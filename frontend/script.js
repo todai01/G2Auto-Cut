@@ -253,6 +253,40 @@ let isProcessing = false;
                 `${Math.round(done / total * 100)}% · осталось ${total - done}`;
         }
 
+        // Лента дублей: соседние дубли с их статусом, клик — переход
+        const STRIP_TITLES = {
+            checked: 'В «Проверенных»',
+            good:    'В «Good»',
+            var:     'В «Переменных»',
+            trash:   'В мусоре',
+            none:    'Ещё не разобран'
+        };
+
+        function renderChunkStrip(strip) {
+            let panel = document.getElementById('stripPanel');
+            if (!panel) return;
+
+            if (!strip || !strip.items || !strip.items.length) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+
+            document.getElementById('stripRange').innerText =
+                `${strip.from}–${strip.to} из ${strip.total}`;
+
+            document.getElementById('stripRail').innerHTML = strip.items.map(it => {
+                let title = `Дубль ${it.num} · ${STRIP_TITLES[it.status] || ''}\n${it.name}`;
+                return `<button class="strip-cell strip-cell--${it.status}${it.current ? ' is-current' : ''}"`
+                     + ` title="${title.replace(/"/g, '&quot;')}" onclick="jumpToChunk(${it.index})"></button>`;
+            }).join('');
+        }
+
+        async function jumpToChunk(index) {
+            let state = await pywebview.api.jump_to_chunk(index);
+            if (state) updateUI(state);
+        }
+
         // Тонкая полоска под счётчиком: где мы среди всех дублей
         function updateChunkTrack(counter) {
             let dot = document.getElementById('chunkTrackDot');
@@ -1180,6 +1214,7 @@ let isProcessing = false;
             document.getElementById('chunkName').innerText = state.chunk_name;
             document.getElementById('chunkCounter').innerText = `Дубль: ${state.chunk_counter}`;
             updateChunkTrack(state.chunk_counter);
+            renderChunkStrip(state.strip);
 
             // НОВЫЙ БЛОК: Управление меткой "Проверено"
             let badge = document.getElementById('checkedBadge');

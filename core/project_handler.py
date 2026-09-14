@@ -165,6 +165,60 @@ class ProjectMixin:
         return {"chunks": self._count_ranges(levels, int(silence_thresh), int(min_silence))}
 
     # ==================================================================
+    #  ЛЕНТА ДУБЛЕЙ
+    # ==================================================================
+
+    def _build_chunk_strip(self, radius=30):
+        """Статусы дублей вокруг текущего: что уже разложено, а что ещё нет.
+
+        Берём окно, а не весь список: при 900 дублях проверять каждый файл на
+        каждое нажатие клавиши — лишняя работа для диска."""
+        if not self.chunks_data or not self.work_dir:
+            return None
+
+        total = len(self.chunks_data)
+        cur = min(max(0, self.chunk_index), total - 1)
+        start = max(0, cur - radius)
+        end = min(total, cur + radius + 1)
+
+        # Дубли и фразы шагают парой; смещение берём из текущей позиции,
+        # чтобы лента показывала ровно ту же связку, что и основной экран.
+        offset = self.phrase_index - self.chunk_index
+
+        checked_dir = os.path.join(self.work_dir, 'Проверенные')
+        good_dir = os.path.join(self.work_dir, 'Good')
+        var_dir = os.path.join(self.work_dir, 'Переменные')
+        trash_dir = os.path.join(self.work_dir, 'Trash')
+
+        items = []
+        for i in range(start, end):
+            chunk_file = self.chunks_data[i]['filename']
+            name = chunk_file
+
+            p = i + offset
+            if self.phrases_data and 0 <= p < len(self.phrases_data):
+                custom = self.phrases_data[p].get('filename')
+                if custom:
+                    custom = str(custom)
+                    name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
+
+            if os.path.exists(os.path.join(checked_dir, name)):
+                status = 'checked'
+            elif os.path.exists(os.path.join(good_dir, name)):
+                status = 'good'
+            elif os.path.exists(os.path.join(var_dir, name)):
+                status = 'var'
+            elif os.path.exists(os.path.join(trash_dir, chunk_file)):
+                status = 'trash'
+            else:
+                status = 'none'
+
+            items.append({"index": i, "num": i + 1, "name": name,
+                          "status": status, "current": i == cur})
+
+        return {"items": items, "total": total, "from": start + 1, "to": end}
+
+    # ==================================================================
 
     def load_raw_audio(self, min_silence, silence_thresh, keep_silence, filepath=None):
         # Файл уже выбран на этапе автоподбора — второй раз не спрашиваем

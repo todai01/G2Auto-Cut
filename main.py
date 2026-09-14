@@ -256,6 +256,9 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
                 state["is_var"] = True
                 if not state["completed_filepath"]: state["completed_filepath"] = var_path
 
+        # Лента дублей: статусы соседних дублей для полоски под счётчиком
+        state["strip"] = self._build_chunk_strip()
+
         # ВАЖНО: состояние возвращается всегда, даже если аудио ещё не загружено.
         # Раньше return стоял внутри блока "если есть чанки", и после загрузки
         # одного только Excel фронтенд получал пустой ответ (None) и ничего не обновлял.

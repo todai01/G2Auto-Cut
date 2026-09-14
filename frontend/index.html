@@ -551,6 +551,21 @@
                     <button class="btn-nav" onclick="navChunk(1)"><kbd>D</kbd> &#9654;</button>
                 </section>
 
+                <section class="strip-panel" id="stripPanel" style="display: none;">
+                    <div class="strip-head">
+                        <span class="strip-head__title">Лента дублей</span>
+                        <span class="strip-legend">
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--checked"></i>Проверенные</span>
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--good"></i>Good</span>
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--var"></i>Переменные</span>
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--trash"></i>Мусор</span>
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--none"></i>Не разобран</span>
+                        </span>
+                        <span class="strip-head__range" id="stripRange"></span>
+                    </div>
+                    <div class="strip-rail" id="stripRail"></div>
+                </section>
+
                 <button class="btn-play" onclick="playAudio(true)">Воспроизвести / Пауза <kbd>Space</kbd></button>
             </div>
 
