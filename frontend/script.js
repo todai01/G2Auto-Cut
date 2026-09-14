@@ -123,6 +123,16 @@ let isProcessing = false;
                     + '<b>Ближе к −20</b> — режет охотнее, но может отхватить начало слова.<br>'
                     + '<b>Ближе к −60</b> — осторожнее, но при шумном фоне разрезов почти не будет.'
             },
+            header: {
+                title: 'Строка с заголовками',
+                body: 'Номер строки, в которой написаны названия колонок — например «51-100 миллионов» '
+                    + 'или «100-900». Программа берёт их как названия категорий, а фразы читает со '
+                    + 'следующей строки.<br><br>'
+                    + '<b>Поставьте 0</b>, если подписей сверху нет и данные начинаются прямо с первой '
+                    + 'строки — так устроен простой формат «текст в первом столбце, имя файла во втором».<br><br>'
+                    + 'Обычно программа определяет это сама, менять вручную нужно редко — например, '
+                    + 'если сверху есть лишняя строка с датой или заметкой.'
+            },
             pad: {
                 title: 'Запас звука по краям',
                 body: 'Найдя границу фразы, программа отступает немного назад и немного вперёд, '
@@ -214,6 +224,151 @@ let isProcessing = false;
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
 
+        // Полоса общего прогресса: проверенные, готовые и переменные в одной шкале
+        function updateProjectProgress(stats) {
+            let total = stats.total || 0;
+            let bar = document.getElementById('projectProgress');
+            if (!bar) return;
+
+            if (!total) {
+                bar.style.display = 'none';
+                return;
+            }
+            bar.style.display = 'flex';
+
+            // На полосе только реально существующие файлы: готовые и переменные.
+            // Отметка клавишей W — это пометка фразы, а не файл на диске,
+            // мешать её сюда значило бы рисовать прогресс, которого нет.
+            let good = Math.min(stats.good || 0, total);
+            let vars = Math.min(stats.var || 0, Math.max(0, total - good));
+            let pct = v => (v / total * 100).toFixed(2) + '%';
+
+            document.getElementById('barGood').style.width = pct(good);
+            document.getElementById('barVar').style.width = pct(vars);
+
+            let done = Math.min(total, good + vars);
+            document.getElementById('progressLabel').innerText =
+                `${Math.round(done / total * 100)}% · осталось ${total - done}`;
+        }
+
+        // Лента дублей: соседние дубли с их статусом, клик — переход
+        const STRIP_TITLES = {
+            checked: 'В «Проверенных»',
+            var:     'В «Переменных»',
+            none:    'Ещё не разобран'
+        };
+
+        function renderChunkStrip(strip) {
+            let panel = document.getElementById('stripPanel');
+            if (!panel) return;
+
+            if (!strip || !strip.items || !strip.items.length) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+
+            document.getElementById('stripRange').innerText =
+                `${strip.from}–${strip.to} из ${strip.total}`;
+
+            document.getElementById('stripRail').innerHTML = strip.items.map(it => {
+                let title = `Дубль ${it.num} · ${STRIP_TITLES[it.status] || ''}\n${it.name}`;
+                return `<button class="strip-cell strip-cell--${it.status}${it.current ? ' is-current' : ''}"`
+                     + ` title="${title.replace(/"/g, '&quot;')}" onclick="jumpToChunk(${it.index})"></button>`;
+            }).join('');
+        }
+
+        async function jumpToChunk(index) {
+            let state = await pywebview.api.jump_to_chunk(index);
+            if (state) updateUI(state);
+        }
+
+        // ===== ПОЛЗУНОК БЫСТРОЙ НАВИГАЦИИ ПО ДУБЛЯМ =====
+
+        let trackTotal = 0;      // всего дублей
+        let trackPos = 0;        // текущий номер, с единицы
+        let trackDragging = false;
+
+        function updateChunkTrack(counter) {
+            // Пока тянут ползунок, состояние с сервера его не дёргает
+            if (trackDragging) return;
+
+            let m = String(counter || '').match(/(\d+)\s*\/\s*(\d+)/);
+            if (!m) { trackTotal = 0; paintChunkTrack(0); return; }
+
+            trackPos = parseInt(m[1]);
+            trackTotal = parseInt(m[2]);
+            paintChunkTrack(trackTotal > 1 ? (trackPos - 1) / (trackTotal - 1) : 0);
+        }
+
+        function paintChunkTrack(ratio) {
+            let dot = document.getElementById('chunkTrackDot');
+            let fill = document.getElementById('chunkTrackFill');
+            if (!dot || !fill) return;
+
+            let pct = (ratio * 100) + '%';
+            dot.style.left = pct;
+            fill.style.width = pct;
+        }
+
+        function trackIndexFromEvent(e) {
+            let track = document.getElementById('chunkTrack');
+            let rect = track.getBoundingClientRect();
+            if (!rect.width) return 0;
+
+            let ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+            return { ratio: ratio, index: Math.round(ratio * (trackTotal - 1)) };
+        }
+
+        function showTrackBubble(ratio, index) {
+            let bubble = document.getElementById('chunkTrackBubble');
+            bubble.style.left = (ratio * 100) + '%';
+            bubble.innerText = `${index + 1} / ${trackTotal}`;
+            bubble.classList.add('is-visible');
+        }
+
+        function setupChunkTrack() {
+            let track = document.getElementById('chunkTrack');
+            if (!track) return;
+
+            track.addEventListener('pointerdown', e => {
+                if (trackTotal < 2) return;
+                e.preventDefault();
+                trackDragging = true;
+                track.classList.add('is-dragging');
+                track.setPointerCapture(e.pointerId);
+
+                let p = trackIndexFromEvent(e);
+                paintChunkTrack(p.ratio);
+                showTrackBubble(p.ratio, p.index);
+            });
+
+            track.addEventListener('pointermove', e => {
+                if (!trackDragging) return;
+                let p = trackIndexFromEvent(e);
+                paintChunkTrack(p.ratio);
+                showTrackBubble(p.ratio, p.index);
+            });
+
+            // Переход делаем один раз, когда кнопку отпустили: дёргать Python
+            // на каждое движение мыши при 900 дублях — верный способ подвесить окно
+            let finish = async e => {
+                if (!trackDragging) return;
+                trackDragging = false;
+                track.classList.remove('is-dragging');
+                document.getElementById('chunkTrackBubble').classList.remove('is-visible');
+                try { track.releasePointerCapture(e.pointerId); } catch (err) {}
+
+                let p = trackIndexFromEvent(e);
+                await jumpToChunk(p.index);
+            };
+
+            track.addEventListener('pointerup', finish);
+            track.addEventListener('pointercancel', finish);
+        }
+
+        document.addEventListener('DOMContentLoaded', setupChunkTrack);
+
         async function handleLoad(apiPromise) {
             let state = await apiPromise;
             updateUI(state);
@@ -233,33 +388,336 @@ let isProcessing = false;
             setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
         }
 
-        async function loadExcel() {
-            let state;
-            try {
-                state = await pywebview.api.load_excel();
-            } catch (e) {
-                showBeautifulAlert(`❌ <b>Не удалось прочитать таблицу</b><br><br>${e}`);
-                return;
-            }
+        // ===== ЧТЕНИЕ ТАБЛИЦЫ: ВЫБОР КОЛОНОК =====
 
-            // Пользователь закрыл окно выбора файла — молча выходим
-            if (!state || state.error === "cancel") return;
+        let excelInfo = null;
+        let excelPreviewTimer = null;
+        let excelAnalyzeTimer = null;
 
-            if (state.error) {
-                showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(state.error).replace(/\n/g, '<br>')}`);
-                return;
-            }
-
-            updateUI(state);
+        function excelError(msg) {
+            showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(msg).replace(/\n/g, '<br>')}`);
         }
 
-        async function loadAudio() {
-            let min_silence = parseInt(document.getElementById('inpPause').value);
-            let silence_thresh = parseInt(document.getElementById('inpSens').value);
-            let keep_silence = parseInt(document.getElementById('inpPad').value);
+        async function loadExcel() {
+            let picked;
+            try {
+                picked = await pywebview.api.pick_excel();
+            } catch (e) { excelError(e); return; }
 
-            updateProgress(0, 'Анализ...');
-            await handleLoad(pywebview.api.load_raw_audio(min_silence, silence_thresh, keep_silence));
+            if (!picked || picked.error === 'cancel') return;
+            if (picked.error) { excelError(picked.error); return; }
+
+            await analyzeExcel(true);
+        }
+
+        // 0 — допустимое значение («заголовков нет»), поэтому обычное || здесь нельзя
+        function excelHeaderRow() {
+            let v = parseInt(document.getElementById('excelHeaderRow').value);
+            return isNaN(v) || v < 0 ? 0 : v;
+        }
+
+        async function analyzeExcel(openDialog) {
+            let info;
+            try {
+                // При первом открытии строку заголовков определяет сам Python
+                info = openDialog ? await pywebview.api.analyze_excel()
+                                  : await pywebview.api.analyze_excel(excelHeaderRow());
+            } catch (e) { excelError(e); return; }
+
+            if (!info) { excelError('Пустой ответ'); return; }
+            if (info.error) {
+                if (openDialog) { excelError(info.error); return; }
+                // Дальше правим номер строки прямо в окне — не закрываем его
+                document.getElementById('excelColumns').innerHTML =
+                    `<div class="excel-empty">${String(info.error).replace(/\n/g, '<br>')}</div>`;
+                renderExcelResult(null);
+                return;
+            }
+
+            excelInfo = info;
+
+            if (openDialog) {
+                document.getElementById('excelHeaderRow').value = info.header_row;
+                document.getElementById('excelHeaderHint').innerText =
+                    info.header_row ? `Строка ${info.header_row} — подписи категорий` : 'Заголовков нет, данные с первой строки';
+                document.getElementById('excelNaming').value = info.suggested_naming || 'cell';
+                document.getElementById('excelFile').innerHTML =
+                    `<b>${info.name}</b> · лист «${info.sheet}» · ${info.total_rows} строк`;
+                document.getElementById('excelOverlay').style.display = 'flex';
+            }
+
+            renderExcelColumns();
+            scheduleExcelPreview();
+        }
+
+        function renderExcelColumns() {
+            let sel = new Set(excelInfo.suggested || []);
+            document.getElementById('excelColumns').innerHTML = excelInfo.columns.map(c => `
+                <label class="col-card">
+                    <input type="checkbox" class="col-card__check" value="${c.index}" ${sel.has(c.index) ? 'checked' : ''} onchange="scheduleExcelPreview()">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="col-card__body">
+                        <span class="col-card__head">
+                            <span class="col-card__letter">${c.letter}</span>
+                            <span class="col-card__title">${c.header || '<i>без заголовка</i>'}</span>
+                        </span>
+                        <span class="col-card__samples">${c.samples.join(' · ')}</span>
+                        <span class="col-card__stats">${c.filled} ячеек${c.duplicates ? ` · повторов: ${c.duplicates}` : ''}</span>
+                    </span>
+                </label>`).join('');
+        }
+
+        function selectedExcelColumns() {
+            return Array.from(document.querySelectorAll('.col-card__check:checked')).map(el => parseInt(el.value));
+        }
+
+        function toggleAllExcelColumns(on) {
+            document.querySelectorAll('.col-card__check').forEach(el => el.checked = on);
+            scheduleExcelPreview();
+        }
+
+        function scheduleExcelReanalyze() {
+            clearTimeout(excelAnalyzeTimer);
+            excelAnalyzeTimer = setTimeout(() => analyzeExcel(false), 450);
+        }
+
+        function scheduleExcelPreview() {
+            clearTimeout(excelPreviewTimer);
+            let el = document.getElementById('excelResult');
+            el.className = 'tune-result is-busy';
+            el.innerHTML = 'Считаю…';
+            excelPreviewTimer = setTimeout(runExcelPreview, 300);
+        }
+
+        async function runExcelPreview() {
+            let cols = selectedExcelColumns();
+            if (!cols.length) { renderExcelResult({ total: 0, unique: 0, duplicates: 0, result: 0, examples: [] }); return; }
+
+            let res = await pywebview.api.preview_excel_selection(
+                cols,
+                document.getElementById('excelNaming').value,
+                document.getElementById('excelSkipDupes').checked,
+                excelHeaderRow()
+            );
+            renderExcelResult(res);
+        }
+
+        function renderExcelResult(res) {
+            let el = document.getElementById('excelResult');
+            if (!res || res.error) {
+                el.className = 'tune-result is-bad';
+                el.innerHTML = 'Не удалось посчитать. Проверьте номер строки с заголовками.';
+                return;
+            }
+
+            if (!res.result) {
+                el.className = 'tune-result is-bad';
+                el.innerHTML = '<span class="tune-result__num">0</span><span class="tune-result__text">'
+                             + '<b>фраз загрузится</b><br>Отметьте хотя бы одну колонку.</span>';
+                return;
+            }
+
+            let skip = document.getElementById('excelSkipDupes').checked;
+            let note;
+            let cls = 'tune-result is-good';
+
+            if (res.duplicates && skip) {
+                note = `Из ${res.total} ячеек ${res.duplicates} — повторы, они пропущены.`;
+            } else if (res.duplicates) {
+                cls = 'tune-result is-warn';
+                note = `Среди них ${res.duplicates} повторов. При одинаковых именах файлы затрут друг друга — `
+                     + `лучше включить «Пропускать повторы».`;
+            } else {
+                note = 'Повторов нет, все тексты разные.';
+            }
+
+            let ex = (res.examples || []).filter(Boolean);
+            if (ex.length) note += `<br><span class="tune-result__ex">Имена: ${ex.join(' · ')}</span>`;
+
+            el.className = cls;
+            el.innerHTML = `<span class="tune-result__num">${res.result}</span>`
+                         + `<span class="tune-result__text"><b>фраз загрузится</b><br>${note}</span>`;
+        }
+
+        function closeExcelPicker() {
+            document.getElementById('excelOverlay').style.display = 'none';
+        }
+
+        async function confirmExcelSelection() {
+            let cols = selectedExcelColumns();
+            if (!cols.length) { showBeautifulAlert('Отметьте хотя бы одну колонку с текстом.'); return; }
+
+            let state = await pywebview.api.load_excel_selection(
+                cols,
+                document.getElementById('excelNaming').value,
+                document.getElementById('excelSkipDupes').checked,
+                excelHeaderRow()
+            );
+
+            if (!state || state.error) { excelError(state && state.error || 'Пустой ответ'); return; }
+
+            closeExcelPicker();
+            updateUI(state);
+
+            let rep = state.load_report;
+            if (rep) {
+                showToast(rep.skipped
+                    ? `Загружено ${rep.loaded} фраз, повторов пропущено: ${rep.skipped}`
+                    : `Загружено ${rep.loaded} фраз`);
+            }
+        }
+
+        // ===== АВТОПОДБОР НАСТРОЕК НАРЕЗКИ =====
+
+        let tuneData = null;       // результат замеров по выбранному файлу
+        let tunePredictTimer = null;
+
+        async function loadAudio() {
+            // Шаг 1 — выбор файла (Python открывает системное окно)
+            let picked = await pywebview.api.pick_raw_audio();
+            if (!picked || picked.error === 'cancel') return;
+            if (picked.error) { showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked.error}`); return; }
+
+            // Шаг 2 — замеры. Могут занять пару секунд, показываем прогресс
+            updateProgress(30, `Анализ записи: ${picked.name}`);
+            let res;
+            try {
+                res = await pywebview.api.analyze_picked_audio();
+            } catch (e) {
+                document.getElementById('progressContainer').style.display = 'none';
+                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
+                return;
+            }
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
+                return;
+            }
+
+            openAutoTune(res);
+        }
+
+        function openAutoTune(res) {
+            tuneData = res;
+
+            let mins = Math.floor(res.duration_sec / 60);
+            let secs = Math.round(res.duration_sec % 60);
+            document.getElementById('tuneFile').innerHTML =
+                `<b>${res.name}</b> · ${mins} мин ${secs} сек`;
+
+            document.getElementById('tuneNoise').innerText  = `${res.noise_db} дБ`;
+            document.getElementById('tuneSpeech').innerText = `${res.speech_db} дБ`;
+            document.getElementById('tuneSpread').innerText = `${res.spread} дБ`;
+
+            let spreadNote = document.getElementById('tuneSpreadNote');
+            if (res.spread < 10) {
+                spreadNote.innerText = 'Мало: фон почти такой же громкий, как речь. Нарезка будет неточной.';
+                spreadNote.className = 'measure-card__note is-warn';
+            } else if (res.spread < 20) {
+                spreadNote.innerText = 'Небольшой запас — возможны ошибки на тихих словах.';
+                spreadNote.className = 'measure-card__note';
+            } else {
+                spreadNote.innerText = 'Хороший запас, речь чётко отделена от фона.';
+                spreadNote.className = 'measure-card__note is-good';
+            }
+
+            document.getElementById('tuneVerdict').innerHTML = res.target_phrases
+                ? `В таблице Excel <b>${res.target_phrases}</b> фраз — настройки подобраны так, чтобы кусков получилось примерно столько же.`
+                : `Таблица Excel не загружена, поэтому подобрано «на глаз» по громкости записи. Загрузите Excel — и подбор станет точнее.`;
+
+            restoreTuneSuggestion();
+
+            // Быстрые варианты: та же чувствительность, разная длина паузы
+            let presets = (res.variants || []).map(v =>
+                `<button class="preset-chip" onclick="applyTunePreset(${v.pause})">${v.pause} мс<small>≈ ${v.chunks} кусков</small></button>`
+            ).join('');
+            document.getElementById('tunePresets').innerHTML = presets;
+
+            document.getElementById('autoTuneOverlay').style.display = 'flex';
+        }
+
+        function closeAutoTune() {
+            document.getElementById('autoTuneOverlay').style.display = 'none';
+        }
+
+        function restoreTuneSuggestion() {
+            if (!tuneData) return;
+            document.getElementById('tunePause').value = tuneData.suggested.pause;
+            document.getElementById('tuneSens').value  = tuneData.suggested.sens;
+            document.getElementById('tunePad').value   = tuneData.suggested.pad;
+            renderTuneResult(tuneData.predicted_chunks);
+        }
+
+        function applyTunePreset(pause) {
+            document.getElementById('tunePause').value = pause;
+            runTunePredict();
+        }
+
+        // Пересчитываем не на каждое нажатие клавиши, а когда человек перестал печатать
+        function scheduleTunePredict() {
+            clearTimeout(tunePredictTimer);
+            document.getElementById('tuneResult').className = 'tune-result is-busy';
+            document.getElementById('tuneResult').innerHTML = 'Пересчитываю…';
+            tunePredictTimer = setTimeout(runTunePredict, 400);
+        }
+
+        async function runTunePredict() {
+            clearTimeout(tunePredictTimer);
+            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
+            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
+
+            let res = await pywebview.api.predict_cut(pause, sens);
+            renderTuneResult(res ? res.chunks : null);
+        }
+
+        function renderTuneResult(chunks) {
+            let el = document.getElementById('tuneResult');
+            if (chunks === null || chunks === undefined) {
+                el.className = 'tune-result';
+                el.innerHTML = 'Не удалось посчитать. Попробуйте выбрать файл заново.';
+                return;
+            }
+
+            let target = tuneData ? tuneData.target_phrases : 0;
+            let note = '';
+            let cls = 'tune-result is-good';
+
+            if (chunks <= 1) {
+                cls = 'tune-result is-bad';
+                note = 'Вся запись останется одним куском. Увеличьте чувствительность — например, до '
+                     + `${Math.min(-10, parseInt(document.getElementById('tuneSens').value) + 4)} дБ.`;
+            } else if (target && chunks < target * 0.6) {
+                cls = 'tune-result is-warn';
+                note = `Это заметно меньше, чем ${target} фраз в таблице. Уменьшите паузу или поднимите чувствительность.`;
+            } else if (target && chunks > target * 1.6) {
+                cls = 'tune-result is-warn';
+                note = `Это заметно больше, чем ${target} фраз в таблице — фразы дробятся на части. Увеличьте паузу.`;
+            } else if (target) {
+                note = `В таблице ${target} фраз — цифры сходятся.`;
+            } else {
+                note = 'Проверьте на слух после нарезки: слова не должны обрываться.';
+            }
+
+            el.className = cls;
+            el.innerHTML = `<span class="tune-result__num">≈ ${chunks}</span>`
+                         + `<span class="tune-result__text"><b>кусков получится</b><br>${note}</span>`;
+        }
+
+        async function startCut() {
+            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
+            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
+            let pad   = clampToInput('inpPad',   document.getElementById('tunePad').value,   CUT_DEFAULTS.pad);
+
+            // Держим ползунки на экране подготовки в согласии с тем, чем резали
+            document.getElementById('inpPause').value = pause;
+            document.getElementById('inpSens').value  = sens;
+            document.getElementById('inpPad').value   = pad;
+            updateSettingsText();
+
+            closeAutoTune();
+            updateProgress(0, 'Нарезка...');
+            await handleLoad(pywebview.api.load_raw_audio(pause, sens, pad));
             document.getElementById('progressContainer').style.display = 'none';
         }
 
@@ -825,6 +1283,8 @@ let isProcessing = false;
             document.getElementById('phraseCounter').innerText = `Фраза: ${state.phrase_counter}`;
             document.getElementById('chunkName').innerText = state.chunk_name;
             document.getElementById('chunkCounter').innerText = `Дубль: ${state.chunk_counter}`;
+            updateChunkTrack(state.chunk_counter);
+            renderChunkStrip(state.strip);
 
             // НОВЫЙ БЛОК: Управление меткой "Проверено"
             let badge = document.getElementById('checkedBadge');
@@ -864,6 +1324,8 @@ let isProcessing = false;
                     missingEl.innerText = state.stats.total - state.stats.good;
                 }
 
+                updateProjectProgress(state.stats);
+
                 if(state.stats.excel_name) {
                     markExcelLoaded(state.stats.excel_name);
                 }
@@ -874,19 +1336,13 @@ let isProcessing = false;
                     document.getElementById('descAudio').innerText = state.stats.project_name;
                 }
             }
-            // === БЛОК ОБНОВЛЕНИЯ АКТИВНОЙ ВКЛАДКИ (ВСТАВЛЕН СЮДА) ===
+            // === АКТИВНАЯ ВКЛАДКА ===
+            // Сравниваем с меткой data-mode: раньше сверяли по надписи на кнопке,
+            // и любое переименование вкладки ломало подсветку.
+            let md = (state.mode || '').toLowerCase();
             document.querySelectorAll('.mode-switch .chip').forEach(btn => {
-                btn.classList.remove('chip-mode--active');
-                let txt = btn.innerText.toLowerCase();
-                let md = state.mode.toLowerCase();
-                if (md === 'chunks' && txt.includes('main')) {
-                    btn.classList.add('chip-mode--active');
-                } else if (md === 'проверенные' && txt.includes('провер')) {
-                    btn.classList.add('chip-mode--active');
-                } else if (txt.includes(md) && md !== 'chunks') {
-                    btn.classList.add('chip-mode--active');
-                }
-            }); // <-- ИСПРАВЛЕНО: добавлено });
+                btn.classList.toggle('chip-mode--active', (btn.dataset.mode || '') === md);
+            });
 
 
             if (state.mode === 'VarBatch') {
@@ -1079,6 +1535,26 @@ let isProcessing = false;
                 return;
             }
 
+            // Окно выбора колонок таблицы: Escape закрывает
+            let excelOverlay = document.getElementById('excelOverlay');
+            if (excelOverlay && excelOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeExcelPicker();
+                }
+                return;
+            }
+
+            // Окно автоподбора: Escape закрывает, печатать цифры не мешаем
+            let tuneOverlay = document.getElementById('autoTuneOverlay');
+            if (tuneOverlay && tuneOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeAutoTune();
+                }
+                return;
+            }
+
             // Окно ручной настройки: Escape закрывает, остальные клавиши не мешаем
             let manualOverlay = document.getElementById('manualOverlay');
             if (manualOverlay && manualOverlay.style.display === 'flex') {
@@ -1105,7 +1581,7 @@ let isProcessing = false;
 
             if (currentState && currentState.mode === 'VarBatch') {
                 // Добавили KeyR в разрешенные
-                if (['KeyC', 'KeyX', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
+                if (['KeyC', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
                     e.preventDefault();
                     showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Здесь эта кнопка отключена. Для сохранения и перехода жмите <b>Z</b>, для навигации аудио — <b>A/D</b>, для навигации текста — <b>Q/E</b>, выгрузить готовое — <b>R</b>.');
                     return;
@@ -1136,7 +1612,6 @@ let isProcessing = false;
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); processAction('good'); }
             else if (e.code === 'KeyC') { e.preventDefault(); processAction('variable'); }
-            else if (e.code === 'KeyX') { e.preventDefault(); processAction('trash'); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

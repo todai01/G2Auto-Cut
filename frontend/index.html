@@ -100,6 +100,119 @@
         </div>
     </div>
 
+    <!-- Модальное окно: выбор колонок таблицы -->
+    <div id="excelOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Что читать из таблицы</h3>
+                <button class="modal-close" onclick="closeExcelPicker()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="tune-file" id="excelFile"></div>
+
+            <div class="excel-toolbar">
+                <label class="excel-headrow">
+                    <span>Строка с заголовками<button type="button" class="help-btn" onclick="explainSetting(event, 'header')" title="Что это такое?">?</button></span>
+                    <input type="number" id="excelHeaderRow" class="search-input" min="0" max="100" value="0" oninput="scheduleExcelReanalyze()">
+                    <span class="excel-headrow__hint" id="excelHeaderHint"></span>
+                </label>
+                <div class="excel-toolbar__buttons">
+                    <button class="btn-manual" onclick="toggleAllExcelColumns(true)">Отметить все</button>
+                    <button class="btn-manual" onclick="toggleAllExcelColumns(false)">Снять все</button>
+                </div>
+            </div>
+
+            <div class="excel-columns" id="excelColumns"></div>
+
+            <div class="excel-options">
+                <label class="field excel-options__field">
+                    <span class="field-label">Имя файла брать из</span>
+                    <select id="excelNaming" class="search-input" onchange="scheduleExcelPreview()">
+                        <option value="cell">текста самой ячейки</option>
+                        <option value="header">заголовка колонки и номера</option>
+                        <option value="right">соседней колонки справа</option>
+                        <option value="order">порядкового номера (фраза_0001)</option>
+                    </select>
+                </label>
+
+                <label class="opt-chip excel-options__chip">
+                    <input type="checkbox" id="excelSkipDupes" checked onchange="scheduleExcelPreview()">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">
+                        Пропускать повторы
+                        <small>одинаковый текст — один файл</small>
+                    </span>
+                </label>
+            </div>
+
+            <div class="tune-result" id="excelResult"></div>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="closeExcelPicker()">Отмена</button>
+                <button class="custom-alert-btn" onclick="confirmExcelSelection()">Загрузить фразы</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно: автоподбор настроек нарезки -->
+    <div id="autoTuneOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Автоподбор настроек нарезки</h3>
+                <button class="modal-close" onclick="closeAutoTune()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="tune-file" id="tuneFile"></div>
+
+            <div class="measure-grid">
+                <div class="measure-card">
+                    <div class="measure-card__label">Уровень фона</div>
+                    <div class="measure-card__value" id="tuneNoise">—</div>
+                    <div class="measure-card__note">Тишина между фразами</div>
+                </div>
+                <div class="measure-card">
+                    <div class="measure-card__label">Уровень речи</div>
+                    <div class="measure-card__value measure-card__value--speech" id="tuneSpeech">—</div>
+                    <div class="measure-card__note">Когда вы говорите</div>
+                </div>
+                <div class="measure-card measure-card--wide">
+                    <div class="measure-card__label">Запас между ними</div>
+                    <div class="measure-card__value measure-card__value--spread" id="tuneSpread">—</div>
+                    <div class="measure-card__note" id="tuneSpreadNote">Чем больше, тем надёжнее разрез</div>
+                </div>
+            </div>
+
+            <div class="tune-verdict" id="tuneVerdict"></div>
+
+            <div class="tune-fields">
+                <label class="field">
+                    <span class="field-label">Пауза, мс<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
+                    <input type="number" id="tunePause" class="search-input" min="50" max="3000" step="10" oninput="scheduleTunePredict()">
+                </label>
+                <label class="field">
+                    <span class="field-label">Чувствительность, дБ<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
+                    <input type="number" id="tuneSens" class="search-input" min="-80" max="-10" step="1" oninput="scheduleTunePredict()">
+                </label>
+                <label class="field">
+                    <span class="field-label">Запас, мс<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
+                    <input type="number" id="tunePad" class="search-input" min="0" max="1000" step="10">
+                </label>
+            </div>
+
+            <div class="tune-result" id="tuneResult"></div>
+
+            <div class="tune-presets">
+                <span class="tune-presets__label">Быстро попробовать</span>
+                <div class="tune-presets__row" id="tunePresets"></div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="restoreTuneSuggestion()">Вернуть рекомендацию</button>
+                <button class="custom-alert-btn" onclick="startCut()">Нарезать</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модальное окно: ручной ввод настроек нарезки -->
     <div id="manualOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -339,9 +452,8 @@
                 <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
                 <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
                 <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
-                <span class="hotkey"><kbd>Z</kbd> В Good</span>
+                <span class="hotkey"><kbd>Z</kbd> В проверенные</span>
                 <span class="hotkey"><kbd>C</kbd> В переменные</span>
-                <span class="hotkey"><kbd>X</kbd> В мусор</span>
                 <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
                 <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
                 <span class="hotkey"><kbd>F</kbd> Поиск</span>
@@ -362,18 +474,27 @@
             <div class="stat-row">
                 <span class="stat-good">Готово: <span id="statGood">0</span> / <span id="statTotal">0</span></span>
 
-                <span class="stat-checked">Проверено: <span id="statChecked">0</span></span>
+                <span class="stat-checked">Отмечено: <span id="statChecked">0</span></span>
 
                 <span class="stat-var">Переменные: <span id="statVar">0</span></span>
                 <button class="btn-ghost btn-alert btn-ghost--compact" onclick="toggleMissingPanel()">Осталось: <span id="statMissing">0</span></button>
             </div>
 
             <div class="mode-switch">
-                <button class="chip" onclick="loadChecked()">Проверенные</button>
-                <button class="chip" onclick="loadVariables()">Переменные</button>
-                <button class="chip chip-mode--active" onclick="loadMainMode()">Основной <kbd>Esc</kbd></button>
+                <button class="chip" data-mode="проверенные" onclick="loadChecked()">Проверенные</button>
+                <button class="chip" data-mode="переменные" onclick="loadVariables()">Переменные</button>
+                <button class="chip chip-mode--active" data-mode="chunks" onclick="loadMainMode()">Основной <kbd>Esc</kbd></button>
             </div>
         </header>
+
+        <!-- Общий прогресс проекта -->
+        <div class="project-progress" id="projectProgress">
+            <div class="project-progress__bar">
+                <span class="project-progress__fill project-progress__fill--good" id="barGood"></span>
+                <span class="project-progress__fill project-progress__fill--var" id="barVar"></span>
+            </div>
+            <div class="project-progress__label" id="progressLabel">0%</div>
+        </div>
 
         <div id="missingPanel" class="missing-panel" style="display: none;">
             <div class="missing-header">
@@ -427,6 +548,26 @@
                     <button class="btn-nav" onclick="navChunk(1)"><kbd>D</kbd> &#9654;</button>
                 </section>
 
+                <!-- Быстрая навигация: ползунок по всем дублям -->
+                <div class="chunk-track" id="chunkTrack" title="Перетащите, чтобы быстро перейти к другому дублю">
+                    <span class="chunk-track__fill" id="chunkTrackFill"></span>
+                    <span class="chunk-track__dot" id="chunkTrackDot"></span>
+                    <span class="chunk-track__bubble" id="chunkTrackBubble"></span>
+                </div>
+
+                <section class="strip-panel" id="stripPanel" style="display: none;">
+                    <div class="strip-head">
+                        <span class="strip-head__title">Лента дублей</span>
+                        <span class="strip-legend">
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--checked"></i>Проверенные</span>
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--var"></i>Переменные</span>
+                            <span class="strip-legend__item"><i class="strip-dot strip-dot--none"></i>Не разобран</span>
+                        </span>
+                        <span class="strip-head__range" id="stripRange"></span>
+                    </div>
+                    <div class="strip-rail" id="stripRail"></div>
+                </section>
+
                 <button class="btn-play" onclick="playAudio(true)">Воспроизвести / Пауза <kbd>Space</kbd></button>
             </div>
 
@@ -466,7 +607,7 @@
                                 onmouseup="releaseHold(1, 'btnPrepMerge', () => markPart(1))"
                                 onmouseleave="releaseHold(1, 'btnPrepMerge', () => {})">1. Выгрузить</button>
 
-                        <button class="btn-step btn-step--confirm" id="btnSaveMerge" onclick="handleDoubleTap('btnSaveMerge', saveMerge, '2. В Good')">2. В Good</button>
+                        <button class="btn-step btn-step--confirm" id="btnSaveMerge" onclick="handleDoubleTap('btnSaveMerge', saveMerge, '2. В проверенные')">2. В проверенные</button>
 
                         <button class="btn-step btn-step--var" id="btnSaveMergeVar" onclick="handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные')">3. В переменные</button>
                     </div>
@@ -506,7 +647,7 @@
                     <div id="standardActions" class="action-col">
                         <button class="btn-action btn-action--good" onclick="processAction('good')"><span>Проверено</span><kbd>Z</kbd></button>
                         <button class="btn-action btn-action--var" onclick="processAction('variable')"><span>В переменные</span><kbd>C</kbd></button>
-                        <button class="btn-action btn-action--trash" onclick="processAction('trash')"><span>Мусор</span><kbd>X</kbd></button>
+                        <div class="action-note">Ненужный дубль просто пролистайте — <kbd>D</kbd></div>
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">
@@ -532,11 +673,21 @@
                             <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--solid-mode btn-tile--tall" onclick="saveVarBatch(true)">Нормализовать</button>
-                            <button class="btn-tile btn-tile--solid-var btn-tile--tall" onclick="saveVarBatch(false)">Срезать <kbd>Z</kbd></button>
+                            <button class="btn-tile btn-tile--mode btn-tile--tall" onclick="saveVarBatch(true)">Нормализовать</button>
+                            <button class="btn-tile btn-tile--var btn-tile--tall" onclick="saveVarBatch(false)">Срезать <kbd>Z</kbd></button>
                         </div>
                     </div>
                 </section>
+
+                <div class="work-hotkeys">
+                    <span class="hotkey"><kbd>Space</kbd> Прослушать</span>
+                    <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза</span>
+                    <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль</span>
+                    <span class="hotkey"><kbd>W</kbd> Проверено</span>
+                    <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
+                    <span class="hotkey"><kbd>S</kbd> Тишина</span>
+                    <span class="hotkey"><kbd>F</kbd> Поиск</span>
+                </div>
             </div>
         </div>
     </div>
