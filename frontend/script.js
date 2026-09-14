@@ -148,31 +148,60 @@ let isProcessing = false;
             document.getElementById('progressText').innerText = t;
         }
 
+        // ===== ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ =====
+        // Каждому экрану нужен свой способ раскладки: заставка и экран подготовки
+        // построены на flex, рабочий экран — обычный block. Раньше это значение
+        // подставлялось руками в каждой функции, и стоило один раз ошибиться —
+        // заставка съезжала в левый край. Теперь оно живёт в одном месте.
+        const STAGE_DISPLAY = {
+            'stage0-splash':    'flex',
+            'stage1-loading':   'flex',
+            'stage2-workspace': 'block'
+        };
+
+        function showStage(activeId) {
+            Object.keys(STAGE_DISPLAY).forEach(id => {
+                let el = document.getElementById(id);
+                if (el) el.style.display = (id === activeId) ? STAGE_DISPLAY[id] : 'none';
+            });
+        }
+
+        // Запоминаем, что рабочий экран уже открывался: тогда из меню
+        // можно вернуться к работе одной кнопкой, ничего не загружая заново.
+        let workspaceReady = false;
+
+        function showSplash() {
+            showStage('stage0-splash');
+        }
+
         // Заставка -> экран подготовки проекта
         function enterApp() {
-            let splash = document.getElementById('stage0-splash');
-            if (splash) splash.style.display = 'none';
             showMenu();
         }
 
         function showMenu() {
-            let splash = document.getElementById('stage0-splash');
-            if (splash) splash.style.display = 'none';
-
-            let setup = document.getElementById('stage1-loading');
-            setup.style.display = 'flex';
-            document.getElementById('stage2-workspace').style.display = 'none';
+            showStage('stage1-loading');
 
             // Кнопка возврата появляется, только если работать уже есть с чем
             let btnResume = document.getElementById('btnResume');
             if (btnResume) btnResume.style.display = workspaceReady ? 'inline-flex' : 'none';
 
             // Перезапускаем появление блоков «лесенкой»
-            setup.querySelectorAll('.rise').forEach(el => {
+            document.getElementById('stage1-loading').querySelectorAll('.rise').forEach(el => {
                 el.style.animation = 'none';
                 void el.offsetWidth;
                 el.style.animation = '';
             });
+        }
+
+        function showWorkspace() {
+            workspaceReady = true;
+            showStage('stage2-workspace');
+        }
+
+        function resumeWorkspace() {
+            if (!workspaceReady) return;
+            showWorkspace();
         }
 
         // Подсказка в шапке экрана подготовки
@@ -181,27 +210,6 @@ let isProcessing = false;
             if (!el) return;
             el.innerText = text;
             el.classList.toggle('setup-status--ready', !!ready);
-        }
-        // Запоминаем, что рабочий экран уже открывался: тогда из меню
-        // можно вернуться к работе одной кнопкой, ничего не загружая заново.
-        let workspaceReady = false;
-
-        function showWorkspace() {
-            workspaceReady = true;
-            document.getElementById('stage0-splash').style.display = 'none';
-            document.getElementById('stage1-loading').style.display = 'none';
-            document.getElementById('stage2-workspace').style.display = 'block';
-        }
-
-        function resumeWorkspace() {
-            if (!workspaceReady) return;
-            showWorkspace();
-        }
-
-        function showSplash() {
-            document.getElementById('stage1-loading').style.display = 'none';
-            document.getElementById('stage2-workspace').style.display = 'none';
-            document.getElementById('stage0-splash').style.display = 'block';
         }
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
