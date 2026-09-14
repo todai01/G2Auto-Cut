@@ -1007,14 +1007,65 @@ button[disabled]:active{ transform: none; }
 
 .btn-tile--tall{ height: 52px; font-size: var(--fs-lg); font-weight: 700; }
 
-/* --- Экран загрузки: группировка и разделитель --- */
-.option-settings{
-    display: flex; flex-direction: column; gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-    background: var(--panel); border: 1px solid var(--border-soft);
-    border-radius: var(--radius-md);
+/* --- Параметры режима: компактные переключатели без тяжёлой панели --- */
+.mode-options{
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-1) 0;
 }
-.option-settings .silence-toggle{ margin-bottom: 0; }
+.mode-options__label{
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint);
+    margin-right: var(--space-1);
+}
+
+.opt-chip{
+    display: inline-flex; align-items: center; gap: var(--space-2);
+    padding: 9px var(--space-3) 9px 11px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 999px; cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+.opt-chip:hover{ border-color: var(--accent-primary); background: var(--tint-primary); }
+
+/* Родной квадратик прячем и рисуем свой — так он совпадает по стилю с остальным */
+.opt-chip input[type=checkbox]{
+    position: absolute; opacity: 0; width: 0; height: 0; margin: 0;
+}
+.opt-chip__box{
+    flex: none; width: 16px; height: 16px; border-radius: 5px;
+    background: var(--screen); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s ease, border-color .15s ease;
+}
+.opt-chip__box::after{
+    content: ""; width: 8px; height: 4px;
+    border-left: 2px solid #062b1c; border-bottom: 2px solid #062b1c;
+    transform: rotate(-45deg) scale(0.5); transform-origin: center;
+    opacity: 0; transition: opacity .15s ease, transform .15s var(--ease);
+    margin-top: -2px;
+}
+.opt-chip input:checked + .opt-chip__box{
+    background: var(--accent-good); border-color: var(--accent-good);
+}
+.opt-chip input:checked + .opt-chip__box::after{ opacity: 1; transform: rotate(-45deg) scale(1); }
+
+.opt-chip__text{
+    display: flex; flex-direction: column; line-height: 1.25;
+    font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim);
+    transition: color .15s ease;
+}
+.opt-chip__text small{
+    font-size: 10.5px; font-weight: 500; color: var(--text-faint); margin-top: 2px;
+}
+.opt-chip input:checked ~ .opt-chip__text{ color: var(--text); }
+
+.opt-chip input:focus-visible + .opt-chip__box{
+    outline: 2px solid var(--accent-primary); outline-offset: 2px;
+}
+
+/* Отмеченный параметр подсвечивается целиком там, где это поддерживается */
+.opt-chip:has(input:checked){ border-color: rgba(47,191,125,0.5); background: var(--tint-good); }
 
 .group-divider{
     display: flex; align-items: center; gap: var(--space-3);

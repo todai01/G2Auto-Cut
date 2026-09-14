@@ -265,12 +265,25 @@
                     </button>
                 </div>
 
-                <div class="option-settings rise" style="--d: 5">
-                    <label class="silence-toggle silence-toggle--left">
-                        <input type="checkbox" id="simpleExportCheck"> <span>Простой экспорт (без start/end и подгонки)</span>
+                <div class="mode-options rise" style="--d: 5">
+                    <span class="mode-options__label">Параметры режима</span>
+
+                    <label class="opt-chip">
+                        <input type="checkbox" id="simpleExportCheck">
+                        <span class="opt-chip__box" aria-hidden="true"></span>
+                        <span class="opt-chip__text">
+                            Простой экспорт
+                            <small>без start/end и подгонки</small>
+                        </span>
                     </label>
-                    <label class="silence-toggle silence-toggle--left">
-                        <input type="checkbox" id="sortByNameCheck"> <span>Сортировать по цифрам (названия клипов и метки)</span>
+
+                    <label class="opt-chip">
+                        <input type="checkbox" id="sortByNameCheck">
+                        <span class="opt-chip__box" aria-hidden="true"></span>
+                        <span class="opt-chip__text">
+                            Сортировка по цифрам
+                            <small>названия клипов и метки</small>
+                        </span>
                     </label>
                 </div>
 
