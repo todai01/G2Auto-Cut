@@ -100,6 +100,60 @@
         </div>
     </div>
 
+    <!-- Модальное окно: выбор колонок таблицы -->
+    <div id="excelOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Что читать из таблицы</h3>
+                <button class="modal-close" onclick="closeExcelPicker()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="tune-file" id="excelFile"></div>
+
+            <div class="excel-toolbar">
+                <label class="excel-headrow">
+                    <span>Строка с заголовками<button type="button" class="help-btn" onclick="explainSetting(event, 'header')" title="Что это такое?">?</button></span>
+                    <input type="number" id="excelHeaderRow" class="search-input" min="0" max="100" value="0" oninput="scheduleExcelReanalyze()">
+                    <span class="excel-headrow__hint" id="excelHeaderHint"></span>
+                </label>
+                <div class="excel-toolbar__buttons">
+                    <button class="btn-manual" onclick="toggleAllExcelColumns(true)">Отметить все</button>
+                    <button class="btn-manual" onclick="toggleAllExcelColumns(false)">Снять все</button>
+                </div>
+            </div>
+
+            <div class="excel-columns" id="excelColumns"></div>
+
+            <div class="excel-options">
+                <label class="field excel-options__field">
+                    <span class="field-label">Имя файла брать из</span>
+                    <select id="excelNaming" class="search-input" onchange="scheduleExcelPreview()">
+                        <option value="cell">текста самой ячейки</option>
+                        <option value="header">заголовка колонки и номера</option>
+                        <option value="right">соседней колонки справа</option>
+                        <option value="order">порядкового номера (фраза_0001)</option>
+                    </select>
+                </label>
+
+                <label class="opt-chip excel-options__chip">
+                    <input type="checkbox" id="excelSkipDupes" checked onchange="scheduleExcelPreview()">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">
+                        Пропускать повторы
+                        <small>одинаковый текст — один файл</small>
+                    </span>
+                </label>
+            </div>
+
+            <div class="tune-result" id="excelResult"></div>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="closeExcelPicker()">Отмена</button>
+                <button class="custom-alert-btn" onclick="confirmExcelSelection()">Загрузить фразы</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модальное окно: автоподбор настроек нарезки -->
     <div id="autoTuneOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">

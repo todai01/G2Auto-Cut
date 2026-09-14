@@ -123,6 +123,16 @@ let isProcessing = false;
                     + '<b>Ближе к −20</b> — режет охотнее, но может отхватить начало слова.<br>'
                     + '<b>Ближе к −60</b> — осторожнее, но при шумном фоне разрезов почти не будет.'
             },
+            header: {
+                title: 'Строка с заголовками',
+                body: 'Номер строки, в которой написаны названия колонок — например «51-100 миллионов» '
+                    + 'или «100-900». Программа берёт их как названия категорий, а фразы читает со '
+                    + 'следующей строки.<br><br>'
+                    + '<b>Поставьте 0</b>, если подписей сверху нет и данные начинаются прямо с первой '
+                    + 'строки — так устроен простой формат «текст в первом столбце, имя файла во втором».<br><br>'
+                    + 'Обычно программа определяет это сама, менять вручную нужно редко — например, '
+                    + 'если сверху есть лишняя строка с датой или заметкой.'
+            },
             pad: {
                 title: 'Запас звука по краям',
                 body: 'Найдя границу фразы, программа отступает немного назад и немного вперёд, '
@@ -233,24 +243,183 @@ let isProcessing = false;
             setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
         }
 
+        // ===== ЧТЕНИЕ ТАБЛИЦЫ: ВЫБОР КОЛОНОК =====
+
+        let excelInfo = null;
+        let excelPreviewTimer = null;
+        let excelAnalyzeTimer = null;
+
+        function excelError(msg) {
+            showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(msg).replace(/\n/g, '<br>')}`);
+        }
+
         async function loadExcel() {
-            let state;
+            let picked;
             try {
-                state = await pywebview.api.load_excel();
-            } catch (e) {
-                showBeautifulAlert(`❌ <b>Не удалось прочитать таблицу</b><br><br>${e}`);
+                picked = await pywebview.api.pick_excel();
+            } catch (e) { excelError(e); return; }
+
+            if (!picked || picked.error === 'cancel') return;
+            if (picked.error) { excelError(picked.error); return; }
+
+            await analyzeExcel(true);
+        }
+
+        // 0 — допустимое значение («заголовков нет»), поэтому обычное || здесь нельзя
+        function excelHeaderRow() {
+            let v = parseInt(document.getElementById('excelHeaderRow').value);
+            return isNaN(v) || v < 0 ? 0 : v;
+        }
+
+        async function analyzeExcel(openDialog) {
+            let info;
+            try {
+                // При первом открытии строку заголовков определяет сам Python
+                info = openDialog ? await pywebview.api.analyze_excel()
+                                  : await pywebview.api.analyze_excel(excelHeaderRow());
+            } catch (e) { excelError(e); return; }
+
+            if (!info) { excelError('Пустой ответ'); return; }
+            if (info.error) {
+                if (openDialog) { excelError(info.error); return; }
+                // Дальше правим номер строки прямо в окне — не закрываем его
+                document.getElementById('excelColumns').innerHTML =
+                    `<div class="excel-empty">${String(info.error).replace(/\n/g, '<br>')}</div>`;
+                renderExcelResult(null);
                 return;
             }
 
-            // Пользователь закрыл окно выбора файла — молча выходим
-            if (!state || state.error === "cancel") return;
+            excelInfo = info;
 
-            if (state.error) {
-                showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(state.error).replace(/\n/g, '<br>')}`);
+            if (openDialog) {
+                document.getElementById('excelHeaderRow').value = info.header_row;
+                document.getElementById('excelHeaderHint').innerText =
+                    info.header_row ? `Строка ${info.header_row} — подписи категорий` : 'Заголовков нет, данные с первой строки';
+                document.getElementById('excelNaming').value = info.suggested_naming || 'cell';
+                document.getElementById('excelFile').innerHTML =
+                    `<b>${info.name}</b> · лист «${info.sheet}» · ${info.total_rows} строк`;
+                document.getElementById('excelOverlay').style.display = 'flex';
+            }
+
+            renderExcelColumns();
+            scheduleExcelPreview();
+        }
+
+        function renderExcelColumns() {
+            let sel = new Set(excelInfo.suggested || []);
+            document.getElementById('excelColumns').innerHTML = excelInfo.columns.map(c => `
+                <label class="col-card">
+                    <input type="checkbox" class="col-card__check" value="${c.index}" ${sel.has(c.index) ? 'checked' : ''} onchange="scheduleExcelPreview()">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="col-card__body">
+                        <span class="col-card__head">
+                            <span class="col-card__letter">${c.letter}</span>
+                            <span class="col-card__title">${c.header || '<i>без заголовка</i>'}</span>
+                        </span>
+                        <span class="col-card__samples">${c.samples.join(' · ')}</span>
+                        <span class="col-card__stats">${c.filled} ячеек${c.duplicates ? ` · повторов: ${c.duplicates}` : ''}</span>
+                    </span>
+                </label>`).join('');
+        }
+
+        function selectedExcelColumns() {
+            return Array.from(document.querySelectorAll('.col-card__check:checked')).map(el => parseInt(el.value));
+        }
+
+        function toggleAllExcelColumns(on) {
+            document.querySelectorAll('.col-card__check').forEach(el => el.checked = on);
+            scheduleExcelPreview();
+        }
+
+        function scheduleExcelReanalyze() {
+            clearTimeout(excelAnalyzeTimer);
+            excelAnalyzeTimer = setTimeout(() => analyzeExcel(false), 450);
+        }
+
+        function scheduleExcelPreview() {
+            clearTimeout(excelPreviewTimer);
+            let el = document.getElementById('excelResult');
+            el.className = 'tune-result is-busy';
+            el.innerHTML = 'Считаю…';
+            excelPreviewTimer = setTimeout(runExcelPreview, 300);
+        }
+
+        async function runExcelPreview() {
+            let cols = selectedExcelColumns();
+            if (!cols.length) { renderExcelResult({ total: 0, unique: 0, duplicates: 0, result: 0, examples: [] }); return; }
+
+            let res = await pywebview.api.preview_excel_selection(
+                cols,
+                document.getElementById('excelNaming').value,
+                document.getElementById('excelSkipDupes').checked,
+                excelHeaderRow()
+            );
+            renderExcelResult(res);
+        }
+
+        function renderExcelResult(res) {
+            let el = document.getElementById('excelResult');
+            if (!res || res.error) {
+                el.className = 'tune-result is-bad';
+                el.innerHTML = 'Не удалось посчитать. Проверьте номер строки с заголовками.';
                 return;
             }
 
+            if (!res.result) {
+                el.className = 'tune-result is-bad';
+                el.innerHTML = '<span class="tune-result__num">0</span><span class="tune-result__text">'
+                             + '<b>фраз загрузится</b><br>Отметьте хотя бы одну колонку.</span>';
+                return;
+            }
+
+            let skip = document.getElementById('excelSkipDupes').checked;
+            let note;
+            let cls = 'tune-result is-good';
+
+            if (res.duplicates && skip) {
+                note = `Из ${res.total} ячеек ${res.duplicates} — повторы, они пропущены.`;
+            } else if (res.duplicates) {
+                cls = 'tune-result is-warn';
+                note = `Среди них ${res.duplicates} повторов. При одинаковых именах файлы затрут друг друга — `
+                     + `лучше включить «Пропускать повторы».`;
+            } else {
+                note = 'Повторов нет, все тексты разные.';
+            }
+
+            let ex = (res.examples || []).filter(Boolean);
+            if (ex.length) note += `<br><span class="tune-result__ex">Имена: ${ex.join(' · ')}</span>`;
+
+            el.className = cls;
+            el.innerHTML = `<span class="tune-result__num">${res.result}</span>`
+                         + `<span class="tune-result__text"><b>фраз загрузится</b><br>${note}</span>`;
+        }
+
+        function closeExcelPicker() {
+            document.getElementById('excelOverlay').style.display = 'none';
+        }
+
+        async function confirmExcelSelection() {
+            let cols = selectedExcelColumns();
+            if (!cols.length) { showBeautifulAlert('Отметьте хотя бы одну колонку с текстом.'); return; }
+
+            let state = await pywebview.api.load_excel_selection(
+                cols,
+                document.getElementById('excelNaming').value,
+                document.getElementById('excelSkipDupes').checked,
+                excelHeaderRow()
+            );
+
+            if (!state || state.error) { excelError(state && state.error || 'Пустой ответ'); return; }
+
+            closeExcelPicker();
             updateUI(state);
+
+            let rep = state.load_report;
+            if (rep) {
+                showToast(rep.skipped
+                    ? `Загружено ${rep.loaded} фраз, повторов пропущено: ${rep.skipped}`
+                    : `Загружено ${rep.loaded} фраз`);
+            }
         }
 
         // ===== АВТОПОДБОР НАСТРОЕК НАРЕЗКИ =====
@@ -1219,6 +1388,16 @@ let isProcessing = false;
                 if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
                     e.preventDefault();
                     closeCustomAlert();
+                }
+                return;
+            }
+
+            // Окно выбора колонок таблицы: Escape закрывает
+            let excelOverlay = document.getElementById('excelOverlay');
+            if (excelOverlay && excelOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeExcelPicker();
                 }
                 return;
             }

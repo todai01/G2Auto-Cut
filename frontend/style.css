@@ -795,6 +795,82 @@ button[disabled]:active{ transform: none; }
 .preset-chip small{ font-size: 10px; font-weight: 500; color: var(--text-faint); }
 .preset-chip:hover{ border-color: var(--accent-primary); background: var(--tint-primary); }
 
+/* --- Окно выбора колонок таблицы --- */
+.excel-toolbar{
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3);
+}
+.excel-headrow{ display: flex; align-items: center; gap: var(--space-2); }
+.excel-headrow span{ font-size: var(--fs-sm); color: var(--text-dim); white-space: nowrap; }
+.excel-headrow .search-input{ width: 74px; text-align: center; flex: none; }
+.excel-headrow__hint{ font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+.excel-toolbar__buttons{ display: flex; gap: var(--space-2); }
+
+.excel-columns{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: var(--space-2); max-height: 34vh; overflow-y: auto;
+    padding-right: 6px; margin-bottom: var(--space-4);
+}
+.excel-empty{
+    grid-column: 1 / -1; padding: var(--space-4);
+    font-size: var(--fs-sm); color: var(--accent-var); line-height: 1.5;
+}
+
+.col-card{
+    display: flex; align-items: flex-start; gap: var(--space-2);
+    padding: var(--space-3); border-radius: var(--radius-md); cursor: pointer;
+    background: var(--panel); border: 1px solid var(--border);
+    transition: border-color .15s ease, background .15s ease;
+}
+.col-card:hover{ border-color: var(--accent-primary); background: var(--tint-primary); }
+.col-card:has(input:checked){ border-color: rgba(47,191,125,0.5); background: var(--tint-good); }
+.col-card input[type=checkbox]{ position: absolute; opacity: 0; width: 0; height: 0; }
+.col-card .opt-chip__box{ margin-top: 2px; }
+
+.col-card__body{ display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.col-card__head{ display: flex; align-items: baseline; gap: var(--space-2); }
+.col-card__letter{
+    flex: none; font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 700;
+    color: var(--accent-info); background: var(--screen);
+    border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px;
+}
+.col-card__title{
+    font-size: var(--fs-md); font-weight: 650; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.col-card__title i{ color: var(--text-faint); font-weight: 500; }
+.col-card__samples{
+    font-size: var(--fs-xs); color: var(--text-dim); line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.col-card__stats{ font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+.excel-options{
+    display: flex; align-items: flex-end; gap: var(--space-4);
+    flex-wrap: wrap; margin-bottom: var(--space-4);
+}
+.excel-options__field{ flex: 1; min-width: 220px; margin-bottom: 0; }
+.excel-options__chip{ flex: none; }
+
+/* Выпадающий список под общий стиль полей ввода */
+select.search-input{
+    appearance: none; -webkit-appearance: none;
+    height: var(--control-h); font-family: var(--font-ui); cursor: pointer;
+    padding-right: var(--space-6);
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+                      linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+}
+select.search-input option{ background: var(--panel); color: var(--text); }
+
+.tune-result__ex{
+    display: inline-block; margin-top: 4px;
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+}
+
 /* --- Информационные панели, заполняющие низ экрана --- */
 .info-panel{
     flex: 1; min-height: 0;
@@ -1126,10 +1202,10 @@ button[disabled]:active{ transform: none; }
     opacity: 0; transition: opacity .15s ease, transform .15s var(--ease);
     margin-top: -2px;
 }
-.opt-chip input:checked + .opt-chip__box{
+input:checked + .opt-chip__box{
     background: var(--accent-good); border-color: var(--accent-good);
 }
-.opt-chip input:checked + .opt-chip__box::after{ opacity: 1; transform: rotate(-45deg) scale(1); }
+input:checked + .opt-chip__box::after{ opacity: 1; transform: rotate(-45deg) scale(1); }
 
 .opt-chip__text{
     display: flex; flex-direction: column; line-height: 1.25;
@@ -1141,7 +1217,7 @@ button[disabled]:active{ transform: none; }
 }
 .opt-chip input:checked ~ .opt-chip__text{ color: var(--text); }
 
-.opt-chip input:focus-visible + .opt-chip__box{
+input:focus-visible + .opt-chip__box{
     outline: 2px solid var(--accent-primary); outline-offset: 2px;
 }
 
