@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.exe
+build/
+dist/
+*.spec
+temp_play.wav
+temp_var_preview.wav

@@ -1,0 +1,1206 @@
+let isProcessing = false;
+        let currentState = null;
+        let mergeParts = [null, null, null, null, null];
+        let saveFilenameForMerge = null;
+        let playTimeout = null;
+
+        function updateSettingsText() {
+            let p = document.getElementById('inpPause').value;
+            let pText = p < 400 ? "Короткая" : (p > 900 ? "Длинная" : "Нормальная");
+            document.getElementById('valPause').innerText = pText;
+
+            let s = document.getElementById('inpSens').value;
+            let sText = s > -30 ? "Высокая (режет даже слабые паузы)" : (s < -45 ? "Строгая (нужна почти полная тишина)" : "Оптимальная");
+            document.getElementById('valSens').innerText = sText;
+
+            let pad = document.getElementById('inpPad').value;
+            let padText = pad < 150 ? "Маленький" : (pad > 300 ? "Большой" : "Безопасный");
+            document.getElementById('valPad').innerText = padText;
+        }
+
+        document.addEventListener('DOMContentLoaded', updateSettingsText);
+
+        function updateProgress(p, t) {
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressBar').value = p;
+            document.getElementById('progressText').innerText = t;
+        }
+
+        function showMenu() { document.getElementById('stage1-loading').style.display = 'block'; document.getElementById('stage2-workspace').style.display = 'none'; }
+        function showWorkspace() { document.getElementById('stage1-loading').style.display = 'none'; document.getElementById('stage2-workspace').style.display = 'block'; }
+
+        function resetSilence() { document.getElementById('addSilence').checked = false; }
+
+        async function handleLoad(apiPromise) {
+            let state = await apiPromise;
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
+        async function loadExcel() {
+            let state = await pywebview.api.load_excel();
+
+            // Если юзер отменил выбор файла, прерываемся
+            if (!state || state.error === "cancel") return;
+
+            // Если есть реальная ошибка, покажем её
+            if (state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            // ПРИНУДИТЕЛЬНАЯ ОКРАСКА КНОПКИ
+            let btnExcel = document.getElementById('btnLoadExcel');
+            btnExcel.style.borderColor = 'var(--accent-good)';
+            btnExcel.style.background = 'rgba(47, 182, 115, 0.1)';
+
+            let descExcel = document.getElementById('descExcel');
+            let fileName = (state.stats && state.stats.excel_name) ? state.stats.excel_name : "Таблица загружена";
+            descExcel.innerHTML = `✅ <b>${fileName}</b>`;
+            descExcel.style.color = 'var(--accent-good)';
+
+            let iconExcel = btnExcel.querySelector('.option-icon');
+            if (iconExcel) iconExcel.style.color = 'var(--accent-good)';
+
+            let titleExcel = btnExcel.querySelector('.option-title');
+            if (titleExcel) titleExcel.style.color = 'var(--accent-good)';
+
+            updateUI(state);
+        }
+
+        async function loadAudio() {
+            let min_silence = parseInt(document.getElementById('inpPause').value);
+            let silence_thresh = parseInt(document.getElementById('inpSens').value);
+            let keep_silence = parseInt(document.getElementById('inpPad').value);
+
+            updateProgress(0, 'Анализ...');
+            await handleLoad(pywebview.api.load_raw_audio(min_silence, silence_thresh, keep_silence));
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+
+        async function loadVariables() {
+            if (currentState && currentState.mode === 'VarBatch') return;
+            await handleLoad(pywebview.api.load_variables_mode());
+        }
+        async function loadResults() {
+            if (currentState && currentState.mode === 'VarBatch') return;
+            await handleLoad(pywebview.api.load_results_mode());
+        }
+        async function loadChecked() {
+            if (currentState && currentState.mode === 'VarBatch') return;
+            await handleLoad(pywebview.api.load_checked_mode());
+        }
+        async function loadMainMode() {
+            if (currentState && currentState.mode === 'VarBatch') {
+                showBeautifulAlert('ℹ️ <b>Режим конвейера</b><br><br>Вкладок здесь нет. Чтобы выйти, нажмите <b>Главное меню</b>.');
+                return;
+            }
+            await handleLoad(pywebview.api.load_main_mode());
+        }
+
+        // Запуск режима конвейера переменных (С выбором окна)
+        let pendingVarBatch = false;
+        let pendingVarBatchPremade = false; // НОВОЕ: Флаг для готовой папки
+
+        function closeProjectSelector() {
+            document.getElementById('projectSelectorOverlay').style.display = 'none';
+        }
+
+        async function initVarBatch() {
+            let windows = await pywebview.api.get_audacity_windows();
+
+            if (windows && windows.length > 1) {
+                let listHtml = '';
+                windows.forEach(w => {
+                    listHtml += `<button class="option-card" style="padding: 12px; width: 100%; border-color: var(--border-soft);" onclick="selectAudacityProject(${w.hwnd})">
+                                    <span class="option-icon" style="color: var(--accent-var); width: 28px; height: 28px; font-size: 16px;">🎧</span>
+                                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        <span class="option-title" style="font-size: 13px;">${w.title}</span>
+                                    </div>
+                                 </button>`;
+                });
+                document.getElementById('projectList').innerHTML = listHtml;
+                document.getElementById('projectSelectorOverlay').style.display = 'flex';
+                pendingVarBatch = true;
+                pendingVarBatchPremade = false; // Сбрасываем соседний флаг
+            } else {
+                let targetHwnd = null;
+                if (windows && windows.length === 1) targetHwnd = windows[0].hwnd;
+                continueInitVarBatch(targetHwnd);
+            }
+        }
+
+        // НОВОЕ: Функция инициализации загрузки готовой папки
+        async function initVarBatchPremade() {
+            // Пропускаем выбор окна проекта, так как данные берутся с диска
+            // и Python сам создаст новый проект для конвейера.
+            continueInitVarBatchPremade(null);
+        }
+
+        // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ОТКРЫТЬ ГОТОВЫЕ ЧАНКИ" ---
+        async function loadFolder() {
+            updateProgress(0, 'Загрузка папки...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.load_chunks_folder();
+            document.getElementById('progressContainer').style.display = 'none';
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
+        // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ГОТОВАЯ ПАПКА С ПЕРЕМЕННЫМИ" ---
+        async function continueInitVarBatchPremade(hwnd) {
+            await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
+            let inDir = await pywebview.api.pick_folder();
+            if (!inDir) return;
+
+            updateProgress(10, 'Чтение структуры готовой папки...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let state = await pywebview.api.load_premade_variables_folder(hwnd, inDir);
+
+            document.getElementById('progressContainer').style.display = 'none';
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            showWorkspace();
+        }
+
+        async function loadCheckedToAudacity() {
+            if (isProcessing) return; isProcessing = true;
+            updateProgress(0, 'Выгрузка из Проверенных...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let state = await pywebview.api.load_checked_var_to_audacity();
+            if (state) updateUI(state);
+
+            document.getElementById('progressContainer').style.display = 'none';
+            isProcessing = false;
+        }
+
+        async function runAutoLabel() {
+            if (isProcessing) return;
+
+            // Спрашиваем у пользователя, сколько клипов нужно прокликать
+            let count = prompt("🤖 Робот-разметчик\n\nВведите количество клипов для разметки (например: 60):", "60");
+
+            if (count !== null && count.trim() !== "" && !isNaN(count)) {
+                isProcessing = true;
+                updateProgress(0, 'Запуск макроса (Не трогайте мышь!)...');
+                document.getElementById('progressContainer').style.display = 'block';
+
+                // Вызываем наш Python-макрос
+                await pywebview.api.auto_label_clips(parseInt(count));
+
+                isProcessing = false;
+            }
+        }
+
+        async function stripFilenames() {
+            if (isProcessing) return;
+            isProcessing = true;
+            await pywebview.api.strip_words_from_filenames();
+            isProcessing = false;
+        }
+
+        async function startBatchNormalization() {
+            if (isProcessing) return; isProcessing = true;
+
+            updateProgress(0, 'Выбор папки и загрузка в Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let res = await pywebview.api.prepare_batch_normalization();
+            document.getElementById('progressContainer').style.display = 'none';
+            isProcessing = false;
+
+            if (res && res.error === "cancel") return;
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res?.error || 'Неизвестная ошибка'}`);
+                return;
+            }
+
+            // Ждем, пока пользователь настроит звук и нажмет ОК в нашем красивом алерте
+            await showBeautifulAlert(`🎚️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Настройте идеальную громкость этого файла в Audacity (Эффекты -> Нормализация или Усиление).<br>2. Вернитесь сюда и нажмите ОК, чтобы применить эту громкость ко всем <b>${res.total}</b> файлам в папке.`);
+
+            // Пользователь нажал ОК, запускаем процесс!
+            isProcessing = true;
+            updateProgress(0, 'Чтение эталона и обработка файлов...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let applyRes = await pywebview.api.apply_batch_normalization();
+            document.getElementById('progressContainer').style.display = 'none';
+            isProcessing = false;
+
+            if (applyRes && applyRes.error) {
+                showBeautifulAlert(`❌ <b>Ошибка нормализации</b><br><br>${applyRes.error}`);
+            } else {
+                showBeautifulAlert('✅ <b>Успешно!</b><br><br>Все файлы в папке выровнены по громкости эталона.');
+            }
+        }
+
+        async function selectAudacityProject(hwnd) {
+            document.getElementById('projectSelectorOverlay').style.display = 'none';
+
+            if (pendingVarBatch) {
+                pendingVarBatch = false;
+                continueInitVarBatch(hwnd);
+            } else if (pendingVarBatchPremade) {
+                pendingVarBatchPremade = false;
+                continueInitVarBatchPremade(hwnd);
+            }
+        }
+
+        async function continueInitVarBatch(hwnd) {
+            // 1. Считываем состояние наших галочек
+            let isReadyExport = document.getElementById('simpleExportCheck').checked;
+            let sortByName = document.getElementById('sortByNameCheck').checked;
+
+            // 2. Меняем текст предупреждения в зависимости от галочки
+            let alertMsg = isReadyExport
+                ? "📁 <b>Простой экспорт (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут рассортированы переменные."
+                : "📁 <b>Пакетная сборка (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут экспортироваться переменные.<br><br><span style='font-size:12px;color:var(--text-dim)'>⚠️ Убедитесь, что в этой папке уже лежат эталонные файлы <b>start.wav</b> и <b>end.wav</b>!</span>";
+
+            await showBeautifulAlert(alertMsg);
+            let outDir = await pywebview.api.pick_folder();
+            if (!outDir) return;
+
+            updateProgress(10, 'Анализ клипов в Audacity и экспорт...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            // 3. Передаем ОБА флага в Python
+            let state = await pywebview.api.init_variables_batch_mode(hwnd, outDir, isReadyExport, sortByName);
+
+            document.getElementById('progressContainer').style.display = 'none';
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            updateUI(state);
+
+            // Если это просто экспорт, мы никуда не переходим (остаемся в меню)
+            if (!isReadyExport) {
+                showWorkspace();
+            }
+        }
+
+
+        async function saveVarBatch(normalize = false) {
+            if (isProcessing) return;
+            isProcessing = true;
+
+            if (normalize) {
+                updateProgress(0, 'Подготовка к нормализации...');
+            }
+
+            setTimeout(async () => {
+                try {
+                    let state = await pywebview.api.save_var_batch(normalize);
+                    if (state) {
+                        updateUI(state);
+                        // === АВТОПЛЕЙ ПОСЛЕ СОХРАНЕНИЯ И ПЕРЕХОДА ===
+                        playAudio(false);
+                    }
+                } catch (err) {
+                    console.error("Ошибка при сохранении:", err);
+                } finally {
+                    if (normalize) document.getElementById('progressContainer').style.display = 'none';
+                    isProcessing = false;
+                }
+            }, 50);
+        }
+
+        async function sendToAudacity() {
+            if (isProcessing) return;
+            isProcessing = true;
+            updateProgress(0, 'Отправка файлов в Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            setTimeout(async () => {
+                try {
+                    let state = await pywebview.api.send_to_audacity();
+                    if (state) updateUI(state);
+                } catch (err) {
+                    console.error("Ошибка при отправке в Audacity:", err);
+                } finally {
+                    document.getElementById('progressContainer').style.display = 'none';
+                    isProcessing = false;
+                }
+            }, 50);
+        }
+
+        async function playAudio(toggle = false) {
+            let res = await pywebview.api.play_audio(toggle);
+            let phraseEl = document.getElementById('phraseText');
+
+            clearTimeout(playTimeout);
+            if(res && res.playing) {
+                phraseEl.classList.add('is-playing');
+                playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+            } else {
+                phraseEl.classList.remove('is-playing');
+            }
+        }
+
+        let isNavigatingPhrase = false;
+        async function navPhrase(dir) {
+            if (isNavigatingPhrase) return;
+            isNavigatingPhrase = true;
+            try {
+                let state = await pywebview.api.navigate_phrase(dir);
+                updateUI(state);
+                resetSilence();
+
+                let phraseEl = document.getElementById('phraseText');
+                clearTimeout(playTimeout);
+                phraseEl.classList.remove('is-playing');
+
+                if (state.completed_filepath) {
+                    let res = await pywebview.api.play_specific_file(state.completed_filepath);
+                    if(res && res.playing) {
+                        phraseEl.classList.add('is-playing');
+                        playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+                    }
+                } else {
+                    await pywebview.api.stop_audio();
+                }
+            } finally {
+                isNavigatingPhrase = false;
+            }
+        }
+
+        let navChunkTimeout = null;
+        let isNavigatingChunk = false;
+        let isNavigatingCategory = false;
+
+        async function navCategory(dir) {
+            if (isNavigatingCategory) return;
+            isNavigatingCategory = true;
+            try {
+                updateProgress(0, 'Смена категории...');
+                document.getElementById('progressContainer').style.display = 'block';
+
+                let state = await pywebview.api.navigate_var_category(dir);
+                if (state && !state.error) {
+                    updateUI(state);
+                    // === АВТОПЛЕЙ ПРИ СМЕНЕ КАТЕГОРИИ ===
+                    playAudio(false);
+                } else if (state && state.error) {
+                    showBeautifulAlert(`⚠️ <b>Ошибка</b><br><br>${state.error}`);
+                }
+            } finally {
+                document.getElementById('progressContainer').style.display = 'none';
+                isNavigatingCategory = false;
+            }
+        }
+
+        async function navChunk(dir) {
+            // === НОВОВВЕДЕНИЕ: Отдельная логика для режима Переменных (VarBatch) ===
+            if (currentState && currentState.mode === 'VarBatch') {
+                let state = await pywebview.api.navigate_var_chunk_ui(dir);
+                if (state) updateUI(state);
+
+                clearTimeout(navChunkTimeout);
+
+                navChunkTimeout = setTimeout(async () => {
+                    updateProgress(0, 'Загрузка дубля...');
+                    document.getElementById('progressContainer').style.display = 'block';
+
+                    let finalState = await pywebview.api.sync_var_chunk_audacity();
+                    if (finalState) updateUI(finalState);
+
+                    document.getElementById('progressContainer').style.display = 'none';
+
+                    // === АВТОПЛЕЙ ПОСЛЕ ПЕРЕЛИСТЫВАНИЯ ===
+                    playAudio(false);
+                }, 650);
+            }
+            else {
+                // === СТАРАЯ ЛОГИКА ДЛЯ ОСНОВНОГО РЕЖИМА (Main) ===
+                if (isNavigatingChunk) return;
+                isNavigatingChunk = true;
+                try {
+                    updateUI(await pywebview.api.navigate_chunk(dir, true));
+                    resetSilence();
+                    clearTimeout(navChunkTimeout);
+                    navChunkTimeout = setTimeout(async () => {
+                        let res = await pywebview.api.sync_and_play();
+                        let phraseEl = document.getElementById('phraseText');
+                        clearTimeout(playTimeout);
+                        if(res && res.playing) {
+                            phraseEl.classList.add('is-playing');
+                            playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+                        } else {
+                            phraseEl.classList.remove('is-playing');
+                        }
+                    }, 300);
+                } finally {
+                    isNavigatingChunk = false;
+                }
+            }
+        }
+
+        async function processAction(action) {
+            if (isProcessing) return; isProcessing = true;
+            try {
+                let addSil = document.getElementById('addSilence').checked;
+                let state = await pywebview.api.process_action(action, addSil);
+                if (state) updateUI(state);
+                playAudio();
+                resetSilence();
+            } finally { isProcessing = false; }
+        }
+
+        // НОВОВВЕДЕНИЕ: Универсальная логика двойного нажатия с визуальным таймером
+        let tapTimers = {};
+        function handleDoubleTap(btnId, callbackFunction, originalText) {
+            let btn = document.getElementById(btnId);
+            if (!btn) return;
+
+            // Поддержка как старых кнопок с <kbd>, так и новых без них
+            let kbd = btn.querySelector('kbd');
+
+            if (tapTimers[btnId]) {
+                // Сценарий 2: Второе нажатие успело вовремя
+                clearTimeout(tapTimers[btnId]);
+                delete tapTimers[btnId];
+
+                btn.classList.remove('btn-waiting');
+                if (kbd) { kbd.innerText = originalText; } else { btn.innerText = originalText; }
+
+                callbackFunction(); // Выполняем нужное сохранение
+            } else {
+                // Сценарий 1: Первое нажатие - запускаем таймер
+                btn.classList.add('btn-waiting');
+                if (kbd) { kbd.innerText = 'Ещё раз!'; } else { btn.innerText = 'Ещё раз!'; }
+
+                tapTimers[btnId] = setTimeout(() => {
+                    // Время вышло - возвращаем в исходное состояние
+                    delete tapTimers[btnId];
+                    btn.classList.remove('btn-waiting');
+                    if (kbd) { kbd.innerText = originalText; } else { btn.innerText = originalText; }
+                }, 400); // 400 миллисекунд на подтверждение
+            }
+        }
+
+        // НОВОВВЕДЕНИЕ: Логика двойного нажатия для W (Good)
+        let lastWTime = 0;
+        function triggerGoodDoubleTap() {
+            let now = new Date().getTime();
+            if (now - lastWTime < 400) { // 400 миллисекунд на двойной клик
+                processAction('good');
+                lastWTime = 0;
+            } else {
+                lastWTime = now;
+            }
+        }
+
+        // НОВОВВЕДЕНИЕ: Логика двойного нажатия для R (Переменные)
+        let lastRTime = 0;
+        function triggerVarDoubleTap() {
+            let now = new Date().getTime();
+            if (now - lastRTime < 400) {
+                processAction('variable');
+                lastRTime = 0;
+            } else {
+                lastRTime = now;
+            }
+        }
+
+        function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+        function getVarName(type) {
+            if(type === 'date') return "Дата";
+            if(type === 'name') return "Имя";
+            if(type === 'amount') return "Сумма";
+            return "";
+        }
+
+        function getVarIcon(type) {
+            if(type === 'date') return "📅";
+            if(type === 'name') return "👤";
+            if(type === 'amount') return "💰";
+            return "";
+        }
+
+        async function loadVarFile(varType) {
+            let result = await pywebview.api.load_var_file(varType);
+            if (result && result.filename) {
+                let btnLoad = document.getElementById(`btnVar${capitalize(varType)}Load`);
+                let btnMix = document.getElementById(`btnVar${capitalize(varType)}Mix`);
+
+                // Красим кнопку файла, давая понять, что он заряжен
+                btnLoad.innerText = `${getVarIcon(varType)} ${getVarName(varType)}: ${result.filename}`;
+                btnLoad.style.color = 'var(--text)';
+                btnLoad.style.borderColor = 'var(--accent-var)';
+                btnLoad.style.background = 'rgba(226, 172, 63, 0.1)';
+
+                btnMix.disabled = false;
+            }
+        }
+
+        async function mixWithVar(varType) {
+            let activeParts = mergeParts.filter(p => p !== null);
+            if (activeParts.length === 0) {
+                alert("Сначала отметьте фразы на монтажном столе (клавиши 1, 2...)!");
+                return;
+            }
+            if (isProcessing) return; isProcessing = true;
+
+            // НОВОВВЕДЕНИЕ: Считываем состояние галочки
+            let varAtStart = document.getElementById('varAtStart').checked;
+            await pywebview.api.build_scene_with_var(mergeParts, varType, varAtStart);
+
+            isProcessing = false;
+        }
+
+        async function saveSeparateParts() {
+            let activeParts = mergeParts.filter(p => p !== null);
+            if (activeParts.length === 0) {
+                alert("Нет фраз для экспорта! Отметьте их клавишами 1, 2...");
+                return;
+            }
+            if (isProcessing) return; isProcessing = true;
+
+            let addSil = document.getElementById('addSilence').checked;
+
+            // Получаем ответ от Python с обновленными галочками
+            let newState = await pywebview.api.save_separate_parts(mergeParts, addSil);
+
+            // Экран обновляется, а уведомление об успехе или ошибке вызовет сам Python!
+            if (newState) {
+                updateUI(newState);
+            }
+
+            // Очистка слотов монтажного стола
+            mergeParts = [null, null, null, null, null];
+            saveFilenameForMerge = null;
+            for(let i=1; i<=5; i++) {
+                document.getElementById(`labelPart${i}`).innerText = "-";
+                document.getElementById(`btnPart${i}`).classList.remove('filled');
+                document.getElementById(`boxPart${i}`).classList.remove('has-data');
+            }
+            resetSilence();
+            isProcessing = false;
+        }
+
+        async function toggleChecked() {
+            if (isProcessing) return; isProcessing = true;
+            let state = await pywebview.api.toggle_phrase_checked();
+            updateUI(state);
+            isProcessing = false;
+        }
+
+        // НОВОВВЕДЕНИЕ: Таймер для удержания кнопки удаления фразы
+        let phraseDeleteTimer = null;
+        function startPhraseDeleteHold() {
+            let btn = document.getElementById('btnDeletePhrase');
+            if(btn) btn.classList.add('holding');
+
+            phraseDeleteTimer = setTimeout(async () => {
+                if(btn) {
+                    btn.classList.remove('holding');
+                    btn.style.opacity = '0';
+                    setTimeout(() => btn.style.opacity = '1', 200);
+                }
+                if (isProcessing) return; isProcessing = true;
+                updateUI(await pywebview.api.delete_current_phrase());
+                isProcessing = false;
+                resetSilence();
+            }, 600); // Время удержания крестика (0.6 секунды)
+        }
+
+        function stopPhraseDeleteHold() {
+            clearTimeout(phraseDeleteTimer);
+            let btn = document.getElementById('btnDeletePhrase');
+            if(btn) btn.classList.remove('holding');
+        }
+
+        function updateUI(state) {
+            currentState = state;
+            let phraseEl = document.getElementById('phraseText');
+            phraseEl.innerText = state.phrase_text;
+
+            let customNameEl = document.getElementById('customFileName');
+            customNameEl.innerHTML = state.custom_filename ? `💾 Сохранится как: <b>${state.custom_filename}</b>` : "";
+            customNameEl.dataset.rawname = state.custom_filename || "";
+
+            let excelName = state.custom_filename ? state.custom_filename.replace('.wav', '') : "";
+            let matchEl = document.getElementById('nameMatchIndicator');
+
+            if (excelName) {
+                if (state.is_done || state.is_var) {
+                    // Используем умное имя папки от Python (Проверенные, Good или Переменные)
+                    let folderName = state.folder_name || (state.is_done ? "Проверенные" : "Переменные");
+
+                    // Если файл готов (is_done), красим в зеленый, иначе - в желтый
+                    let color = (state.is_done) ? "var(--accent-good)" : "var(--accent-var)";
+
+                    matchEl.innerHTML = `<span style="color: ${color};">✓ Сохранено в ${folderName}: ${excelName}.wav</span>`;
+                    matchEl.style.border = `1px solid ${color}`;
+                } else {
+                    matchEl.innerHTML = `<span style="color: var(--text-dim);">Ожидает выгрузки: ${excelName}.wav</span>`;
+                    matchEl.style.border = "1px solid var(--border)";
+                }
+            } else {
+                matchEl.innerHTML = "";
+                matchEl.style.border = "none";
+            }
+
+            document.getElementById('phraseCounter').innerText = `Фраза: ${state.phrase_counter}`;
+            document.getElementById('chunkName').innerText = state.chunk_name;
+            document.getElementById('chunkCounter').innerText = `Дубль: ${state.chunk_counter}`;
+
+            // НОВЫЙ БЛОК: Управление меткой "Проверено"
+            let badge = document.getElementById('checkedBadge');
+            if (badge) badge.style.display = state.is_checked ? 'inline-block' : 'none';
+
+            let btnCheck = document.getElementById('btnCheckToggle');
+            if (btnCheck) {
+                if (state.is_checked) {
+                    btnCheck.style.color = 'var(--accent-good)';
+                    btnCheck.style.borderColor = 'var(--accent-good)';
+                    btnCheck.style.background = 'rgba(47, 182, 115, 0.1)';
+                } else {
+                    btnCheck.style.color = 'var(--text-dim)';
+                    btnCheck.style.borderColor = 'var(--border)';
+                    btnCheck.style.background = 'var(--panel)';
+                }
+            }
+
+            phraseEl.classList.toggle('is-done', !!state.is_done);
+            // НОВОВВЕДЕНИЕ: Применяем класс желтого свечения, если это переменная
+            phraseEl.classList.toggle('is-var', !!state.is_var);
+
+            if (document.getElementById('varMixPanel')) {
+                document.getElementById('varMixPanel').style.display = (state.mode === 'Переменные') ? 'block' : 'none';
+            }
+
+            if(state.stats) {
+                document.getElementById('statTotal').innerText = state.stats.total;
+                document.getElementById('statGood').innerText = state.stats.good;
+                document.getElementById('statVar').innerText = state.stats.var;
+
+                let checkedEl = document.getElementById('statChecked');
+                if (checkedEl) checkedEl.innerText = state.stats.checked || 0;
+
+                let missingEl = document.getElementById('statMissing');
+                if (missingEl) {
+                    missingEl.innerText = state.stats.total - state.stats.good;
+                }
+
+                if(state.stats.excel_name) {
+                    let btnExcel = document.getElementById('btnLoadExcel');
+                    btnExcel.classList.add('loaded');
+                    // Принудительно красим кнопку в красивый зеленый цвет успеха
+                    btnExcel.style.borderColor = 'var(--accent-good)';
+                    btnExcel.style.background = 'rgba(47, 182, 115, 0.1)';
+
+                    let descExcel = document.getElementById('descExcel');
+                    // Добавляем галочку и делаем текст жирным и зеленым
+                    descExcel.innerHTML = `✅ <b>${state.stats.excel_name}</b>`;
+                    descExcel.style.color = 'var(--accent-good)';
+
+                    // Красим саму иконку документа
+                    let iconExcel = btnExcel.querySelector('.option-icon');
+                    if (iconExcel) iconExcel.style.color = 'var(--accent-good)';
+
+                    let titleExcel = btnExcel.querySelector('.option-title');
+                    if (titleExcel) titleExcel.style.color = 'var(--accent-good)';
+                }
+                if(state.stats.project_name) {
+                    document.getElementById('btnLoadFolder').classList.add('loaded');
+                    document.getElementById('descFolder').innerText = state.stats.project_name;
+                    document.getElementById('btnLoadAudio').classList.add('loaded');
+                    document.getElementById('descAudio').innerText = state.stats.project_name;
+                }
+            }
+            // === БЛОК ОБНОВЛЕНИЯ АКТИВНОЙ ВКЛАДКИ (ВСТАВЛЕН СЮДА) ===
+            document.querySelectorAll('.mode-switch .chip').forEach(btn => {
+                btn.classList.remove('chip-mode--active');
+                let txt = btn.innerText.toLowerCase();
+                let md = state.mode.toLowerCase();
+                if (md === 'chunks' && txt.includes('main')) {
+                    btn.classList.add('chip-mode--active');
+                } else if (md === 'проверенные' && txt.includes('провер')) {
+                    btn.classList.add('chip-mode--active');
+                } else if (txt.includes(md) && md !== 'chunks') {
+                    btn.classList.add('chip-mode--active');
+                }
+            }); // <-- ИСПРАВЛЕНО: добавлено });
+
+
+            if (state.mode === 'VarBatch') {
+                document.getElementById('standardActions').style.display = 'none';
+                document.getElementById('varBatchActions').style.display = 'flex';
+                // Теперь берем правильный текст фразы, а если его нет — название папки
+                document.getElementById('phraseText').innerText = state.phrase_text || state.var_batch_cat;
+                document.getElementById('chunkName').innerText = state.var_batch_name || "";
+
+                let mergePanel = document.querySelector('.merge-panel');
+                if(mergePanel) mergePanel.style.display = 'none';
+                let addSil = document.getElementById('addSilence');
+                if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'none';
+
+            } else {
+                document.getElementById('standardActions').style.display = 'flex';
+                document.getElementById('varBatchActions').style.display = 'none';
+
+                let mergePanel = document.querySelector('.merge-panel');
+                if(mergePanel) mergePanel.style.display = 'block';
+                let addSil = document.getElementById('addSilence');
+                if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'flex';
+            }
+        }
+
+        async function toggleMissingPanel() {
+            let grid = document.getElementById('workspaceGrid');
+            let panel = document.getElementById('missingPanel');
+
+            if (panel.style.display === 'none') {
+                grid.style.display = 'none';
+                panel.style.display = 'flex';
+
+                let missingList = await pywebview.api.get_missing_phrases();
+                let html = '';
+                missingList.forEach(m => {
+                    html += `<div class="missing-item" onclick="jumpToMissing(${m.index})">
+                                <div class="missing-item-text">${m.text}</div>
+                                <div class="missing-item-name">${m.filename}</div>
+                             </div>`;
+                });
+
+                if(missingList.length === 0) html = '<div style="text-align:center; color: var(--accent-good); padding: 20px;">Поздравляем! Все фразы готовы! 🎉</div>';
+                document.getElementById('missingList').innerHTML = html;
+            } else {
+                panel.style.display = 'none';
+                grid.style.display = '';
+            }
+        }
+
+        async function jumpToMissing(index) {
+            updateUI(await pywebview.api.jump_to_phrase(index));
+            resetSilence();
+            toggleMissingPanel();
+        }
+
+        function markPart(partNum) {
+            if (!currentState || !currentState.chunk_name) return;
+
+            // БЕРЕМ ТОЧНЫЙ ПУТЬ ДО ФАЙЛА НА ДИСКЕ (из Good, Переменных или сырой папки)
+            let exactFilePath = currentState.completed_filepath || currentState.filepath;
+
+            // А для красоты на экране показываем имя
+            let rawName = currentState.raw_chunk_name || currentState.chunk_name.replace('.wav', '').replace('.mp3', '');
+            let displayName = currentState.custom_filename || rawName;
+
+            let idx = partNum - 1;
+            mergeParts[idx] = exactFilePath; // <-- В Python теперь уходит абсолютный путь!
+
+            document.getElementById(`labelPart${partNum}`).innerText = displayName;
+            document.getElementById(`btnPart${partNum}`).classList.add('filled');
+            document.getElementById(`boxPart${partNum}`).classList.add('has-data');
+
+            if(!saveFilenameForMerge) saveFilenameForMerge = currentState.custom_filename || currentState.chunk_name;
+        }
+
+        function clearPart(partNum) {
+            let idx = partNum - 1;
+            mergeParts[idx] = null;
+            document.getElementById(`labelPart${partNum}`).innerText = "-";
+            document.getElementById(`btnPart${partNum}`).classList.remove('filled');
+            document.getElementById(`boxPart${partNum}`).classList.remove('has-data');
+
+            if (partNum === 1 || mergeParts.every(p => p === null)) {
+                saveFilenameForMerge = null;
+            }
+        }
+
+        async function prepMerge() {
+            let activeParts = mergeParts.filter(p => p !== null);
+
+            if (activeParts.length === 0) {
+                alert("Отметьте хотя бы одну часть для выгрузки на монтаж (клавиши 1, 2...)!");
+                return;
+            }
+
+            if (isProcessing) return; isProcessing = true;
+            await pywebview.api.prep_merge(mergeParts);
+            isProcessing = false;
+        }
+
+        async function saveMerge() {
+            if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
+            if (isProcessing) return; isProcessing = true;
+            await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
+            alert("✅ Склейка сохранена в Good!");
+
+            mergeParts = [null, null, null, null, null];
+            saveFilenameForMerge = null;
+            for(let i=1; i<=5; i++) {
+                document.getElementById(`labelPart${i}`).innerText = "-";
+                document.getElementById(`btnPart${i}`).classList.remove('filled');
+                document.getElementById(`boxPart${i}`).classList.remove('has-data');
+            }
+            resetSilence();
+            isProcessing = false;
+        }
+
+        async function saveMergeVar() {
+            if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
+            if (isProcessing) return; isProcessing = true;
+            // Передаем true в Python, чтобы файл ушел в папку Переменные
+            await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, true);
+            alert("✅ Склейка сохранена в Переменные!");
+
+            mergeParts = [null, null, null, null, null];
+            saveFilenameForMerge = null;
+            for(let i=1; i<=5; i++) {
+                document.getElementById(`labelPart${i}`).innerText = "-";
+                document.getElementById(`btnPart${i}`).classList.remove('filled');
+                document.getElementById(`boxPart${i}`).classList.remove('has-data');
+            }
+            resetSilence();
+            isProcessing = false;
+        }
+
+        let holdTimers = {};
+        let isLongPress = {};
+        const HOLD_DURATION = 600;
+
+        function startHold(keyNum, btnId, actionFunc) {
+            isLongPress[keyNum] = false;
+            let btn = document.getElementById(btnId);
+            if(btn) btn.classList.add('holding');
+
+            holdTimers[keyNum] = setTimeout(() => {
+                isLongPress[keyNum] = true;
+                if(btn) {
+                    btn.classList.remove('holding');
+                    btn.classList.add('executed');
+                    setTimeout(() => btn.classList.remove('executed'), 150);
+                }
+                actionFunc();
+            }, HOLD_DURATION);
+        }
+
+        function releaseHold(keyNum, btnId, shortActionFunc) {
+            clearTimeout(holdTimers[keyNum]);
+            let btn = document.getElementById(btnId);
+            if(btn) btn.classList.remove('holding');
+
+            if (!isLongPress[keyNum]) {
+                shortActionFunc();
+            }
+            isLongPress[keyNum] = false;
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            // РАЗРЕШАЕМ СТАНДАРТНЫЕ КОМБИНАЦИИ (Ctrl+C, Ctrl+A, и т.д.)
+            if (e.ctrlKey || e.metaKey) return;
+
+            let alertOverlay = document.getElementById('customAlertOverlay');
+            if (alertOverlay && alertOverlay.style.display === 'flex') {
+                if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
+                    e.preventDefault();
+                    closeCustomAlert();
+                }
+                return;
+            }
+
+            // Блокируем горячие клавиши программы, если открыт Аудит
+            let auditOverlay = document.getElementById('auditOverlay');
+            if (auditOverlay && auditOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeAudit();
+                }
+                return;
+            }
+
+            if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
+
+            if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
+
+            if (currentState && currentState.mode === 'VarBatch') {
+                // Добавили KeyR в разрешенные
+                if (['KeyC', 'KeyX', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
+                    e.preventDefault();
+                    showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Здесь эта кнопка отключена. Для сохранения и перехода жмите <b>Z</b>, для навигации аудио — <b>A/D</b>, для навигации текста — <b>Q/E</b>, выгрузить готовое — <b>R</b>.');
+                    return;
+                }
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Чтобы выйти из конвейера, нажмите <b>Главное меню</b> в левом верхнем углу.');
+                    return;
+                }
+
+                // ВНИМАНИЕ: Здесь Q и E крутят текст, а A и D крутят аудио!
+                if (e.code === 'Space') { e.preventDefault(); playAudio(true); }
+                else if (e.code === 'KeyQ') { e.preventDefault(); navPhrase(-1); }
+                else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
+                else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
+                else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
+                else if (e.code === 'KeyZ') { e.preventDefault(); saveVarBatch(false); }
+                else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
+                else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
+                return;
+            }
+
+            // === СТАНДАРТНАЯ ЛОГИКА ДЛЯ ОСТАЛЬНЫХ РЕЖИМОВ ===
+            if (e.code === 'Space') { e.preventDefault(); playAudio(true); }
+            else if (e.code === 'KeyQ') { e.preventDefault(); navPhrase(-1); }
+            else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
+            else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
+            else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
+            else if (e.code === 'KeyZ') { e.preventDefault(); processAction('good'); }
+            else if (e.code === 'KeyC') { e.preventDefault(); processAction('variable'); }
+            else if (e.code === 'KeyX') { e.preventDefault(); processAction('trash'); }
+            else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
+            else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
+            else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
+            else if (e.code === 'KeyS') {
+                e.preventDefault();
+                let chk = document.getElementById('addSilence');
+                chk.checked = !chk.checked;
+            }
+            else if (e.code === 'Digit1') { e.preventDefault(); startHold(1, 'btnPrepMerge', prepMerge); }
+            else if (e.code === 'Digit2') { e.preventDefault(); handleDoubleTap('btnSaveMerge', saveMerge, '2. В Good'); }
+            else if (e.code === 'Digit3') { e.preventDefault(); handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные'); }
+            else if (e.code === 'Digit4') { e.preventDefault(); markPart(4); }
+            else if (e.code === 'Digit5') { e.preventDefault(); markPart(5); }
+        });
+
+        document.addEventListener('keyup', function(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            // НОВОВВЕДЕНИЕ: Отключаем отпускание кнопок при открытом Аудите
+            let auditOverlay = document.getElementById('auditOverlay');
+            if (auditOverlay && auditOverlay.style.display === 'flex') return;
+
+            if (e.code === 'Digit1') { releaseHold(1, 'btnPrepMerge', () => markPart(1)); }
+            else if (e.code === 'Digit2') { releaseHold(2, 'btnSaveMerge', () => markPart(2)); }
+            if (e.code === 'Digit3') { releaseHold(3, 'btnSaveMergeVar', () => markPart(3)); }
+        });
+
+        window.alert = function(message) {
+            let el = document.getElementById('customAlertText');
+            if(el) {
+                el.innerText = message;
+                document.getElementById('customAlertOverlay').style.display = 'flex';
+            }
+        };
+
+        // НОВОВВЕДЕНИЕ: Поддержка ожидания клика "ОК" в красивом алерте
+        window.customAlertCallback = null;
+
+        function showBeautifulAlert(message) {
+            return new Promise((resolve) => {
+                let el = document.getElementById('customAlertText');
+                if (el) {
+                    // Используем HTML для форматирования текста (жирный шрифт, переносы)
+                    el.innerHTML = `<div style="font-size: 14px; line-height: 1.5; color: var(--text);">${message}</div>`;
+                    document.getElementById('customAlertOverlay').style.display = 'flex';
+                    window.customAlertCallback = resolve;
+                } else {
+                    resolve();
+                }
+            });
+        }
+
+        function closeCustomAlert() {
+            document.getElementById('customAlertOverlay').style.display = 'none';
+            // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
+            if (window.customAlertCallback) {
+                window.customAlertCallback();
+                window.customAlertCallback = null;
+            }
+        }
+
+        function copyRawText(text) {
+            if (!text) return;
+            navigator.clipboard.writeText(text);
+            showToast("Скопировано: " + text);
+        }
+
+        function showToast(msg) {
+            let toast = document.createElement('div');
+            toast.innerText = msg;
+            toast.style.position = 'fixed';
+            toast.style.bottom = '30px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.background = 'var(--accent-good)';
+            toast.style.color = '#fff';
+            toast.style.padding = '10px 20px';
+            toast.style.borderRadius = '20px';
+            toast.style.fontSize = '14px';
+            toast.style.fontWeight = 'bold';
+            toast.style.zIndex = '9999';
+            toast.style.animation = 'fadeInAlert 0.2s ease, fadeInAlert 0.2s ease 2s reverse forwards';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2200);
+        }
+
+        // === НОВОВВЕДЕНИЕ: Логика системы поиска ===
+        function openSearch() {
+            let totalChunks = currentState?.chunk_counter ? currentState.chunk_counter.split(' / ')[1] : 0;
+            document.getElementById('searchMaxChunk').innerText = totalChunks;
+            document.getElementById('searchOverlay').style.display = 'flex';
+
+            let searchInp = document.getElementById('searchText');
+            searchInp.focus();
+            searchInp.select(); // Выделяем старый текст, чтобы можно было сразу писать новый
+        }
+
+        function closeSearch() {
+            document.getElementById('searchOverlay').style.display = 'none';
+            // Мы НЕ стираем searchText, чтобы можно было легко искать следующее совпадение
+            document.getElementById('searchChunkNum').value = '';
+        }
+
+        // Новая функция поиска по тексту
+        async function doSearchText() {
+            let val = document.getElementById('searchText').value;
+            if (val.trim() !== "") {
+                let state = await pywebview.api.search_phrase(val);
+                updateUI(state);
+                resetSilence();
+                closeSearch();
+
+                // Проигрываем файл, если он уже выгружен (как при навигации Q/E)
+                let phraseEl = document.getElementById('phraseText');
+                clearTimeout(playTimeout);
+                phraseEl.classList.remove('is-playing');
+                if (state.completed_filepath) {
+                    let res = await pywebview.api.play_specific_file(state.completed_filepath);
+                    if(res && res.playing) {
+                        phraseEl.classList.add('is-playing');
+                        playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+                    }
+                } else {
+                    await pywebview.api.stop_audio();
+                }
+            }
+        }
+
+        async function doSearchChunk() {
+            let val = parseInt(document.getElementById('searchChunkNum').value);
+            if (val > 0) {
+                updateUI(await pywebview.api.jump_to_chunk(val - 1));
+                resetSilence();
+                closeSearch();
+
+                // Проигрываем выбранный дубль, как при нажатии A/D
+                let res = await pywebview.api.sync_and_play();
+                let phraseEl = document.getElementById('phraseText');
+                clearTimeout(playTimeout);
+                if(res && res.playing) {
+                    phraseEl.classList.add('is-playing');
+                    playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+                } else {
+                    phraseEl.classList.remove('is-playing');
+                }
+            }
+        }
+
+        function closeAudit() {
+            document.getElementById('auditOverlay').style.display = 'none';
+        }
+
+        // Функция плавной анимации цифр
+        function animateValue(obj, start, end, duration) {
+            let startTimestamp = null;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                // Эффект замедления к концу
+                const easeProgress = 1 - Math.pow(1 - progress, 3);
+                obj.innerHTML = Math.floor(easeProgress * (end - start) + start);
+                if (progress < 1) {
+                    window.requestAnimationFrame(step);
+                }
+            };
+            window.requestAnimationFrame(step);
+        }
+
+        async function runProjectAudit() {
+            if (isProcessing) return; isProcessing = true;
+
+            // Вызываем Python-сканер (откроется окно выбора папки)
+            let res = await pywebview.api.audit_project_files();
+            isProcessing = false;
+
+            if (res && res.error === "cancel") return; // Юзер закрыл окно выбора
+            if (!res || res.error) {
+                alert(res?.error || "Сначала загрузите Excel-файл с текстом!");
+                return;
+            }
+
+            // Показываем красивое модальное окно
+            document.getElementById('auditOverlay').style.display = 'flex';
+            document.getElementById('auditPath').innerText = "📁 Директория сканирования: " + res.scan_dir;
+
+            // Запускаем анимацию счетчиков (на 1200 миллисекунд)
+            animateValue(document.getElementById('auditTotalExcel'), 0, res.total_excel, 1200);
+            animateValue(document.getElementById('auditTotalDisk'), 0, res.total_disk, 1200);
+            animateValue(document.getElementById('auditMissing'), 0, res.missing_count, 1200);
+            animateValue(document.getElementById('auditDups'), 0, res.duplicates_count, 1200);
+
+            // Генерируем детальные списки и чистый текст для копирования
+            let detailsHtml = '';
+            window.lastAuditReportText = `📊 ОТЧЕТ АУДИТА ПРОЕКТА\n📁 Директория: ${res.scan_dir}\n`;
+            window.lastAuditReportText += `Excel база: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n\n`;
+
+            // Блок отсутствующих файлов
+            if (res.missing_count > 0) {
+                detailsHtml += `<h4 style="color: var(--accent-trash); margin: 0 0 8px 0; font-size: 13px;">❌ Отсутствуют (${res.missing_count}):</h4>`;
+                window.lastAuditReportText += `❌ ОТСУТСТВУЮТ (${res.missing_count}):\n`;
+
+                res.missing.forEach(m => {
+                    detailsHtml += `
+                    <div style="background: var(--panel); border: 1px solid var(--border-soft); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12px; user-select: text;">
+                        <span style="color: var(--accent-trash); font-family: var(--font-mono); font-weight: bold; user-select: text;">${m.filename}</span>
+                        <div style="color: var(--text-dim); margin-top: 4px; user-select: text;">Строка ${m.index}: ${m.text}</div>
+                    </div>`;
+                    window.lastAuditReportText += `- ${m.filename} (Строка ${m.index}: ${m.text})\n`;
+                });
+                window.lastAuditReportText += `\n`;
+            } else {
+                detailsHtml += `<div style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); padding: 10px; border-radius: var(--radius-sm); color: var(--accent-good); font-weight: bold; font-size: 13px; text-align: center; margin-bottom: 10px;">✅ Все файлы по списку Excel на месте!</div>`;
+            }
+
+            // Блок дубликатов
+            if (res.duplicates_count > 0) {
+                detailsHtml += `<h4 style="color: var(--accent-var); margin: 15px 0 8px 0; font-size: 13px;">⚠️ Найдены дубликаты (${res.duplicates_count}):</h4>`;
+                window.lastAuditReportText += `⚠️ ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
+
+                res.duplicates.forEach(d => {
+                    detailsHtml += `
+                    <div style="background: var(--panel); border: 1px solid var(--border-soft); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12px; user-select: text;">
+                        <span style="color: var(--accent-var); font-family: var(--font-mono); font-weight: bold; user-select: text;">${d.filename}</span> (Найдено: ${d.count} шт.)
+                        <div style="color: var(--text-dim); margin-top: 4px; font-size: 10.5px; line-height: 1.4; user-select: text;">${d.paths.join('<br>')}</div>
+                    </div>`;
+                    window.lastAuditReportText += `- ${d.filename} (Найдено: ${d.count} шт.)\n`;
+                });
+            } else {
+                detailsHtml += `<div style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); padding: 10px; border-radius: var(--radius-sm); color: var(--accent-good); font-weight: bold; font-size: 13px; text-align: center;">✅ Дубликатов не обнаружено!</div>`;
+            }
+
+            document.getElementById('auditDetails').innerHTML = detailsHtml;
+        }
+
+        // НОВОВВЕДЕНИЕ: Функция копирования отчета
+        function copyAuditReport() {
+            if (window.lastAuditReportText) {
+                navigator.clipboard.writeText(window.lastAuditReportText);
+                showToast("Отчет аудита скопирован в буфер обмена!");
+            }
+        }
