@@ -544,10 +544,16 @@
                     <div class="chunk-display">
                         <div id="chunkCounter" class="chunk-counter">Дубль: 0 / 0</div>
                         <div id="chunkName" class="chunk-name">Загрузите аудио</div>
-                        <div class="chunk-track"><span class="chunk-track__dot" id="chunkTrackDot"></span></div>
                     </div>
                     <button class="btn-nav" onclick="navChunk(1)"><kbd>D</kbd> &#9654;</button>
                 </section>
+
+                <!-- Быстрая навигация: ползунок по всем дублям -->
+                <div class="chunk-track" id="chunkTrack" title="Перетащите, чтобы быстро перейти к другому дублю">
+                    <span class="chunk-track__fill" id="chunkTrackFill"></span>
+                    <span class="chunk-track__dot" id="chunkTrackDot"></span>
+                    <span class="chunk-track__bubble" id="chunkTrackBubble"></span>
+                </div>
 
                 <section class="strip-panel" id="stripPanel" style="display: none;">
                     <div class="strip-head">

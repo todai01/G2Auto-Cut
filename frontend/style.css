@@ -910,17 +910,53 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
-/* --- Положение среди дублей --- */
+/* --- Ползунок быстрой навигации по дублям --- */
 .chunk-track{
-    position: relative; height: 3px; margin-top: var(--space-2);
-    background: var(--border); border-radius: 999px;
+    position: relative; height: 22px; margin-top: var(--space-4);
+    cursor: pointer; touch-action: none; user-select: none;
+}
+/* Сама дорожка тонкая, но зона захвата — вся высота блока,
+   иначе в точку в три пикселя попасть мышью почти невозможно */
+.chunk-track::before{
+    content: ""; position: absolute; left: 0; right: 0; top: 50%;
+    height: 4px; margin-top: -2px; border-radius: 999px;
+    background: var(--border);
+}
+.chunk-track__fill{
+    position: absolute; left: 0; top: 50%; width: 0;
+    height: 4px; margin-top: -2px; border-radius: 999px;
+    background: linear-gradient(90deg, rgba(77,149,234,0.35), var(--accent-primary));
+    transition: width .25s var(--ease);
 }
 .chunk-track__dot{
-    position: absolute; top: 50%; left: 0; width: 10px; height: 10px;
-    margin: -5px 0 0 -5px; border-radius: 50%;
-    background: var(--accent-primary); box-shadow: 0 0 8px rgba(77,149,234,0.6);
-    transition: left .25s var(--ease);
+    position: absolute; top: 50%; left: 0; width: 13px; height: 13px;
+    margin: -6.5px 0 0 -6.5px; border-radius: 50%;
+    background: var(--accent-primary); border: 2px solid var(--bg);
+    box-shadow: 0 0 8px rgba(77,149,234,0.6);
+    transition: left .25s var(--ease), width .12s var(--ease), height .12s var(--ease), margin .12s var(--ease);
 }
+.chunk-track:hover .chunk-track__dot{
+    width: 17px; height: 17px; margin: -8.5px 0 0 -8.5px;
+}
+/* Во время перетаскивания подсказка должна успевать за курсором */
+.chunk-track.is-dragging .chunk-track__dot,
+.chunk-track.is-dragging .chunk-track__fill{ transition: none; }
+.chunk-track.is-dragging .chunk-track__dot{
+    width: 17px; height: 17px; margin: -8.5px 0 0 -8.5px;
+    box-shadow: 0 0 0 5px rgba(77,149,234,0.18), 0 0 10px rgba(77,149,234,0.7);
+}
+
+.chunk-track__bubble{
+    position: absolute; bottom: 100%; left: 0;
+    transform: translate(-50%, -2px); pointer-events: none;
+    opacity: 0; transition: opacity .12s ease;
+    padding: 4px 9px; border-radius: var(--radius-sm);
+    background: var(--panel-raised); border: 1px solid var(--accent-primary);
+    color: var(--text); font-family: var(--font-mono); font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    box-shadow: var(--shadow-pop);
+}
+.chunk-track__bubble.is-visible{ opacity: 1; }
 
 /* --- Лента дублей --- */
 .strip-panel{

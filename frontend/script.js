@@ -283,17 +283,91 @@ let isProcessing = false;
             if (state) updateUI(state);
         }
 
-        // Тонкая полоска под счётчиком: где мы среди всех дублей
+        // ===== ПОЛЗУНОК БЫСТРОЙ НАВИГАЦИИ ПО ДУБЛЯМ =====
+
+        let trackTotal = 0;      // всего дублей
+        let trackPos = 0;        // текущий номер, с единицы
+        let trackDragging = false;
+
         function updateChunkTrack(counter) {
-            let dot = document.getElementById('chunkTrackDot');
-            if (!dot || !counter) return;
+            // Пока тянут ползунок, состояние с сервера его не дёргает
+            if (trackDragging) return;
 
-            let m = String(counter).match(/(\d+)\s*\/\s*(\d+)/);
-            if (!m) { dot.style.left = '0%'; return; }
+            let m = String(counter || '').match(/(\d+)\s*\/\s*(\d+)/);
+            if (!m) { trackTotal = 0; paintChunkTrack(0); return; }
 
-            let pos = parseInt(m[1]), total = parseInt(m[2]);
-            dot.style.left = (total > 1 ? ((pos - 1) / (total - 1)) * 100 : 0) + '%';
+            trackPos = parseInt(m[1]);
+            trackTotal = parseInt(m[2]);
+            paintChunkTrack(trackTotal > 1 ? (trackPos - 1) / (trackTotal - 1) : 0);
         }
+
+        function paintChunkTrack(ratio) {
+            let dot = document.getElementById('chunkTrackDot');
+            let fill = document.getElementById('chunkTrackFill');
+            if (!dot || !fill) return;
+
+            let pct = (ratio * 100) + '%';
+            dot.style.left = pct;
+            fill.style.width = pct;
+        }
+
+        function trackIndexFromEvent(e) {
+            let track = document.getElementById('chunkTrack');
+            let rect = track.getBoundingClientRect();
+            if (!rect.width) return 0;
+
+            let ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+            return { ratio: ratio, index: Math.round(ratio * (trackTotal - 1)) };
+        }
+
+        function showTrackBubble(ratio, index) {
+            let bubble = document.getElementById('chunkTrackBubble');
+            bubble.style.left = (ratio * 100) + '%';
+            bubble.innerText = `${index + 1} / ${trackTotal}`;
+            bubble.classList.add('is-visible');
+        }
+
+        function setupChunkTrack() {
+            let track = document.getElementById('chunkTrack');
+            if (!track) return;
+
+            track.addEventListener('pointerdown', e => {
+                if (trackTotal < 2) return;
+                e.preventDefault();
+                trackDragging = true;
+                track.classList.add('is-dragging');
+                track.setPointerCapture(e.pointerId);
+
+                let p = trackIndexFromEvent(e);
+                paintChunkTrack(p.ratio);
+                showTrackBubble(p.ratio, p.index);
+            });
+
+            track.addEventListener('pointermove', e => {
+                if (!trackDragging) return;
+                let p = trackIndexFromEvent(e);
+                paintChunkTrack(p.ratio);
+                showTrackBubble(p.ratio, p.index);
+            });
+
+            // Переход делаем один раз, когда кнопку отпустили: дёргать Python
+            // на каждое движение мыши при 900 дублях — верный способ подвесить окно
+            let finish = async e => {
+                if (!trackDragging) return;
+                trackDragging = false;
+                track.classList.remove('is-dragging');
+                document.getElementById('chunkTrackBubble').classList.remove('is-visible');
+                try { track.releasePointerCapture(e.pointerId); } catch (err) {}
+
+                let p = trackIndexFromEvent(e);
+                await jumpToChunk(p.index);
+            };
+
+            track.addEventListener('pointerup', finish);
+            track.addEventListener('pointercancel', finish);
+        }
+
+        document.addEventListener('DOMContentLoaded', setupChunkTrack);
 
         async function handleLoad(apiPromise) {
             let state = await apiPromise;
