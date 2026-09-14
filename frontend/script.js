@@ -4,18 +4,140 @@ let isProcessing = false;
         let saveFilenameForMerge = null;
         let playTimeout = null;
 
+        // Значения по умолчанию — используются кнопкой «Сбросить»
+        const CUT_DEFAULTS = { pause: 500, sens: -35, pad: 250 };
+
+        function pauseWord(v)  { return v < 400 ? "Короткая" : (v > 900 ? "Длинная" : "Нормальная"); }
+        function sensWord(v)   { return v > -30 ? "Высокая" : (v < -45 ? "Строгая" : "Оптимальная"); }
+        function padWord(v)    { return v < 150 ? "Маленький" : (v > 300 ? "Большой" : "Безопасный"); }
+
         function updateSettingsText() {
-            let p = document.getElementById('inpPause').value;
-            let pText = p < 400 ? "Короткая" : (p > 900 ? "Длинная" : "Нормальная");
-            document.getElementById('valPause').innerText = pText;
+            let p = parseInt(document.getElementById('inpPause').value);
+            document.getElementById('valPause').innerText = `${pauseWord(p)} · ${p} мс`;
 
-            let s = document.getElementById('inpSens').value;
-            let sText = s > -30 ? "Высокая (режет даже слабые паузы)" : (s < -45 ? "Строгая (нужна почти полная тишина)" : "Оптимальная");
-            document.getElementById('valSens').innerText = sText;
+            let s = parseInt(document.getElementById('inpSens').value);
+            document.getElementById('valSens').innerText = `${sensWord(s)} · ${s} дБ`;
 
-            let pad = document.getElementById('inpPad').value;
-            let padText = pad < 150 ? "Маленький" : (pad > 300 ? "Большой" : "Безопасный");
-            document.getElementById('valPad').innerText = padText;
+            let pad = parseInt(document.getElementById('inpPad').value);
+            document.getElementById('valPad').innerText = `${padWord(pad)} · ${pad} мс`;
+        }
+
+        // ===== РУЧНОЙ ВВОД НАСТРОЕК НАРЕЗКИ =====
+
+        function openManualSettings() {
+            document.getElementById('manPause').value = document.getElementById('inpPause').value;
+            document.getElementById('manSens').value  = document.getElementById('inpSens').value;
+            document.getElementById('manPad').value   = document.getElementById('inpPad').value;
+            updateManualHints();
+            document.getElementById('manualOverlay').style.display = 'flex';
+            setTimeout(() => document.getElementById('manPause').focus(), 50);
+        }
+
+        function closeManualSettings() {
+            document.getElementById('manualOverlay').style.display = 'none';
+        }
+
+        function resetManualSettings() {
+            document.getElementById('manPause').value = CUT_DEFAULTS.pause;
+            document.getElementById('manSens').value  = CUT_DEFAULTS.sens;
+            document.getElementById('manPad').value   = CUT_DEFAULTS.pad;
+            updateManualHints();
+        }
+
+        // Ограничиваем значение допустимыми рамками ползунка
+        function clampToInput(sliderId, raw, fallback) {
+            let slider = document.getElementById(sliderId);
+            let v = parseInt(raw);
+            if (isNaN(v)) return fallback;
+            return Math.min(parseInt(slider.max), Math.max(parseInt(slider.min), v));
+        }
+
+        // Живые подсказки: объясняют простым языком, что даст введённое число
+        function updateManualHints() {
+            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
+            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
+            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
+
+            let hP = document.getElementById('hintPause');
+            hP.classList.toggle('is-warn', p < 200 || p > 1500);
+            hP.innerHTML = `Разрез произойдёт только там, где тишина длится дольше <b>${(p / 1000).toFixed(2)} сек</b>. `
+                + (p < 200
+                    ? 'Очень мало: программа разрежет даже короткие вдохи, дублей получится много и они будут рваными.'
+                    : p > 1500
+                        ? 'Очень много: короткие паузы между фразами программа пропустит, несколько фраз слипнутся в один дубль.'
+                        : 'Обычная речевая пауза между фразами — хороший баланс.');
+
+            let hS = document.getElementById('hintSens');
+            hS.classList.toggle('is-warn', sn > -25 || sn < -55);
+            hS.innerHTML = `Тишиной считается всё, что тише <b>${sn} дБ</b>. `
+                + (sn > -25
+                    ? 'Порог высокий: программа примет за тишину даже негромкую речь и может срезать начало слова.'
+                    : sn < -55
+                        ? 'Порог строгий: нужна почти стерильная тишина. При фоновом шуме разрезов почти не будет.'
+                        : 'Подходит для обычной студийной записи с лёгким фоновым шумом.');
+
+            let hPad = document.getElementById('hintPad');
+            hPad.classList.toggle('is-warn', pad < 80 || pad > 600);
+            hPad.innerHTML = `К каждому дублю добавится <b>${pad} мс</b> звука с обеих сторон. `
+                + (pad < 80
+                    ? 'Запас маленький: есть риск отрезать первый и последний звук слова.'
+                    : pad > 600
+                        ? 'Запас большой: в дубли попадут куски соседних фраз, придётся дочищать вручную.'
+                        : 'Слово гарантированно не обрежется, лишнего почти не попадёт.');
+        }
+
+        function applyManualSettings() {
+            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
+            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
+            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
+
+            document.getElementById('inpPause').value = p;
+            document.getElementById('inpSens').value  = sn;
+            document.getElementById('inpPad').value   = pad;
+
+            updateSettingsText();
+            closeManualSettings();
+            showToast(`Настройки применены: ${p} мс · ${sn} дБ · ${pad} мс`);
+        }
+
+        // Пояснения по кнопкам «?»
+        const SETTING_HELP = {
+            pause: {
+                title: 'Длина паузы для разреза',
+                body: 'Программа слушает запись и ищет места, где вы молчите. Этот параметр говорит, '
+                    + 'насколько долгим должно быть молчание, чтобы считать его концом фразы.<br><br>'
+                    + '<b>Бытовой пример:</b> представьте, что вы читаете вслух список. Между словами внутри '
+                    + 'предложения вы делаете короткие паузы, а между пунктами списка — длинные. '
+                    + 'Здесь вы задаёте, какую паузу считать «между пунктами».<br><br>'
+                    + '<b>Меньше число</b> — больше дублей, режет мелко.<br>'
+                    + '<b>Больше число</b> — меньше дублей, несколько фраз могут слипнуться.'
+            },
+            sens: {
+                title: 'Чувствительность к тихим звукам',
+                body: 'Абсолютной тишины в записи не бывает — всегда есть шум микрофона, дыхание, гул комнаты. '
+                    + 'Этот параметр задаёт громкость, ниже которой звук считается тишиной. '
+                    + 'Измеряется в децибелах, и число всегда отрицательное: чем оно меньше, тем тише.<br><br>'
+                    + '<b>Бытовой пример:</b> это как порог слышимости. Поставьте −20 дБ — программа «глуховата» '
+                    + 'и примет за тишину даже негромкую речь. Поставьте −60 дБ — у неё идеальный слух, '
+                    + 'и любой шорох она посчитает звуком.<br><br>'
+                    + '<b>Ближе к −20</b> — режет охотнее, но может отхватить начало слова.<br>'
+                    + '<b>Ближе к −60</b> — осторожнее, но при шумном фоне разрезов почти не будет.'
+            },
+            pad: {
+                title: 'Запас звука по краям',
+                body: 'Найдя границу фразы, программа отступает немного назад и немного вперёд, '
+                    + 'и только потом режет. Этот отступ и есть запас.<br><br>'
+                    + '<b>Бытовой пример:</b> как поля на листе бумаги. Режете точно по буквам — рискуете '
+                    + 'срезать край. Оставляете поля — текст цел.<br><br>'
+                    + '<b>Меньше число</b> — дубли плотные, но можно потерять первый или последний звук.<br>'
+                    + '<b>Больше число</b> — слово точно целое, но в дубль попадёт кусок соседней фразы.'
+            }
+        };
+
+        function explainSetting(event, key) {
+            if (event) { event.preventDefault(); event.stopPropagation(); }
+            let h = SETTING_HELP[key];
+            if (h) showBeautifulAlert(`<b>${h.title}</b><br><br>${h.body}`);
         }
 
         document.addEventListener('DOMContentLoaded', updateSettingsText);
@@ -26,8 +148,69 @@ let isProcessing = false;
             document.getElementById('progressText').innerText = t;
         }
 
-        function showMenu() { document.getElementById('stage1-loading').style.display = 'block'; document.getElementById('stage2-workspace').style.display = 'none'; }
-        function showWorkspace() { document.getElementById('stage1-loading').style.display = 'none'; document.getElementById('stage2-workspace').style.display = 'block'; }
+        // ===== ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ =====
+        // Каждому экрану нужен свой способ раскладки: заставка и экран подготовки
+        // построены на flex, рабочий экран — обычный block. Раньше это значение
+        // подставлялось руками в каждой функции, и стоило один раз ошибиться —
+        // заставка съезжала в левый край. Теперь оно живёт в одном месте.
+        const STAGE_DISPLAY = {
+            'stage0-splash':    'flex',
+            'stage1-loading':   'flex',
+            'stage2-workspace': 'block'
+        };
+
+        function showStage(activeId) {
+            Object.keys(STAGE_DISPLAY).forEach(id => {
+                let el = document.getElementById(id);
+                if (el) el.style.display = (id === activeId) ? STAGE_DISPLAY[id] : 'none';
+            });
+        }
+
+        // Запоминаем, что рабочий экран уже открывался: тогда из меню
+        // можно вернуться к работе одной кнопкой, ничего не загружая заново.
+        let workspaceReady = false;
+
+        function showSplash() {
+            showStage('stage0-splash');
+        }
+
+        // Заставка -> экран подготовки проекта
+        function enterApp() {
+            showMenu();
+        }
+
+        function showMenu() {
+            showStage('stage1-loading');
+
+            // Кнопка возврата появляется, только если работать уже есть с чем
+            let btnResume = document.getElementById('btnResume');
+            if (btnResume) btnResume.style.display = workspaceReady ? 'inline-flex' : 'none';
+
+            // Перезапускаем появление блоков «лесенкой»
+            document.getElementById('stage1-loading').querySelectorAll('.rise').forEach(el => {
+                el.style.animation = 'none';
+                void el.offsetWidth;
+                el.style.animation = '';
+            });
+        }
+
+        function showWorkspace() {
+            workspaceReady = true;
+            showStage('stage2-workspace');
+        }
+
+        function resumeWorkspace() {
+            if (!workspaceReady) return;
+            showWorkspace();
+        }
+
+        // Подсказка в шапке экрана подготовки
+        function setSetupStatus(text, ready) {
+            let el = document.getElementById('setupStatus');
+            if (!el) return;
+            el.innerText = text;
+            el.classList.toggle('setup-status--ready', !!ready);
+        }
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
 
@@ -37,33 +220,35 @@ let isProcessing = false;
             if (state.has_audio) { showWorkspace(); playAudio(); }
         }
 
+        // Подсветка карточки «Загрузить текст (Excel)».
+        // Раньше этот код был продублирован в двух местах и мог разойтись.
+        function markExcelLoaded(fileName) {
+            let btnExcel = document.getElementById('btnLoadExcel');
+            if (!btnExcel) return;
+
+            btnExcel.classList.add('loaded');
+            let descExcel = document.getElementById('descExcel');
+            if (descExcel) descExcel.innerHTML = `<b>${fileName}</b>`;
+
+            setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
+        }
+
         async function loadExcel() {
-            let state = await pywebview.api.load_excel();
-
-            // Если юзер отменил выбор файла, прерываемся
-            if (!state || state.error === "cancel") return;
-
-            // Если есть реальная ошибка, покажем её
-            if (state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+            let state;
+            try {
+                state = await pywebview.api.load_excel();
+            } catch (e) {
+                showBeautifulAlert(`❌ <b>Не удалось прочитать таблицу</b><br><br>${e}`);
                 return;
             }
 
-            // ПРИНУДИТЕЛЬНАЯ ОКРАСКА КНОПКИ
-            let btnExcel = document.getElementById('btnLoadExcel');
-            btnExcel.style.borderColor = 'var(--accent-good)';
-            btnExcel.style.background = 'rgba(47, 182, 115, 0.1)';
+            // Пользователь закрыл окно выбора файла — молча выходим
+            if (!state || state.error === "cancel") return;
 
-            let descExcel = document.getElementById('descExcel');
-            let fileName = (state.stats && state.stats.excel_name) ? state.stats.excel_name : "Таблица загружена";
-            descExcel.innerHTML = `✅ <b>${fileName}</b>`;
-            descExcel.style.color = 'var(--accent-good)';
-
-            let iconExcel = btnExcel.querySelector('.option-icon');
-            if (iconExcel) iconExcel.style.color = 'var(--accent-good)';
-
-            let titleExcel = btnExcel.querySelector('.option-title');
-            if (titleExcel) titleExcel.style.color = 'var(--accent-good)';
+            if (state.error) {
+                showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(state.error).replace(/\n/g, '<br>')}`);
+                return;
+            }
 
             updateUI(state);
         }
@@ -112,11 +297,9 @@ let isProcessing = false;
             if (windows && windows.length > 1) {
                 let listHtml = '';
                 windows.forEach(w => {
-                    listHtml += `<button class="option-card" style="padding: 12px; width: 100%; border-color: var(--border-soft);" onclick="selectAudacityProject(${w.hwnd})">
-                                    <span class="option-icon" style="color: var(--accent-var); width: 28px; height: 28px; font-size: 16px;">🎧</span>
-                                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                        <span class="option-title" style="font-size: 13px;">${w.title}</span>
-                                    </div>
+                    listHtml += `<button class="option-card project-option" onclick="selectAudacityProject(${w.hwnd})">
+                                    <span class="option-icon">🎧</span>
+                                    <span class="project-option__title">${w.title}</span>
                                  </button>`;
                 });
                 document.getElementById('projectList').innerHTML = listHtml;
@@ -181,24 +364,6 @@ let isProcessing = false;
 
             document.getElementById('progressContainer').style.display = 'none';
             isProcessing = false;
-        }
-
-        async function runAutoLabel() {
-            if (isProcessing) return;
-
-            // Спрашиваем у пользователя, сколько клипов нужно прокликать
-            let count = prompt("🤖 Робот-разметчик\n\nВведите количество клипов для разметки (например: 60):", "60");
-
-            if (count !== null && count.trim() !== "" && !isNaN(count)) {
-                isProcessing = true;
-                updateProgress(0, 'Запуск макроса (Не трогайте мышь!)...');
-                document.getElementById('progressContainer').style.display = 'block';
-
-                // Вызываем наш Python-макрос
-                await pywebview.api.auto_label_clips(parseInt(count));
-
-                isProcessing = false;
-            }
         }
 
         async function stripFilenames() {
@@ -538,7 +703,7 @@ let isProcessing = false;
                 btnLoad.innerText = `${getVarIcon(varType)} ${getVarName(varType)}: ${result.filename}`;
                 btnLoad.style.color = 'var(--text)';
                 btnLoad.style.borderColor = 'var(--accent-var)';
-                btnLoad.style.background = 'rgba(226, 172, 63, 0.1)';
+                btnLoad.style.background = 'var(--tint-var)';
 
                 btnMix.disabled = false;
             }
@@ -641,15 +806,20 @@ let isProcessing = false;
                     // Если файл готов (is_done), красим в зеленый, иначе - в желтый
                     let color = (state.is_done) ? "var(--accent-good)" : "var(--accent-var)";
 
-                    matchEl.innerHTML = `<span style="color: ${color};">✓ Сохранено в ${folderName}: ${excelName}.wav</span>`;
+                    let tint = (state.is_done) ? "var(--tint-good)" : "var(--tint-var)";
+
+                    matchEl.innerHTML = `<span style="color: ${color};">Сохранено в «${folderName}»: ${excelName}.wav</span>`;
                     matchEl.style.border = `1px solid ${color}`;
+                    matchEl.style.background = tint;
                 } else {
                     matchEl.innerHTML = `<span style="color: var(--text-dim);">Ожидает выгрузки: ${excelName}.wav</span>`;
                     matchEl.style.border = "1px solid var(--border)";
+                    matchEl.style.background = "var(--panel)";
                 }
             } else {
                 matchEl.innerHTML = "";
                 matchEl.style.border = "none";
+                matchEl.style.background = "transparent";
             }
 
             document.getElementById('phraseCounter').innerText = `Фраза: ${state.phrase_counter}`;
@@ -665,7 +835,7 @@ let isProcessing = false;
                 if (state.is_checked) {
                     btnCheck.style.color = 'var(--accent-good)';
                     btnCheck.style.borderColor = 'var(--accent-good)';
-                    btnCheck.style.background = 'rgba(47, 182, 115, 0.1)';
+                    btnCheck.style.background = 'var(--tint-good)';
                 } else {
                     btnCheck.style.color = 'var(--text-dim)';
                     btnCheck.style.borderColor = 'var(--border)';
@@ -695,23 +865,7 @@ let isProcessing = false;
                 }
 
                 if(state.stats.excel_name) {
-                    let btnExcel = document.getElementById('btnLoadExcel');
-                    btnExcel.classList.add('loaded');
-                    // Принудительно красим кнопку в красивый зеленый цвет успеха
-                    btnExcel.style.borderColor = 'var(--accent-good)';
-                    btnExcel.style.background = 'rgba(47, 182, 115, 0.1)';
-
-                    let descExcel = document.getElementById('descExcel');
-                    // Добавляем галочку и делаем текст жирным и зеленым
-                    descExcel.innerHTML = `✅ <b>${state.stats.excel_name}</b>`;
-                    descExcel.style.color = 'var(--accent-good)';
-
-                    // Красим саму иконку документа
-                    let iconExcel = btnExcel.querySelector('.option-icon');
-                    if (iconExcel) iconExcel.style.color = 'var(--accent-good)';
-
-                    let titleExcel = btnExcel.querySelector('.option-title');
-                    if (titleExcel) titleExcel.style.color = 'var(--accent-good)';
+                    markExcelLoaded(state.stats.excel_name);
                 }
                 if(state.stats.project_name) {
                     document.getElementById('btnLoadFolder').classList.add('loaded');
@@ -775,7 +929,7 @@ let isProcessing = false;
                              </div>`;
                 });
 
-                if(missingList.length === 0) html = '<div style="text-align:center; color: var(--accent-good); padding: 20px;">Поздравляем! Все фразы готовы! 🎉</div>';
+                if(missingList.length === 0) html = '<div class="audit-ok">Все фразы готовы</div>';
                 document.getElementById('missingList').innerHTML = html;
             } else {
                 panel.style.display = 'none';
@@ -906,11 +1060,31 @@ let isProcessing = false;
             // РАЗРЕШАЕМ СТАНДАРТНЫЕ КОМБИНАЦИИ (Ctrl+C, Ctrl+A, и т.д.)
             if (e.ctrlKey || e.metaKey) return;
 
+            // На заставке любая из клавиш Enter / Space открывает экран подготовки
+            let splash = document.getElementById('stage0-splash');
+            if (splash && splash.style.display !== 'none') {
+                if (e.code === 'Enter' || e.code === 'Space') {
+                    e.preventDefault();
+                    enterApp();
+                }
+                return;
+            }
+
             let alertOverlay = document.getElementById('customAlertOverlay');
             if (alertOverlay && alertOverlay.style.display === 'flex') {
                 if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
                     e.preventDefault();
                     closeCustomAlert();
+                }
+                return;
+            }
+
+            // Окно ручной настройки: Escape закрывает, остальные клавиши не мешаем
+            let manualOverlay = document.getElementById('manualOverlay');
+            if (manualOverlay && manualOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeManualSettings();
                 }
                 return;
             }
@@ -1006,7 +1180,7 @@ let isProcessing = false;
                 let el = document.getElementById('customAlertText');
                 if (el) {
                     // Используем HTML для форматирования текста (жирный шрифт, переносы)
-                    el.innerHTML = `<div style="font-size: 14px; line-height: 1.5; color: var(--text);">${message}</div>`;
+                    el.innerHTML = `<div class="alert-body">${message}</div>`;
                     document.getElementById('customAlertOverlay').style.display = 'flex';
                     window.customAlertCallback = resolve;
                 } else {
@@ -1032,19 +1206,8 @@ let isProcessing = false;
 
         function showToast(msg) {
             let toast = document.createElement('div');
+            toast.className = 'toast';
             toast.innerText = msg;
-            toast.style.position = 'fixed';
-            toast.style.bottom = '30px';
-            toast.style.left = '50%';
-            toast.style.transform = 'translateX(-50%)';
-            toast.style.background = 'var(--accent-good)';
-            toast.style.color = '#fff';
-            toast.style.padding = '10px 20px';
-            toast.style.borderRadius = '20px';
-            toast.style.fontSize = '14px';
-            toast.style.fontWeight = 'bold';
-            toast.style.zIndex = '9999';
-            toast.style.animation = 'fadeInAlert 0.2s ease, fadeInAlert 0.2s ease 2s reverse forwards';
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2200);
         }
@@ -1161,37 +1324,37 @@ let isProcessing = false;
 
             // Блок отсутствующих файлов
             if (res.missing_count > 0) {
-                detailsHtml += `<h4 style="color: var(--accent-trash); margin: 0 0 8px 0; font-size: 13px;">❌ Отсутствуют (${res.missing_count}):</h4>`;
+                detailsHtml += `<h4 class="audit-group-title audit-group-title--lost">Отсутствуют — ${res.missing_count}</h4>`;
                 window.lastAuditReportText += `❌ ОТСУТСТВУЮТ (${res.missing_count}):\n`;
 
                 res.missing.forEach(m => {
                     detailsHtml += `
-                    <div style="background: var(--panel); border: 1px solid var(--border-soft); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12px; user-select: text;">
-                        <span style="color: var(--accent-trash); font-family: var(--font-mono); font-weight: bold; user-select: text;">${m.filename}</span>
-                        <div style="color: var(--text-dim); margin-top: 4px; user-select: text;">Строка ${m.index}: ${m.text}</div>
+                    <div class="audit-row">
+                        <span class="audit-row__name audit-row__name--lost">${m.filename}</span>
+                        <div class="audit-row__meta">Строка ${m.index}: ${m.text}</div>
                     </div>`;
                     window.lastAuditReportText += `- ${m.filename} (Строка ${m.index}: ${m.text})\n`;
                 });
                 window.lastAuditReportText += `\n`;
             } else {
-                detailsHtml += `<div style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); padding: 10px; border-radius: var(--radius-sm); color: var(--accent-good); font-weight: bold; font-size: 13px; text-align: center; margin-bottom: 10px;">✅ Все файлы по списку Excel на месте!</div>`;
+                detailsHtml += `<div class="audit-ok">Все файлы по списку Excel на месте</div>`;
             }
 
             // Блок дубликатов
             if (res.duplicates_count > 0) {
-                detailsHtml += `<h4 style="color: var(--accent-var); margin: 15px 0 8px 0; font-size: 13px;">⚠️ Найдены дубликаты (${res.duplicates_count}):</h4>`;
+                detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Дубликаты — ${res.duplicates_count}</h4>`;
                 window.lastAuditReportText += `⚠️ ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
 
                 res.duplicates.forEach(d => {
                     detailsHtml += `
-                    <div style="background: var(--panel); border: 1px solid var(--border-soft); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12px; user-select: text;">
-                        <span style="color: var(--accent-var); font-family: var(--font-mono); font-weight: bold; user-select: text;">${d.filename}</span> (Найдено: ${d.count} шт.)
-                        <div style="color: var(--text-dim); margin-top: 4px; font-size: 10.5px; line-height: 1.4; user-select: text;">${d.paths.join('<br>')}</div>
+                    <div class="audit-row">
+                        <span class="audit-row__name audit-row__name--dups">${d.filename}</span> — найдено ${d.count} шт.
+                        <div class="audit-row__meta">${d.paths.join('<br>')}</div>
                     </div>`;
                     window.lastAuditReportText += `- ${d.filename} (Найдено: ${d.count} шт.)\n`;
                 });
             } else {
-                detailsHtml += `<div style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); padding: 10px; border-radius: var(--radius-sm); color: var(--accent-good); font-weight: bold; font-size: 13px; text-align: center;">✅ Дубликатов не обнаружено!</div>`;
+                detailsHtml += `<div class="audit-ok">Дубликатов не обнаружено</div>`;
             }
 
             document.getElementById('auditDetails').innerHTML = detailsHtml;

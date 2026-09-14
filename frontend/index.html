@@ -19,25 +19,25 @@
 
     <!-- НОВОВВЕДЕНИЕ: Модальное окно поиска -->
     <div id="searchOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box" style="text-align: left; max-width: 350px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 style="margin: 0; font-size: 18px; color: var(--text);">Быстрый переход</h3>
-                <button class="btn-delete-phrase" style="position: static; padding: 0;" onclick="closeSearch()">&times;</button>
+        <div class="custom-alert-box modal--sm">
+            <div class="modal-head">
+                <h3 class="modal-title">Быстрый переход</h3>
+                <button class="modal-close" onclick="closeSearch()" title="Закрыть">&times;</button>
             </div>
 
-            <label style="display: block; margin-bottom: 15px;">
-                <span style="font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 5px;">Текстовый поиск фразы (как в Excel):</span>
-                <div style="display: flex; gap: 8px;">
+            <label class="field">
+                <span class="field-label">Текстовый поиск фразы (как в Excel)</span>
+                <div class="field-row">
                     <input type="text" id="searchText" class="search-input" placeholder="Введите слово..." onkeydown="if(event.key==='Enter') doSearchText(); if(event.key==='Escape') closeSearch();">
-                    <button class="custom-alert-btn" style="width: auto; padding: 8px 15px;" onclick="doSearchText()">Найти</button>
+                    <button class="custom-alert-btn" onclick="doSearchText()">Найти</button>
                 </div>
             </label>
 
-            <label style="display: block;">
-                <span style="font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 5px;">Перейти к дублю (от 1 до <span id="searchMaxChunk">?</span>):</span>
-                <div style="display: flex; gap: 8px;">
+            <label class="field">
+                <span class="field-label">Перейти к дублю (от 1 до <span id="searchMaxChunk">?</span>)</span>
+                <div class="field-row">
                     <input type="number" id="searchChunkNum" class="search-input" placeholder="№" min="1" onkeydown="if(event.key==='Enter') doSearchChunk(); if(event.key==='Escape') closeSearch();">
-                    <button class="custom-alert-btn" style="width: auto; padding: 8px 15px;" onclick="doSearchChunk()">Go</button>
+                    <button class="custom-alert-btn" onclick="doSearchChunk()">Перейти</button>
                 </div>
             </label>
         </div>
@@ -45,14 +45,14 @@
 
     <!-- НОВОВВЕДЕНИЕ: Модальное окно выбора проекта Audacity -->
     <div id="projectSelectorOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box" style="text-align: left; max-width: 450px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h3 style="margin: 0; font-size: 18px; color: var(--accent-var);">В каком окне работаем?</h3>
-                <button class="btn-delete-phrase" style="position: static; padding: 0;" onclick="closeProjectSelector()">&times;</button>
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title modal-title--var">Выбор проекта Audacity</h3>
+                <button class="modal-close" onclick="closeProjectSelector()" title="Закрыть">&times;</button>
             </div>
-            <div style="font-size: 13px; color: var(--text-dim); margin-bottom: 20px;">Найдено несколько открытых проектов Audacity. Выберите нужный:</div>
+            <div class="modal-hint">Открыто несколько проектов Audacity. Укажите, в каком из них работать.</div>
 
-            <div id="projectList" style="display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; padding-right: 5px;">
+            <div id="projectList" class="project-list">
                 <!-- Кнопки проектов сгенерируются тут через JS -->
             </div>
         </div>
@@ -60,187 +60,325 @@
 
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box" style="max-width: 650px; text-align: left; padding: 25px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 style="margin: 0; font-size: 20px; color: var(--text);">📊 Интеллектуальный Аудит</h3>
-                <button class="btn-delete-phrase" style="position: static; padding: 0;" onclick="closeAudit()">&times;</button>
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Аудит проекта</h3>
+                <button class="modal-close" onclick="closeAudit()" title="Закрыть">&times;</button>
             </div>
 
-            <div style="font-size: 11.5px; color: var(--text-dim); margin-bottom: 15px; word-break: break-all; background: var(--panel-raised); padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-soft);" id="auditPath"></div>
+            <div class="audit-path" id="auditPath"></div>
 
-            <!-- Статистика -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
-                <div style="background: var(--panel-raised); border: 1px solid var(--border); padding: 15px 10px; border-radius: var(--radius-md); text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-dim); text-transform: uppercase; font-weight: bold;">Excel база</div>
-                    <div id="auditTotalExcel" style="font-size: 26px; font-weight: bold; color: var(--accent-primary); margin-top: 5px;">0</div>
+            <!-- Сводка -->
+            <div class="stat-grid">
+                <div class="stat-card stat-card--total">
+                    <div class="stat-card__label">Всего в Excel</div>
+                    <div id="auditTotalExcel" class="stat-card__value">0</div>
                 </div>
-                <div style="background: var(--panel-raised); border: 1px solid var(--border); padding: 15px 10px; border-radius: var(--radius-md); text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-dim); text-transform: uppercase; font-weight: bold;">Найдено</div>
-                    <div id="auditTotalDisk" style="font-size: 26px; font-weight: bold; color: var(--accent-info); margin-top: 5px;">0</div>
+                <div class="stat-card stat-card--found">
+                    <div class="stat-card__label">Найдено</div>
+                    <div id="auditTotalDisk" class="stat-card__value">0</div>
                 </div>
-                <div style="background: var(--panel-raised); border: 1px solid var(--accent-trash); padding: 15px 10px; border-radius: var(--radius-md); text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-dim); text-transform: uppercase; font-weight: bold;">Потеряно</div>
-                    <div id="auditMissing" style="font-size: 26px; font-weight: bold; color: var(--accent-trash); margin-top: 5px;">0</div>
+                <div class="stat-card stat-card--lost">
+                    <div class="stat-card__label">Потеряно</div>
+                    <div id="auditMissing" class="stat-card__value">0</div>
                 </div>
-                <div style="background: var(--panel-raised); border: 1px solid var(--accent-var); padding: 15px 10px; border-radius: var(--radius-md); text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-dim); text-transform: uppercase; font-weight: bold;">Дубликаты</div>
-                    <div id="auditDups" style="font-size: 26px; font-weight: bold; color: var(--accent-var); margin-top: 5px;">0</div>
+                <div class="stat-card stat-card--dups">
+                    <div class="stat-card__label">Дубликаты</div>
+                    <div id="auditDups" class="stat-card__value">0</div>
                 </div>
             </div>
 
-            <!-- Списки с прокруткой (добавлено user-select: text) -->
-            <div style="display: flex; flex-direction: column; gap: 15px; max-height: 280px; overflow-y: auto; padding-right: 5px; user-select: text;" id="auditDetails">
+            <!-- Списки с прокруткой -->
+            <div class="audit-details" id="auditDetails">
                 <!-- Контент генерируется JS -->
             </div>
 
-            <div style="display: flex; gap: 10px; margin-top: 20px;">
-                <button class="custom-alert-btn" style="background: var(--panel-raised); border: 1px solid var(--border); color: var(--text);" onclick="copyAuditReport()">📋 Скопировать текст</button>
-                <button class="custom-alert-btn" onclick="closeAudit()">Отлично, спасибо!</button>
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="copyAuditReport()">Скопировать отчёт</button>
+                <button class="custom-alert-btn" onclick="closeAudit()">Закрыть</button>
             </div>
         </div>
     </div>
 
-    <div id="stage1-loading" class="stage stage-loading">
-        <div class="loading-card">
-            <div class="loading-header">
-                <span class="eyebrow">G2Auto-Cut</span>
-                <h1>Шаг 1 — Загрузка проекта</h1>
+    <!-- Модальное окно: ручной ввод настроек нарезки -->
+    <div id="manualOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Ручная настройка нарезки</h3>
+                <button class="modal-close" onclick="closeManualSettings()" title="Закрыть">&times;</button>
             </div>
-            <div class="load-options">
-                <button class="option-card" id="btnLoadExcel" onclick="loadExcel()">
+            <div class="modal-hint">Введите точные значения. Под каждым полем программа сразу объясняет, что получится.</div>
+
+            <label class="field">
+                <span class="field-label">
+                    Длина паузы для разреза, миллисекунд
+                    <button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button>
+                </span>
+                <input type="number" id="manPause" class="search-input" min="50" max="3000" step="10" value="500" oninput="updateManualHints()">
+                <span class="field-hint" id="hintPause"></span>
+            </label>
+
+            <label class="field">
+                <span class="field-label">
+                    Чувствительность к тихим звукам, дБ
+                    <button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button>
+                </span>
+                <input type="number" id="manSens" class="search-input" min="-80" max="-10" step="1" value="-35" oninput="updateManualHints()">
+                <span class="field-hint" id="hintSens"></span>
+            </label>
+
+            <label class="field">
+                <span class="field-label">
+                    Запас звука по краям, миллисекунд
+                    <button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button>
+                </span>
+                <input type="number" id="manPad" class="search-input" min="0" max="1000" step="10" value="250" oninput="updateManualHints()">
+                <span class="field-hint" id="hintPad"></span>
+            </label>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="resetManualSettings()">Сбросить</button>
+                <button class="custom-alert-btn" onclick="applyManualSettings()">Применить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ЭКРАН 0 — Заставка -->
+    <div id="stage0-splash" class="stage stage-splash">
+        <div class="splash">
+            <div class="splash-bars" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="splash-inner">
+                <div class="splash-mark">G2<span>Auto</span>Cut</div>
+                <div class="splash-tagline">Студийная нарезка и монтаж озвучки</div>
+                <button class="splash-btn" onclick="enterApp()">
+                    Начать работу <kbd>Enter</kbd>
+                </button>
+                <div class="splash-note">G2Studio · работает в связке с Audacity</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ЭКРАН 1 — Подготовка проекта и выбор режима -->
+    <div id="stage1-loading" class="stage stage-loading" style="display: none;">
+        <header class="setup-header">
+            <div class="setup-brand">
+                <button class="setup-brand__mark" onclick="showSplash()" title="Вернуться на приветственный экран">G2<span>Auto</span>Cut</button>
+                <span class="setup-brand__sub">Подготовка проекта</span>
+            </div>
+            <div class="setup-header__right">
+                <button class="btn-resume" id="btnResume" onclick="resumeWorkspace()" style="display: none;">
+                    &#8592;&nbsp; Вернуться к работе
+                </button>
+                <div class="setup-status" id="setupStatus">Шаг 1 · Подключите таблицу с текстом</div>
+            </div>
+        </header>
+
+        <div class="setup-grid">
+
+            <!-- ЛЕВАЯ КОЛОНКА: источник материала -->
+            <section class="setup-col setup-col--source">
+                <div class="section-label"><span>Источник материала</span></div>
+
+                <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
                     <span class="option-icon">📄</span>
                     <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
                 </button>
 
-                <button class="option-card" id="btnLoadAudio" onclick="loadAudio()" style="margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0;">
+                <button class="option-card option-card--attached rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
                     <span class="option-icon">🎚️</span>
                     <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
                 </button>
 
-                <div style="background: var(--panel); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: var(--radius-md); border-bottom-right-radius: var(--radius-md); padding: 12px 16px 16px; margin-bottom: 10px;">
-                    <div style="font-size: 11.5px; color: var(--text-dim); margin-bottom: 12px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Настройки нарезки</div>
+                <div class="settings-panel rise" style="--d: 3">
+                    <div class="settings-head">
+                        <div class="settings-title">Настройки нарезки</div>
+                        <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
+                    </div>
 
-                    <label style="display: flex; flex-direction: column; font-size: 12.5px; margin-bottom: 12px; color: var(--text);">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                            <span>Длина паузы для разреза:</span>
-                            <span id="valPause" style="color: var(--accent-info); font-weight: 600;">Нормальная</span>
+                    <label class="slider-field">
+                        <div class="slider-head">
+                            <span class="slider-name">Длина паузы для разреза<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
+                            <span id="valPause" class="slider-value">Нормальная</span>
                         </div>
-                        <input type="range" id="inpPause" min="100" max="1500" step="50" value="500" oninput="updateSettingsText()">
+                        <input type="range" id="inpPause" min="50" max="3000" step="10" value="500" oninput="updateSettingsText()">
                     </label>
 
-                    <label style="display: flex; flex-direction: column; font-size: 12.5px; margin-bottom: 12px; color: var(--text);">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                            <span>Чувствительность к тихим звукам:</span>
-                            <span id="valSens" style="color: var(--accent-info); font-weight: 600;">Оптимальная</span>
+                    <label class="slider-field">
+                        <div class="slider-head">
+                            <span class="slider-name">Чувствительность к тихим звукам<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
+                            <span id="valSens" class="slider-value">Оптимальная</span>
                         </div>
-                        <input type="range" id="inpSens" min="-55" max="-20" step="5" value="-35" oninput="updateSettingsText()">
+                        <input type="range" id="inpSens" min="-80" max="-10" step="1" value="-35" oninput="updateSettingsText()">
                     </label>
 
-                    <label style="display: flex; flex-direction: column; font-size: 12.5px; color: var(--text);">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                            <span>Запас звука по краям:</span>
-                            <span id="valPad" style="color: var(--accent-info); font-weight: 600;">Безопасный</span>
+                    <label class="slider-field">
+                        <div class="slider-head">
+                            <span class="slider-name">Запас звука по краям<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
+                            <span id="valPad" class="slider-value">Безопасный</span>
                         </div>
-                        <input type="range" id="inpPad" min="50" max="400" step="50" value="250" oninput="updateSettingsText()">
+                        <input type="range" id="inpPad" min="0" max="1000" step="10" value="250" oninput="updateSettingsText()">
                     </label>
                 </div>
 
-                <button class="option-card option-card--alt" id="btnLoadFolder" onclick="loadFolder()">
+                <button class="option-card option-card--alt rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
                     <span class="option-icon">📁</span>
-                    <div><span class="option-title">Или открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
+                    <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
                 </button>
 
-                <button class="option-card option-card--alt" onclick="initVarBatch()" style="margin-top: 10px; background: rgba(226, 172, 63, 0.1); border-color: var(--accent-var);">
-                    <span class="option-icon" style="color: var(--accent-var);">🔄</span>
-                    <div>
-                        <span class="option-title" style="color: var(--accent-var);">3. Пакетная сборка переменных</span>
-                        <span class="option-desc">Авто-сортировка сумм и подгонка под эталон</span>
-                    </div>
-                </button>
+                <div id="progressContainer" class="progress-panel">
+                    <div id="progressText" class="progress-text">Анализ...</div>
+                    <progress id="progressBar" max="100"></progress>
+                </div>
 
-                <!-- СТАРАЯ ГАЛОЧКА ДЛЯ ПРОСТОГО ЭКСПОРТА -->
-                <label class="silence-toggle" style="margin-top: 10px; margin-bottom: 5px; color: var(--text); justify-content: flex-start; gap: 8px;">
-                    <input type="checkbox" id="simpleExportCheck"> <span>Это простой экспорт (Без start/end и подгонки)</span>
-                </label>
+                <div class="info-panel rise" style="--d: 5">
+                    <div class="info-panel__title">Куда попадают файлы</div>
+                    <ul class="folder-map">
+                        <li><span class="folder-map__name folder-map__name--raw">Chunks</span><span class="folder-map__desc">Черновые куски сразу после нарезки</span></li>
+                        <li><span class="folder-map__name folder-map__name--good">Good</span><span class="folder-map__desc">Отобранные дубли, которые вы оставили</span></li>
+                        <li><span class="folder-map__name folder-map__name--var">Переменные</span><span class="folder-map__desc">Куски с датой, именем или суммой</span></li>
+                        <li><span class="folder-map__name folder-map__name--checked">Проверенные</span><span class="folder-map__desc">Финальные файлы, готовые к сдаче</span></li>
+                    </ul>
+                </div>
+            </section>
 
-                <!-- НОВАЯ ГАЛОЧКА ДЛЯ СОРТИРОВКИ ПО ЦИФРАМ -->
-                <label class="silence-toggle" style="margin-bottom: 10px; color: var(--text); justify-content: flex-start; gap: 8px;">
-                    <input type="checkbox" id="sortByNameCheck"> <span>Сортировать по цифрам (Названия клипов / Метки)</span>
-                </label>
+            <!-- ПРАВАЯ КОЛОНКА: режимы работы -->
+            <section class="setup-col setup-col--modes">
+                <div class="section-label"><span>Режимы работы с переменными</span></div>
 
-                <!-- НОВАЯ УТИЛИТА: МАКРОС -->
-                <button class="option-card option-card--alt" onclick="runAutoLabel()" style="margin-top: 10px; background: rgba(63, 143, 224, 0.1); border-color: var(--accent-primary);">
-                    <span class="option-icon" style="color: var(--accent-primary);">🤖</span>
-                    <div>
-                        <span class="option-title" style="color: var(--accent-primary);">Авто-разметка клипов (Макрос)</span>
-                        <span class="option-desc">Эмуляция клавиатуры для переноса имен в метки</span>
-                    </div>
-                </button>
+                <div class="mode-grid">
+                    <button class="mode-card mode-card--var rise" style="--d: 3" onclick="initVarBatch()">
+                        <span class="mode-card__icon">🔄</span>
+                        <span class="mode-card__title">Пакетная сборка переменных</span>
+                        <span class="mode-card__desc">Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity.</span>
+                        <span class="mode-card__go">Запустить &#8594;</span>
+                    </button>
 
-                <button class="option-card option-card--alt" onclick="initVarBatchPremade()" style="margin-top: 0px; background: rgba(47, 182, 115, 0.1); border-color: var(--accent-good);">
-                    <span class="option-icon" style="color: var(--accent-good);">📂</span>
-                    <div>
-                        <span class="option-title" style="color: var(--accent-good);">4. Готовая папка с переменными</span>
-                        <span class="option-desc">Загрузить уже рассортированные суммы с диска</span>
-                    </div>
-                </button>
+                    <button class="mode-card mode-card--good rise" style="--d: 4" onclick="initVarBatchPremade()">
+                        <span class="mode-card__icon">📂</span>
+                        <span class="mode-card__title">Готовая папка с переменными</span>
+                        <span class="mode-card__desc">Загрузить уже рассортированные суммы с диска вместе с файлами start.wav и end.wav.</span>
+                        <span class="mode-card__go">Выбрать папку &#8594;</span>
+                    </button>
+                </div>
 
-                <!-- НОВАЯ УТИЛИТА: Очистка названий файлов -->
-                <button class="option-card option-card--alt" onclick="stripFilenames()" style="margin-top: 10px; background: rgba(139, 108, 224, 0.1); border-color: var(--accent-mode);">
-                    <span class="option-icon" style="color: var(--accent-mode);">🔤</span>
-                    <div>
-                        <span class="option-title" style="color: var(--accent-mode);">5. Очистить названия файлов</span>
-                        <span class="option-desc">Удалить слова (миллион, тысяч), оставив только цифры</span>
-                    </div>
-                </button>
+                <div class="mode-options rise" style="--d: 5">
+                    <span class="mode-options__label">Параметры режима</span>
 
-                <!-- НОВАЯ УТИЛИТА: Массовая нормализация -->
-                <button class="option-card option-card--alt" onclick="startBatchNormalization()" style="margin-top: 10px; background: rgba(43, 192, 207, 0.1); border-color: var(--accent-info);">
-                    <span class="option-icon" style="color: var(--accent-info);">🔊</span>
-                    <div>
-                        <span class="option-title" style="color: var(--accent-info);">6. Массовая нормализация</span>
-                        <span class="option-desc">Подогнать громкость всех файлов в папке под эталон</span>
-                    </div>
-                </button>
+                    <label class="opt-chip">
+                        <input type="checkbox" id="simpleExportCheck">
+                        <span class="opt-chip__box" aria-hidden="true"></span>
+                        <span class="opt-chip__text">
+                            Простой экспорт
+                            <small>без start/end и подгонки</small>
+                        </span>
+                    </label>
 
-            </div>
-            <div id="progressContainer" class="progress-panel">
-                <div id="progressText" style="color: var(--accent-good); font-size:12px; font-weight:bold; margin-bottom:8px;">Анализ...</div>
-                <progress id="progressBar" max="100"></progress>
-            </div>
+                    <label class="opt-chip">
+                        <input type="checkbox" id="sortByNameCheck">
+                        <span class="opt-chip__box" aria-hidden="true"></span>
+                        <span class="opt-chip__text">
+                            Сортировка по цифрам
+                            <small>названия клипов и метки</small>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="section-label section-label--spaced"><span>Утилиты</span></div>
+
+                <div class="util-grid">
+                    <button class="util-tile util-tile--mode rise" style="--d: 6" onclick="stripFilenames()">
+                        <span class="util-tile__icon">🔤</span>
+                        <span class="util-tile__title">Очистить названия файлов</span>
+                        <span class="util-tile__desc">Убрать слова «миллион», «тысяч» — оставить цифры</span>
+                    </button>
+
+                    <button class="util-tile util-tile--info rise" style="--d: 7" onclick="startBatchNormalization()">
+                        <span class="util-tile__icon">🔊</span>
+                        <span class="util-tile__title">Массовая нормализация</span>
+                        <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
+                    </button>
+                </div>
+
+                <div class="info-panel info-panel--flow rise" style="--d: 8">
+                    <div class="info-panel__title">Порядок работы</div>
+                    <ol class="flow-steps">
+                        <li>
+                            <span class="flow-steps__num">1</span>
+                            <span class="flow-steps__title">Нарезка</span>
+                            <span class="flow-steps__desc">Программа режет длинный WAV по паузам на отдельные дубли.</span>
+                        </li>
+                        <li>
+                            <span class="flow-steps__num">2</span>
+                            <span class="flow-steps__title">Отбор</span>
+                            <span class="flow-steps__desc">Клавиши Z, C и X раскладывают дубли по папкам.</span>
+                        </li>
+                        <li>
+                            <span class="flow-steps__num">3</span>
+                            <span class="flow-steps__title">Монтаж</span>
+                            <span class="flow-steps__desc">До пяти частей склеиваются в один файл через Audacity.</span>
+                        </li>
+                        <li>
+                            <span class="flow-steps__num">4</span>
+                            <span class="flow-steps__title">Сдача</span>
+                            <span class="flow-steps__desc">Готовое уходит в «Проверенные» под именем из Excel.</span>
+                        </li>
+                    </ol>
+                </div>
+            </section>
+
         </div>
+
+        <footer class="setup-footer rise" style="--d: 8">
+            <span class="setup-footer__label">Горячие клавиши</span>
+            <div class="hotkey-list">
+                <span class="hotkey"><kbd>Space</kbd> Воспроизвести</span>
+                <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
+                <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
+                <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
+                <span class="hotkey"><kbd>Z</kbd> В Good</span>
+                <span class="hotkey"><kbd>C</kbd> В переменные</span>
+                <span class="hotkey"><kbd>X</kbd> В мусор</span>
+                <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
+                <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
+                <span class="hotkey"><kbd>F</kbd> Поиск</span>
+                <span class="hotkey"><kbd>Esc</kbd> Основной режим</span>
+            </div>
+        </footer>
     </div>
 
     <div id="stage2-workspace" class="stage stage-workspace" style="display: none;">
         <header class="workspace-header">
 
-            <div style="display: flex; gap: 10px;">
-                <button class="btn-ghost" onclick="showMenu()">&#8592; Главное меню</button>
-                <button class="btn-ghost" style="color: var(--accent-var); border-color: rgba(226, 172, 63, 0.3);" onclick="runProjectAudit()">🔍 Аудит проекта</button>
-                <button class="btn-ghost" style="color: var(--accent-info); border-color: rgba(47, 182, 196, 0.3);" onclick="openSearch()">🔍 Поиск <kbd>F</kbd></button>
+            <div class="header-actions">
+                <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
+                <button class="btn-ghost btn-ghost--var" onclick="runProjectAudit()">Аудит проекта</button>
+                <button class="btn-ghost btn-ghost--info" onclick="openSearch()">Поиск <kbd>F</kbd></button>
             </div>
 
             <div class="stat-row">
                 <span class="stat-good">Готово: <span id="statGood">0</span> / <span id="statTotal">0</span></span>
 
-                <!-- НОВЫЙ СЧЕТЧИК ПРОВЕРЕННЫХ -->
-                <span style="color: var(--accent-primary); margin-left: 5px;">Проверено: <span id="statChecked">0</span></span>
+                <span class="stat-checked">Проверено: <span id="statChecked">0</span></span>
 
-                <span class="stat-var">Var: <span id="statVar">0</span></span>
-                <button class="btn-ghost btn-alert" style="padding: 4px 8px; margin-left: 5px; font-size: 11.5px;" onclick="toggleMissingPanel()">Осталось: <span id="statMissing">0</span></button>
+                <span class="stat-var">Переменные: <span id="statVar">0</span></span>
+                <button class="btn-ghost btn-alert btn-ghost--compact" onclick="toggleMissingPanel()">Осталось: <span id="statMissing">0</span></button>
             </div>
 
             <div class="mode-switch">
-                <button class="chip" onclick="loadChecked()">Провер.</button>
-                <button class="chip" onclick="loadVariables()">Var</button>
-                <button class="chip chip-mode--active" onclick="loadMainMode()">Main <kbd>Esc</kbd></button>
+                <button class="chip" onclick="loadChecked()">Проверенные</button>
+                <button class="chip" onclick="loadVariables()">Переменные</button>
+                <button class="chip chip-mode--active" onclick="loadMainMode()">Основной <kbd>Esc</kbd></button>
             </div>
         </header>
 
         <div id="missingPanel" class="missing-panel" style="display: none;">
             <div class="missing-header">
-                <h3>Недостающие записи (Еще не готовы)</h3>
-                <button class="btn-ghost" onclick="toggleMissingPanel()">&#10006; Назад к дублям</button>
+                <h3>Недостающие записи</h3>
+                <button class="btn-ghost" onclick="toggleMissingPanel()">&#10006;&nbsp; Назад к дублям</button>
             </div>
             <div id="missingList" class="missing-list">
                 <!-- Сюда JS загрузит список -->
@@ -262,29 +400,28 @@
                 <section class="screen">
                     <div class="screen-content">
                         <!-- НОВАЯ ПЛАШКА -->
-                        <div id="checkedBadge" style="display: none; position: absolute; top: -10px; left: 0; background: var(--accent-good); color: #fff; padding: 4px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: bold; letter-spacing: 0.5px; z-index: 10;">✓ ПРОВЕРЕНО
-                        </div>
+                        <div id="checkedBadge" class="badge-checked" style="display: none;">Проверено</div>
                         <button id="btnDeletePhrase" class="btn-delete-phrase" title="Зажмите для удаления фразы из списка"
                                 onmousedown="startPhraseDeleteHold()" onmouseup="stopPhraseDeleteHold()" onmouseleave="stopPhraseDeleteHold()">
                             &times;
                         </button>
 
-                        <div style="position: relative;">
-                            <div class="hero-phrase" id="phraseText" style="user-select: text; cursor: pointer;" onclick="copyRawText(this.innerText)">Загрузите Excel</div>
-                            <div style="font-size: 10px; color: var(--text-dim); margin-top: 5px; pointer-events: none;">Кликните по тексту для копирования</div>
+                        <div class="phrase-block">
+                            <div class="hero-phrase copyable" id="phraseText" onclick="copyRawText(this.innerText)">Загрузите Excel</div>
+                            <div class="hint-copy">Кликните по тексту, чтобы скопировать</div>
                         </div>
 
-                        <div id="customFileName" class="save-name" style="user-select: text; cursor: pointer;" onclick="copyRawText(this.dataset.rawname)"></div>
+                        <div id="customFileName" class="save-name copyable" onclick="copyRawText(this.dataset.rawname)"></div>
 
-                        <!-- Индикатор совпадения имен -->
-                        <div id="nameMatchIndicator" style="margin-top: 15px; font-size: 13px; font-weight: 600; padding: 8px; border-radius: var(--radius-sm); display: inline-block;"></div>
+                        <!-- Индикатор совпадения имён -->
+                        <div id="nameMatchIndicator" class="match-indicator"></div>
                     </div>
                 </section>
 
                 <section class="chunk-nav">
                     <button class="btn-nav" onclick="navChunk(-1)">&#9664; <kbd>A</kbd></button>
                     <div class="chunk-display">
-                        <div id="chunkCounter" style="font-size:11px; color:#5c6270; margin-bottom:5px;">Дубль: 0 / 0</div>
+                        <div id="chunkCounter" class="chunk-counter">Дубль: 0 / 0</div>
                         <div id="chunkName" class="chunk-name">Загрузите аудио</div>
                     </div>
                     <button class="btn-nav" onclick="navChunk(1)"><kbd>D</kbd> &#9654;</button>
@@ -295,7 +432,7 @@
 
             <div class="panel-column">
                 <section class="merge-panel">
-                    <h4 style="margin:0 0 15px; font-size:13px; color:#9096a3;">Монтажный стол (До 5 частей)</h4>
+                    <h4 class="panel-title">Монтажный стол — до 5 частей</h4>
                     <div class="merge-parts-row">
                         <div class="merge-part-box" id="boxPart1">
                             <div class="btn-remove-part" onclick="clearPart(1)">&times;</div>
@@ -335,35 +472,32 @@
                     </div>
                 </section>
 
-                <section class="var-mix-panel" id="varMixPanel" style="display:none; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-panel); margin-bottom: 15px;">
-                    <h4 style="margin:0 0 15px; font-size:13px; color: var(--accent-var);">Редактор переменных (Сценарии)</h4>
+                <section class="var-mix-panel" id="varMixPanel" style="display:none;">
+                    <h4 class="panel-title panel-title--var">Редактор переменных</h4>
 
-                    <!-- НОВОВВЕДЕНИЕ: Галочка для перемещения переменной -->
-                    <label class="silence-toggle" style="justify-content: flex-start; margin-bottom: 15px; color: var(--text);">
-                        <input type="checkbox" id="varAtStart"> Вставить переменную ПЕРЕД первой фразой
+                    <label class="silence-toggle silence-toggle--left">
+                        <input type="checkbox" id="varAtStart"> <span>Вставить переменную перед первой фразой</span>
                     </label>
 
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <div class="var-slots">
                         <!-- Слот 1: Дата -->
-                        <div style="display: flex; gap: 8px; align-items: stretch;">
-                            <button class="btn-ghost" style="flex: 1; text-align: left; padding: 12px; font-size: 13px;" onclick="loadVarFile('date')" id="btnVarDateLoad">📅 Дата: Кликните для загрузки</button>
-                            <button class="btn-step btn-step--var" style="width: 110px; padding: 12px;" onclick="mixWithVar('date')" id="btnVarDateMix" disabled>▶ Собрать</button>
+                        <div class="var-slot">
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('date')" id="btnVarDateLoad">📅 Дата: кликните для загрузки</button>
+                            <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('date')" id="btnVarDateMix" disabled>Собрать</button>
                         </div>
                         <!-- Слот 2: Имя -->
-                        <div style="display: flex; gap: 8px; align-items: stretch;">
-                            <button class="btn-ghost" style="flex: 1; text-align: left; padding: 12px; font-size: 13px;" onclick="loadVarFile('name')" id="btnVarNameLoad">👤 Имя: Кликните для загрузки</button>
-                            <button class="btn-step btn-step--var" style="width: 110px; padding: 12px;" onclick="mixWithVar('name')" id="btnVarNameMix" disabled>▶ Собрать</button>
+                        <div class="var-slot">
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('name')" id="btnVarNameLoad">👤 Имя: кликните для загрузки</button>
+                            <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('name')" id="btnVarNameMix" disabled>Собрать</button>
                         </div>
                         <!-- Слот 3: Сумма -->
-                        <div style="display: flex; gap: 8px; align-items: stretch;">
-                            <button class="btn-ghost" style="flex: 1; text-align: left; padding: 12px; font-size: 13px;" onclick="loadVarFile('amount')" id="btnVarAmountLoad">💰 Сумма: Кликните для загрузки</button>
-                            <button class="btn-step btn-step--var" style="width: 110px; padding: 12px;" onclick="mixWithVar('amount')" id="btnVarAmountMix" disabled>▶ Собрать</button>
+                        <div class="var-slot">
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('amount')" id="btnVarAmountLoad">💰 Сумма: кликните для загрузки</button>
+                            <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('amount')" id="btnVarAmountMix" disabled>Собрать</button>
                         </div>
                     </div>
 
-                    <div style="margin-top: 20px;">
-                        <button class="btn-step btn-step--confirm" style="width: 100%; padding: 16px;" onclick="saveSeparateParts()">💾 Экспортировать фразы в Проверенные (Без переменных)</button>
-                    </div>
+                    <button class="btn-step btn-step--confirm var-export" onclick="saveSeparateParts()">Экспортировать фразы в «Проверенные» (без переменных)</button>
                 </section>
 
                 <section class="action-panel">
@@ -376,36 +510,30 @@
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">
-                        <!-- Кнопки переключения категорий -->
-                        <div style="display: flex; gap: 10px; margin-bottom: 5px;">
-                            <button class="btn-action" style="flex: 1; background: rgba(226, 172, 63, 0.1); border: 1px solid var(--accent-var); color: var(--text); padding: 8px; font-size: 11.5px; text-transform: uppercase;" onclick="navCategory(-1)">⏪ Категория</button>
-                            <button class="btn-action" style="flex: 1; background: rgba(226, 172, 63, 0.1); border: 1px solid var(--accent-var); color: var(--text); padding: 8px; font-size: 11.5px; text-transform: uppercase;" onclick="navCategory(1)">Категория ⏩</button>
+                        <!-- Переключение категорий -->
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--var btn-tile--sub" onclick="navCategory(-1)">&#9664;&nbsp; Категория</button>
+                            <button class="btn-tile btn-tile--var btn-tile--sub" onclick="navCategory(1)">Категория &nbsp;&#9654;</button>
                         </div>
 
                         <!-- Навигация по дублям -->
-                        <div style="display: flex; gap: 10px; margin-bottom: 5px;">
-                            <button class="btn-action" style="flex: 1; background: var(--panel-raised); border: 1px solid var(--border); color: var(--text); padding: 12px; font-size: 13px;" onclick="navChunk(-1)">◀ Пред. (A)</button>
-                            <button class="btn-action" style="flex: 1; background: var(--panel-raised); border: 1px solid var(--border); color: var(--text); padding: 12px; font-size: 13px;" onclick="navChunk(1)">След. (D) ▶</button>
+                        <div class="tile-row">
+                            <button class="btn-tile" onclick="navChunk(-1)">&#9664;&nbsp; Пред. <kbd>A</kbd></button>
+                            <button class="btn-tile" onclick="navChunk(1)">След. <kbd>D</kbd> &nbsp;&#9654;</button>
                         </div>
 
-                        <!-- Кнопка загрузки Проверенного -->
-                        <button class="btn-action" style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); color: var(--accent-good); padding: 12px; font-size: 13px; margin-bottom: 5px; justify-content: center;" onclick="loadCheckedToAudacity()">
-                            ⬇️ Выгрузить в Audacity из Проверенных (R)
-                        </button>
-
-                        <!-- НОВОВВЕДЕНИЕ: Три кнопки конвейера -->
-                        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-                            <button class="btn-action" style="flex: 1; background: rgba(77, 149, 234, 0.1); border: 1px solid var(--accent-primary); color: var(--accent-primary); padding: 14px; font-size: 13px; justify-content: center;" onclick="sendToAudacity()">
-                                ✂️ В Audacity (C)
-                            </button>
+                        <!-- Загрузка проверенного дубля -->
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--good" onclick="loadCheckedToAudacity()">Выгрузить из «Проверенных» <kbd>R</kbd></button>
                         </div>
-                        <div style="display: flex; gap: 8px;">
-                            <button class="btn-action" style="flex: 1; background: var(--accent-mode); color: #fff; padding: 14px; font-size: 11.5px; justify-content: center; text-align: center;" onclick="saveVarBatch(true)">
-                                🔊 Норм. чанки
-                            </button>
-                            <button class="btn-action" style="flex: 1; background: var(--accent-var); color: #20180a; padding: 14px; font-size: 13px; justify-content: center;" onclick="saveVarBatch(false)">
-                                <span>💾 Срезать (Z)</span>
-                            </button>
+
+                        <!-- Основной конвейер -->
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
+                        </div>
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--solid-mode btn-tile--tall" onclick="saveVarBatch(true)">Нормализовать</button>
+                            <button class="btn-tile btn-tile--solid-var btn-tile--tall" onclick="saveVarBatch(false)">Срезать <kbd>Z</kbd></button>
                         </div>
                     </div>
                 </section>
