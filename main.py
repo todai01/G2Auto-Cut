@@ -29,7 +29,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
 
         self.raw_audio_full = None
         self.current_mode = 'Chunks'
-        self.state_memory = {'Chunks': [0, 0], 'Good': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
+        self.state_memory = {'Chunks': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
 
         self.excel_name = ""
         self.project_name = ""
@@ -128,8 +128,8 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         # Ищем сохраненный файл по приоритетам (Проверенные -> Good -> Переменные)
         if self.work_dir:
             checked_path = os.path.join(self.work_dir, 'Проверенные', check_name)
-            good_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, 'Good'), check_name)
-            var_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, 'Переменные'), check_name)
+            good_path = os.path.join(self.work_dir, 'Good', check_name)
+            var_path = os.path.join(self.work_dir, 'Переменные', check_name)
 
             # Если файл есть в Проверенных - играем его!
             if os.path.exists(checked_path):
@@ -173,6 +173,14 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         self.player.stop()
         return {"playing": False, "duration": 0}
 
+    @staticmethod
+    def _count_audio(folder):
+        """Сколько аудиофайлов лежит в папке (вместе с подпапками)."""
+        if not folder or not os.path.exists(folder):
+            return 0
+        return sum(len([f for f in files if f.lower().endswith(('.wav', '.mp3'))])
+                   for _, _, files in os.walk(folder))
+
     def get_ui_state(self):
         """Сборка состояния приложения для фронтенда (JS)"""
 
@@ -181,6 +189,10 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         if getattr(self, 'current_mode', '') == 'VarBatch':
             return self._get_var_batch_ui_state()
 
+        # «Готово» — это файлы в «Проверенных». Раньше считалась папка Good,
+        # которую основное действие никогда не заполняло, и счётчик вечно
+        # показывал 0 из N. Good доглядываем ради старых проектов.
+        done_dir = os.path.join(self.work_dir, 'Проверенные') if self.work_dir else ""
         good_dir = os.path.join(self.work_dir, 'Good') if self.work_dir else ""
         var_dir = os.path.join(self.work_dir, 'Переменные') if self.work_dir else ""
 
@@ -196,10 +208,8 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             "excel_loaded": bool(self.phrases_data),
             "stats": {
                 "total": len(self.phrases_data),
-                "good": sum(len([f for f in files if f.endswith(('.wav', '.mp3'))]) for r, d, files in
-                            os.walk(good_dir)) if os.path.exists(good_dir) else 0,
-                "var": sum(len([f for f in files if f.endswith(('.wav', '.mp3'))]) for r, d, files in
-                           os.walk(var_dir)) if os.path.exists(var_dir) else 0,
+                "good": self._count_audio(done_dir) + self._count_audio(good_dir),
+                "var": self._count_audio(var_dir),
                 "checked": sum(1 for p in self.phrases_data if p.get("checked", False)),
                 "excel_name": getattr(self, 'excel_name', ""),
                 "project_name": getattr(self, 'project_name', "")
@@ -239,8 +249,8 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             check_name = f"{state['custom_filename']}.wav" if state['custom_filename'] and not state[
                 'custom_filename'].lower().endswith('.wav') else (state['custom_filename'] or current_chunk)
 
-            good_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, 'Good'), check_name)
-            var_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, 'Переменные'), check_name)
+            good_path = os.path.join(self.work_dir, 'Good', check_name)
+            var_path = os.path.join(self.work_dir, 'Переменные', check_name)
             checked_path = os.path.join(self.work_dir, 'Проверенные', check_name)
 
             state["completed_filepath"] = None

@@ -452,9 +452,8 @@
                 <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
                 <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
                 <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
-                <span class="hotkey"><kbd>Z</kbd> В Good</span>
+                <span class="hotkey"><kbd>Z</kbd> В проверенные</span>
                 <span class="hotkey"><kbd>C</kbd> В переменные</span>
-                <span class="hotkey"><kbd>X</kbd> В мусор</span>
                 <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
                 <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
                 <span class="hotkey"><kbd>F</kbd> Поиск</span>
@@ -475,7 +474,7 @@
             <div class="stat-row">
                 <span class="stat-good">Готово: <span id="statGood">0</span> / <span id="statTotal">0</span></span>
 
-                <span class="stat-checked">Проверено: <span id="statChecked">0</span></span>
+                <span class="stat-checked">Отмечено: <span id="statChecked">0</span></span>
 
                 <span class="stat-var">Переменные: <span id="statVar">0</span></span>
                 <button class="btn-ghost btn-alert btn-ghost--compact" onclick="toggleMissingPanel()">Осталось: <span id="statMissing">0</span></button>
@@ -491,7 +490,6 @@
         <!-- Общий прогресс проекта -->
         <div class="project-progress" id="projectProgress">
             <div class="project-progress__bar">
-                <span class="project-progress__fill project-progress__fill--checked" id="barChecked"></span>
                 <span class="project-progress__fill project-progress__fill--good" id="barGood"></span>
                 <span class="project-progress__fill project-progress__fill--var" id="barVar"></span>
             </div>
@@ -556,9 +554,7 @@
                         <span class="strip-head__title">Лента дублей</span>
                         <span class="strip-legend">
                             <span class="strip-legend__item"><i class="strip-dot strip-dot--checked"></i>Проверенные</span>
-                            <span class="strip-legend__item"><i class="strip-dot strip-dot--good"></i>Good</span>
                             <span class="strip-legend__item"><i class="strip-dot strip-dot--var"></i>Переменные</span>
-                            <span class="strip-legend__item"><i class="strip-dot strip-dot--trash"></i>Мусор</span>
                             <span class="strip-legend__item"><i class="strip-dot strip-dot--none"></i>Не разобран</span>
                         </span>
                         <span class="strip-head__range" id="stripRange"></span>
@@ -605,7 +601,7 @@
                                 onmouseup="releaseHold(1, 'btnPrepMerge', () => markPart(1))"
                                 onmouseleave="releaseHold(1, 'btnPrepMerge', () => {})">1. Выгрузить</button>
 
-                        <button class="btn-step btn-step--confirm" id="btnSaveMerge" onclick="handleDoubleTap('btnSaveMerge', saveMerge, '2. В Good')">2. В Good</button>
+                        <button class="btn-step btn-step--confirm" id="btnSaveMerge" onclick="handleDoubleTap('btnSaveMerge', saveMerge, '2. В проверенные')">2. В проверенные</button>
 
                         <button class="btn-step btn-step--var" id="btnSaveMergeVar" onclick="handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные')">3. В переменные</button>
                     </div>
@@ -645,7 +641,7 @@
                     <div id="standardActions" class="action-col">
                         <button class="btn-action btn-action--good" onclick="processAction('good')"><span>Проверено</span><kbd>Z</kbd></button>
                         <button class="btn-action btn-action--var" onclick="processAction('variable')"><span>В переменные</span><kbd>C</kbd></button>
-                        <button class="btn-action btn-action--trash" onclick="processAction('trash')"><span>Мусор</span><kbd>X</kbd></button>
+                        <div class="action-note">Ненужный дубль просто пролистайте — <kbd>D</kbd></div>
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">
@@ -671,8 +667,8 @@
                             <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--solid-mode btn-tile--tall" onclick="saveVarBatch(true)">Нормализовать</button>
-                            <button class="btn-tile btn-tile--solid-var btn-tile--tall" onclick="saveVarBatch(false)">Срезать <kbd>Z</kbd></button>
+                            <button class="btn-tile btn-tile--mode btn-tile--tall" onclick="saveVarBatch(true)">Нормализовать</button>
+                            <button class="btn-tile btn-tile--var btn-tile--tall" onclick="saveVarBatch(false)">Срезать <kbd>Z</kbd></button>
                         </div>
                     </div>
                 </section>

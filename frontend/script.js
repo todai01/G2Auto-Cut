@@ -236,19 +236,17 @@ let isProcessing = false;
             }
             bar.style.display = 'flex';
 
-            let checked = Math.min(stats.checked || 0, total);
+            // На полосе только реально существующие файлы: готовые и переменные.
+            // Отметка клавишей W — это пометка фразы, а не файл на диске,
+            // мешать её сюда значило бы рисовать прогресс, которого нет.
             let good = Math.min(stats.good || 0, total);
-            let vars = Math.min(stats.var || 0, total);
-
-            // Проверенные — это подмножество готовых, поэтому показываем их отдельным слоем
-            let goodRest = Math.max(0, good - checked);
+            let vars = Math.min(stats.var || 0, Math.max(0, total - good));
             let pct = v => (v / total * 100).toFixed(2) + '%';
 
-            document.getElementById('barChecked').style.width = pct(checked);
-            document.getElementById('barGood').style.width = pct(goodRest);
-            document.getElementById('barVar').style.width = pct(Math.min(vars, total - checked - goodRest));
+            document.getElementById('barGood').style.width = pct(good);
+            document.getElementById('barVar').style.width = pct(vars);
 
-            let done = Math.min(total, Math.max(good, checked) + vars);
+            let done = Math.min(total, good + vars);
             document.getElementById('progressLabel').innerText =
                 `${Math.round(done / total * 100)}% · осталось ${total - done}`;
         }
@@ -256,9 +254,7 @@ let isProcessing = false;
         // Лента дублей: соседние дубли с их статусом, клик — переход
         const STRIP_TITLES = {
             checked: 'В «Проверенных»',
-            good:    'В «Good»',
             var:     'В «Переменных»',
-            trash:   'В мусоре',
             none:    'Ещё не разобран'
         };
 
@@ -1511,7 +1507,7 @@ let isProcessing = false;
 
             if (currentState && currentState.mode === 'VarBatch') {
                 // Добавили KeyR в разрешенные
-                if (['KeyC', 'KeyX', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
+                if (['KeyC', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
                     e.preventDefault();
                     showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Здесь эта кнопка отключена. Для сохранения и перехода жмите <b>Z</b>, для навигации аудио — <b>A/D</b>, для навигации текста — <b>Q/E</b>, выгрузить готовое — <b>R</b>.');
                     return;
@@ -1542,7 +1538,6 @@ let isProcessing = false;
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); processAction('good'); }
             else if (e.code === 'KeyC') { e.preventDefault(); processAction('variable'); }
-            else if (e.code === 'KeyX') { e.preventDefault(); processAction('trash'); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

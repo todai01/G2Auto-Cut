@@ -343,15 +343,19 @@ button[disabled]:active{ transform: none; }
 
 .merge-actions{ display:flex; gap:10px; }
 .btn-step{
-    flex:1; background: var(--accent-mode); color:#fff; border:none; padding: 15px; border-radius: var(--radius-md);
-    font-size: 13px; font-weight: 700; cursor:pointer; position: relative; overflow: hidden;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 12px rgba(146,112,234,0.25);
+    flex:1; padding: 15px; border-radius: var(--radius-md);
+    font-size: 13px; font-weight: 650; cursor:pointer; position: relative; overflow: hidden;
+    background: var(--tint-mode); border: 1px solid rgba(146,112,234,0.45); color: var(--accent-mode);
+    box-shadow: none;
 }
-.btn-step--confirm{ background: var(--accent-good); box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 12px rgba(47,191,125,0.25); }
-.btn-step::after { content: ""; position: absolute; top: 0; left: 0; bottom: 0; width: 0%; background: rgba(255, 255, 255, 0.25); transition: width 0s linear; }
+.btn-step:hover{ background: rgba(146,112,234,0.18); border-color: var(--accent-mode); }
+.btn-step--confirm{ background: var(--tint-good); border-color: rgba(47,191,125,0.45); color: var(--accent-good); }
+.btn-step--confirm:hover{ background: rgba(47,191,125,0.18); border-color: var(--accent-good); }
+.btn-step::after { content: ""; position: absolute; top: 0; left: 0; bottom: 0; width: 0%; background: rgba(255, 255, 255, 0.14); transition: width 0s linear; }
 .btn-step.holding::after { width: 100%; transition: width 0.6s linear; }
 .btn-step.executed { transform: scale(0.96); filter: brightness(1.2); transition: all 0.1s ease; }
-.btn-step--var { background: var(--accent-var); color: #221806; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 12px rgba(238,172,62,0.25); }
+.btn-step--var { background: var(--tint-var); border-color: rgba(238,172,62,0.45); color: var(--accent-var); }
+.btn-step--var:hover{ background: rgba(238,172,62,0.18); border-color: var(--accent-var); }
 
 .action-panel{
     position: relative; overflow: hidden;
@@ -370,14 +374,24 @@ button[disabled]:active{ transform: none; }
 
 .action-col{ display:flex; flex-direction: column; gap: 12px; }
 .btn-action{
-    width: 100%; border:none; color:#fff; padding: 19px 16px; border-radius: var(--radius-md);
-    font-size: 15px; font-weight: 700; cursor:pointer; display: flex; justify-content: space-between; align-items: center;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 4px 12px rgba(0,0,0,0.25);
+    width: 100%; padding: 18px 16px; border-radius: var(--radius-md);
+    font-size: var(--fs-lg); font-weight: 650; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
     letter-spacing: -0.01em;
+    background: var(--panel-raised); border: 1px solid var(--border); color: var(--text);
+    box-shadow: none;
 }
-.btn-action--good{ background: linear-gradient(180deg, #45cf8f, var(--accent-good)); }
-.btn-action--trash{ background: linear-gradient(180deg, #f37368, var(--accent-trash)); }
-.btn-action--var{ background: linear-gradient(180deg, #f4bc5e, var(--accent-var)); color:#241a05; }
+/* Спокойная заливка вместо неоновой: цвет подсказывает назначение,
+   но не бьёт по глазам при работе часами. */
+.btn-action--good{ background: var(--tint-good); border-color: rgba(47,191,125,0.45); color: var(--accent-good); }
+.btn-action--good:hover{ background: rgba(47,191,125,0.18); border-color: var(--accent-good); }
+.btn-action--var{ background: var(--tint-var); border-color: rgba(238,172,62,0.45); color: var(--accent-var); }
+.btn-action--var:hover{ background: rgba(238,172,62,0.18); border-color: var(--accent-var); }
+
+.action-note{
+    text-align: center; font-size: var(--fs-sm); color: var(--text-faint);
+    padding-top: var(--space-2);
+}
 
 .missing-panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -889,7 +903,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     border: 1px solid var(--border-soft); box-shadow: var(--shadow-screen);
 }
 .project-progress__fill{ height: 100%; width: 0; transition: width .35s var(--ease); }
-.project-progress__fill--checked{ background: linear-gradient(90deg, #5fb0f6, var(--accent-primary)); }
 .project-progress__fill--good{ background: linear-gradient(90deg, #45cf8f, var(--accent-good)); }
 .project-progress__fill--var{ background: linear-gradient(90deg, #f4bc5e, var(--accent-var)); }
 .project-progress__label{
@@ -937,9 +950,7 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     border: 1px solid transparent;
 }
 .strip-dot--checked{ background: var(--accent-primary); }
-.strip-dot--good{ background: var(--accent-good); }
 .strip-dot--var{ background: var(--accent-var); }
-.strip-dot--trash{ background: var(--accent-trash); }
 .strip-dot--none{ background: var(--screen); border-color: var(--border); }
 
 .strip-rail{
@@ -957,9 +968,7 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .strip-cell:hover{ filter: brightness(1.45); height: 85%; }
 
 .strip-cell--checked{ background: var(--accent-primary); }
-.strip-cell--good{ background: var(--accent-good); }
 .strip-cell--var{ background: var(--accent-var); }
-.strip-cell--trash{ background: var(--accent-trash); opacity: 0.55; }
 .strip-cell--none{ background: #262b33; }
 
 /* Текущий дубль во всю высоту и со светящейся рамкой */
@@ -1254,6 +1263,9 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 
 .btn-tile--primary{ background: var(--tint-primary); border-color: rgba(77,149,234,0.45); color: var(--accent-primary); }
 .btn-tile--primary:hover{ background: rgba(77,149,234,0.18); border-color: var(--accent-primary); }
+
+.btn-tile--mode{ background: var(--tint-mode); border-color: rgba(146,112,234,0.45); color: var(--accent-mode); }
+.btn-tile--mode:hover{ background: rgba(146,112,234,0.18); border-color: var(--accent-mode); }
 
 /* Сплошные кнопки — главные действия пакетного режима */
 .btn-tile--solid-mode{

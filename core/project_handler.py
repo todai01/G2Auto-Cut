@@ -186,9 +186,9 @@ class ProjectMixin:
         offset = self.phrase_index - self.chunk_index
 
         checked_dir = os.path.join(self.work_dir, 'Проверенные')
-        good_dir = os.path.join(self.work_dir, 'Good')
         var_dir = os.path.join(self.work_dir, 'Переменные')
-        trash_dir = os.path.join(self.work_dir, 'Trash')
+        # Good остаётся только ради проектов, начатых до отказа от двойного отбора
+        good_dir = os.path.join(self.work_dir, 'Good')
 
         items = []
         for i in range(start, end):
@@ -202,14 +202,11 @@ class ProjectMixin:
                     custom = str(custom)
                     name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
 
-            if os.path.exists(os.path.join(checked_dir, name)):
+            if os.path.exists(os.path.join(checked_dir, name)) or \
+                    os.path.exists(os.path.join(good_dir, name)):
                 status = 'checked'
-            elif os.path.exists(os.path.join(good_dir, name)):
-                status = 'good'
             elif os.path.exists(os.path.join(var_dir, name)):
                 status = 'var'
-            elif os.path.exists(os.path.join(trash_dir, chunk_file)):
-                status = 'trash'
             else:
                 status = 'none'
 
@@ -234,7 +231,7 @@ class ProjectMixin:
         self.project_name = os.path.basename(self.work_dir)
         chunks_dir = os.path.join(self.work_dir, 'Chunks')
 
-        for folder in ['Chunks', 'Good', 'Trash', 'Переменные', 'Проверенные']:
+        for folder in ['Chunks', 'Переменные', 'Проверенные']:
             os.makedirs(os.path.join(self.work_dir, folder), exist_ok=True)
 
         audio = AudioSegment.from_file(raw_filepath)
@@ -294,7 +291,7 @@ class ProjectMixin:
         # -----------------------------------------------------
 
         self.current_mode = 'Chunks'
-        self.state_memory = {'Chunks': [0, 0], 'Good': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
+        self.state_memory = {'Chunks': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
         return self._scan_and_load_folder(chunks_dir, 'Chunks')
 
     def load_chunks_folder(self):
@@ -360,7 +357,7 @@ class ProjectMixin:
         self.state_memory[self.current_mode] = [self.chunk_index, self.phrase_index]
         self.current_mode = mode_name
 
-        for sub in ['Good', 'Trash', 'Переменные', 'Проверенные']:
+        for sub in ['Переменные', 'Проверенные']:
             os.makedirs(os.path.join(self.work_dir, sub), exist_ok=True)
 
         timings = {}

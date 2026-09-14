@@ -243,7 +243,8 @@ class MontageMixin:
         if not save_name.lower().endswith('.wav'):
             save_name += '.wav'
 
-        folder_name = 'Переменные' if is_variable else 'Good'
+        # Одна конечная папка вместо двухступенчатого отбора Good -> Проверенные
+        folder_name = 'Переменные' if is_variable else 'Проверенные'
         target_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, folder_name), save_name)
         safe_path = os.path.abspath(target_path).replace('\\', '/')
 
@@ -280,10 +281,8 @@ class MontageMixin:
         source_path = item['filepath']
         chunk_name_no_ext = item['filename'].replace('.wav', '')
 
-        if action == 'trash':
-            shutil.copy(source_path, os.path.join(self.work_dir, 'Trash', item['filename']))
-            self.chunk_index += 1
-        elif action in ['good', 'variable']:
+        # Мусор не размечается: ненужный дубль просто пролистывается клавишей D
+        if action in ['good', 'variable']:
             self.audacity.send_command('SelectNone:')
             response = self.audacity.send_command('GetInfo: Type=Labels Format=JSON')
             start_sec, end_sec = None, None
