@@ -52,7 +52,7 @@ let isProcessing = false;
             // ПРИНУДИТЕЛЬНАЯ ОКРАСКА КНОПКИ
             let btnExcel = document.getElementById('btnLoadExcel');
             btnExcel.style.borderColor = 'var(--accent-good)';
-            btnExcel.style.background = 'rgba(47, 182, 115, 0.1)';
+            btnExcel.style.background = 'var(--tint-good)';
 
             let descExcel = document.getElementById('descExcel');
             let fileName = (state.stats && state.stats.excel_name) ? state.stats.excel_name : "Таблица загружена";
@@ -112,11 +112,9 @@ let isProcessing = false;
             if (windows && windows.length > 1) {
                 let listHtml = '';
                 windows.forEach(w => {
-                    listHtml += `<button class="option-card" style="padding: 12px; width: 100%; border-color: var(--border-soft);" onclick="selectAudacityProject(${w.hwnd})">
-                                    <span class="option-icon" style="color: var(--accent-var); width: 28px; height: 28px; font-size: 16px;">🎧</span>
-                                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                        <span class="option-title" style="font-size: 13px;">${w.title}</span>
-                                    </div>
+                    listHtml += `<button class="option-card project-option" onclick="selectAudacityProject(${w.hwnd})">
+                                    <span class="option-icon">🎧</span>
+                                    <span class="project-option__title">${w.title}</span>
                                  </button>`;
                 });
                 document.getElementById('projectList').innerHTML = listHtml;
@@ -538,7 +536,7 @@ let isProcessing = false;
                 btnLoad.innerText = `${getVarIcon(varType)} ${getVarName(varType)}: ${result.filename}`;
                 btnLoad.style.color = 'var(--text)';
                 btnLoad.style.borderColor = 'var(--accent-var)';
-                btnLoad.style.background = 'rgba(226, 172, 63, 0.1)';
+                btnLoad.style.background = 'var(--tint-var)';
 
                 btnMix.disabled = false;
             }
@@ -641,15 +639,20 @@ let isProcessing = false;
                     // Если файл готов (is_done), красим в зеленый, иначе - в желтый
                     let color = (state.is_done) ? "var(--accent-good)" : "var(--accent-var)";
 
-                    matchEl.innerHTML = `<span style="color: ${color};">✓ Сохранено в ${folderName}: ${excelName}.wav</span>`;
+                    let tint = (state.is_done) ? "var(--tint-good)" : "var(--tint-var)";
+
+                    matchEl.innerHTML = `<span style="color: ${color};">Сохранено в «${folderName}»: ${excelName}.wav</span>`;
                     matchEl.style.border = `1px solid ${color}`;
+                    matchEl.style.background = tint;
                 } else {
                     matchEl.innerHTML = `<span style="color: var(--text-dim);">Ожидает выгрузки: ${excelName}.wav</span>`;
                     matchEl.style.border = "1px solid var(--border)";
+                    matchEl.style.background = "var(--panel)";
                 }
             } else {
                 matchEl.innerHTML = "";
                 matchEl.style.border = "none";
+                matchEl.style.background = "transparent";
             }
 
             document.getElementById('phraseCounter').innerText = `Фраза: ${state.phrase_counter}`;
@@ -665,7 +668,7 @@ let isProcessing = false;
                 if (state.is_checked) {
                     btnCheck.style.color = 'var(--accent-good)';
                     btnCheck.style.borderColor = 'var(--accent-good)';
-                    btnCheck.style.background = 'rgba(47, 182, 115, 0.1)';
+                    btnCheck.style.background = 'var(--tint-good)';
                 } else {
                     btnCheck.style.color = 'var(--text-dim)';
                     btnCheck.style.borderColor = 'var(--border)';
@@ -699,7 +702,7 @@ let isProcessing = false;
                     btnExcel.classList.add('loaded');
                     // Принудительно красим кнопку в красивый зеленый цвет успеха
                     btnExcel.style.borderColor = 'var(--accent-good)';
-                    btnExcel.style.background = 'rgba(47, 182, 115, 0.1)';
+                    btnExcel.style.background = 'var(--tint-good)';
 
                     let descExcel = document.getElementById('descExcel');
                     // Добавляем галочку и делаем текст жирным и зеленым
@@ -775,7 +778,7 @@ let isProcessing = false;
                              </div>`;
                 });
 
-                if(missingList.length === 0) html = '<div style="text-align:center; color: var(--accent-good); padding: 20px;">Поздравляем! Все фразы готовы! 🎉</div>';
+                if(missingList.length === 0) html = '<div class="audit-ok">Все фразы готовы</div>';
                 document.getElementById('missingList').innerHTML = html;
             } else {
                 panel.style.display = 'none';
@@ -1006,7 +1009,7 @@ let isProcessing = false;
                 let el = document.getElementById('customAlertText');
                 if (el) {
                     // Используем HTML для форматирования текста (жирный шрифт, переносы)
-                    el.innerHTML = `<div style="font-size: 14px; line-height: 1.5; color: var(--text);">${message}</div>`;
+                    el.innerHTML = `<div class="alert-body">${message}</div>`;
                     document.getElementById('customAlertOverlay').style.display = 'flex';
                     window.customAlertCallback = resolve;
                 } else {
@@ -1032,19 +1035,8 @@ let isProcessing = false;
 
         function showToast(msg) {
             let toast = document.createElement('div');
+            toast.className = 'toast';
             toast.innerText = msg;
-            toast.style.position = 'fixed';
-            toast.style.bottom = '30px';
-            toast.style.left = '50%';
-            toast.style.transform = 'translateX(-50%)';
-            toast.style.background = 'var(--accent-good)';
-            toast.style.color = '#fff';
-            toast.style.padding = '10px 20px';
-            toast.style.borderRadius = '20px';
-            toast.style.fontSize = '14px';
-            toast.style.fontWeight = 'bold';
-            toast.style.zIndex = '9999';
-            toast.style.animation = 'fadeInAlert 0.2s ease, fadeInAlert 0.2s ease 2s reverse forwards';
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2200);
         }
@@ -1161,37 +1153,37 @@ let isProcessing = false;
 
             // Блок отсутствующих файлов
             if (res.missing_count > 0) {
-                detailsHtml += `<h4 style="color: var(--accent-trash); margin: 0 0 8px 0; font-size: 13px;">❌ Отсутствуют (${res.missing_count}):</h4>`;
+                detailsHtml += `<h4 class="audit-group-title audit-group-title--lost">Отсутствуют — ${res.missing_count}</h4>`;
                 window.lastAuditReportText += `❌ ОТСУТСТВУЮТ (${res.missing_count}):\n`;
 
                 res.missing.forEach(m => {
                     detailsHtml += `
-                    <div style="background: var(--panel); border: 1px solid var(--border-soft); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12px; user-select: text;">
-                        <span style="color: var(--accent-trash); font-family: var(--font-mono); font-weight: bold; user-select: text;">${m.filename}</span>
-                        <div style="color: var(--text-dim); margin-top: 4px; user-select: text;">Строка ${m.index}: ${m.text}</div>
+                    <div class="audit-row">
+                        <span class="audit-row__name audit-row__name--lost">${m.filename}</span>
+                        <div class="audit-row__meta">Строка ${m.index}: ${m.text}</div>
                     </div>`;
                     window.lastAuditReportText += `- ${m.filename} (Строка ${m.index}: ${m.text})\n`;
                 });
                 window.lastAuditReportText += `\n`;
             } else {
-                detailsHtml += `<div style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); padding: 10px; border-radius: var(--radius-sm); color: var(--accent-good); font-weight: bold; font-size: 13px; text-align: center; margin-bottom: 10px;">✅ Все файлы по списку Excel на месте!</div>`;
+                detailsHtml += `<div class="audit-ok">Все файлы по списку Excel на месте</div>`;
             }
 
             // Блок дубликатов
             if (res.duplicates_count > 0) {
-                detailsHtml += `<h4 style="color: var(--accent-var); margin: 15px 0 8px 0; font-size: 13px;">⚠️ Найдены дубликаты (${res.duplicates_count}):</h4>`;
+                detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Дубликаты — ${res.duplicates_count}</h4>`;
                 window.lastAuditReportText += `⚠️ ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
 
                 res.duplicates.forEach(d => {
                     detailsHtml += `
-                    <div style="background: var(--panel); border: 1px solid var(--border-soft); padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 12px; user-select: text;">
-                        <span style="color: var(--accent-var); font-family: var(--font-mono); font-weight: bold; user-select: text;">${d.filename}</span> (Найдено: ${d.count} шт.)
-                        <div style="color: var(--text-dim); margin-top: 4px; font-size: 10.5px; line-height: 1.4; user-select: text;">${d.paths.join('<br>')}</div>
+                    <div class="audit-row">
+                        <span class="audit-row__name audit-row__name--dups">${d.filename}</span> — найдено ${d.count} шт.
+                        <div class="audit-row__meta">${d.paths.join('<br>')}</div>
                     </div>`;
                     window.lastAuditReportText += `- ${d.filename} (Найдено: ${d.count} шт.)\n`;
                 });
             } else {
-                detailsHtml += `<div style="background: rgba(47, 182, 115, 0.1); border: 1px solid var(--accent-good); padding: 10px; border-radius: var(--radius-sm); color: var(--accent-good); font-weight: bold; font-size: 13px; text-align: center;">✅ Дубликатов не обнаружено!</div>`;
+                detailsHtml += `<div class="audit-ok">Дубликатов не обнаружено</div>`;
             }
 
             document.getElementById('auditDetails').innerHTML = detailsHtml;
