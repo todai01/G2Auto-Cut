@@ -100,6 +100,65 @@
         </div>
     </div>
 
+    <!-- Модальное окно: автоподбор настроек нарезки -->
+    <div id="autoTuneOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Автоподбор настроек нарезки</h3>
+                <button class="modal-close" onclick="closeAutoTune()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="tune-file" id="tuneFile"></div>
+
+            <div class="measure-grid">
+                <div class="measure-card">
+                    <div class="measure-card__label">Уровень фона</div>
+                    <div class="measure-card__value" id="tuneNoise">—</div>
+                    <div class="measure-card__note">Тишина между фразами</div>
+                </div>
+                <div class="measure-card">
+                    <div class="measure-card__label">Уровень речи</div>
+                    <div class="measure-card__value measure-card__value--speech" id="tuneSpeech">—</div>
+                    <div class="measure-card__note">Когда вы говорите</div>
+                </div>
+                <div class="measure-card measure-card--wide">
+                    <div class="measure-card__label">Запас между ними</div>
+                    <div class="measure-card__value measure-card__value--spread" id="tuneSpread">—</div>
+                    <div class="measure-card__note" id="tuneSpreadNote">Чем больше, тем надёжнее разрез</div>
+                </div>
+            </div>
+
+            <div class="tune-verdict" id="tuneVerdict"></div>
+
+            <div class="tune-fields">
+                <label class="field">
+                    <span class="field-label">Пауза, мс<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
+                    <input type="number" id="tunePause" class="search-input" min="50" max="3000" step="10" oninput="scheduleTunePredict()">
+                </label>
+                <label class="field">
+                    <span class="field-label">Чувствительность, дБ<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
+                    <input type="number" id="tuneSens" class="search-input" min="-80" max="-10" step="1" oninput="scheduleTunePredict()">
+                </label>
+                <label class="field">
+                    <span class="field-label">Запас, мс<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
+                    <input type="number" id="tunePad" class="search-input" min="0" max="1000" step="10">
+                </label>
+            </div>
+
+            <div class="tune-result" id="tuneResult"></div>
+
+            <div class="tune-presets">
+                <span class="tune-presets__label">Быстро попробовать</span>
+                <div class="tune-presets__row" id="tunePresets"></div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="restoreTuneSuggestion()">Вернуть рекомендацию</button>
+                <button class="custom-alert-btn" onclick="startCut()">Нарезать</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модальное окно: ручной ввод настроек нарезки -->
     <div id="manualOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">

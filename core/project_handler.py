@@ -1,21 +1,181 @@
 import os
+import math
 import time
 import webview
 import pyautogui
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
+try:
+    import audioop  # быстрый расчёт громкости; удалён из Python 3.13
+except ImportError:
+    audioop = None
+
+# Длина окна, которым мы замеряем громкость записи
+FRAME_MS = 20
+
+# Варианты длины паузы, которые перебирает автоподбор
+PAUSE_CANDIDATES = [120, 150, 200, 250, 300, 400, 500, 650, 800, 1000]
+
 
 class ProjectMixin:
     """Модуль управления файлами проекта, нарезкой аудио и загрузкой папок."""
 
-    def load_raw_audio(self, min_silence, silence_thresh, keep_silence):
+    # ==================================================================
+    #  АВТОПОДБОР НАСТРОЕК НАРЕЗКИ
+    # ==================================================================
+
+    def pick_raw_audio(self):
+        """Шаг 1: пользователь выбирает файл. Тяжёлый анализ идёт отдельно,
+        чтобы интерфейс успел показать полосу прогресса."""
         file_types = ('Audio Files (*.wav)', 'All files (*.*)')
         filename = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
         if not filename:
-            return self.get_ui_state()
+            return {"error": "cancel"}
 
-        raw_filepath = filename[0]
+        self.pending_raw_path = filename[0]
+        self.pending_levels = None
+        return {"name": os.path.basename(filename[0])}
+
+    def _frame_levels(self, audio):
+        """Громкость записи по коротким окнам, в дБ. Это основа всех замеров."""
+        mono = audio.set_channels(1)
+        samples_per_frame = max(1, int(mono.frame_rate * FRAME_MS / 1000))
+        floor_db = -100.0
+
+        if audioop is not None:
+            width = mono.sample_width
+            data = mono.raw_data
+            chunk_bytes = samples_per_frame * width
+            max_amp = float(mono.max_possible_amplitude)
+            levels = []
+            for i in range(0, len(data) - chunk_bytes + 1, chunk_bytes):
+                rms = audioop.rms(data[i:i + chunk_bytes], width)
+                levels.append(20 * math.log10(rms / max_amp) if rms > 0 else floor_db)
+            return levels
+
+        # Запасной путь, если audioop недоступен: медленнее, но работает везде
+        levels = []
+        for i in range(0, len(mono), FRAME_MS):
+            d = mono[i:i + FRAME_MS].dBFS
+            levels.append(floor_db if d == float('-inf') or d != d else d)
+        return levels
+
+    @staticmethod
+    def _count_ranges(levels, thresh, min_silence_ms):
+        """Сколько кусков получится при таких настройках. Быстрая оценка по окнам."""
+        min_frames = max(1, int(round(min_silence_ms / FRAME_MS)))
+        count = 0
+        in_speech = False
+        silence_run = 0
+        for lv in levels:
+            if lv < thresh:
+                silence_run += 1
+                if in_speech and silence_run >= min_frames:
+                    in_speech = False
+            else:
+                if not in_speech:
+                    count += 1
+                    in_speech = True
+                silence_run = 0
+        return count
+
+    @staticmethod
+    def _percentile(sorted_values, share):
+        if not sorted_values:
+            return -60.0
+        idx = min(len(sorted_values) - 1, max(0, int(len(sorted_values) * share)))
+        return sorted_values[idx]
+
+    def analyze_picked_audio(self):
+        """Шаг 2: замеряем фон и речь, подбираем настройки под число фраз из Excel."""
+        path = getattr(self, 'pending_raw_path', None)
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не выбран. Нажмите «Резать сырой WAV» ещё раз."}
+
+        try:
+            audio = AudioSegment.from_file(path)
+        except Exception as e:
+            return {"error": f"Не удалось открыть аудиофайл.\n\n{os.path.basename(path)}\n\nПодробности: {e}"}
+
+        levels = self._frame_levels(audio)
+        if not levels:
+            return {"error": "Запись пустая или слишком короткая для анализа."}
+
+        self.pending_levels = levels
+        ordered = sorted(levels)
+
+        noise_db = round(self._percentile(ordered, 0.10), 1)   # уровень фона
+        speech_db = round(self._percentile(ordered, 0.90), 1)  # уровень речи
+        spread = speech_db - noise_db
+
+        # Порог ставим чуть выше фона, но заведомо ниже речи
+        raw_thresh = noise_db + max(3.0, min(12.0, spread * 0.25))
+        low_limit, high_limit = -70, -12
+        base_thresh = int(round(max(low_limit, min(high_limit, min(raw_thresh, speech_db - 8)))))
+
+        target = len(self.phrases_data) if getattr(self, 'phrases_data', None) else 0
+
+        # Перебираем пары «порог + пауза» и ищем ближайшую к числу фраз из Excel
+        thresh_options = sorted({int(round(max(low_limit, min(high_limit, base_thresh + d))))
+                                 for d in (-4, -2, 0, 2, 4, 6)})
+        best = None
+        for th in thresh_options:
+            for pause in PAUSE_CANDIDATES:
+                n = self._count_ranges(levels, th, pause)
+                if n < 1:
+                    continue
+                if target:
+                    score = (abs(n - target), abs(th - base_thresh), -pause)
+                else:
+                    # Без Excel: хотим осмысленное дробление, а не один кусок
+                    score = (0 if n >= 8 else 8 - n, abs(th - base_thresh), -pause)
+                if best is None or score < best[0]:
+                    best = (score, th, pause, n)
+
+        if best is None:
+            sug_thresh, sug_pause, predicted = base_thresh, 400, 1
+        else:
+            _, sug_thresh, sug_pause, predicted = best
+
+        sug_pad = 150 if sug_pause < 300 else 200
+
+        # Несколько соседних вариантов, чтобы было видно, как меняется дробление
+        variants = []
+        for pause in (150, 250, 400, 600, 900):
+            variants.append({"pause": pause, "chunks": self._count_ranges(levels, sug_thresh, pause)})
+
+        return {
+            "name": os.path.basename(path),
+            "duration_sec": round(len(audio) / 1000.0, 1),
+            "noise_db": noise_db,
+            "speech_db": speech_db,
+            "spread": round(spread, 1),
+            "target_phrases": target,
+            "suggested": {"pause": sug_pause, "sens": sug_thresh, "pad": sug_pad},
+            "predicted_chunks": predicted,
+            "variants": variants
+        }
+
+    def predict_cut(self, min_silence, silence_thresh):
+        """Пересчёт числа кусков, когда пользователь правит цифры руками."""
+        levels = getattr(self, 'pending_levels', None)
+        if not levels:
+            return {"chunks": None}
+        return {"chunks": self._count_ranges(levels, int(silence_thresh), int(min_silence))}
+
+    # ==================================================================
+
+    def load_raw_audio(self, min_silence, silence_thresh, keep_silence, filepath=None):
+        # Файл уже выбран на этапе автоподбора — второй раз не спрашиваем
+        raw_filepath = filepath or getattr(self, 'pending_raw_path', None)
+
+        if not raw_filepath or not os.path.exists(raw_filepath):
+            file_types = ('Audio Files (*.wav)', 'All files (*.*)')
+            filename = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
+            if not filename:
+                return self.get_ui_state()
+            raw_filepath = filename[0]
         self.work_dir = os.path.dirname(raw_filepath)
         self.project_name = os.path.basename(self.work_dir)
         chunks_dir = os.path.join(self.work_dir, 'Chunks')

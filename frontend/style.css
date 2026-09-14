@@ -714,6 +714,87 @@ button[disabled]:active{ transform: none; }
 .field-hint b{ color: var(--accent-info); font-weight: 650; }
 .field-hint.is-warn b{ color: var(--accent-var); }
 
+/* --- Окно автоподбора настроек нарезки --- */
+.tune-file{
+    font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-dim);
+    background: var(--screen); border: 1px solid var(--border-soft);
+    padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+    margin-bottom: var(--space-4); word-break: break-all;
+    box-shadow: var(--shadow-screen);
+}
+.tune-file b{ color: var(--text); }
+
+.measure-grid{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--space-2); margin-bottom: var(--space-4);
+}
+.measure-card{
+    background: var(--panel-raised); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: var(--space-3);
+}
+.measure-card--wide{ grid-column: span 2; }
+.measure-card__label{
+    font-size: 10.5px; color: var(--text-dim);
+    text-transform: uppercase; font-weight: 700; letter-spacing: 0.06em;
+}
+.measure-card__value{
+    font-size: 24px; font-weight: 750; margin: var(--space-1) 0 2px;
+    color: var(--text-dim); font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.measure-card__value--speech{ color: var(--accent-primary); }
+.measure-card__value--spread{ color: var(--accent-info); }
+.measure-card__note{ font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.4; }
+.measure-card__note.is-good{ color: var(--accent-good); }
+.measure-card__note.is-warn{ color: var(--accent-var); }
+
+.tune-verdict{
+    font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5;
+    margin-bottom: var(--space-4);
+}
+.tune-verdict b{ color: var(--text); }
+
+.tune-fields{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-3); margin-bottom: var(--space-4);
+}
+.tune-fields .field{ margin-bottom: 0; }
+
+.tune-result{
+    display: flex; align-items: center; gap: var(--space-4);
+    padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
+    border: 1px solid var(--border); background: var(--panel-raised);
+    font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45;
+    margin-bottom: var(--space-4); min-height: 74px;
+}
+.tune-result__num{
+    flex: none; font-size: 30px; font-weight: 750; letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums; color: var(--text);
+}
+.tune-result__text b{ color: var(--text); }
+.tune-result.is-busy{ opacity: 0.6; }
+.tune-result.is-good{ border-color: rgba(47,191,125,0.45); background: var(--tint-good); }
+.tune-result.is-good .tune-result__num{ color: var(--accent-good); }
+.tune-result.is-warn{ border-color: rgba(238,172,62,0.45); background: var(--tint-var); }
+.tune-result.is-warn .tune-result__num{ color: var(--accent-var); }
+.tune-result.is-bad{ border-color: rgba(239,91,80,0.5); background: var(--tint-trash); }
+.tune-result.is-bad .tune-result__num{ color: var(--accent-trash); }
+
+.tune-presets{ margin-bottom: var(--space-2); }
+.tune-presets__label{
+    display: block; font-size: var(--fs-xs); color: var(--text-dim);
+    margin-bottom: 6px; font-weight: 600;
+}
+.tune-presets__row{ display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.preset-chip{
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 7px var(--space-3); border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-size: var(--fs-sm); font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+.preset-chip small{ font-size: 10px; font-weight: 500; color: var(--text-faint); }
+.preset-chip:hover{ border-color: var(--accent-primary); background: var(--tint-primary); }
+
 /* --- Информационные панели, заполняющие низ экрана --- */
 .info-panel{
     flex: 1; min-height: 0;

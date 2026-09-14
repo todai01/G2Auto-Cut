@@ -253,13 +253,157 @@ let isProcessing = false;
             updateUI(state);
         }
 
-        async function loadAudio() {
-            let min_silence = parseInt(document.getElementById('inpPause').value);
-            let silence_thresh = parseInt(document.getElementById('inpSens').value);
-            let keep_silence = parseInt(document.getElementById('inpPad').value);
+        // ===== АВТОПОДБОР НАСТРОЕК НАРЕЗКИ =====
 
-            updateProgress(0, 'Анализ...');
-            await handleLoad(pywebview.api.load_raw_audio(min_silence, silence_thresh, keep_silence));
+        let tuneData = null;       // результат замеров по выбранному файлу
+        let tunePredictTimer = null;
+
+        async function loadAudio() {
+            // Шаг 1 — выбор файла (Python открывает системное окно)
+            let picked = await pywebview.api.pick_raw_audio();
+            if (!picked || picked.error === 'cancel') return;
+            if (picked.error) { showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked.error}`); return; }
+
+            // Шаг 2 — замеры. Могут занять пару секунд, показываем прогресс
+            updateProgress(30, `Анализ записи: ${picked.name}`);
+            let res;
+            try {
+                res = await pywebview.api.analyze_picked_audio();
+            } catch (e) {
+                document.getElementById('progressContainer').style.display = 'none';
+                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
+                return;
+            }
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
+                return;
+            }
+
+            openAutoTune(res);
+        }
+
+        function openAutoTune(res) {
+            tuneData = res;
+
+            let mins = Math.floor(res.duration_sec / 60);
+            let secs = Math.round(res.duration_sec % 60);
+            document.getElementById('tuneFile').innerHTML =
+                `<b>${res.name}</b> · ${mins} мин ${secs} сек`;
+
+            document.getElementById('tuneNoise').innerText  = `${res.noise_db} дБ`;
+            document.getElementById('tuneSpeech').innerText = `${res.speech_db} дБ`;
+            document.getElementById('tuneSpread').innerText = `${res.spread} дБ`;
+
+            let spreadNote = document.getElementById('tuneSpreadNote');
+            if (res.spread < 10) {
+                spreadNote.innerText = 'Мало: фон почти такой же громкий, как речь. Нарезка будет неточной.';
+                spreadNote.className = 'measure-card__note is-warn';
+            } else if (res.spread < 20) {
+                spreadNote.innerText = 'Небольшой запас — возможны ошибки на тихих словах.';
+                spreadNote.className = 'measure-card__note';
+            } else {
+                spreadNote.innerText = 'Хороший запас, речь чётко отделена от фона.';
+                spreadNote.className = 'measure-card__note is-good';
+            }
+
+            document.getElementById('tuneVerdict').innerHTML = res.target_phrases
+                ? `В таблице Excel <b>${res.target_phrases}</b> фраз — настройки подобраны так, чтобы кусков получилось примерно столько же.`
+                : `Таблица Excel не загружена, поэтому подобрано «на глаз» по громкости записи. Загрузите Excel — и подбор станет точнее.`;
+
+            restoreTuneSuggestion();
+
+            // Быстрые варианты: та же чувствительность, разная длина паузы
+            let presets = (res.variants || []).map(v =>
+                `<button class="preset-chip" onclick="applyTunePreset(${v.pause})">${v.pause} мс<small>≈ ${v.chunks} кусков</small></button>`
+            ).join('');
+            document.getElementById('tunePresets').innerHTML = presets;
+
+            document.getElementById('autoTuneOverlay').style.display = 'flex';
+        }
+
+        function closeAutoTune() {
+            document.getElementById('autoTuneOverlay').style.display = 'none';
+        }
+
+        function restoreTuneSuggestion() {
+            if (!tuneData) return;
+            document.getElementById('tunePause').value = tuneData.suggested.pause;
+            document.getElementById('tuneSens').value  = tuneData.suggested.sens;
+            document.getElementById('tunePad').value   = tuneData.suggested.pad;
+            renderTuneResult(tuneData.predicted_chunks);
+        }
+
+        function applyTunePreset(pause) {
+            document.getElementById('tunePause').value = pause;
+            runTunePredict();
+        }
+
+        // Пересчитываем не на каждое нажатие клавиши, а когда человек перестал печатать
+        function scheduleTunePredict() {
+            clearTimeout(tunePredictTimer);
+            document.getElementById('tuneResult').className = 'tune-result is-busy';
+            document.getElementById('tuneResult').innerHTML = 'Пересчитываю…';
+            tunePredictTimer = setTimeout(runTunePredict, 400);
+        }
+
+        async function runTunePredict() {
+            clearTimeout(tunePredictTimer);
+            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
+            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
+
+            let res = await pywebview.api.predict_cut(pause, sens);
+            renderTuneResult(res ? res.chunks : null);
+        }
+
+        function renderTuneResult(chunks) {
+            let el = document.getElementById('tuneResult');
+            if (chunks === null || chunks === undefined) {
+                el.className = 'tune-result';
+                el.innerHTML = 'Не удалось посчитать. Попробуйте выбрать файл заново.';
+                return;
+            }
+
+            let target = tuneData ? tuneData.target_phrases : 0;
+            let note = '';
+            let cls = 'tune-result is-good';
+
+            if (chunks <= 1) {
+                cls = 'tune-result is-bad';
+                note = 'Вся запись останется одним куском. Увеличьте чувствительность — например, до '
+                     + `${Math.min(-10, parseInt(document.getElementById('tuneSens').value) + 4)} дБ.`;
+            } else if (target && chunks < target * 0.6) {
+                cls = 'tune-result is-warn';
+                note = `Это заметно меньше, чем ${target} фраз в таблице. Уменьшите паузу или поднимите чувствительность.`;
+            } else if (target && chunks > target * 1.6) {
+                cls = 'tune-result is-warn';
+                note = `Это заметно больше, чем ${target} фраз в таблице — фразы дробятся на части. Увеличьте паузу.`;
+            } else if (target) {
+                note = `В таблице ${target} фраз — цифры сходятся.`;
+            } else {
+                note = 'Проверьте на слух после нарезки: слова не должны обрываться.';
+            }
+
+            el.className = cls;
+            el.innerHTML = `<span class="tune-result__num">≈ ${chunks}</span>`
+                         + `<span class="tune-result__text"><b>кусков получится</b><br>${note}</span>`;
+        }
+
+        async function startCut() {
+            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
+            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
+            let pad   = clampToInput('inpPad',   document.getElementById('tunePad').value,   CUT_DEFAULTS.pad);
+
+            // Держим ползунки на экране подготовки в согласии с тем, чем резали
+            document.getElementById('inpPause').value = pause;
+            document.getElementById('inpSens').value  = sens;
+            document.getElementById('inpPad').value   = pad;
+            updateSettingsText();
+
+            closeAutoTune();
+            updateProgress(0, 'Нарезка...');
+            await handleLoad(pywebview.api.load_raw_audio(pause, sens, pad));
             document.getElementById('progressContainer').style.display = 'none';
         }
 
@@ -1075,6 +1219,16 @@ let isProcessing = false;
                 if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
                     e.preventDefault();
                     closeCustomAlert();
+                }
+                return;
+            }
+
+            // Окно автоподбора: Escape закрывает, печатать цифры не мешаем
+            let tuneOverlay = document.getElementById('autoTuneOverlay');
+            if (tuneOverlay && tuneOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeAutoTune();
                 }
                 return;
             }
