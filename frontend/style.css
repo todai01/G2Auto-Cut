@@ -395,7 +395,11 @@ button[disabled]:active{ transform: none; }
     animation: fadeInAlert 0.2s ease;
 }
 @keyframes fadeInAlert { from { opacity: 0; } to { opacity: 1; } }
+/* Окно-подсказка всегда поверх остальных модальных окон */
+#customAlertOverlay{ z-index: 10000; }
+
 .custom-alert-box {
+    max-height: 92vh; overflow-y: auto;
     background: linear-gradient(180deg, var(--panel-raised), var(--panel));
     border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: 32px; max-width: 400px; width: 90%; text-align: center;
@@ -549,9 +553,12 @@ button[disabled]:active{ transform: none; }
     color: var(--accent-good); background: var(--tint-good); border-color: rgba(47,191,125,0.35);
 }
 
+.stage-loading{ display: flex; flex-direction: column; min-height: calc(100vh - 80px); }
+
 .setup-grid{ display: grid; grid-template-columns: 1fr; gap: var(--space-5); align-items: start; }
 @media (min-width: 1000px){
-    .setup-grid{ grid-template-columns: minmax(340px, 420px) 1fr; gap: var(--space-6); }
+    /* Сетка забирает всю оставшуюся высоту, чтобы внизу не оставалось пустоты */
+    .setup-grid{ grid-template-columns: minmax(340px, 420px) 1fr; gap: var(--space-6); flex: 1 0 auto; align-items: stretch; }
 }
 .setup-col{ display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 
@@ -637,8 +644,10 @@ button[disabled]:active{ transform: none; }
 /* --- Шпаргалка по горячим клавишам внизу экрана подготовки --- */
 .setup-footer{
     display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
-    margin-top: var(--space-6); padding-top: var(--space-4);
+    /* auto прижимает шпаргалку к нижнему краю окна на высоких экранах */
+    margin-top: auto; padding-top: var(--space-4);
     border-top: 1px solid var(--border);
+    margin-bottom: 0;
 }
 .setup-footer__label{
     font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
@@ -652,6 +661,96 @@ button[disabled]:active{ transform: none; }
 }
 .hotkey kbd{ margin-left: 0; margin-right: 4px; }
 .hotkey kbd + kbd{ margin-left: -2px; }
+
+/* --- Шапка: логотип-кнопка и возврат к работе --- */
+.setup-brand__mark{
+    background: none; border: none; padding: 4px 8px; margin-left: -8px;
+    border-radius: var(--radius-sm); cursor: pointer;
+    font-family: inherit; font-size: 24px; font-weight: 800;
+    letter-spacing: -0.03em; color: var(--text);
+}
+.setup-brand__mark:hover{ background: var(--panel-raised); }
+.setup-brand__mark:hover span{ filter: brightness(1.15); }
+
+.setup-header__right{ display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+.btn-resume{
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 34px; padding: 0 var(--space-4); border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--tint-good); border: 1px solid rgba(47,191,125,0.45);
+    color: var(--accent-good); font-size: var(--fs-sm); font-weight: 650; white-space: nowrap;
+}
+.btn-resume:hover{ background: rgba(47,191,125,0.18); border-color: var(--accent-good); transform: translateY(-1px); }
+
+/* --- Настройки нарезки: заголовок, ручной ввод, кнопки-подсказки --- */
+.settings-head{
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--space-3); margin-bottom: var(--space-3);
+}
+.settings-head .settings-title{ margin-bottom: 0; }
+
+.btn-manual{
+    height: 28px; padding: 0 var(--space-3); border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--panel-raised); border: 1px solid var(--border); color: var(--text-dim);
+    font-size: var(--fs-xs); font-weight: 650; letter-spacing: 0.02em; white-space: nowrap;
+}
+.btn-manual:hover{ border-color: var(--accent-primary); color: var(--accent-primary); background: var(--tint-primary); }
+
+.slider-name{ display: inline-flex; align-items: center; gap: 6px; }
+
+.help-btn{
+    flex: none; width: 17px; height: 17px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; cursor: pointer;
+    background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text-faint); font-size: 10px; font-weight: 800; line-height: 1;
+}
+.help-btn:hover{ border-color: var(--accent-info); color: var(--accent-info); background: var(--tint-info); }
+
+.field-hint{
+    display: block; margin-top: 6px; font-size: var(--fs-xs);
+    color: var(--text-dim); line-height: 1.5; min-height: 2.4em;
+}
+.field-hint b{ color: var(--accent-info); font-weight: 650; }
+.field-hint.is-warn b{ color: var(--accent-var); }
+
+/* --- Информационные панели, заполняющие низ экрана --- */
+.info-panel{
+    flex: 1; min-height: 0;
+    background: var(--panel); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg); padding: var(--space-4) var(--space-5) var(--space-5);
+}
+.info-panel__title{
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint);
+    margin-bottom: var(--space-4);
+}
+
+.folder-map{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.folder-map li{ display: flex; align-items: baseline; gap: var(--space-3); }
+.folder-map__name{
+    flex: none; width: 106px; font-family: var(--font-mono);
+    font-size: var(--fs-sm); font-weight: 650;
+}
+.folder-map__name--raw{ color: var(--text-dim); }
+.folder-map__name--good{ color: var(--accent-good); }
+.folder-map__name--var{ color: var(--accent-var); }
+.folder-map__name--checked{ color: var(--accent-primary); }
+.folder-map__desc{ font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; }
+
+.flow-steps{
+    list-style: none; margin: 0; padding: 0;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-4);
+}
+.flow-steps li{ display: flex; flex-direction: column; gap: 6px; }
+.flow-steps__num{
+    width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: var(--tint-primary); border: 1px solid rgba(77,149,234,0.4);
+    color: var(--accent-primary); font-family: var(--font-mono);
+    font-size: var(--fs-xs); font-weight: 700;
+}
+.flow-steps__title{ font-size: var(--fs-md); font-weight: 650; color: var(--text); }
+.flow-steps__desc{ font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.5; }
 
 /* --- Появление блоков «лесенкой» --- */
 .rise{ animation: riseIn .5s var(--ease) both; animation-delay: calc(var(--d, 0) * 60ms); }

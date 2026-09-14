@@ -100,6 +100,49 @@
         </div>
     </div>
 
+    <!-- Модальное окно: ручной ввод настроек нарезки -->
+    <div id="manualOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Ручная настройка нарезки</h3>
+                <button class="modal-close" onclick="closeManualSettings()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Введите точные значения. Под каждым полем программа сразу объясняет, что получится.</div>
+
+            <label class="field">
+                <span class="field-label">
+                    Длина паузы для разреза, миллисекунд
+                    <button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button>
+                </span>
+                <input type="number" id="manPause" class="search-input" min="50" max="3000" step="10" value="500" oninput="updateManualHints()">
+                <span class="field-hint" id="hintPause"></span>
+            </label>
+
+            <label class="field">
+                <span class="field-label">
+                    Чувствительность к тихим звукам, дБ
+                    <button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button>
+                </span>
+                <input type="number" id="manSens" class="search-input" min="-80" max="-10" step="1" value="-35" oninput="updateManualHints()">
+                <span class="field-hint" id="hintSens"></span>
+            </label>
+
+            <label class="field">
+                <span class="field-label">
+                    Запас звука по краям, миллисекунд
+                    <button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button>
+                </span>
+                <input type="number" id="manPad" class="search-input" min="0" max="1000" step="10" value="250" oninput="updateManualHints()">
+                <span class="field-hint" id="hintPad"></span>
+            </label>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="resetManualSettings()">Сбросить</button>
+                <button class="custom-alert-btn" onclick="applyManualSettings()">Применить</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ЭКРАН 0 — Заставка -->
     <div id="stage0-splash" class="stage stage-splash">
         <div class="splash">
@@ -123,10 +166,15 @@
     <div id="stage1-loading" class="stage stage-loading" style="display: none;">
         <header class="setup-header">
             <div class="setup-brand">
-                <span class="setup-brand__mark">G2<span>Auto</span>Cut</span>
+                <button class="setup-brand__mark" onclick="showSplash()" title="Вернуться на приветственный экран">G2<span>Auto</span>Cut</button>
                 <span class="setup-brand__sub">Подготовка проекта</span>
             </div>
-            <div class="setup-status" id="setupStatus">Шаг 1 · Подключите таблицу с текстом</div>
+            <div class="setup-header__right">
+                <button class="btn-resume" id="btnResume" onclick="resumeWorkspace()" style="display: none;">
+                    &#8592;&nbsp; Вернуться к работе
+                </button>
+                <div class="setup-status" id="setupStatus">Шаг 1 · Подключите таблицу с текстом</div>
+            </div>
         </header>
 
         <div class="setup-grid">
@@ -146,30 +194,33 @@
                 </button>
 
                 <div class="settings-panel rise" style="--d: 3">
-                    <div class="settings-title">Настройки нарезки</div>
+                    <div class="settings-head">
+                        <div class="settings-title">Настройки нарезки</div>
+                        <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
+                    </div>
 
                     <label class="slider-field">
                         <div class="slider-head">
-                            <span>Длина паузы для разреза</span>
+                            <span class="slider-name">Длина паузы для разреза<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
                             <span id="valPause" class="slider-value">Нормальная</span>
                         </div>
-                        <input type="range" id="inpPause" min="100" max="1500" step="50" value="500" oninput="updateSettingsText()">
+                        <input type="range" id="inpPause" min="50" max="3000" step="10" value="500" oninput="updateSettingsText()">
                     </label>
 
                     <label class="slider-field">
                         <div class="slider-head">
-                            <span>Чувствительность к тихим звукам</span>
+                            <span class="slider-name">Чувствительность к тихим звукам<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
                             <span id="valSens" class="slider-value">Оптимальная</span>
                         </div>
-                        <input type="range" id="inpSens" min="-55" max="-20" step="5" value="-35" oninput="updateSettingsText()">
+                        <input type="range" id="inpSens" min="-80" max="-10" step="1" value="-35" oninput="updateSettingsText()">
                     </label>
 
                     <label class="slider-field">
                         <div class="slider-head">
-                            <span>Запас звука по краям</span>
+                            <span class="slider-name">Запас звука по краям<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
                             <span id="valPad" class="slider-value">Безопасный</span>
                         </div>
-                        <input type="range" id="inpPad" min="50" max="400" step="50" value="250" oninput="updateSettingsText()">
+                        <input type="range" id="inpPad" min="0" max="1000" step="10" value="250" oninput="updateSettingsText()">
                     </label>
                 </div>
 
@@ -181,6 +232,16 @@
                 <div id="progressContainer" class="progress-panel">
                     <div id="progressText" class="progress-text">Анализ...</div>
                     <progress id="progressBar" max="100"></progress>
+                </div>
+
+                <div class="info-panel rise" style="--d: 5">
+                    <div class="info-panel__title">Куда попадают файлы</div>
+                    <ul class="folder-map">
+                        <li><span class="folder-map__name folder-map__name--raw">Chunks</span><span class="folder-map__desc">Черновые куски сразу после нарезки</span></li>
+                        <li><span class="folder-map__name folder-map__name--good">Good</span><span class="folder-map__desc">Отобранные дубли, которые вы оставили</span></li>
+                        <li><span class="folder-map__name folder-map__name--var">Переменные</span><span class="folder-map__desc">Куски с датой, именем или суммой</span></li>
+                        <li><span class="folder-map__name folder-map__name--checked">Проверенные</span><span class="folder-map__desc">Финальные файлы, готовые к сдаче</span></li>
+                    </ul>
                 </div>
             </section>
 
@@ -227,6 +288,32 @@
                         <span class="util-tile__title">Массовая нормализация</span>
                         <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
                     </button>
+                </div>
+
+                <div class="info-panel info-panel--flow rise" style="--d: 8">
+                    <div class="info-panel__title">Порядок работы</div>
+                    <ol class="flow-steps">
+                        <li>
+                            <span class="flow-steps__num">1</span>
+                            <span class="flow-steps__title">Нарезка</span>
+                            <span class="flow-steps__desc">Программа режет длинный WAV по паузам на отдельные дубли.</span>
+                        </li>
+                        <li>
+                            <span class="flow-steps__num">2</span>
+                            <span class="flow-steps__title">Отбор</span>
+                            <span class="flow-steps__desc">Клавиши Z, C и X раскладывают дубли по папкам.</span>
+                        </li>
+                        <li>
+                            <span class="flow-steps__num">3</span>
+                            <span class="flow-steps__title">Монтаж</span>
+                            <span class="flow-steps__desc">До пяти частей склеиваются в один файл через Audacity.</span>
+                        </li>
+                        <li>
+                            <span class="flow-steps__num">4</span>
+                            <span class="flow-steps__title">Сдача</span>
+                            <span class="flow-steps__desc">Готовое уходит в «Проверенные» под именем из Excel.</span>
+                        </li>
+                    </ol>
                 </div>
             </section>
 

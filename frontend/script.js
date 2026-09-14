@@ -4,18 +4,140 @@ let isProcessing = false;
         let saveFilenameForMerge = null;
         let playTimeout = null;
 
+        // Значения по умолчанию — используются кнопкой «Сбросить»
+        const CUT_DEFAULTS = { pause: 500, sens: -35, pad: 250 };
+
+        function pauseWord(v)  { return v < 400 ? "Короткая" : (v > 900 ? "Длинная" : "Нормальная"); }
+        function sensWord(v)   { return v > -30 ? "Высокая" : (v < -45 ? "Строгая" : "Оптимальная"); }
+        function padWord(v)    { return v < 150 ? "Маленький" : (v > 300 ? "Большой" : "Безопасный"); }
+
         function updateSettingsText() {
-            let p = document.getElementById('inpPause').value;
-            let pText = p < 400 ? "Короткая" : (p > 900 ? "Длинная" : "Нормальная");
-            document.getElementById('valPause').innerText = pText;
+            let p = parseInt(document.getElementById('inpPause').value);
+            document.getElementById('valPause').innerText = `${pauseWord(p)} · ${p} мс`;
 
-            let s = document.getElementById('inpSens').value;
-            let sText = s > -30 ? "Высокая (режет даже слабые паузы)" : (s < -45 ? "Строгая (нужна почти полная тишина)" : "Оптимальная");
-            document.getElementById('valSens').innerText = sText;
+            let s = parseInt(document.getElementById('inpSens').value);
+            document.getElementById('valSens').innerText = `${sensWord(s)} · ${s} дБ`;
 
-            let pad = document.getElementById('inpPad').value;
-            let padText = pad < 150 ? "Маленький" : (pad > 300 ? "Большой" : "Безопасный");
-            document.getElementById('valPad').innerText = padText;
+            let pad = parseInt(document.getElementById('inpPad').value);
+            document.getElementById('valPad').innerText = `${padWord(pad)} · ${pad} мс`;
+        }
+
+        // ===== РУЧНОЙ ВВОД НАСТРОЕК НАРЕЗКИ =====
+
+        function openManualSettings() {
+            document.getElementById('manPause').value = document.getElementById('inpPause').value;
+            document.getElementById('manSens').value  = document.getElementById('inpSens').value;
+            document.getElementById('manPad').value   = document.getElementById('inpPad').value;
+            updateManualHints();
+            document.getElementById('manualOverlay').style.display = 'flex';
+            setTimeout(() => document.getElementById('manPause').focus(), 50);
+        }
+
+        function closeManualSettings() {
+            document.getElementById('manualOverlay').style.display = 'none';
+        }
+
+        function resetManualSettings() {
+            document.getElementById('manPause').value = CUT_DEFAULTS.pause;
+            document.getElementById('manSens').value  = CUT_DEFAULTS.sens;
+            document.getElementById('manPad').value   = CUT_DEFAULTS.pad;
+            updateManualHints();
+        }
+
+        // Ограничиваем значение допустимыми рамками ползунка
+        function clampToInput(sliderId, raw, fallback) {
+            let slider = document.getElementById(sliderId);
+            let v = parseInt(raw);
+            if (isNaN(v)) return fallback;
+            return Math.min(parseInt(slider.max), Math.max(parseInt(slider.min), v));
+        }
+
+        // Живые подсказки: объясняют простым языком, что даст введённое число
+        function updateManualHints() {
+            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
+            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
+            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
+
+            let hP = document.getElementById('hintPause');
+            hP.classList.toggle('is-warn', p < 200 || p > 1500);
+            hP.innerHTML = `Разрез произойдёт только там, где тишина длится дольше <b>${(p / 1000).toFixed(2)} сек</b>. `
+                + (p < 200
+                    ? 'Очень мало: программа разрежет даже короткие вдохи, дублей получится много и они будут рваными.'
+                    : p > 1500
+                        ? 'Очень много: короткие паузы между фразами программа пропустит, несколько фраз слипнутся в один дубль.'
+                        : 'Обычная речевая пауза между фразами — хороший баланс.');
+
+            let hS = document.getElementById('hintSens');
+            hS.classList.toggle('is-warn', sn > -25 || sn < -55);
+            hS.innerHTML = `Тишиной считается всё, что тише <b>${sn} дБ</b>. `
+                + (sn > -25
+                    ? 'Порог высокий: программа примет за тишину даже негромкую речь и может срезать начало слова.'
+                    : sn < -55
+                        ? 'Порог строгий: нужна почти стерильная тишина. При фоновом шуме разрезов почти не будет.'
+                        : 'Подходит для обычной студийной записи с лёгким фоновым шумом.');
+
+            let hPad = document.getElementById('hintPad');
+            hPad.classList.toggle('is-warn', pad < 80 || pad > 600);
+            hPad.innerHTML = `К каждому дублю добавится <b>${pad} мс</b> звука с обеих сторон. `
+                + (pad < 80
+                    ? 'Запас маленький: есть риск отрезать первый и последний звук слова.'
+                    : pad > 600
+                        ? 'Запас большой: в дубли попадут куски соседних фраз, придётся дочищать вручную.'
+                        : 'Слово гарантированно не обрежется, лишнего почти не попадёт.');
+        }
+
+        function applyManualSettings() {
+            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
+            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
+            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
+
+            document.getElementById('inpPause').value = p;
+            document.getElementById('inpSens').value  = sn;
+            document.getElementById('inpPad').value   = pad;
+
+            updateSettingsText();
+            closeManualSettings();
+            showToast(`Настройки применены: ${p} мс · ${sn} дБ · ${pad} мс`);
+        }
+
+        // Пояснения по кнопкам «?»
+        const SETTING_HELP = {
+            pause: {
+                title: 'Длина паузы для разреза',
+                body: 'Программа слушает запись и ищет места, где вы молчите. Этот параметр говорит, '
+                    + 'насколько долгим должно быть молчание, чтобы считать его концом фразы.<br><br>'
+                    + '<b>Бытовой пример:</b> представьте, что вы читаете вслух список. Между словами внутри '
+                    + 'предложения вы делаете короткие паузы, а между пунктами списка — длинные. '
+                    + 'Здесь вы задаёте, какую паузу считать «между пунктами».<br><br>'
+                    + '<b>Меньше число</b> — больше дублей, режет мелко.<br>'
+                    + '<b>Больше число</b> — меньше дублей, несколько фраз могут слипнуться.'
+            },
+            sens: {
+                title: 'Чувствительность к тихим звукам',
+                body: 'Абсолютной тишины в записи не бывает — всегда есть шум микрофона, дыхание, гул комнаты. '
+                    + 'Этот параметр задаёт громкость, ниже которой звук считается тишиной. '
+                    + 'Измеряется в децибелах, и число всегда отрицательное: чем оно меньше, тем тише.<br><br>'
+                    + '<b>Бытовой пример:</b> это как порог слышимости. Поставьте −20 дБ — программа «глуховата» '
+                    + 'и примет за тишину даже негромкую речь. Поставьте −60 дБ — у неё идеальный слух, '
+                    + 'и любой шорох она посчитает звуком.<br><br>'
+                    + '<b>Ближе к −20</b> — режет охотнее, но может отхватить начало слова.<br>'
+                    + '<b>Ближе к −60</b> — осторожнее, но при шумном фоне разрезов почти не будет.'
+            },
+            pad: {
+                title: 'Запас звука по краям',
+                body: 'Найдя границу фразы, программа отступает немного назад и немного вперёд, '
+                    + 'и только потом режет. Этот отступ и есть запас.<br><br>'
+                    + '<b>Бытовой пример:</b> как поля на листе бумаги. Режете точно по буквам — рискуете '
+                    + 'срезать край. Оставляете поля — текст цел.<br><br>'
+                    + '<b>Меньше число</b> — дубли плотные, но можно потерять первый или последний звук.<br>'
+                    + '<b>Больше число</b> — слово точно целое, но в дубль попадёт кусок соседней фразы.'
+            }
+        };
+
+        function explainSetting(event, key) {
+            if (event) { event.preventDefault(); event.stopPropagation(); }
+            let h = SETTING_HELP[key];
+            if (h) showBeautifulAlert(`<b>${h.title}</b><br><br>${h.body}`);
         }
 
         document.addEventListener('DOMContentLoaded', updateSettingsText);
@@ -38,8 +160,12 @@ let isProcessing = false;
             if (splash) splash.style.display = 'none';
 
             let setup = document.getElementById('stage1-loading');
-            setup.style.display = 'block';
+            setup.style.display = 'flex';
             document.getElementById('stage2-workspace').style.display = 'none';
+
+            // Кнопка возврата появляется, только если работать уже есть с чем
+            let btnResume = document.getElementById('btnResume');
+            if (btnResume) btnResume.style.display = workspaceReady ? 'inline-flex' : 'none';
 
             // Перезапускаем появление блоков «лесенкой»
             setup.querySelectorAll('.rise').forEach(el => {
@@ -56,7 +182,27 @@ let isProcessing = false;
             el.innerText = text;
             el.classList.toggle('setup-status--ready', !!ready);
         }
-        function showWorkspace() { document.getElementById('stage1-loading').style.display = 'none'; document.getElementById('stage2-workspace').style.display = 'block'; }
+        // Запоминаем, что рабочий экран уже открывался: тогда из меню
+        // можно вернуться к работе одной кнопкой, ничего не загружая заново.
+        let workspaceReady = false;
+
+        function showWorkspace() {
+            workspaceReady = true;
+            document.getElementById('stage0-splash').style.display = 'none';
+            document.getElementById('stage1-loading').style.display = 'none';
+            document.getElementById('stage2-workspace').style.display = 'block';
+        }
+
+        function resumeWorkspace() {
+            if (!workspaceReady) return;
+            showWorkspace();
+        }
+
+        function showSplash() {
+            document.getElementById('stage1-loading').style.display = 'none';
+            document.getElementById('stage2-workspace').style.display = 'none';
+            document.getElementById('stage0-splash').style.display = 'block';
+        }
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
 
@@ -921,6 +1067,16 @@ let isProcessing = false;
                 if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
                     e.preventDefault();
                     closeCustomAlert();
+                }
+                return;
+            }
+
+            // Окно ручной настройки: Escape закрывает, остальные клавиши не мешаем
+            let manualOverlay = document.getElementById('manualOverlay');
+            if (manualOverlay && manualOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeManualSettings();
                 }
                 return;
             }
