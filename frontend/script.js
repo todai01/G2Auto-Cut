@@ -224,6 +224,47 @@ let isProcessing = false;
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
 
+        // Полоса общего прогресса: проверенные, готовые и переменные в одной шкале
+        function updateProjectProgress(stats) {
+            let total = stats.total || 0;
+            let bar = document.getElementById('projectProgress');
+            if (!bar) return;
+
+            if (!total) {
+                bar.style.display = 'none';
+                return;
+            }
+            bar.style.display = 'flex';
+
+            let checked = Math.min(stats.checked || 0, total);
+            let good = Math.min(stats.good || 0, total);
+            let vars = Math.min(stats.var || 0, total);
+
+            // Проверенные — это подмножество готовых, поэтому показываем их отдельным слоем
+            let goodRest = Math.max(0, good - checked);
+            let pct = v => (v / total * 100).toFixed(2) + '%';
+
+            document.getElementById('barChecked').style.width = pct(checked);
+            document.getElementById('barGood').style.width = pct(goodRest);
+            document.getElementById('barVar').style.width = pct(Math.min(vars, total - checked - goodRest));
+
+            let done = Math.min(total, Math.max(good, checked) + vars);
+            document.getElementById('progressLabel').innerText =
+                `${Math.round(done / total * 100)}% · осталось ${total - done}`;
+        }
+
+        // Тонкая полоска под счётчиком: где мы среди всех дублей
+        function updateChunkTrack(counter) {
+            let dot = document.getElementById('chunkTrackDot');
+            if (!dot || !counter) return;
+
+            let m = String(counter).match(/(\d+)\s*\/\s*(\d+)/);
+            if (!m) { dot.style.left = '0%'; return; }
+
+            let pos = parseInt(m[1]), total = parseInt(m[2]);
+            dot.style.left = (total > 1 ? ((pos - 1) / (total - 1)) * 100 : 0) + '%';
+        }
+
         async function handleLoad(apiPromise) {
             let state = await apiPromise;
             updateUI(state);
@@ -1138,6 +1179,7 @@ let isProcessing = false;
             document.getElementById('phraseCounter').innerText = `Фраза: ${state.phrase_counter}`;
             document.getElementById('chunkName').innerText = state.chunk_name;
             document.getElementById('chunkCounter').innerText = `Дубль: ${state.chunk_counter}`;
+            updateChunkTrack(state.chunk_counter);
 
             // НОВЫЙ БЛОК: Управление меткой "Проверено"
             let badge = document.getElementById('checkedBadge');
@@ -1177,6 +1219,8 @@ let isProcessing = false;
                     missingEl.innerText = state.stats.total - state.stats.good;
                 }
 
+                updateProjectProgress(state.stats);
+
                 if(state.stats.excel_name) {
                     markExcelLoaded(state.stats.excel_name);
                 }
@@ -1187,19 +1231,13 @@ let isProcessing = false;
                     document.getElementById('descAudio').innerText = state.stats.project_name;
                 }
             }
-            // === БЛОК ОБНОВЛЕНИЯ АКТИВНОЙ ВКЛАДКИ (ВСТАВЛЕН СЮДА) ===
+            // === АКТИВНАЯ ВКЛАДКА ===
+            // Сравниваем с меткой data-mode: раньше сверяли по надписи на кнопке,
+            // и любое переименование вкладки ломало подсветку.
+            let md = (state.mode || '').toLowerCase();
             document.querySelectorAll('.mode-switch .chip').forEach(btn => {
-                btn.classList.remove('chip-mode--active');
-                let txt = btn.innerText.toLowerCase();
-                let md = state.mode.toLowerCase();
-                if (md === 'chunks' && txt.includes('main')) {
-                    btn.classList.add('chip-mode--active');
-                } else if (md === 'проверенные' && txt.includes('провер')) {
-                    btn.classList.add('chip-mode--active');
-                } else if (txt.includes(md) && md !== 'chunks') {
-                    btn.classList.add('chip-mode--active');
-                }
-            }); // <-- ИСПРАВЛЕНО: добавлено });
+                btn.classList.toggle('chip-mode--active', (btn.dataset.mode || '') === md);
+            });
 
 
             if (state.mode === 'VarBatch') {

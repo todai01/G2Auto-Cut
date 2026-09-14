@@ -180,7 +180,7 @@ progress{ width: 100%; height: 8px; accent-color: var(--accent-good); border-rad
 progress::-webkit-progress-bar{ background: #0d1015; border-radius: 4px; }
 progress::-webkit-progress-value{ background: linear-gradient(90deg, var(--accent-good), #57d79a); border-radius: 4px; }
 
-.workspace-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom: 26px; gap: 15px; flex-wrap: wrap; }
+.workspace-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-4); gap: 15px; flex-wrap: wrap; }
 
 .stat-row{
     display: flex; align-items: center; gap: 16px; background: var(--panel);
@@ -230,9 +230,13 @@ button[disabled]:active{ transform: none; }
 .chip-mode--active{ background: linear-gradient(180deg, #a284f0, var(--accent-mode)); color: #fff; box-shadow: 0 2px 8px rgba(146,112,234,0.35); }
 .chip-mode--active:hover{ background: linear-gradient(180deg, #a284f0, var(--accent-mode)); color:#fff; }
 
-.workspace-grid { display: grid; grid-template-columns: 1fr; gap: 30px; align-items: stretch; height: 100%; }
-@media (min-width: 900px) { .workspace-grid { grid-template-columns: 1.2fr 1fr; } }
-.panel-column { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; height: 100%; }
+.stage-workspace{ display: flex; flex-direction: column; min-height: calc(100vh - 80px); }
+
+.workspace-grid { display: grid; grid-template-columns: 1fr; gap: 24px; align-items: stretch; flex: 1; }
+@media (min-width: 900px) { .workspace-grid { grid-template-columns: 1.15fr 1fr; } }
+/* Колонки идут сверху вниз: раньше space-between раздвигал панели
+   и посреди правой колонки зияла пустота в треть экрана. */
+.panel-column { display: flex; flex-direction: column; justify-content: flex-start; gap: var(--space-4); min-width: 0; }
 
 .counter-pill{
     font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-dim);
@@ -250,8 +254,8 @@ button[disabled]:active{ transform: none; }
 .screen{
     background: radial-gradient(ellipse at top, rgba(77,149,234,0.05), transparent 60%), var(--screen);
     border: 1px solid var(--border-soft); box-shadow: var(--shadow-screen); border-radius: var(--radius-lg);
-    padding: 32px 26px; text-align:center; display: flex; flex-direction: column; flex: 1;
-    min-height: 45vh; max-height: 65vh; overflow-y: auto; position: relative;
+    padding: 28px 26px; text-align:center; display: flex; flex-direction: column; flex: 1;
+    min-height: 220px; overflow-y: auto; position: relative;
 }
 
 .screen-content { margin: auto; width: 100%; position: relative; }
@@ -275,15 +279,18 @@ button[disabled]:active{ transform: none; }
 .btn-delete-phrase:hover { color: var(--accent-trash); background: rgba(239,91,80,0.08); }
 .btn-delete-phrase.holding { color: var(--accent-trash); transform: scale(1.4); }
 
-.chunk-nav{ display:flex; justify-content:center; align-items:center; gap: 22px; margin-top: 12px; }
+.chunk-nav{ display:flex; justify-content:center; align-items:center; gap: 22px; }
 .btn-nav{
     background: var(--panel-raised); border: 1px solid var(--border); color: var(--text);
     font-size: 13px; font-weight: 650; padding: 13px 20px; border-radius: var(--radius-md); cursor:pointer;
     box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset;
 }
 .btn-nav:hover{ border-color: var(--accent-primary); background: #232935; }
-.chunk-display{ text-align:center; width: 240px; }
-.chunk-name{ font-weight: 700; font-size: 16px; font-family: var(--font-mono); color: var(--text); }
+.chunk-display{ text-align:center; width: 260px; max-width: 100%; }
+.chunk-name{
+    font-weight: 700; font-size: 17px; font-family: var(--font-mono); color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .btn-play{
     width:100%; background: linear-gradient(180deg, #64a8f3, var(--accent-primary));
@@ -869,6 +876,44 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .tune-result__ex{
     display: inline-block; margin-top: 4px;
     font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+}
+
+/* --- Полоса общего прогресса проекта --- */
+.project-progress{
+    display: none; align-items: center; gap: var(--space-3);
+    margin: 0 0 var(--space-5);
+}
+.project-progress__bar{
+    flex: 1; height: 8px; border-radius: 999px; overflow: hidden;
+    display: flex; background: var(--screen);
+    border: 1px solid var(--border-soft); box-shadow: var(--shadow-screen);
+}
+.project-progress__fill{ height: 100%; width: 0; transition: width .35s var(--ease); }
+.project-progress__fill--checked{ background: linear-gradient(90deg, #5fb0f6, var(--accent-primary)); }
+.project-progress__fill--good{ background: linear-gradient(90deg, #45cf8f, var(--accent-good)); }
+.project-progress__fill--var{ background: linear-gradient(90deg, #f4bc5e, var(--accent-var)); }
+.project-progress__label{
+    flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
+    color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* --- Положение среди дублей --- */
+.chunk-track{
+    position: relative; height: 3px; margin-top: var(--space-2);
+    background: var(--border); border-radius: 999px;
+}
+.chunk-track__dot{
+    position: absolute; top: 50%; left: 0; width: 10px; height: 10px;
+    margin: -5px 0 0 -5px; border-radius: 50%;
+    background: var(--accent-primary); box-shadow: 0 0 8px rgba(77,149,234,0.6);
+    transition: left .25s var(--ease);
+}
+
+/* --- Шпаргалка в правой колонке рабочего экрана --- */
+.work-hotkeys{
+    display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
+    margin-top: auto; padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
 }
 
 /* --- Информационные панели, заполняющие низ экрана --- */

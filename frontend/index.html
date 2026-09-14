@@ -482,11 +482,21 @@
             </div>
 
             <div class="mode-switch">
-                <button class="chip" onclick="loadChecked()">Проверенные</button>
-                <button class="chip" onclick="loadVariables()">Переменные</button>
-                <button class="chip chip-mode--active" onclick="loadMainMode()">Основной <kbd>Esc</kbd></button>
+                <button class="chip" data-mode="проверенные" onclick="loadChecked()">Проверенные</button>
+                <button class="chip" data-mode="переменные" onclick="loadVariables()">Переменные</button>
+                <button class="chip chip-mode--active" data-mode="chunks" onclick="loadMainMode()">Основной <kbd>Esc</kbd></button>
             </div>
         </header>
+
+        <!-- Общий прогресс проекта -->
+        <div class="project-progress" id="projectProgress">
+            <div class="project-progress__bar">
+                <span class="project-progress__fill project-progress__fill--checked" id="barChecked"></span>
+                <span class="project-progress__fill project-progress__fill--good" id="barGood"></span>
+                <span class="project-progress__fill project-progress__fill--var" id="barVar"></span>
+            </div>
+            <div class="project-progress__label" id="progressLabel">0%</div>
+        </div>
 
         <div id="missingPanel" class="missing-panel" style="display: none;">
             <div class="missing-header">
@@ -536,6 +546,7 @@
                     <div class="chunk-display">
                         <div id="chunkCounter" class="chunk-counter">Дубль: 0 / 0</div>
                         <div id="chunkName" class="chunk-name">Загрузите аудио</div>
+                        <div class="chunk-track"><span class="chunk-track__dot" id="chunkTrackDot"></span></div>
                     </div>
                     <button class="btn-nav" onclick="navChunk(1)"><kbd>D</kbd> &#9654;</button>
                 </section>
@@ -650,6 +661,16 @@
                         </div>
                     </div>
                 </section>
+
+                <div class="work-hotkeys">
+                    <span class="hotkey"><kbd>Space</kbd> Прослушать</span>
+                    <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза</span>
+                    <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль</span>
+                    <span class="hotkey"><kbd>W</kbd> Проверено</span>
+                    <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
+                    <span class="hotkey"><kbd>S</kbd> Тишина</span>
+                    <span class="hotkey"><kbd>F</kbd> Поиск</span>
+                </div>
             </div>
         </div>
     </div>
