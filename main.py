@@ -192,7 +192,8 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             "chunk_name": "Загрузите аудио",
             "chunk_counter": f"0 / {len(self.chunks_data)}",
             "has_audio": False, "is_done": False, "is_var": False, "is_checked": False,
-            "raw_chunk_name": "", "filepath": "",
+            "raw_chunk_name": "", "filepath": "", "completed_filepath": None,
+            "excel_loaded": bool(self.phrases_data),
             "stats": {
                 "total": len(self.phrases_data),
                 "good": sum(len([f for f in files if f.endswith(('.wav', '.mp3'))]) for r, d, files in
@@ -255,27 +256,28 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
                 state["is_var"] = True
                 if not state["completed_filepath"]: state["completed_filepath"] = var_path
 
-            return state
+        # ВАЖНО: состояние возвращается всегда, даже если аудио ещё не загружено.
+        # Раньше return стоял внутри блока "если есть чанки", и после загрузки
+        # одного только Excel фронтенд получал пустой ответ (None) и ничего не обновлял.
+        return state
 
-            # --- НАЧАЛО НОВОГО КОДА (БЕЗ ОТСТУПОВ СЛЕВА!) ---
+
 def resource_path(relative_path):
-                """
-                Помогает .exe файлу найти папку frontend во временной директории Windows.
-                Без этой функции будет белый экран.
-                """
-                try:
-                    base_path = sys._MEIPASS
-                except Exception:
-                    base_path = os.path.abspath(".")
-                return os.path.join(base_path, relative_path)
+    """
+    Помогает .exe файлу найти папку frontend во временной директории Windows.
+    Без этой функции будет белый экран.
+    """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
-            # --- КОНЕЦ НОВОГО КОДА ---
 
 if __name__ == '__main__':
-                api = Api()
+    api = Api()
 
-                # Оборачиваем путь в resource_path
-                html_path = resource_path('frontend/index.html')
+    html_path = resource_path('frontend/index.html')
 
-                webview.create_window('G2Studio | Автосрезка', html_path, js_api=api, width=1200, height=800)
-                webview.start()
+    webview.create_window('G2Studio | Автосрезка', html_path, js_api=api, width=1280, height=860)
+    webview.start()

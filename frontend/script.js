@@ -26,7 +26,36 @@ let isProcessing = false;
             document.getElementById('progressText').innerText = t;
         }
 
-        function showMenu() { document.getElementById('stage1-loading').style.display = 'block'; document.getElementById('stage2-workspace').style.display = 'none'; }
+        // Заставка -> экран подготовки проекта
+        function enterApp() {
+            let splash = document.getElementById('stage0-splash');
+            if (splash) splash.style.display = 'none';
+            showMenu();
+        }
+
+        function showMenu() {
+            let splash = document.getElementById('stage0-splash');
+            if (splash) splash.style.display = 'none';
+
+            let setup = document.getElementById('stage1-loading');
+            setup.style.display = 'block';
+            document.getElementById('stage2-workspace').style.display = 'none';
+
+            // Перезапускаем появление блоков «лесенкой»
+            setup.querySelectorAll('.rise').forEach(el => {
+                el.style.animation = 'none';
+                void el.offsetWidth;
+                el.style.animation = '';
+            });
+        }
+
+        // Подсказка в шапке экрана подготовки
+        function setSetupStatus(text, ready) {
+            let el = document.getElementById('setupStatus');
+            if (!el) return;
+            el.innerText = text;
+            el.classList.toggle('setup-status--ready', !!ready);
+        }
         function showWorkspace() { document.getElementById('stage1-loading').style.display = 'none'; document.getElementById('stage2-workspace').style.display = 'block'; }
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
@@ -37,33 +66,35 @@ let isProcessing = false;
             if (state.has_audio) { showWorkspace(); playAudio(); }
         }
 
+        // Подсветка карточки «Загрузить текст (Excel)».
+        // Раньше этот код был продублирован в двух местах и мог разойтись.
+        function markExcelLoaded(fileName) {
+            let btnExcel = document.getElementById('btnLoadExcel');
+            if (!btnExcel) return;
+
+            btnExcel.classList.add('loaded');
+            let descExcel = document.getElementById('descExcel');
+            if (descExcel) descExcel.innerHTML = `<b>${fileName}</b>`;
+
+            setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
+        }
+
         async function loadExcel() {
-            let state = await pywebview.api.load_excel();
-
-            // Если юзер отменил выбор файла, прерываемся
-            if (!state || state.error === "cancel") return;
-
-            // Если есть реальная ошибка, покажем её
-            if (state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+            let state;
+            try {
+                state = await pywebview.api.load_excel();
+            } catch (e) {
+                showBeautifulAlert(`❌ <b>Не удалось прочитать таблицу</b><br><br>${e}`);
                 return;
             }
 
-            // ПРИНУДИТЕЛЬНАЯ ОКРАСКА КНОПКИ
-            let btnExcel = document.getElementById('btnLoadExcel');
-            btnExcel.style.borderColor = 'var(--accent-good)';
-            btnExcel.style.background = 'var(--tint-good)';
+            // Пользователь закрыл окно выбора файла — молча выходим
+            if (!state || state.error === "cancel") return;
 
-            let descExcel = document.getElementById('descExcel');
-            let fileName = (state.stats && state.stats.excel_name) ? state.stats.excel_name : "Таблица загружена";
-            descExcel.innerHTML = `✅ <b>${fileName}</b>`;
-            descExcel.style.color = 'var(--accent-good)';
-
-            let iconExcel = btnExcel.querySelector('.option-icon');
-            if (iconExcel) iconExcel.style.color = 'var(--accent-good)';
-
-            let titleExcel = btnExcel.querySelector('.option-title');
-            if (titleExcel) titleExcel.style.color = 'var(--accent-good)';
+            if (state.error) {
+                showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(state.error).replace(/\n/g, '<br>')}`);
+                return;
+            }
 
             updateUI(state);
         }
@@ -179,24 +210,6 @@ let isProcessing = false;
 
             document.getElementById('progressContainer').style.display = 'none';
             isProcessing = false;
-        }
-
-        async function runAutoLabel() {
-            if (isProcessing) return;
-
-            // Спрашиваем у пользователя, сколько клипов нужно прокликать
-            let count = prompt("🤖 Робот-разметчик\n\nВведите количество клипов для разметки (например: 60):", "60");
-
-            if (count !== null && count.trim() !== "" && !isNaN(count)) {
-                isProcessing = true;
-                updateProgress(0, 'Запуск макроса (Не трогайте мышь!)...');
-                document.getElementById('progressContainer').style.display = 'block';
-
-                // Вызываем наш Python-макрос
-                await pywebview.api.auto_label_clips(parseInt(count));
-
-                isProcessing = false;
-            }
         }
 
         async function stripFilenames() {
@@ -698,23 +711,7 @@ let isProcessing = false;
                 }
 
                 if(state.stats.excel_name) {
-                    let btnExcel = document.getElementById('btnLoadExcel');
-                    btnExcel.classList.add('loaded');
-                    // Принудительно красим кнопку в красивый зеленый цвет успеха
-                    btnExcel.style.borderColor = 'var(--accent-good)';
-                    btnExcel.style.background = 'var(--tint-good)';
-
-                    let descExcel = document.getElementById('descExcel');
-                    // Добавляем галочку и делаем текст жирным и зеленым
-                    descExcel.innerHTML = `✅ <b>${state.stats.excel_name}</b>`;
-                    descExcel.style.color = 'var(--accent-good)';
-
-                    // Красим саму иконку документа
-                    let iconExcel = btnExcel.querySelector('.option-icon');
-                    if (iconExcel) iconExcel.style.color = 'var(--accent-good)';
-
-                    let titleExcel = btnExcel.querySelector('.option-title');
-                    if (titleExcel) titleExcel.style.color = 'var(--accent-good)';
+                    markExcelLoaded(state.stats.excel_name);
                 }
                 if(state.stats.project_name) {
                     document.getElementById('btnLoadFolder').classList.add('loaded');
@@ -908,6 +905,16 @@ let isProcessing = false;
 
             // РАЗРЕШАЕМ СТАНДАРТНЫЕ КОМБИНАЦИИ (Ctrl+C, Ctrl+A, и т.д.)
             if (e.ctrlKey || e.metaKey) return;
+
+            // На заставке любая из клавиш Enter / Space открывает экран подготовки
+            let splash = document.getElementById('stage0-splash');
+            if (splash && splash.style.display !== 'none') {
+                if (e.code === 'Enter' || e.code === 'Space') {
+                    e.preventDefault();
+                    enterApp();
+                }
+                return;
+            }
 
             let alertOverlay = document.getElementById('customAlertOverlay');
             if (alertOverlay && alertOverlay.style.display === 'flex') {

@@ -100,25 +100,52 @@
         </div>
     </div>
 
-    <div id="stage1-loading" class="stage stage-loading">
-        <div class="loading-card">
-            <div class="loading-header">
-                <span class="eyebrow">G2Auto-Cut</span>
-                <h1>Загрузка проекта</h1>
-                <p class="subtitle">Подключите текст и аудио, затем выберите режим работы.</p>
+    <!-- ЭКРАН 0 — Заставка -->
+    <div id="stage0-splash" class="stage stage-splash">
+        <div class="splash">
+            <div class="splash-bars" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span>
             </div>
-            <div class="load-options">
-                <button class="option-card" id="btnLoadExcel" onclick="loadExcel()">
+            <div class="splash-inner">
+                <div class="splash-mark">G2<span>Auto</span>Cut</div>
+                <div class="splash-tagline">Студийная нарезка и монтаж озвучки</div>
+                <button class="splash-btn" onclick="enterApp()">
+                    Начать работу <kbd>Enter</kbd>
+                </button>
+                <div class="splash-note">G2Studio · работает в связке с Audacity</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ЭКРАН 1 — Подготовка проекта и выбор режима -->
+    <div id="stage1-loading" class="stage stage-loading" style="display: none;">
+        <header class="setup-header">
+            <div class="setup-brand">
+                <span class="setup-brand__mark">G2<span>Auto</span>Cut</span>
+                <span class="setup-brand__sub">Подготовка проекта</span>
+            </div>
+            <div class="setup-status" id="setupStatus">Шаг 1 · Подключите таблицу с текстом</div>
+        </header>
+
+        <div class="setup-grid">
+
+            <!-- ЛЕВАЯ КОЛОНКА: источник материала -->
+            <section class="setup-col setup-col--source">
+                <div class="section-label"><span>Источник материала</span></div>
+
+                <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
                     <span class="option-icon">📄</span>
                     <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
                 </button>
 
-                <button class="option-card option-card--attached" id="btnLoadAudio" onclick="loadAudio()">
+                <button class="option-card option-card--attached rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
                     <span class="option-icon">🎚️</span>
                     <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
                 </button>
 
-                <div class="settings-panel">
+                <div class="settings-panel rise" style="--d: 3">
                     <div class="settings-title">Настройки нарезки</div>
 
                     <label class="slider-field">
@@ -146,20 +173,38 @@
                     </label>
                 </div>
 
-                <button class="option-card option-card--alt" id="btnLoadFolder" onclick="loadFolder()">
+                <button class="option-card option-card--alt rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
                     <span class="option-icon">📁</span>
                     <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
                 </button>
 
-                <button class="option-card option-card--var" onclick="initVarBatch()">
-                    <span class="option-icon">🔄</span>
-                    <div>
-                        <span class="option-title">4. Пакетная сборка переменных</span>
-                        <span class="option-desc">Авто-сортировка сумм и подгонка под эталон</span>
-                    </div>
-                </button>
+                <div id="progressContainer" class="progress-panel">
+                    <div id="progressText" class="progress-text">Анализ...</div>
+                    <progress id="progressBar" max="100"></progress>
+                </div>
+            </section>
 
-                <div class="option-settings">
+            <!-- ПРАВАЯ КОЛОНКА: режимы работы -->
+            <section class="setup-col setup-col--modes">
+                <div class="section-label"><span>Режимы работы с переменными</span></div>
+
+                <div class="mode-grid">
+                    <button class="mode-card mode-card--var rise" style="--d: 3" onclick="initVarBatch()">
+                        <span class="mode-card__icon">🔄</span>
+                        <span class="mode-card__title">Пакетная сборка переменных</span>
+                        <span class="mode-card__desc">Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity.</span>
+                        <span class="mode-card__go">Запустить &#8594;</span>
+                    </button>
+
+                    <button class="mode-card mode-card--good rise" style="--d: 4" onclick="initVarBatchPremade()">
+                        <span class="mode-card__icon">📂</span>
+                        <span class="mode-card__title">Готовая папка с переменными</span>
+                        <span class="mode-card__desc">Загрузить уже рассортированные суммы с диска вместе с файлами start.wav и end.wav.</span>
+                        <span class="mode-card__go">Выбрать папку &#8594;</span>
+                    </button>
+                </div>
+
+                <div class="option-settings rise" style="--d: 5">
                     <label class="silence-toggle silence-toggle--left">
                         <input type="checkbox" id="simpleExportCheck"> <span>Простой экспорт (без start/end и подгонки)</span>
                     </label>
@@ -168,46 +213,41 @@
                     </label>
                 </div>
 
-                <button class="option-card option-card--good" onclick="initVarBatchPremade()">
-                    <span class="option-icon">📂</span>
-                    <div>
-                        <span class="option-title">5. Готовая папка с переменными</span>
-                        <span class="option-desc">Загрузить уже рассортированные суммы с диска</span>
-                    </div>
-                </button>
+                <div class="section-label section-label--spaced"><span>Утилиты</span></div>
 
-                <div class="group-divider"><span>Утилиты</span></div>
+                <div class="util-grid">
+                    <button class="util-tile util-tile--mode rise" style="--d: 6" onclick="stripFilenames()">
+                        <span class="util-tile__icon">🔤</span>
+                        <span class="util-tile__title">Очистить названия файлов</span>
+                        <span class="util-tile__desc">Убрать слова «миллион», «тысяч» — оставить цифры</span>
+                    </button>
 
-                <button class="option-card option-card--primary" onclick="runAutoLabel()">
-                    <span class="option-icon">🤖</span>
-                    <div>
-                        <span class="option-title">Авто-разметка клипов</span>
-                        <span class="option-desc">Перенос имён клипов в метки через эмуляцию клавиатуры</span>
-                    </div>
-                </button>
+                    <button class="util-tile util-tile--info rise" style="--d: 7" onclick="startBatchNormalization()">
+                        <span class="util-tile__icon">🔊</span>
+                        <span class="util-tile__title">Массовая нормализация</span>
+                        <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
+                    </button>
+                </div>
+            </section>
 
-                <button class="option-card option-card--mode" onclick="stripFilenames()">
-                    <span class="option-icon">🔤</span>
-                    <div>
-                        <span class="option-title">Очистить названия файлов</span>
-                        <span class="option-desc">Удалить слова «миллион», «тысяч» и оставить только цифры</span>
-                    </div>
-                </button>
-
-                <button class="option-card option-card--info" onclick="startBatchNormalization()">
-                    <span class="option-icon">🔊</span>
-                    <div>
-                        <span class="option-title">Массовая нормализация</span>
-                        <span class="option-desc">Подогнать громкость всех файлов в папке под эталон</span>
-                    </div>
-                </button>
-
-            </div>
-            <div id="progressContainer" class="progress-panel">
-                <div id="progressText" class="progress-text">Анализ...</div>
-                <progress id="progressBar" max="100"></progress>
-            </div>
         </div>
+
+        <footer class="setup-footer rise" style="--d: 8">
+            <span class="setup-footer__label">Горячие клавиши</span>
+            <div class="hotkey-list">
+                <span class="hotkey"><kbd>Space</kbd> Воспроизвести</span>
+                <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
+                <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
+                <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
+                <span class="hotkey"><kbd>Z</kbd> В Good</span>
+                <span class="hotkey"><kbd>C</kbd> В переменные</span>
+                <span class="hotkey"><kbd>X</kbd> В мусор</span>
+                <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
+                <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
+                <span class="hotkey"><kbd>F</kbd> Поиск</span>
+                <span class="hotkey"><kbd>Esc</kbd> Основной режим</span>
+            </div>
+        </footer>
     </div>
 
     <div id="stage2-workspace" class="stage stage-workspace" style="display: none;">
