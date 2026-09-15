@@ -6,7 +6,7 @@ import pyautogui
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
-from core import project_state
+from core import project_state, recent_projects
 
 try:
     import audioop  # быстрый расчёт громкости; удалён из Python 3.13
@@ -329,6 +329,28 @@ class ProjectMixin:
         self.current_mode = 'Chunks'
         self.state_memory = {'Chunks': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
         return self._scan_and_load_folder(chunks_dir, 'Chunks')
+
+    def get_recent_projects(self):
+        """Список недавних проектов для стартового экрана."""
+        return recent_projects.list_recent()
+
+    def open_recent_project(self, path):
+        """Быстрое продолжение недавнего проекта в один клик: без диалогов
+        про Audacity — просто восстанавливаем состояние и открываем список
+        дублей на том месте, где остановились."""
+        if not path or not os.path.isdir(path):
+            return {"error": "Папка проекта больше не найдена на диске."}
+
+        self.work_dir = path
+        self.project_name = os.path.basename(path)
+        project_state.apply(self, project_state.load(path))
+
+        # Режим VarBatch нельзя восстановить с одного диска — каскад
+        # собирается заново из открытого Audacity или выбранной папки.
+        # Открываем обычный список дублей как безопасный старт.
+        mode = self.current_mode if self.current_mode in ('Chunks', 'Переменные', 'Проверенные') else 'Chunks'
+        self.current_mode = mode
+        return self._scan_and_load_folder(os.path.join(path, mode), mode)
 
     def load_chunks_folder(self):
         folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)

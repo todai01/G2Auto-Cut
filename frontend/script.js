@@ -150,7 +150,10 @@ let isProcessing = false;
             if (h) showBeautifulAlert(`<b>${h.title}</b><br><br>${h.body}`);
         }
 
-        document.addEventListener('DOMContentLoaded', updateSettingsText);
+        document.addEventListener('DOMContentLoaded', () => {
+            updateSettingsText();
+            loadRecentProjects();
+        });
 
         function updateProgress(p, t) {
             document.getElementById('progressContainer').style.display = 'block';
@@ -182,6 +185,68 @@ let isProcessing = false;
 
         function showSplash() {
             showStage('stage0-splash');
+            loadRecentProjects();
+        }
+
+        // ===== НЕДАВНИЕ ПРОЕКТЫ =====
+        let recentProjectsCache = [];
+
+        function escapeHtml(s) {
+            let d = document.createElement('div');
+            d.innerText = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
+
+        function formatRecentTime(ts) {
+            if (!ts) return '';
+            let diffMin = Math.floor(Date.now() / 1000 - ts) / 60;
+            if (diffMin < 1) return 'только что';
+            if (diffMin < 60) return `${Math.floor(diffMin)} мин назад`;
+            let diffH = diffMin / 60;
+            if (diffH < 24) return `${Math.floor(diffH)} ч назад`;
+            return `${Math.floor(diffH / 24)} дн назад`;
+        }
+
+        async function loadRecentProjects() {
+            let panel = document.getElementById('recentProjectsPanel');
+            let list = document.getElementById('recentProjectsList');
+            if (!panel || !list) return;
+
+            let items = [];
+            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
+            recentProjectsCache = items || [];
+
+            if (!recentProjectsCache.length) {
+                panel.style.display = 'none';
+                return;
+            }
+
+            list.innerHTML = recentProjectsCache.map((it, idx) => `
+                <button class="recent-project" onclick="openRecentProject(${idx})">
+                    <span class="recent-project__name">${escapeHtml(it.name)}</span>
+                    <span class="recent-project__time">${formatRecentTime(it.updated_at)}</span>
+                </button>
+            `).join('');
+            panel.style.display = 'block';
+        }
+
+        async function openRecentProject(idx) {
+            let item = recentProjectsCache[idx];
+            if (!item) return;
+
+            updateProgress(0, 'Продолжаем проект...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.open_recent_project(item.path);
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                loadRecentProjects(); // вдруг папка пропала — обновим список
+                return;
+            }
+
+            updateUI(state);
+            showWorkspace();
         }
 
         // Заставка -> экран подготовки проекта
