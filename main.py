@@ -297,13 +297,29 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
     # (navigate_chunk, process_action и т.д.) не меняются ни на строку —
     # dispatch() лишь даёт им одну общую дверь.
     _MAIN_SCREEN_ACTIONS = {
-        "navigate":  lambda api, p: api.navigate_chunk(p.get("direction", 1), p.get("auto_play", True)),
-        "jump":      lambda api, p: api.jump_to_chunk(p.get("index", 0)),
-        "save":      lambda api, p: api.process_action(p.get("kind"), p.get("add_silence", False)),
-        "play":      lambda api, p: api.play_audio(p.get("toggle", False)),
-        "play_sync": lambda api, p: api.sync_and_play(),
-        "stop":      lambda api, p: api.stop_audio(),
+        "navigate":    lambda api, p: api.navigate_chunk(p.get("direction", 1), p.get("auto_play", True)),
+        "jump":        lambda api, p: api.jump_to_chunk(p.get("index", 0)),
+        "save":        lambda api, p: api.process_action(p.get("kind"), p.get("add_silence", False)),
+        "play":        lambda api, p: api.play_audio(p.get("toggle", False)),
+        "play_sync":   lambda api, p: api.sync_and_play(),
+        "stop":        lambda api, p: api.stop_audio(),
+        "switch_mode": lambda api, p: api._switch_mode(p.get("mode")),
     }
+
+    # Папки проекта, между которыми переключается основной экран. Отдельная
+    # точка, а не условия внутри dispatch(), чтобы регистр действий выше
+    # оставался плоским и читаемым.
+    _MODE_SWITCHERS = {
+        "chunks":  lambda api: api.load_main_mode(),
+        "checked": lambda api: api.load_checked_mode(),
+        "results": lambda api: api.load_results_mode(),
+    }
+
+    def _switch_mode(self, mode):
+        fn = self._MODE_SWITCHERS.get(mode)
+        if fn is None:
+            return {"error": f"Неизвестный режим: {mode}"}
+        return fn(self)
 
     def dispatch(self, action, payload=None):
         """Единая точка входа для действий основного экрана: навигация по
