@@ -327,8 +327,14 @@ class VariablesMixin:
         self.cascade_ordered_cats = []
         self.cascade_files = {}
 
+        # «Проверенные»/«Переменные» — собственные служебные папки программы,
+        # а не категории, которые задал пользователь. Раньше их наличие
+        # заставляло программу считать их единственной категорией и вообще
+        # не смотреть на файлы, лежащие прямо в выбранной папке.
+        OWN_OUTPUT_FOLDERS = {'проверенные', 'переменные'}
         try:
-            subdirs = [d for d in os.listdir(self.work_dir) if os.path.isdir(os.path.join(self.work_dir, d))]
+            subdirs = [d for d in os.listdir(self.work_dir)
+                      if os.path.isdir(os.path.join(self.work_dir, d)) and d.lower() not in OWN_OUTPUT_FOLDERS]
             subdirs.sort()  # Сортируем по алфавиту
         except Exception as e:
             return {"error": f"Ошибка чтения папки: {e}"}
@@ -385,10 +391,17 @@ class VariablesMixin:
         self.current_mode = 'VarBatch'
         self.is_cascade_initialized = False
 
+        # Если в «Проверенные» уже есть готовые файлы (продолжаем прошлую
+        # работу, а не начинаем с нуля) — выставляем счётчик на первую
+        # ещё не сделанную фразу вместо начала списка.
+        resumed = self._resume_cascade_progress()
+
+        msg = "✅ <b>Готовая папка загружена.</b><br><br>Нажмите ОК, чтобы открыть конвейер!"
+        if resumed:
+            msg = f"✅ <b>Готовая папка загружена.</b><br><br>Уже сделано: <b>{resumed}</b>. Продолжаем с этого места — нажмите ОК!"
+
         # Отправляем команду в UI и инициализируем новый проект Audacity
-        # Отправляем команду в UI и инициализируем новый проект Audacity
-        webview.windows[0].evaluate_js(
-            "showBeautifulAlert('✅ <b>Готовая папка загружена.</b><br><br>Нажмите ОК, чтобы открыть конвейер!');")
+        webview.windows[0].evaluate_js(f"showBeautifulAlert('{msg}');")
 
         # Просто переходим к загрузке!
         return self.load_next_var_batch()
@@ -784,12 +797,61 @@ class VariablesMixin:
             self.cascade_active_cat_idx = 0
             self.current_mode = 'VarBatch'
             self.is_cascade_initialized = False
+            self._resume_cascade_progress()
 
             webview.windows[0].evaluate_js(
                 "showBeautifulAlert('✅ <b>Переменные выгружены</b> (фулл-цифры сохранены).<br><br>Нажмите ОК, чтобы открыть конвейер!');")
 
             # Просто переходим к загрузке!
             return self.load_next_var_batch()
+
+    def _resume_cascade_progress(self):
+        """Если в «Проверенные» уже лежат готовые файлы (продолжение
+        прошлой работы, а не старт с нуля) — переставляет указатель
+        каскада и текущую фразу на первую ещё не сделанную позицию.
+
+        Возвращает число уже готовых фраз (0, если продолжать нечего)."""
+        if not getattr(self, 'phrases_data', None) or not getattr(self, 'cascade_ordered_cats', None):
+            return 0
+
+        checked_dir = os.path.join(self.work_dir, 'Проверенные')
+        if not os.path.isdir(checked_dir):
+            return 0
+
+        existing = {f.lower() for f in os.listdir(checked_dir) if os.path.isfile(os.path.join(checked_dir, f))}
+        if not existing:
+            return 0
+
+        # Считаем подряд идущие готовые фразы с самого начала списка —
+        # именно в этом порядке их сохраняет save_var_batch.
+        done_count = 0
+        for i, p in enumerate(self.phrases_data):
+            expected = p.get("filename") or f"фраза_{i + 1:04d}"
+            expected_wav = (expected if expected.lower().endswith('.wav') else f"{expected}.wav").lower()
+            if expected_wav in existing:
+                done_count += 1
+            else:
+                break
+
+        if done_count == 0:
+            return 0
+
+        self.phrase_index = min(done_count, len(self.phrases_data) - 1)
+
+        remaining = done_count
+        for cat_idx, cat in enumerate(self.cascade_ordered_cats):
+            cat_len = len(self.cascade_files.get(cat, []))
+            if remaining < cat_len:
+                self.cascade_active_cat_idx = cat_idx
+                self.cascade_ptrs[cat] = remaining
+                return done_count
+            remaining -= cat_len
+
+        # Все категории уже пройдены — остаёмся на последней позиции последней
+        last_cat = self.cascade_ordered_cats[-1]
+        self.cascade_active_cat_idx = len(self.cascade_ordered_cats) - 1
+        self.cascade_ptrs[last_cat] = max(0, len(self.cascade_files.get(last_cat, [])) - 1)
+        return done_count
 
     def load_next_var_batch(self):
         """Супербыстрый старт. Только инициализация, без Audacity."""
