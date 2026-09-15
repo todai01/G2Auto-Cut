@@ -6,6 +6,8 @@ import pyautogui
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
+from core import project_state
+
 try:
     import audioop  # быстрый расчёт громкости; удалён из Python 3.13
 except ImportError:
@@ -229,6 +231,11 @@ class ProjectMixin:
             raw_filepath = filename[0]
         self.work_dir = os.path.dirname(raw_filepath)
         self.project_name = os.path.basename(self.work_dir)
+
+        # Если в этой папке уже есть сохранённый проект — подтягиваем тексты
+        # из Excel, чтобы не загружать их заново после повторной нарезки.
+        project_state.apply(self, project_state.load(self.work_dir))
+
         chunks_dir = os.path.join(self.work_dir, 'Chunks')
 
         for folder in ['Chunks', 'Переменные', 'Проверенные']:
@@ -268,19 +275,31 @@ class ProjectMixin:
 
         try:
             self.audacity.send_command('New:', auto_start=True)
-            time.sleep(2.5)  # Даем Audacity больше времени на "холодный" старт
 
-            # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит
+            # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит.
+            # Раньше перед этим циклом ещё стояла слепая пауза в 2.5с — она не
+            # нужна, потому что первая же попытка в цикле делает то же самое
+            # ожидание, просто с проверкой результата, а не наугад.
+            resp = ""
             for _ in range(15):
                 resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
                 if resp and '[' in resp:
                     break
                 time.sleep(0.5)
 
+            tracks_before = resp.count('"kind"')
             self.audacity.send_command(f'Import2: Filename="{os.path.abspath(raw_filepath).replace(chr(92), "/")}"')
-            time.sleep(1.0)
+
+            # Ждём, пока импортированная дорожка реально появится в проекте,
+            # вместо слепой паузы в 1с на любой скорости диска и файла.
+            for _ in range(10):
+                resp2 = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
+                if resp2 and resp2.count('"kind"') > tracks_before:
+                    break
+                time.sleep(0.2)
+
             self.audacity.send_command('NewMonoTrack:')
-            time.sleep(0.5)
+            time.sleep(0.2)
             self.audacity.send_command(f'ImportLabels: Filename="{os.path.abspath(labels_path).replace(chr(92), "/")}"')
         except Exception as e:
             try:
@@ -305,6 +324,10 @@ class ProjectMixin:
                                                                                                       'trash',
                                                                                                       'проверенные'] else selected_path
         self.project_name = os.path.basename(self.work_dir)
+
+        # Восстанавливаем сохранённый снимок проекта (тексты из Excel, номер
+        # текущего дубля, режим) — если он раньше сохранялся в эту папку.
+        project_state.apply(self, project_state.load(self.work_dir))
 
         has_tracks = False
         response = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON', auto_start=True)

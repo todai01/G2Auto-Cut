@@ -501,6 +501,7 @@ class VariablesMixin:
 
         return {
             "mode": "VarBatch",
+            "screen": "varbatch",
             "var_batch_name": active_name,
             "var_batch_cat": active_cat,
             "phrase_text": display_phrase_text,

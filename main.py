@@ -10,6 +10,7 @@ from core.variables_handler import VariablesMixin
 from core.phrase_handler import PhrasesMixin
 from core.project_handler import ProjectMixin
 from core.audacity_montage import MontageMixin
+from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
 from utils.audacity_client import AudacityClient
@@ -198,6 +199,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
 
         state = {
             "mode": self.current_mode,
+            "screen": "main",
             "phrase_text": "Загрузите Excel" if not self.phrases_data else "Все фразы удалены",
             "phrase_counter": f"0 / {len(self.phrases_data)}",
             "custom_filename": "",
@@ -269,10 +271,69 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         # Лента дублей: статусы соседних дублей для полоски под счётчиком
         state["strip"] = self._build_chunk_strip()
 
+        # Автосохранение: снимок проекта пишется на диск при каждом обновлении
+        # экрана, поэтому закрытие программы больше не стирает прогресс.
+        project_state.save(self)
+
         # ВАЖНО: состояние возвращается всегда, даже если аудио ещё не загружено.
         # Раньше return стоял внутри блока "если есть чанки", и после загрузки
         # одного только Excel фронтенд получал пустой ответ (None) и ничего не обновлял.
         return state
+
+    def to_view(self):
+        """Единая точка получения состояния экрана.
+
+        Раньше фронтенд должен был знать, что для обычного режима нужен
+        get_ui_state(), а для режима переменных — свой отдельный сборщик.
+        Внутри всё та же логика (она пока не трогалась, чтобы ничего не
+        сломать), но теперь есть одно имя, за которым можно спрятать оба
+        сборщика и любые будущие. Поле "screen" в ответе говорит, какой
+        именно экран пришёл: "main" или "varbatch"."""
+        return self.get_ui_state()
+
+    # Регистр действий основного рабочего экрана для dispatch(). Каждая
+    # запись — это имя действия и функция, которая достаёт аргументы из
+    # payload и вызывает уже существующий, проверенный метод. Сами методы
+    # (navigate_chunk, process_action и т.д.) не меняются ни на строку —
+    # dispatch() лишь даёт им одну общую дверь.
+    _MAIN_SCREEN_ACTIONS = {
+        "navigate":    lambda api, p: api.navigate_chunk(p.get("direction", 1), p.get("auto_play", True)),
+        "jump":        lambda api, p: api.jump_to_chunk(p.get("index", 0)),
+        "save":        lambda api, p: api.process_action(p.get("kind"), p.get("add_silence", False)),
+        "play":        lambda api, p: api.play_audio(p.get("toggle", False)),
+        "play_sync":   lambda api, p: api.sync_and_play(),
+        "stop":        lambda api, p: api.stop_audio(),
+        "switch_mode": lambda api, p: api._switch_mode(p.get("mode")),
+    }
+
+    # Папки проекта, между которыми переключается основной экран. Отдельная
+    # точка, а не условия внутри dispatch(), чтобы регистр действий выше
+    # оставался плоским и читаемым.
+    _MODE_SWITCHERS = {
+        "chunks":  lambda api: api.load_main_mode(),
+        "checked": lambda api: api.load_checked_mode(),
+        "results": lambda api: api.load_results_mode(),
+    }
+
+    def _switch_mode(self, mode):
+        fn = self._MODE_SWITCHERS.get(mode)
+        if fn is None:
+            return {"error": f"Неизвестный режим: {mode}"}
+        return fn(self)
+
+    def dispatch(self, action, payload=None):
+        """Единая точка входа для действий основного экрана: навигация по
+        дублям, сохранение (Проверено/В переменные), воспроизведение.
+
+        Это дополнительный слой поверх существующих методов — они и сами
+        по себе продолжают работать, ничего не удалено. Фронтенд можно
+        переводить на dispatch() постепенно, кнопка за кнопкой, вместо
+        одной рискованной правки сразу везде."""
+        payload = payload or {}
+        handler = self._MAIN_SCREEN_ACTIONS.get(action)
+        if handler is None:
+            return {"error": f"Неизвестное действие: {action}"}
+        return handler(self, payload)
 
 
 def resource_path(relative_path):
