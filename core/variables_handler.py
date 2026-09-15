@@ -16,6 +16,9 @@ class VariablesMixin:
         if getattr(self, 'current_mode', '') != 'VarBatch':
             return self.get_ui_state()
 
+        if self._block_if_audacity_ambiguous():
+            return self._get_var_batch_ui_state()
+
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
         active_idx = self.cascade_ptrs[active_cat]
         active_file = self.cascade_files[active_cat][active_idx]
@@ -211,7 +214,7 @@ class VariablesMixin:
 
     def sync_var_chunk_audacity(self):
         """Если перелистываем вручную, просто сбрасываем состояние Audacity"""
-        if getattr(self, 'is_in_audacity', False):
+        if getattr(self, 'is_in_audacity', False) and not self._block_if_audacity_ambiguous():
             self.audacity.send_command('SelectAll:')
             self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
@@ -283,35 +286,137 @@ class VariablesMixin:
             return {
                 "error": "Сначала загрузите Excel-файл с текстами (Шаг 1), чтобы программа понимала, какое имя сейчас обрабатывается!"}
 
-        # Автоматически ищем start.wav и end.wav
-        start_f = self._find_reference_file(in_dir, "start")
-        end_f = self._find_reference_file(in_dir, "end")
-
         if target_hwnd:
             self.set_active_window(target_hwnd)
 
-        # 2. Если start.wav нет, просим пользователя выбрать его вручную
-        if not start_f:
-            webview.windows[0].evaluate_js(
-                "alert('В папке нет файла start.wav.\\n\\nПожалуйста, выберите аудиофайл НАЧАЛА фразы с вашего компьютера.');")
-            f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                                                      file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
-            if f:
-                start_f = f[0]
-            else:
-                return {"error": "Вы не выбрали файл начала (start)!"}
+        # Автоматически ищем start.wav и end.wav
+        self._pending_premade_dir = in_dir
+        self._pending_start_file = self._find_reference_file(in_dir, "start")
+        self._pending_end_file = self._find_reference_file(in_dir, "end")
 
-        # 3. Если end.wav нет, просим пользователя выбрать его вручную
-        if not end_f:
-            webview.windows[0].evaluate_js(
-                "alert('В папке нет файла end.wav.\\n\\nПожалуйста, выберите аудиофайл КОНЦА фразы с вашего компьютера.');")
-            f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                                                      file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
-            if f:
-                end_f = f[0]
-            else:
-                return {"error": "Вы не выбрали файл конца (end)!"}
+        return self._try_finish_premade_pending()
 
+    def _try_finish_premade_pending(self):
+        """Проверяет, нашлись ли уже оба эталонных файла (start/end) для
+        отложенной загрузки «Готовых переменных». Если да — запускает
+        сборку каскада; если нет — сообщает фронтенду, каких файлов не
+        хватает, чтобы тот предложил выбрать их или создать заново."""
+        in_dir = getattr(self, '_pending_premade_dir', None)
+        if not in_dir:
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        start_f = getattr(self, '_pending_start_file', None)
+        end_f = getattr(self, '_pending_end_file', None)
+
+        if start_f and end_f:
+            return self._finish_premade_load(in_dir, start_f, end_f)
+
+        missing = [name for name, f in (('start', start_f), ('end', end_f)) if not f]
+        return {"missing_start_end": True, "missing": missing}
+
+    def pick_start_end_file(self, which):
+        """Пользователь выбирает файл start/end вручную с диска."""
+        if which not in ('start', 'end'):
+            return {"error": "Неизвестный файл."}
+        if not getattr(self, '_pending_premade_dir', None):
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                                                  file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+        if not f:
+            return {"error": "cancel"}
+
+        setattr(self, f'_pending_{which}_file', f[0])
+        return self._try_finish_premade_pending()
+
+    def create_start_end_from_recording(self):
+        """Второй способ получить start/end: открыть исходную запись в
+        Audacity и подождать, пока пользователь сам отметит на ней
+        меткой «start» и меткой «end» нужные участки."""
+        in_dir = getattr(self, '_pending_premade_dir', None)
+        if not in_dir:
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                                                          file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+        if not raw_file:
+            return {"error": "cancel"}
+
+        needed = [name for name in ('start', 'end') if not getattr(self, f'_pending_{name}_file', None)]
+
+        try:
+            resp = self.audacity.send_command('New:', auto_start=True)
+            if not resp:
+                return {"error": "Audacity не ответил при запуске. Возможно, ему нужно больше времени, "
+                                  "чтобы открыться на медленном компьютере — попробуйте ещё раз."}
+
+            for _ in range(15):
+                resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
+                if resp and '[' in resp:
+                    break
+                time.sleep(0.5)
+            else:
+                return {"error": "Audacity запустился, но не отвечает на команды. Проверьте, что он "
+                                  "действительно открылся, и попробуйте ещё раз."}
+
+            import_resp = self.audacity.send_command(
+                f'Import2: Filename="{os.path.abspath(raw_file[0]).replace(chr(92), "/")}"')
+            if not import_resp:
+                return {"error": "Не удалось загрузить запись в Audacity. Проверьте, что он открылся, "
+                                  "и попробуйте ещё раз."}
+        except Exception as e:
+            return {"error": f"Не удалось открыть запись в Audacity: {e}"}
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        self._pending_create_missing = needed
+        return {"status": "waiting_labels", "missing": needed}
+
+    def finish_create_start_end(self):
+        """Пользователь отметил участки метками в Audacity — читаем их и
+        экспортируем как обычные start.wav/end.wav в целевую папку."""
+        in_dir = getattr(self, '_pending_premade_dir', None)
+        needed = getattr(self, '_pending_create_missing', None) or ['start', 'end']
+        if not in_dir:
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        resp = self.audacity.send_command('GetInfo: Type=Labels Format=JSON')
+        labels = {}
+        try:
+            s, e = resp.find('['), resp.rfind(']')
+            data = json.loads(resp[s:e + 1])
+            for track in data:
+                for label in track[1]:
+                    text = str(label[2]).strip().lower()
+                    labels[text] = (float(label[0]), float(label[1]))
+        except Exception:
+            return {"error": "Не удалось прочитать метки из Audacity.", "status": "waiting_labels", "missing": needed}
+
+        still_missing = [name for name in needed if name not in labels]
+        if still_missing:
+            return {
+                "error": f"Не найдены метки: {', '.join(still_missing)}. Выделите нужный участок, "
+                         f"нажмите Ctrl+B, впишите название «{still_missing[0]}» и нажмите ОК в Audacity — "
+                         f"затем снова нажмите эту кнопку.",
+                "status": "waiting_labels", "missing": needed
+            }
+
+        for name in needed:
+            t0, t1 = labels[name]
+            target_path = os.path.abspath(os.path.join(in_dir, f'{name}.wav')).replace('\\', '/')
+            self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+            self.audacity.send_command(f'SelectTime: Start={t0} End={t1} RelativeTo=ProjectStart')
+            self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+            setattr(self, f'_pending_{name}_file', target_path.replace('/', os.sep))
+
+        return self._try_finish_premade_pending()
+
+    def _finish_premade_load(self, in_dir, start_f, end_f):
+        """Собирает каскад «Готовых переменных», когда оба эталонных файла
+        (start/end) уже известны — найдены на диске, выбраны вручную или
+        только что созданы из меток в Audacity."""
         self.work_dir = in_dir
         self.var_start_phrase = start_f
         self.var_end_phrase = end_f
@@ -431,6 +536,9 @@ class VariablesMixin:
         if not os.path.exists(checked_file_path):
             webview.windows[0].evaluate_js(
                 f"showBeautifulAlert('⚠️ <b>Файл не найден!</b><br><br>В папке Проверенные нет файла: <b>{save_name}</b>');")
+            return self._get_var_batch_ui_state()
+
+        if self._block_if_audacity_ambiguous():
             return self._get_var_batch_ui_state()
 
         # 3. ПОЛНОСТЬЮ ПЕРЕСОБИРАЕМ СТОЛ (Как в send_to_audacity)
@@ -576,6 +684,13 @@ class VariablesMixin:
 
     def init_variables_batch_mode(self, target_hwnd, out_dir, is_ready_export=False, sort_by_name=False):
         """Парсит Audacity, читает метки, соблюдает очередность папок и чинит баг с числами"""
+
+        # Даже если пользователь выбрал конкретное окно из списка — пайп
+        # управления Audacity всё равно один на всю систему, и команды
+        # могут уйти не в то окно, что выбрано визуально. Безопаснее
+        # отказаться, чем читать/удалять содержимое чужого проекта.
+        if self._block_if_audacity_ambiguous():
+            return {"error": "cancel"}
 
         if not is_ready_export:
             # Ищем start.wav и end.wav ТОЛЬКО если нам нужна подгонка
@@ -824,13 +939,22 @@ class VariablesMixin:
 
         self.phrase_index = min(done_count, len(self.phrases_data) - 1)
 
+        # Отмечаем уже сохранённые дубли как «проверенные» и в памяти —
+        # иначе после переоткрытия проекта воспроизведение (Пробел) играло
+        # бы черновик вместо сохранённой версии, пока дубль не пересохранят.
+        if not hasattr(self, 'cascade_checked_files'):
+            self.cascade_checked_files = set()
+
         remaining = done_count
         for cat_idx, cat in enumerate(self.cascade_ordered_cats):
-            cat_len = len(self.cascade_files.get(cat, []))
+            files = self.cascade_files.get(cat, [])
+            cat_len = len(files)
             if remaining < cat_len:
+                self.cascade_checked_files.update(files[:remaining])
                 self.cascade_active_cat_idx = cat_idx
                 self.cascade_ptrs[cat] = remaining
                 return done_count
+            self.cascade_checked_files.update(files)
             remaining -= cat_len
 
         # Все категории уже пройдены — остаёмся на последней позиции последней
@@ -842,6 +966,9 @@ class VariablesMixin:
     def load_next_var_batch(self):
         """Супербыстрый старт. Только инициализация, без Audacity."""
         if getattr(self, 'is_cascade_initialized', False):
+            return self._get_var_batch_ui_state()
+
+        if self._block_if_audacity_ambiguous():
             return self._get_var_batch_ui_state()
 
         self.audacity.send_command('SelectAll:')
@@ -910,9 +1037,13 @@ class VariablesMixin:
             self.audacity.send_command(f'Export2: Filename="{safe_path}" NumChannels=1')
             time.sleep(0.1)
 
-            # Очищаем Audacity, мы закончили с ручным редактированием
-            self.audacity.send_command('SelectAll:')
-            self.audacity.send_command('RemoveTracks:')
+            # Очищаем Audacity, мы закончили с ручным редактированием —
+            # но только если уверены, что это то самое окно: если параллельно
+            # открылось ещё одно окно Audacity, лучше оставить дорожки как
+            # есть, чем случайно стереть чужой проект.
+            if not self._block_if_audacity_ambiguous():
+                self.audacity.send_command('SelectAll:')
+                self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
 
             # --- ВОЗВРАТ ФОКУСА В НАШУ ПРОГРАММУ ---
@@ -1040,6 +1171,9 @@ class VariablesMixin:
         if not files:
             return {"error": "В выбранной папке нет аудиофайлов!"}
 
+        if self._block_if_audacity_ambiguous():
+            return {"error": "cancel"}
+
         first_file = files[0]
         self.batch_norm_files = files
         self.batch_norm_first_file = first_file
@@ -1110,8 +1244,9 @@ class VariablesMixin:
                 except:
                     pass
 
-            self.audacity.send_command('SelectAll:')
-            self.audacity.send_command('RemoveTracks:')
+            if not self._block_if_audacity_ambiguous():
+                self.audacity.send_command('SelectAll:')
+                self.audacity.send_command('RemoveTracks:')
 
             self.batch_norm_files = []
             return {"status": "success"}

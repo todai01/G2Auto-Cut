@@ -79,6 +79,15 @@ body{
     padding: 32px 20px 48px;
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.005em;
+    transition: filter .35s ease;
+}
+
+/* Когда окно программы теряет фокус (например, Audacity вышел на передний
+   план) — размываем и затемняем фон, как будто программа «отошла назад».
+   Срабатывает на стандартные события окна, поэтому включается само —
+   никаких дополнительных сигналов от Python не нужно. */
+body.app-unfocused{
+    filter: blur(5px) brightness(0.55) saturate(0.85);
 }
 
 button{ font-family: inherit; transition: transform .15s var(--ease), background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }
@@ -234,9 +243,22 @@ button[disabled]:active{ transform: none; }
 
 .workspace-grid { display: grid; grid-template-columns: 1fr; gap: 24px; align-items: stretch; flex: 1; }
 @media (min-width: 900px) { .workspace-grid { grid-template-columns: 1.15fr 1fr; } }
+/* В режиме "Готовые переменные" правая колонка держит вживлённое окно
+   Audacity — отдаём ей больше места, чтобы редактировать было удобнее. */
+@media (min-width: 900px) { .workspace-grid.workspace-grid--varbatch { grid-template-columns: 0.85fr 1.3fr; } }
 /* Колонки идут сверху вниз: раньше space-between раздвигал панели
    и посреди правой колонки зияла пустота в треть экрана. */
 .panel-column { display: flex; flex-direction: column; justify-content: flex-start; gap: var(--space-4); min-width: 0; }
+
+.audacity-embed-area{
+    flex: 1; min-height: 640px; border-radius: 14px; border: 2px dashed var(--border-soft);
+    background: #0b0d10; position: relative; overflow: hidden;
+}
+.audacity-embed-area__label{
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: var(--text-dim); background: rgba(0,0,0,.55);
+    padding: 3px 10px; border-radius: 999px; pointer-events: none; z-index: 1;
+}
 
 .counter-pill{
     font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-dim);

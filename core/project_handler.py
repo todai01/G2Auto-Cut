@@ -242,9 +242,18 @@ class ProjectMixin:
         self.raw_audio_full = audio
         nonsilent_ranges = detect_nonsilent(audio, min_silence_len=int(min_silence), silence_thresh=int(silence_thresh))
 
+        # Чистим старые дубли перед новой нарезкой, но не трогаем start/end —
+        # если в эту же папку раньше уже клали эталоны для «Готовых
+        # переменных», повторная нарезка не должна их стирать.
+        AUDIO_EXT = ('.wav', '.mp3', '.ogg', '.flac')
         for f in os.listdir(chunks_dir):
-            if os.path.isfile(os.path.join(chunks_dir, f)):
-                os.remove(os.path.join(chunks_dir, f))
+            full_path = os.path.join(chunks_dir, f)
+            if not os.path.isfile(full_path):
+                continue
+            clean_f = f.strip().lower()
+            if clean_f.startswith(('start', 'end')) and clean_f.endswith(AUDIO_EXT):
+                continue
+            os.remove(full_path)
 
         labels_path = os.path.join(self.work_dir, 'labels.txt')
         with open(labels_path, 'w', encoding='utf-8') as label_file:

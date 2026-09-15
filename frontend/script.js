@@ -155,6 +155,19 @@ let isProcessing = false;
             loadRecentProjects();
         });
 
+        // Размытие/затемнение фона, когда окно программы теряет фокус ОС
+        // (например, когда Audacity выходит на передний план после C, R
+        // или выбора исходника для start/end). Это стандартные события
+        // window — их не нужно вызывать вручную из Python.
+        // Когда Audacity вживлён внутрь софта, клик по нему технически уводит
+        // фокус браузерного слоя — но это всё ещё то же самое окно, а не
+        // отдельная программа, поэтому темнить/размывать фон не нужно.
+        window.addEventListener('blur', () => {
+            if (audacityEmbedded) return;
+            document.body.classList.add('app-unfocused');
+        });
+        window.addEventListener('focus', () => document.body.classList.remove('app-unfocused'));
+
         function updateProgress(p, t) {
             document.getElementById('progressContainer').style.display = 'block';
             document.getElementById('progressBar').value = p;
@@ -255,6 +268,7 @@ let isProcessing = false;
         }
 
         function showMenu() {
+            detachEmbeddedAudacity();
             showStage('stage1-loading');
 
             // Кнопка возврата появляется, только если работать уже есть с чем
@@ -804,21 +818,110 @@ let isProcessing = false;
             let state = await pywebview.api.choose_mode_after_cut(mode);
             document.getElementById('progressContainer').style.display = 'none';
 
+            if (mode === 'premade') {
+                handlePremadeResult(state);
+                return;
+            }
+
             if (state && state.error) {
                 if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
             }
 
             updateUI(state);
-            if (state.has_audio || state.mode === 'VarBatch') { showWorkspace(); playAudio(); }
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
+        // ===== «ГОТОВЫЕ ПЕРЕМЕННЫЕ»: НЕ ХВАТАЕТ start/end =====
+        // Единая точка разбора ответа для обоих мест, откуда грузится
+        // «Готовая папка» (обычная кнопка и режим сразу после нарезки) —
+        // чтобы поведение не расходилось между ними.
+        let pendingMissing = [];
+
+        function closeStartEndMissing() {
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+        }
+
+        async function handlePremadeResult(state) {
+            if (state && state.error === "cancel") return;
+
+            if (state && state.status === 'waiting_labels') {
+                pendingMissing = state.missing || pendingMissing;
+                document.getElementById('startEndMissingOverlay').style.display = 'none';
+                let baseText = `Выделите нужный кусок записи и нажмите <b>Ctrl+B</b>, впишите название метки — `
+                    + `<b>${pendingMissing.join('</b> или <b>')}</b> — и нажмите ОК в Audacity. `
+                    + `Когда участки отмечены, нажмите кнопку ниже.`;
+                document.getElementById('waitLabelsText').innerHTML = state.error
+                    ? `<span style="color:#e5484d;">${state.error}</span><br><br>${baseText}` : baseText;
+                document.getElementById('waitLabelsOverlay').style.display = 'flex';
+                return;
+            }
+
+            if (state && state.missing_start_end) {
+                pendingMissing = state.missing || [];
+                document.getElementById('waitLabelsOverlay').style.display = 'none';
+                document.getElementById('startEndMissingText').innerHTML =
+                    `В выбранной папке не найдено: <b>${pendingMissing.map(m => m + '.wav').join(', ')}</b>. Выберите, как их получить.`;
+                document.getElementById('startEndMissingOverlay').style.display = 'flex';
+                return;
+            }
+
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+            document.getElementById('waitLabelsOverlay').style.display = 'none';
+            updateUI(state);
+            showWorkspace();
+        }
+
+        async function pickStartEndManual() {
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+            let toPick = pendingMissing.slice();
+            let lastResult = null;
+            for (let which of toPick) {
+                let result = await pywebview.api.pick_start_end_file(which);
+                if (result && result.error === 'cancel') return;
+                lastResult = result;
+                if (result && result.error) break;
+            }
+            if (lastResult) handlePremadeResult(lastResult);
+        }
+
+        async function createStartEndFromRecording() {
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+            updateProgress(0, 'Открываем запись в Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.create_start_end_from_recording();
+            document.getElementById('progressContainer').style.display = 'none';
+            handlePremadeResult(state);
+        }
+
+        async function finishStartEndLabels() {
+            updateProgress(0, 'Экспортируем метки...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.finish_create_start_end();
+            document.getElementById('progressContainer').style.display = 'none';
+            handlePremadeResult(state);
         }
 
         async function loadVariables() {
-            if (currentState && currentState.mode === 'VarBatch') return;
+            if (currentState && currentState.mode === 'VarBatch') {
+                showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Вкладки здесь не переключаются — конвейер уже открыт. Чтобы выйти, нажмите <b>Главное меню</b> в левом верхнем углу.');
+                return;
+            }
             await handleLoad(pywebview.api.load_variables_mode());
         }
         async function loadChecked() {
-            if (currentState && currentState.mode === 'VarBatch') return;
+            // В конвейере переменных вкладка «Проверенные» не переключает
+            // экран (это сломало бы каскад) — вместо этого проигрывает
+            // сохранённую версию текущего дубля, если он уже отмечен.
+            if (currentState && currentState.mode === 'VarBatch') {
+                playAudio(false);
+                return;
+            }
             await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'checked'}));
         }
         async function loadMainMode() {
@@ -892,12 +995,7 @@ let isProcessing = false;
             let state = await pywebview.api.load_premade_variables_folder(hwnd, inDir);
 
             document.getElementById('progressContainer').style.display = 'none';
-            if (state && state.error) {
-                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            showWorkspace();
+            handlePremadeResult(state);
         }
 
         async function loadCheckedToAudacity() {
@@ -1024,6 +1122,69 @@ let isProcessing = false;
                     isProcessing = false;
                 }
             }, 50);
+        }
+
+        // --- Вживление окна Audacity внутрь софта ---
+        // Приём системный (Windows SetParent) — Audacity не создан для этого,
+        // поэтому если поведение станет хуже, кнопка сразу отсоединяет обратно.
+        let audacityEmbedded = false;
+        let embedResizeTimer = null;
+
+        function toggleEmbedAudacity() {
+            if (audacityEmbedded) {
+                detachEmbeddedAudacity();
+            } else {
+                attachEmbeddedAudacity();
+            }
+        }
+
+        async function attachEmbeddedAudacity() {
+            const area = document.getElementById('audacityEmbedArea');
+            const btn = document.getElementById('btnEmbedAudacity');
+            const rect = area.getBoundingClientRect();
+            area.style.display = 'block';
+
+            const result = await pywebview.api.embed_audacity(
+                Math.round(rect.left), Math.round(rect.top),
+                Math.round(rect.width), Math.round(rect.height)
+            );
+
+            if (result && result.error) {
+                area.style.display = 'none';
+                showBeautifulAlert('⚠️ ' + result.error);
+                return;
+            }
+
+            audacityEmbedded = true;
+            if (btn) btn.innerText = 'Отсоединить Audacity';
+            window.addEventListener('resize', onEmbedWindowResize);
+        }
+
+        async function detachEmbeddedAudacity() {
+            if (!audacityEmbedded) return;
+            window.removeEventListener('resize', onEmbedWindowResize);
+            audacityEmbedded = false;
+            const area = document.getElementById('audacityEmbedArea');
+            const btn = document.getElementById('btnEmbedAudacity');
+            if (area) area.style.display = 'none';
+            if (btn) btn.innerText = 'Встроить окно Audacity сюда';
+            try {
+                await pywebview.api.unembed_audacity();
+            } catch (e) {}
+        }
+
+        function onEmbedWindowResize() {
+            clearTimeout(embedResizeTimer);
+            embedResizeTimer = setTimeout(() => {
+                if (!audacityEmbedded) return;
+                const area = document.getElementById('audacityEmbedArea');
+                if (!area) return;
+                const rect = area.getBoundingClientRect();
+                pywebview.api.sync_embed_position(
+                    Math.round(rect.left), Math.round(rect.top),
+                    Math.round(rect.width), Math.round(rect.height)
+                );
+            }, 150);
         }
 
         async function sendToAudacity() {
@@ -1434,6 +1595,7 @@ let isProcessing = false;
 
 
             if (state.mode === 'VarBatch') {
+                document.getElementById('workspaceGrid').classList.add('workspace-grid--varbatch');
                 document.getElementById('standardActions').style.display = 'none';
                 document.getElementById('varBatchActions').style.display = 'flex';
                 // Теперь берем правильный текст фразы, а если его нет — название папки
@@ -1446,6 +1608,7 @@ let isProcessing = false;
                 if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'none';
 
             } else {
+                document.getElementById('workspaceGrid').classList.remove('workspace-grid--varbatch');
                 document.getElementById('standardActions').style.display = 'flex';
                 document.getElementById('varBatchActions').style.display = 'none';
 
@@ -1653,10 +1816,20 @@ let isProcessing = false;
                 return;
             }
 
-            // Выбор режима после нарезки: явный клик, без горячих клавиш —
-            // тут не должно быть случайного выхода куда-то на полпути.
+            // Выбор режима после нарезки, выбор start/end и ожидание меток —
+            // везде нужен явный клик, без горячих клавиш, чтобы не было
+            // случайного выхода куда-то на полпути.
             let modeChoiceOverlay = document.getElementById('modeChoiceOverlay');
             if (modeChoiceOverlay && modeChoiceOverlay.style.display === 'flex') {
+                return;
+            }
+            let startEndMissingOverlay = document.getElementById('startEndMissingOverlay');
+            if (startEndMissingOverlay && startEndMissingOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') { e.preventDefault(); closeStartEndMissing(); }
+                return;
+            }
+            let waitLabelsOverlay = document.getElementById('waitLabelsOverlay');
+            if (waitLabelsOverlay && waitLabelsOverlay.style.display === 'flex') {
                 return;
             }
 
