@@ -43,17 +43,10 @@ class VariablesMixin:
 
         self.is_in_audacity = True
 
-        # --- ЖЕЛЕЗОБЕТОННЫЙ ПЕРЕХВАТ ФОКУСА AUDACITY ---
-        try:
-            import pyautogui
-            windows = self.get_audacity_windows()
-            if windows:
-                hwnd = windows[0]['hwnd']
-                pyautogui.press('alt')  # Взламываем блокировку фокуса Windows
-                ctypes.windll.user32.ShowWindow(hwnd, 3)  # 3 = SW_MAXIMIZE
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception as e:
-            print("Ошибка фокуса:", e)
+        # --- ПЕРЕХВАТ ФОКУСА AUDACITY ---
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
 
         webview.windows[0].evaluate_js("showToast('✂️ Аудио отправлено на хирургический стол Audacity');")
         return self._get_var_batch_ui_state()
@@ -459,17 +452,10 @@ class VariablesMixin:
 
         self.is_in_audacity = True
 
-        # --- ЖЕЛЕЗОБЕТОННЫЙ ПЕРЕХВАТ ФОКУСА AUDACITY ---
-        try:
-            import pyautogui
-            windows = self.get_audacity_windows()
-            if windows:
-                hwnd = windows[0]['hwnd']
-                pyautogui.press('alt')
-                ctypes.windll.user32.ShowWindow(hwnd, 3)  # 3 = SW_MAXIMIZE
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception as e:
-            print("Ошибка фокуса:", e)
+        # --- ПЕРЕХВАТ ФОКУСА AUDACITY ---
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
 
         webview.windows[0].evaluate_js("showToast('🔄 Файл загружен в Audacity для правки');")
         return self._get_var_batch_ui_state()
@@ -929,16 +915,10 @@ class VariablesMixin:
             self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
 
-            # --- ЖЕЛЕЗОБЕТОННЫЙ ВОЗВРАТ ФОКУСА В НАШУ ПРОГРАММУ ---
-            try:
-                import pyautogui
-                hwnd = ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
-                if hwnd:
-                    pyautogui.press('alt')  # Взламываем блокировку фокуса
-                    ctypes.windll.user32.ShowWindow(hwnd, 3)
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
-            except:
-                pass
+            # --- ВОЗВРАТ ФОКУСА В НАШУ ПРОГРАММУ ---
+            hwnd = ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
+            if hwnd:
+                self._force_foreground(hwnd)
         else:
             # СУПЕРБЫСТРЫЙ РЕЖИМ: Audacity не нужен, просто копируем файл!
             shutil.copy(active_file, safe_path)
@@ -1073,16 +1053,9 @@ class VariablesMixin:
         self.audacity.send_command('ZoomSel:')
 
         # Перехватываем фокус на Audacity
-        try:
-            import pyautogui
-            windows = self.get_audacity_windows()
-            if windows:
-                hwnd = windows[0]['hwnd']
-                pyautogui.press('alt')
-                ctypes.windll.user32.ShowWindow(hwnd, 3)
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except:
-            pass
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
 
         return {"status": "ready", "total": len(files), "filename": os.path.basename(first_file)}
 
