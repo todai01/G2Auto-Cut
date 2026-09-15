@@ -279,7 +279,7 @@ let isProcessing = false;
         }
 
         async function jumpToChunk(index) {
-            let state = await pywebview.api.jump_to_chunk(index);
+            let state = await pywebview.api.dispatch('jump', {index: index});
             if (state) updateUI(state);
         }
 
@@ -727,18 +727,18 @@ let isProcessing = false;
         }
         async function loadResults() {
             if (currentState && currentState.mode === 'VarBatch') return;
-            await handleLoad(pywebview.api.load_results_mode());
+            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'results'}));
         }
         async function loadChecked() {
             if (currentState && currentState.mode === 'VarBatch') return;
-            await handleLoad(pywebview.api.load_checked_mode());
+            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'checked'}));
         }
         async function loadMainMode() {
             if (currentState && currentState.mode === 'VarBatch') {
                 showBeautifulAlert('ℹ️ <b>Режим конвейера</b><br><br>Вкладок здесь нет. Чтобы выйти, нажмите <b>Главное меню</b>.');
                 return;
             }
-            await handleLoad(pywebview.api.load_main_mode());
+            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'chunks'}));
         }
 
         // Запуск режима конвейера переменных (С выбором окна)
@@ -958,7 +958,7 @@ let isProcessing = false;
         }
 
         async function playAudio(toggle = false) {
-            let res = await pywebview.api.play_audio(toggle);
+            let res = await pywebview.api.dispatch('play', {toggle: toggle});
             let phraseEl = document.getElementById('phraseText');
 
             clearTimeout(playTimeout);
@@ -990,7 +990,7 @@ let isProcessing = false;
                         playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
                     }
                 } else {
-                    await pywebview.api.stop_audio();
+                    await pywebview.api.dispatch('stop');
                 }
             } finally {
                 isNavigatingPhrase = false;
@@ -1048,11 +1048,11 @@ let isProcessing = false;
                 if (isNavigatingChunk) return;
                 isNavigatingChunk = true;
                 try {
-                    updateUI(await pywebview.api.navigate_chunk(dir, true));
+                    updateUI(await pywebview.api.dispatch('navigate', {direction: dir, auto_play: true}));
                     resetSilence();
                     clearTimeout(navChunkTimeout);
                     navChunkTimeout = setTimeout(async () => {
-                        let res = await pywebview.api.sync_and_play();
+                        let res = await pywebview.api.dispatch('play_sync');
                         let phraseEl = document.getElementById('phraseText');
                         clearTimeout(playTimeout);
                         if(res && res.playing) {
@@ -1072,7 +1072,7 @@ let isProcessing = false;
             if (isProcessing) return; isProcessing = true;
             try {
                 let addSil = document.getElementById('addSilence').checked;
-                let state = await pywebview.api.process_action(action, addSil);
+                let state = await pywebview.api.dispatch('save', {kind: action, add_silence: addSil});
                 if (state) updateUI(state);
                 playAudio();
                 resetSilence();
@@ -1724,7 +1724,7 @@ let isProcessing = false;
                         playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
                     }
                 } else {
-                    await pywebview.api.stop_audio();
+                    await pywebview.api.dispatch('stop');
                 }
             }
         }
@@ -1732,12 +1732,12 @@ let isProcessing = false;
         async function doSearchChunk() {
             let val = parseInt(document.getElementById('searchChunkNum').value);
             if (val > 0) {
-                updateUI(await pywebview.api.jump_to_chunk(val - 1));
+                updateUI(await pywebview.api.dispatch('jump', {index: val - 1}));
                 resetSilence();
                 closeSearch();
 
                 // Проигрываем выбранный дубль, как при нажатии A/D
-                let res = await pywebview.api.sync_and_play();
+                let res = await pywebview.api.dispatch('play_sync');
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
                 if(res && res.playing) {
