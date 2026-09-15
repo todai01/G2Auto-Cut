@@ -48,6 +48,35 @@ class MontageMixin:
         EnumWindows(EnumWindowsProc(foreach_window), 0)
         return windows
 
+    def _block_if_audacity_ambiguous(self):
+        """У Audacity один канал управления на весь компьютер — если открыто
+        больше одного окна Audacity, программа не может выбрать, с каким
+        именно она говорит. Команды вроде «очистить проект» уйдут в то окно,
+        что первым перехватило канал, а не обязательно в то, с которым
+        работает пользователь — и способны стереть содержимое чужого проекта.
+
+        Вызывать перед любой командой, которая стирает содержимое проекта
+        (SelectAll: + RemoveTracks:). Возвращает True и показывает
+        предупреждение, если продолжать небезопасно; иначе False."""
+        try:
+            windows = self.get_audacity_windows()
+        except Exception:
+            return False  # не смогли проверить — не блокируем работу
+
+        if len(windows) <= 1:
+            return False
+
+        try:
+            webview.windows[0].evaluate_js(
+                "showBeautifulAlert('⚠️ <b>Открыто несколько окон Audacity</b>"
+                "<br><br>Программа управляет Audacity через единый канал на весь компьютер "
+                "и не может выбрать нужное окно среди нескольких — команда могла бы случайно "
+                "стереть содержимое другого проекта.<br><br>Закройте лишние окна Audacity, "
+                "оставив только то, с которым работает эта программа, и повторите.');")
+        except Exception:
+            pass
+        return True
+
     def _force_foreground(self, hwnd):
         """Надёжнее голого SetForegroundWindow: Windows обычно блокирует
         попытку окна перехватить фокус, если она идёт не от того потока,

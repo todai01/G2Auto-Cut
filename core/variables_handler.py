@@ -16,6 +16,9 @@ class VariablesMixin:
         if getattr(self, 'current_mode', '') != 'VarBatch':
             return self.get_ui_state()
 
+        if self._block_if_audacity_ambiguous():
+            return self._get_var_batch_ui_state()
+
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
         active_idx = self.cascade_ptrs[active_cat]
         active_file = self.cascade_files[active_cat][active_idx]
@@ -211,7 +214,7 @@ class VariablesMixin:
 
     def sync_var_chunk_audacity(self):
         """Если перелистываем вручную, просто сбрасываем состояние Audacity"""
-        if getattr(self, 'is_in_audacity', False):
+        if getattr(self, 'is_in_audacity', False) and not self._block_if_audacity_ambiguous():
             self.audacity.send_command('SelectAll:')
             self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
@@ -523,6 +526,9 @@ class VariablesMixin:
                 f"showBeautifulAlert('⚠️ <b>Файл не найден!</b><br><br>В папке Проверенные нет файла: <b>{save_name}</b>');")
             return self._get_var_batch_ui_state()
 
+        if self._block_if_audacity_ambiguous():
+            return self._get_var_batch_ui_state()
+
         # 3. ПОЛНОСТЬЮ ПЕРЕСОБИРАЕМ СТОЛ (Как в send_to_audacity)
         self.audacity.send_command('SelectAll:')
         self.audacity.send_command('RemoveTracks:')
@@ -666,6 +672,13 @@ class VariablesMixin:
 
     def init_variables_batch_mode(self, target_hwnd, out_dir, is_ready_export=False, sort_by_name=False):
         """Парсит Audacity, читает метки, соблюдает очередность папок и чинит баг с числами"""
+
+        # Даже если пользователь выбрал конкретное окно из списка — пайп
+        # управления Audacity всё равно один на всю систему, и команды
+        # могут уйти не в то окно, что выбрано визуально. Безопаснее
+        # отказаться, чем читать/удалять содержимое чужого проекта.
+        if self._block_if_audacity_ambiguous():
+            return {"error": "cancel"}
 
         if not is_ready_export:
             # Ищем start.wav и end.wav ТОЛЬКО если нам нужна подгонка
@@ -943,6 +956,9 @@ class VariablesMixin:
         if getattr(self, 'is_cascade_initialized', False):
             return self._get_var_batch_ui_state()
 
+        if self._block_if_audacity_ambiguous():
+            return self._get_var_batch_ui_state()
+
         self.audacity.send_command('SelectAll:')
         self.audacity.send_command('RemoveTracks:')
 
@@ -1009,9 +1025,13 @@ class VariablesMixin:
             self.audacity.send_command(f'Export2: Filename="{safe_path}" NumChannels=1')
             time.sleep(0.1)
 
-            # Очищаем Audacity, мы закончили с ручным редактированием
-            self.audacity.send_command('SelectAll:')
-            self.audacity.send_command('RemoveTracks:')
+            # Очищаем Audacity, мы закончили с ручным редактированием —
+            # но только если уверены, что это то самое окно: если параллельно
+            # открылось ещё одно окно Audacity, лучше оставить дорожки как
+            # есть, чем случайно стереть чужой проект.
+            if not self._block_if_audacity_ambiguous():
+                self.audacity.send_command('SelectAll:')
+                self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
 
             # --- ВОЗВРАТ ФОКУСА В НАШУ ПРОГРАММУ ---
@@ -1139,6 +1159,9 @@ class VariablesMixin:
         if not files:
             return {"error": "В выбранной папке нет аудиофайлов!"}
 
+        if self._block_if_audacity_ambiguous():
+            return {"error": "cancel"}
+
         first_file = files[0]
         self.batch_norm_files = files
         self.batch_norm_first_file = first_file
@@ -1209,8 +1232,9 @@ class VariablesMixin:
                 except:
                     pass
 
-            self.audacity.send_command('SelectAll:')
-            self.audacity.send_command('RemoveTracks:')
+            if not self._block_if_audacity_ambiguous():
+                self.audacity.send_command('SelectAll:')
+                self.audacity.send_command('RemoveTracks:')
 
             self.batch_norm_files = []
             return {"status": "success"}

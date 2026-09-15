@@ -79,6 +79,15 @@ body{
     padding: 32px 20px 48px;
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.005em;
+    transition: filter .35s ease;
+}
+
+/* Когда окно программы теряет фокус (например, Audacity вышел на передний
+   план) — размываем и затемняем фон, как будто программа «отошла назад».
+   Срабатывает на стандартные события окна, поэтому включается само —
+   никаких дополнительных сигналов от Python не нужно. */
+body.app-unfocused{
+    filter: blur(5px) brightness(0.55) saturate(0.85);
 }
 
 button{ font-family: inherit; transition: transform .15s var(--ease), background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }

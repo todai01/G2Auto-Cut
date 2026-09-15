@@ -155,6 +155,13 @@ let isProcessing = false;
             loadRecentProjects();
         });
 
+        // Размытие/затемнение фона, когда окно программы теряет фокус ОС
+        // (например, когда Audacity выходит на передний план после C, R
+        // или выбора исходника для start/end). Это стандартные события
+        // window — их не нужно вызывать вручную из Python.
+        window.addEventListener('blur', () => document.body.classList.add('app-unfocused'));
+        window.addEventListener('focus', () => document.body.classList.remove('app-unfocused'));
+
         function updateProgress(p, t) {
             document.getElementById('progressContainer').style.display = 'block';
             document.getElementById('progressBar').value = p;
