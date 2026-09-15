@@ -283,35 +283,125 @@ class VariablesMixin:
             return {
                 "error": "Сначала загрузите Excel-файл с текстами (Шаг 1), чтобы программа понимала, какое имя сейчас обрабатывается!"}
 
-        # Автоматически ищем start.wav и end.wav
-        start_f = self._find_reference_file(in_dir, "start")
-        end_f = self._find_reference_file(in_dir, "end")
-
         if target_hwnd:
             self.set_active_window(target_hwnd)
 
-        # 2. Если start.wav нет, просим пользователя выбрать его вручную
-        if not start_f:
-            webview.windows[0].evaluate_js(
-                "alert('В папке нет файла start.wav.\\n\\nПожалуйста, выберите аудиофайл НАЧАЛА фразы с вашего компьютера.');")
-            f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                                                      file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
-            if f:
-                start_f = f[0]
-            else:
-                return {"error": "Вы не выбрали файл начала (start)!"}
+        # Автоматически ищем start.wav и end.wav
+        self._pending_premade_dir = in_dir
+        self._pending_start_file = self._find_reference_file(in_dir, "start")
+        self._pending_end_file = self._find_reference_file(in_dir, "end")
 
-        # 3. Если end.wav нет, просим пользователя выбрать его вручную
-        if not end_f:
-            webview.windows[0].evaluate_js(
-                "alert('В папке нет файла end.wav.\\n\\nПожалуйста, выберите аудиофайл КОНЦА фразы с вашего компьютера.');")
-            f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                                                      file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
-            if f:
-                end_f = f[0]
-            else:
-                return {"error": "Вы не выбрали файл конца (end)!"}
+        return self._try_finish_premade_pending()
 
+    def _try_finish_premade_pending(self):
+        """Проверяет, нашлись ли уже оба эталонных файла (start/end) для
+        отложенной загрузки «Готовых переменных». Если да — запускает
+        сборку каскада; если нет — сообщает фронтенду, каких файлов не
+        хватает, чтобы тот предложил выбрать их или создать заново."""
+        in_dir = getattr(self, '_pending_premade_dir', None)
+        if not in_dir:
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        start_f = getattr(self, '_pending_start_file', None)
+        end_f = getattr(self, '_pending_end_file', None)
+
+        if start_f and end_f:
+            return self._finish_premade_load(in_dir, start_f, end_f)
+
+        missing = [name for name, f in (('start', start_f), ('end', end_f)) if not f]
+        return {"missing_start_end": True, "missing": missing}
+
+    def pick_start_end_file(self, which):
+        """Пользователь выбирает файл start/end вручную с диска."""
+        if which not in ('start', 'end'):
+            return {"error": "Неизвестный файл."}
+        if not getattr(self, '_pending_premade_dir', None):
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                                                  file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+        if not f:
+            return {"error": "cancel"}
+
+        setattr(self, f'_pending_{which}_file', f[0])
+        return self._try_finish_premade_pending()
+
+    def create_start_end_from_recording(self):
+        """Второй способ получить start/end: открыть исходную запись в
+        Audacity и подождать, пока пользователь сам отметит на ней
+        меткой «start» и меткой «end» нужные участки."""
+        in_dir = getattr(self, '_pending_premade_dir', None)
+        if not in_dir:
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                                                          file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+        if not raw_file:
+            return {"error": "cancel"}
+
+        needed = [name for name in ('start', 'end') if not getattr(self, f'_pending_{name}_file', None)]
+
+        try:
+            self.audacity.send_command('New:', auto_start=True)
+            for _ in range(15):
+                resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
+                if resp and '[' in resp:
+                    break
+                time.sleep(0.5)
+            self.audacity.send_command(f'Import2: Filename="{os.path.abspath(raw_file[0]).replace(chr(92), "/")}"')
+        except Exception as e:
+            return {"error": f"Не удалось открыть запись в Audacity: {e}"}
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        self._pending_create_missing = needed
+        return {"status": "waiting_labels", "missing": needed}
+
+    def finish_create_start_end(self):
+        """Пользователь отметил участки метками в Audacity — читаем их и
+        экспортируем как обычные start.wav/end.wav в целевую папку."""
+        in_dir = getattr(self, '_pending_premade_dir', None)
+        needed = getattr(self, '_pending_create_missing', None) or ['start', 'end']
+        if not in_dir:
+            return {"error": "Сессия загрузки истекла, начните заново."}
+
+        resp = self.audacity.send_command('GetInfo: Type=Labels Format=JSON')
+        labels = {}
+        try:
+            s, e = resp.find('['), resp.rfind(']')
+            data = json.loads(resp[s:e + 1])
+            for track in data:
+                for label in track[1]:
+                    text = str(label[2]).strip().lower()
+                    labels[text] = (float(label[0]), float(label[1]))
+        except Exception:
+            return {"error": "Не удалось прочитать метки из Audacity.", "status": "waiting_labels", "missing": needed}
+
+        still_missing = [name for name in needed if name not in labels]
+        if still_missing:
+            return {
+                "error": f"Не найдены метки: {', '.join(still_missing)}. Выделите нужный участок, "
+                         f"нажмите Ctrl+B, впишите название «{still_missing[0]}» и нажмите ОК в Audacity — "
+                         f"затем снова нажмите эту кнопку.",
+                "status": "waiting_labels", "missing": needed
+            }
+
+        for name in needed:
+            t0, t1 = labels[name]
+            target_path = os.path.abspath(os.path.join(in_dir, f'{name}.wav')).replace('\\', '/')
+            self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+            self.audacity.send_command(f'SelectTime: Start={t0} End={t1} RelativeTo=ProjectStart')
+            self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+            setattr(self, f'_pending_{name}_file', target_path.replace('/', os.sep))
+
+        return self._try_finish_premade_pending()
+
+    def _finish_premade_load(self, in_dir, start_f, end_f):
+        """Собирает каскад «Готовых переменных», когда оба эталонных файла
+        (start/end) уже известны — найдены на диске, выбраны вручную или
+        только что созданы из меток в Audacity."""
         self.work_dir = in_dir
         self.var_start_phrase = start_f
         self.var_end_phrase = end_f

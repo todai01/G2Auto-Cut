@@ -79,6 +79,41 @@
         </div>
     </div>
 
+    <!-- Не хватает эталонных файлов start/end -->
+    <div id="startEndMissingOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title modal-title--var">Не хватает эталонных файлов</h3>
+                <button class="modal-close" onclick="closeStartEndMissing()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint" id="startEndMissingText">В папке нет файлов start/end.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="pickStartEndManual()">
+                    <span class="option-icon">📂</span>
+                    <div><span class="option-title">Выбрать с диска</span><span class="option-desc">Указать готовые файлы вручную</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="createStartEndFromRecording()">
+                    <span class="option-icon">🎙️</span>
+                    <div><span class="option-title">Создать из записи</span><span class="option-desc">Открыть исходник, отметить метками в Audacity</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ожидание меток start/end в Audacity -->
+    <div id="waitLabelsOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title modal-title--var">Отметьте участки в Audacity</h3>
+            </div>
+            <div class="modal-hint" id="waitLabelsText">
+                Выделите нужный кусок записи и нажмите <b>Ctrl+B</b>, впишите название метки — <b>start</b> или <b>end</b> — и нажмите ОК в Audacity. Когда участки отмечены, нажмите кнопку ниже.
+            </div>
+            <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" onclick="finishStartEndLabels()">Готово, экспортировать</button>
+        </div>
+    </div>
+
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">

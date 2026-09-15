@@ -804,13 +804,93 @@ let isProcessing = false;
             let state = await pywebview.api.choose_mode_after_cut(mode);
             document.getElementById('progressContainer').style.display = 'none';
 
+            if (mode === 'premade') {
+                handlePremadeResult(state);
+                return;
+            }
+
             if (state && state.error) {
                 if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
             }
 
             updateUI(state);
-            if (state.has_audio || state.mode === 'VarBatch') { showWorkspace(); playAudio(); }
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
+        // ===== «ГОТОВЫЕ ПЕРЕМЕННЫЕ»: НЕ ХВАТАЕТ start/end =====
+        // Единая точка разбора ответа для обоих мест, откуда грузится
+        // «Готовая папка» (обычная кнопка и режим сразу после нарезки) —
+        // чтобы поведение не расходилось между ними.
+        let pendingMissing = [];
+
+        function closeStartEndMissing() {
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+        }
+
+        async function handlePremadeResult(state) {
+            if (state && state.error === "cancel") return;
+
+            if (state && state.status === 'waiting_labels') {
+                pendingMissing = state.missing || pendingMissing;
+                document.getElementById('startEndMissingOverlay').style.display = 'none';
+                let baseText = `Выделите нужный кусок записи и нажмите <b>Ctrl+B</b>, впишите название метки — `
+                    + `<b>${pendingMissing.join('</b> или <b>')}</b> — и нажмите ОК в Audacity. `
+                    + `Когда участки отмечены, нажмите кнопку ниже.`;
+                document.getElementById('waitLabelsText').innerHTML = state.error
+                    ? `<span style="color:#e5484d;">${state.error}</span><br><br>${baseText}` : baseText;
+                document.getElementById('waitLabelsOverlay').style.display = 'flex';
+                return;
+            }
+
+            if (state && state.missing_start_end) {
+                pendingMissing = state.missing || [];
+                document.getElementById('waitLabelsOverlay').style.display = 'none';
+                document.getElementById('startEndMissingText').innerHTML =
+                    `В выбранной папке не найдено: <b>${pendingMissing.map(m => m + '.wav').join(', ')}</b>. Выберите, как их получить.`;
+                document.getElementById('startEndMissingOverlay').style.display = 'flex';
+                return;
+            }
+
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+            document.getElementById('waitLabelsOverlay').style.display = 'none';
+            updateUI(state);
+            showWorkspace();
+        }
+
+        async function pickStartEndManual() {
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+            let toPick = pendingMissing.slice();
+            let lastResult = null;
+            for (let which of toPick) {
+                let result = await pywebview.api.pick_start_end_file(which);
+                if (result && result.error === 'cancel') return;
+                lastResult = result;
+                if (result && result.error) break;
+            }
+            if (lastResult) handlePremadeResult(lastResult);
+        }
+
+        async function createStartEndFromRecording() {
+            document.getElementById('startEndMissingOverlay').style.display = 'none';
+            updateProgress(0, 'Открываем запись в Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.create_start_end_from_recording();
+            document.getElementById('progressContainer').style.display = 'none';
+            handlePremadeResult(state);
+        }
+
+        async function finishStartEndLabels() {
+            updateProgress(0, 'Экспортируем метки...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.finish_create_start_end();
+            document.getElementById('progressContainer').style.display = 'none';
+            handlePremadeResult(state);
         }
 
         async function loadVariables() {
@@ -892,12 +972,7 @@ let isProcessing = false;
             let state = await pywebview.api.load_premade_variables_folder(hwnd, inDir);
 
             document.getElementById('progressContainer').style.display = 'none';
-            if (state && state.error) {
-                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            showWorkspace();
+            handlePremadeResult(state);
         }
 
         async function loadCheckedToAudacity() {
@@ -1653,10 +1728,20 @@ let isProcessing = false;
                 return;
             }
 
-            // Выбор режима после нарезки: явный клик, без горячих клавиш —
-            // тут не должно быть случайного выхода куда-то на полпути.
+            // Выбор режима после нарезки, выбор start/end и ожидание меток —
+            // везде нужен явный клик, без горячих клавиш, чтобы не было
+            // случайного выхода куда-то на полпути.
             let modeChoiceOverlay = document.getElementById('modeChoiceOverlay');
             if (modeChoiceOverlay && modeChoiceOverlay.style.display === 'flex') {
+                return;
+            }
+            let startEndMissingOverlay = document.getElementById('startEndMissingOverlay');
+            if (startEndMissingOverlay && startEndMissingOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') { e.preventDefault(); closeStartEndMissing(); }
+                return;
+            }
+            let waitLabelsOverlay = document.getElementById('waitLabelsOverlay');
+            if (waitLabelsOverlay && waitLabelsOverlay.style.display === 'flex') {
                 return;
             }
 
