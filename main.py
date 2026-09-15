@@ -291,6 +291,34 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         именно экран пришёл: "main" или "varbatch"."""
         return self.get_ui_state()
 
+    # Регистр действий основного рабочего экрана для dispatch(). Каждая
+    # запись — это имя действия и функция, которая достаёт аргументы из
+    # payload и вызывает уже существующий, проверенный метод. Сами методы
+    # (navigate_chunk, process_action и т.д.) не меняются ни на строку —
+    # dispatch() лишь даёт им одну общую дверь.
+    _MAIN_SCREEN_ACTIONS = {
+        "navigate":  lambda api, p: api.navigate_chunk(p.get("direction", 1), p.get("auto_play", True)),
+        "jump":      lambda api, p: api.jump_to_chunk(p.get("index", 0)),
+        "save":      lambda api, p: api.process_action(p.get("kind"), p.get("add_silence", False)),
+        "play":      lambda api, p: api.play_audio(p.get("toggle", False)),
+        "play_sync": lambda api, p: api.sync_and_play(),
+        "stop":      lambda api, p: api.stop_audio(),
+    }
+
+    def dispatch(self, action, payload=None):
+        """Единая точка входа для действий основного экрана: навигация по
+        дублям, сохранение (Проверено/В переменные), воспроизведение.
+
+        Это дополнительный слой поверх существующих методов — они и сами
+        по себе продолжают работать, ничего не удалено. Фронтенд можно
+        переводить на dispatch() постепенно, кнопка за кнопкой, вместо
+        одной рискованной правки сразу везде."""
+        payload = payload or {}
+        handler = self._MAIN_SCREEN_ACTIONS.get(action)
+        if handler is None:
+            return {"error": f"Неизвестное действие: {action}"}
+        return handler(self, payload)
+
 
 def resource_path(relative_path):
     """
