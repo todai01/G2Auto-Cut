@@ -1576,8 +1576,8 @@ let isProcessing = false;
             if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
 
             if (currentState && currentState.mode === 'VarBatch') {
-                // Добавили KeyR в разрешенные
-                if (['KeyC', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
+                // Цифры 1-5 — это разметка монтажа в основном режиме, здесь её нет
+                if (['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
                     e.preventDefault();
                     showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Здесь эта кнопка отключена. Для сохранения и перехода жмите <b>Z</b>, для навигации аудио — <b>A/D</b>, для навигации текста — <b>Q/E</b>, выгрузить готовое — <b>R</b>.');
                     return;
@@ -1597,6 +1597,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyZ') { e.preventDefault(); saveVarBatch(false); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
+                else if (e.code === 'KeyC') { e.preventDefault(); sendToAudacity(); }
                 return;
             }
 
