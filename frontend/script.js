@@ -725,10 +725,6 @@ let isProcessing = false;
             if (currentState && currentState.mode === 'VarBatch') return;
             await handleLoad(pywebview.api.load_variables_mode());
         }
-        async function loadResults() {
-            if (currentState && currentState.mode === 'VarBatch') return;
-            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'results'}));
-        }
         async function loadChecked() {
             if (currentState && currentState.mode === 'VarBatch') return;
             await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'checked'}));
@@ -1258,7 +1254,7 @@ let isProcessing = false;
 
             if (excelName) {
                 if (state.is_done || state.is_var) {
-                    // Используем умное имя папки от Python (Проверенные, Good или Переменные)
+                    // Используем умное имя папки от Python (Проверенные или Переменные)
                     let folderName = state.folder_name || (state.is_done ? "Проверенные" : "Переменные");
 
                     // Если файл готов (is_done), красим в зеленый, иначе - в желтый
@@ -1402,7 +1398,7 @@ let isProcessing = false;
         function markPart(partNum) {
             if (!currentState || !currentState.chunk_name) return;
 
-            // БЕРЕМ ТОЧНЫЙ ПУТЬ ДО ФАЙЛА НА ДИСКЕ (из Good, Переменных или сырой папки)
+            // БЕРЕМ ТОЧНЫЙ ПУТЬ ДО ФАЙЛА НА ДИСКЕ (из Проверенных, Переменных или сырой папки)
             let exactFilePath = currentState.completed_filepath || currentState.filepath;
 
             // А для красоты на экране показываем имя
@@ -1448,7 +1444,7 @@ let isProcessing = false;
             if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
             if (isProcessing) return; isProcessing = true;
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
-            alert("✅ Склейка сохранена в Good!");
+            alert("✅ Склейка сохранена в Проверенные!");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -1621,7 +1617,7 @@ let isProcessing = false;
                 chk.checked = !chk.checked;
             }
             else if (e.code === 'Digit1') { e.preventDefault(); startHold(1, 'btnPrepMerge', prepMerge); }
-            else if (e.code === 'Digit2') { e.preventDefault(); handleDoubleTap('btnSaveMerge', saveMerge, '2. В Good'); }
+            else if (e.code === 'Digit2') { e.preventDefault(); handleDoubleTap('btnSaveMerge', saveMerge, '2. В проверенные'); }
             else if (e.code === 'Digit3') { e.preventDefault(); handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные'); }
             else if (e.code === 'Digit4') { e.preventDefault(); markPart(4); }
             else if (e.code === 'Digit5') { e.preventDefault(); markPart(5); }

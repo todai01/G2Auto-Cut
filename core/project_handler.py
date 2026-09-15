@@ -189,8 +189,6 @@ class ProjectMixin:
 
         checked_dir = os.path.join(self.work_dir, 'Проверенные')
         var_dir = os.path.join(self.work_dir, 'Переменные')
-        # Good остаётся только ради проектов, начатых до отказа от двойного отбора
-        good_dir = os.path.join(self.work_dir, 'Good')
 
         items = []
         for i in range(start, end):
@@ -204,8 +202,7 @@ class ProjectMixin:
                     custom = str(custom)
                     name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
 
-            if os.path.exists(os.path.join(checked_dir, name)) or \
-                    os.path.exists(os.path.join(good_dir, name)):
+            if os.path.exists(os.path.join(checked_dir, name)):
                 status = 'checked'
             elif os.path.exists(os.path.join(var_dir, name)):
                 status = 'var'
@@ -319,10 +316,8 @@ class ProjectMixin:
             return self.get_ui_state()
 
         selected_path = folder[0]
-        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in ['chunks', 'good',
-                                                                                                      'переменные',
-                                                                                                      'trash',
-                                                                                                      'проверенные'] else selected_path
+        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in [
+            'chunks', 'переменные', 'проверенные'] else selected_path
         self.project_name = os.path.basename(self.work_dir)
 
         # Восстанавливаем сохранённый снимок проекта (тексты из Excel, номер
@@ -364,10 +359,6 @@ class ProjectMixin:
 
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'), 'Chunks')
 
-    def load_results_mode(self):
-        return self._scan_and_load_folder(os.path.join(self.work_dir, 'Good'),
-                                          'Good') if self.work_dir else self.get_ui_state()
-
     def load_main_mode(self):
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'),
                                           'Chunks') if self.work_dir else self.get_ui_state()
@@ -408,7 +399,7 @@ class ProjectMixin:
                     info['start'], info['end'] = timings[name_no_ext]['start'], timings[name_no_ext]['end']
                 self.chunks_data.append(info)
 
-        if mode_name in ['Good', 'Переменные', 'Проверенные'] and self.phrases_data:
+        if mode_name in ['Переменные', 'Проверенные'] and self.phrases_data:
             def sort_key(chunk):
                 name = chunk['filename'].replace('.wav', '')
                 for i, p in enumerate(self.phrases_data):

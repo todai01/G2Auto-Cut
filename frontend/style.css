@@ -1040,7 +1040,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     font-size: var(--fs-sm); font-weight: 650;
 }
 .folder-map__name--raw{ color: var(--text-dim); }
-.folder-map__name--good{ color: var(--accent-good); }
 .folder-map__name--var{ color: var(--accent-var); }
 .folder-map__name--checked{ color: var(--accent-primary); }
 .folder-map__desc{ font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; }

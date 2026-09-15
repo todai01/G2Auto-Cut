@@ -273,15 +273,12 @@ class PhrasesMixin:
     def get_missing_phrases(self):
         """Фразы, для которых ещё нет готового файла.
 
-        Смотрим в «Проверенные» — единственную конечную папку. Good доглядываем
-        ради проектов, начатых до отказа от двойного отбора."""
+        Смотрим только в «Проверенные» — единственную конечную папку."""
         if not self.phrases_data: return []
 
         good_files = set()
-        for folder in ('Проверенные', 'Good'):
-            path = os.path.join(self.work_dir, folder) if self.work_dir else ""
-            if not path or not os.path.exists(path):
-                continue
+        path = os.path.join(self.work_dir, 'Проверенные') if self.work_dir else ""
+        if path and os.path.exists(path):
             for r, d, files in os.walk(path):
                 for f in files:
                     good_files.add(f.lower())
@@ -355,11 +352,8 @@ class PhrasesMixin:
                 target_path = os.path.join(checked_dir, expected)
 
                 if new_status:
-                    good_path = os.path.join(self.work_dir, 'Good', expected)
                     var_path = os.path.join(self.work_dir, 'Переменные', expected)
-
-                    source_path = good_path if os.path.exists(good_path) else (
-                        var_path if os.path.exists(var_path) else None)
+                    source_path = var_path if os.path.exists(var_path) else None
 
                     if source_path:
                         shutil.copy(source_path, target_path)
