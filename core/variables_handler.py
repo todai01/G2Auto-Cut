@@ -345,13 +345,25 @@ class VariablesMixin:
         needed = [name for name in ('start', 'end') if not getattr(self, f'_pending_{name}_file', None)]
 
         try:
-            self.audacity.send_command('New:', auto_start=True)
+            resp = self.audacity.send_command('New:', auto_start=True)
+            if not resp:
+                return {"error": "Audacity не ответил при запуске. Возможно, ему нужно больше времени, "
+                                  "чтобы открыться на медленном компьютере — попробуйте ещё раз."}
+
             for _ in range(15):
                 resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
                 if resp and '[' in resp:
                     break
                 time.sleep(0.5)
-            self.audacity.send_command(f'Import2: Filename="{os.path.abspath(raw_file[0]).replace(chr(92), "/")}"')
+            else:
+                return {"error": "Audacity запустился, но не отвечает на команды. Проверьте, что он "
+                                  "действительно открылся, и попробуйте ещё раз."}
+
+            import_resp = self.audacity.send_command(
+                f'Import2: Filename="{os.path.abspath(raw_file[0]).replace(chr(92), "/")}"')
+            if not import_resp:
+                return {"error": "Не удалось загрузить запись в Audacity. Проверьте, что он открылся, "
+                                  "и попробуйте ещё раз."}
         except Exception as e:
             return {"error": f"Не удалось открыть запись в Audacity: {e}"}
 
