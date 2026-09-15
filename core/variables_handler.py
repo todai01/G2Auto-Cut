@@ -914,13 +914,22 @@ class VariablesMixin:
 
         self.phrase_index = min(done_count, len(self.phrases_data) - 1)
 
+        # Отмечаем уже сохранённые дубли как «проверенные» и в памяти —
+        # иначе после переоткрытия проекта воспроизведение (Пробел) играло
+        # бы черновик вместо сохранённой версии, пока дубль не пересохранят.
+        if not hasattr(self, 'cascade_checked_files'):
+            self.cascade_checked_files = set()
+
         remaining = done_count
         for cat_idx, cat in enumerate(self.cascade_ordered_cats):
-            cat_len = len(self.cascade_files.get(cat, []))
+            files = self.cascade_files.get(cat, [])
+            cat_len = len(files)
             if remaining < cat_len:
+                self.cascade_checked_files.update(files[:remaining])
                 self.cascade_active_cat_idx = cat_idx
                 self.cascade_ptrs[cat] = remaining
                 return done_count
+            self.cascade_checked_files.update(files)
             remaining -= cat_len
 
         # Все категории уже пройдены — остаёмся на последней позиции последней

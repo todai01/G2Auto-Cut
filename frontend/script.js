@@ -894,11 +894,20 @@ let isProcessing = false;
         }
 
         async function loadVariables() {
-            if (currentState && currentState.mode === 'VarBatch') return;
+            if (currentState && currentState.mode === 'VarBatch') {
+                showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Вкладки здесь не переключаются — конвейер уже открыт. Чтобы выйти, нажмите <b>Главное меню</b> в левом верхнем углу.');
+                return;
+            }
             await handleLoad(pywebview.api.load_variables_mode());
         }
         async function loadChecked() {
-            if (currentState && currentState.mode === 'VarBatch') return;
+            // В конвейере переменных вкладка «Проверенные» не переключает
+            // экран (это сломало бы каскад) — вместо этого проигрывает
+            // сохранённую версию текущего дубля, если он уже отмечен.
+            if (currentState && currentState.mode === 'VarBatch') {
+                playAudio(false);
+                return;
+            }
             await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'checked'}));
         }
         async function loadMainMode() {
