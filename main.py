@@ -199,6 +199,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
 
         state = {
             "mode": self.current_mode,
+            "screen": "main",
             "phrase_text": "Загрузите Excel" if not self.phrases_data else "Все фразы удалены",
             "phrase_counter": f"0 / {len(self.phrases_data)}",
             "custom_filename": "",
@@ -278,6 +279,17 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         # Раньше return стоял внутри блока "если есть чанки", и после загрузки
         # одного только Excel фронтенд получал пустой ответ (None) и ничего не обновлял.
         return state
+
+    def to_view(self):
+        """Единая точка получения состояния экрана.
+
+        Раньше фронтенд должен был знать, что для обычного режима нужен
+        get_ui_state(), а для режима переменных — свой отдельный сборщик.
+        Внутри всё та же логика (она пока не трогалась, чтобы ничего не
+        сломать), но теперь есть одно имя, за которым можно спрятать оба
+        сборщика и любые будущие. Поле "screen" в ответе говорит, какой
+        именно экран пришёл: "main" или "varbatch"."""
+        return self.get_ui_state()
 
 
 def resource_path(relative_path):
