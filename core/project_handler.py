@@ -275,19 +275,31 @@ class ProjectMixin:
 
         try:
             self.audacity.send_command('New:', auto_start=True)
-            time.sleep(2.5)  # Даем Audacity больше времени на "холодный" старт
 
-            # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит
+            # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит.
+            # Раньше перед этим циклом ещё стояла слепая пауза в 2.5с — она не
+            # нужна, потому что первая же попытка в цикле делает то же самое
+            # ожидание, просто с проверкой результата, а не наугад.
+            resp = ""
             for _ in range(15):
                 resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
                 if resp and '[' in resp:
                     break
                 time.sleep(0.5)
 
+            tracks_before = resp.count('"kind"')
             self.audacity.send_command(f'Import2: Filename="{os.path.abspath(raw_filepath).replace(chr(92), "/")}"')
-            time.sleep(1.0)
+
+            # Ждём, пока импортированная дорожка реально появится в проекте,
+            # вместо слепой паузы в 1с на любой скорости диска и файла.
+            for _ in range(10):
+                resp2 = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
+                if resp2 and resp2.count('"kind"') > tracks_before:
+                    break
+                time.sleep(0.2)
+
             self.audacity.send_command('NewMonoTrack:')
-            time.sleep(0.5)
+            time.sleep(0.2)
             self.audacity.send_command(f'ImportLabels: Filename="{os.path.abspath(labels_path).replace(chr(92), "/")}"')
         except Exception as e:
             try:
