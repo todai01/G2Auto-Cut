@@ -74,7 +74,14 @@ class MontageMixin:
             except Exception:
                 pass
 
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE — поднимает из свёрнутого состояния
+            # SW_RESTORE (9) разворачивает окно из свёрнутого — но если окно
+            # было развёрнуто на весь экран, он же его тихо схлопывает до
+            # обычного размера. Разворачиваем принудительно только то, что
+            # реально свёрнуто; иначе просто показываем как есть (SW_SHOW).
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            else:
+                user32.ShowWindow(hwnd, 5)  # SW_SHOW — размер/состояние не трогаем
             user32.SetForegroundWindow(hwnd)
             user32.BringWindowToTop(hwnd)
 
