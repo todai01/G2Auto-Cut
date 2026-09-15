@@ -89,9 +89,14 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
                     # Тормозим плеер перед генерацией новой склейки
                     self.player.stop()
 
-                    start_audio = AudioSegment.from_file(self.var_start_phrase)
-                    mid_audio = AudioSegment.from_file(file_to_play)
-                    end_audio = AudioSegment.from_file(self.var_end_phrase)
+                    # Приводим все три куска к одной частоте (8000 Гц) перед склейкой.
+                    # Раньше это не делалось: start.wav часто уже был 8000 Гц (создан
+                    # программой), а сама фраза — в частоте исходной записи (обычно
+                    # 44100/48000 Гц). При склейке кусков с разной частотой без
+                    # приведения к одной середина трека звучала искажённо.
+                    start_audio = AudioSegment.from_file(self.var_start_phrase).set_frame_rate(8000)
+                    mid_audio = AudioSegment.from_file(file_to_play).set_frame_rate(8000)
+                    end_audio = AudioSegment.from_file(self.var_end_phrase).set_frame_rate(8000)
 
                     # Сшиваем все 3 куска вместе в монолитный трек (0 миллисекунд пауз)
                     combined = start_audio + mid_audio + end_audio
@@ -142,7 +147,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         if file_to_play == source_path and self.current_mode == 'Chunks' and 'start' in item and 'end' in item and self.raw_audio_full is not None:
             try:
                 start_ms, end_ms = int(item['start'] * 1000), int(item['end'] * 1000)
-                temp_audio = self.raw_audio_full[start_ms:end_ms]
+                temp_audio = self.raw_audio_full[start_ms:end_ms].set_frame_rate(8000)
                 temp_path = os.path.join(self.work_dir, "temp_play.wav")
                 temp_audio.export(temp_path, format="wav")
                 file_to_play = temp_path
