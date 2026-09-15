@@ -48,13 +48,46 @@ class MontageMixin:
         EnumWindows(EnumWindowsProc(foreach_window), 0)
         return windows
 
-    def set_active_window(self, hwnd):
+    def _force_foreground(self, hwnd):
+        """Надёжнее голого SetForegroundWindow: Windows обычно блокирует
+        попытку окна перехватить фокус, если она идёт не от того потока,
+        что был активен последним, — а вызовы из js_api как раз идут из
+        фонового потока. AttachThreadInput на время «занимает» права
+        активного окна, чтобы SetForegroundWindow не проваливался молча."""
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
         try:
-            ctypes.windll.user32.ShowWindow(hwnd, 5)
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-            time.sleep(0.5)
-        except:
+            fg_hwnd = user32.GetForegroundWindow()
+            current_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+            target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+            fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+
+            if fg_thread and fg_thread != current_thread:
+                user32.AttachThreadInput(current_thread, fg_thread, True)
+            if target_thread and target_thread != current_thread:
+                user32.AttachThreadInput(current_thread, target_thread, True)
+
+            try:
+                import pyautogui
+                pyautogui.press('alt')  # старый трюк — оставлен как доп. подстраховка
+            except Exception:
+                pass
+
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE — поднимает из свёрнутого состояния
+            user32.SetForegroundWindow(hwnd)
+            user32.BringWindowToTop(hwnd)
+
+            if fg_thread and fg_thread != current_thread:
+                user32.AttachThreadInput(current_thread, fg_thread, False)
+            if target_thread and target_thread != current_thread:
+                user32.AttachThreadInput(current_thread, target_thread, False)
+        except Exception:
             pass
+
+    def set_active_window(self, hwnd):
+        self._force_foreground(hwnd)
+        time.sleep(0.5)
         return True
 
     def _get_montage_track_idx(self):

@@ -6,6 +6,8 @@
 import json
 import os
 
+from core import recent_projects
+
 # Поля объекта Api, которые входят в сохранённый снимок проекта.
 STATE_FIELDS = [
     'phrases_data', 'excel_name', 'project_name', 'variables',
@@ -32,6 +34,8 @@ def save(api):
             json.dump(snapshot(api), f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+    recent_projects.touch(work_dir, getattr(api, 'project_name', None))
 
 
 def load(work_dir):

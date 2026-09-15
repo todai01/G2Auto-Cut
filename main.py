@@ -109,7 +109,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             self.player.play(file_to_play)
             return {"playing": True, "duration": duration}
 
-        # 2. ЛОГИКА ДЛЯ ОСНОВНЫХ РЕЖИМОВ (Chunks, Good и т.д.)
+        # 2. ЛОГИКА ДЛЯ ОСНОВНЫХ РЕЖИМОВ (Chunks, Проверенные и т.д.)
         if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
             return {"playing": False, "duration": 0}
 
@@ -126,18 +126,14 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             if custom:
                 check_name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
 
-        # Ищем сохраненный файл по приоритетам (Проверенные -> Good -> Переменные)
+        # Ищем сохраненный файл по приоритетам (Проверенные -> Переменные)
         if self.work_dir:
             checked_path = os.path.join(self.work_dir, 'Проверенные', check_name)
-            good_path = os.path.join(self.work_dir, 'Good', check_name)
             var_path = os.path.join(self.work_dir, 'Переменные', check_name)
 
             # Если файл есть в Проверенных - играем его!
             if os.path.exists(checked_path):
                 file_to_play = checked_path
-            # Иначе если он есть в Good - играем его
-            elif os.path.exists(good_path):
-                file_to_play = good_path
             # Иначе если он есть в Переменных - играем его
             elif os.path.exists(var_path):
                 file_to_play = var_path
@@ -190,11 +186,9 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
         if getattr(self, 'current_mode', '') == 'VarBatch':
             return self._get_var_batch_ui_state()
 
-        # «Готово» — это файлы в «Проверенных». Раньше считалась папка Good,
-        # которую основное действие никогда не заполняло, и счётчик вечно
-        # показывал 0 из N. Good доглядываем ради старых проектов.
+        # «Готово» — это файлы в «Проверенных». Папка Good — наследие
+        # двухступенчатого отбора, которого в программе больше нет.
         done_dir = os.path.join(self.work_dir, 'Проверенные') if self.work_dir else ""
-        good_dir = os.path.join(self.work_dir, 'Good') if self.work_dir else ""
         var_dir = os.path.join(self.work_dir, 'Переменные') if self.work_dir else ""
 
         state = {
@@ -210,7 +204,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             "excel_loaded": bool(self.phrases_data),
             "stats": {
                 "total": len(self.phrases_data),
-                "good": self._count_audio(done_dir) + self._count_audio(good_dir),
+                "good": self._count_audio(done_dir),
                 "var": self._count_audio(var_dir),
                 "checked": sum(1 for p in self.phrases_data if p.get("checked", False)),
                 "excel_name": getattr(self, 'excel_name', ""),
@@ -235,7 +229,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             state["has_audio"] = True
 
             # Синхронизация имени чанка с Excel-базой в отсортированных папках
-            if self.current_mode in ['Good', 'Переменные', 'Проверенные'] and self.phrases_data:
+            if self.current_mode in ['Переменные', 'Проверенные'] and self.phrases_data:
                 name_no_ext = current_chunk.replace('.wav', '').replace('.mp3', '')
                 for i, p in enumerate(self.phrases_data):
                     if p["filename"] == name_no_ext or f"фраза_{i + 1:04d}" == name_no_ext:
@@ -251,7 +245,6 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             check_name = f"{state['custom_filename']}.wav" if state['custom_filename'] and not state[
                 'custom_filename'].lower().endswith('.wav') else (state['custom_filename'] or current_chunk)
 
-            good_path = os.path.join(self.work_dir, 'Good', check_name)
             var_path = os.path.join(self.work_dir, 'Переменные', check_name)
             checked_path = os.path.join(self.work_dir, 'Проверенные', check_name)
 
@@ -260,13 +253,10 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
             if os.path.exists(checked_path):
                 state["completed_filepath"] = checked_path
                 state["is_checked"] = True
-
-            if os.path.exists(good_path):
                 state["is_done"] = True
-                if not state["completed_filepath"]: state["completed_filepath"] = good_path
             elif os.path.exists(var_path):
                 state["is_var"] = True
-                if not state["completed_filepath"]: state["completed_filepath"] = var_path
+                state["completed_filepath"] = var_path
 
         # Лента дублей: статусы соседних дублей для полоски под счётчиком
         state["strip"] = self._build_chunk_strip()
@@ -312,7 +302,6 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
     _MODE_SWITCHERS = {
         "chunks":  lambda api: api.load_main_mode(),
         "checked": lambda api: api.load_checked_mode(),
-        "results": lambda api: api.load_results_mode(),
     }
 
     def _switch_mode(self, mode):

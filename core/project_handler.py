@@ -6,7 +6,7 @@ import pyautogui
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
-from core import project_state
+from core import project_state, recent_projects
 
 try:
     import audioop  # быстрый расчёт громкости; удалён из Python 3.13
@@ -189,8 +189,6 @@ class ProjectMixin:
 
         checked_dir = os.path.join(self.work_dir, 'Проверенные')
         var_dir = os.path.join(self.work_dir, 'Переменные')
-        # Good остаётся только ради проектов, начатых до отказа от двойного отбора
-        good_dir = os.path.join(self.work_dir, 'Good')
 
         items = []
         for i in range(start, end):
@@ -204,8 +202,7 @@ class ProjectMixin:
                     custom = str(custom)
                     name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
 
-            if os.path.exists(os.path.join(checked_dir, name)) or \
-                    os.path.exists(os.path.join(good_dir, name)):
+            if os.path.exists(os.path.join(checked_dir, name)):
                 status = 'checked'
             elif os.path.exists(os.path.join(var_dir, name)):
                 status = 'var'
@@ -267,9 +264,32 @@ class ProjectMixin:
                 except:
                     pass
 
-        # --- БЕЗОПАСНАЯ ИНТЕГРАЦИЯ С AUDACITY ---
+        # Нарезка — это фундамент, он нужен в любом режиме. А вот что делать
+        # дальше (открывать Audacity с метками или сразу собирать каскад
+        # переменных) — решает пользователь на следующем экране, а не
+        # программа за него. Здесь только запоминаем, куда резали.
+        self._pending_chunks_dir = chunks_dir
+        self._pending_raw_filepath = raw_filepath
+        self._pending_labels_path = labels_path
+        return {"await_mode_choice": True}
+
+    def choose_mode_after_cut(self, mode):
+        """Второй шаг после нарезки: пользователь выбрал, в каком режиме
+        продолжать работать с только что нарезанными чанками."""
+        chunks_dir = getattr(self, '_pending_chunks_dir', None)
+        raw_filepath = getattr(self, '_pending_raw_filepath', None)
+        labels_path = getattr(self, '_pending_labels_path', None)
+        if not chunks_dir:
+            return self.get_ui_state()
+
+        if mode == 'premade':
+            # Этому режиму Audacity с метками не нужен вообще — каскад
+            # читает файлы прямо из папки Chunks и попросит start/end сам.
+            return self.load_premade_variables_folder(None, chunks_dir)
+
+        # --- ОБЫЧНЫЙ РЕЖИМ: БЕЗОПАСНАЯ ИНТЕГРАЦИЯ С AUDACITY ---
         try:
-            webview.windows[0].evaluate_js("updateProgress(100, 'Запуск Audacity (подождите пару секунд)...');")
+            webview.windows[0].evaluate_js("updateProgress(0, 'Запуск Audacity (подождите пару секунд)...');")
         except:
             pass
 
@@ -277,9 +297,6 @@ class ProjectMixin:
             self.audacity.send_command('New:', auto_start=True)
 
             # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит.
-            # Раньше перед этим циклом ещё стояла слепая пауза в 2.5с — она не
-            # нужна, потому что первая же попытка в цикле делает то же самое
-            # ожидание, просто с проверкой результата, а не наугад.
             resp = ""
             for _ in range(15):
                 resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
@@ -313,16 +330,36 @@ class ProjectMixin:
         self.state_memory = {'Chunks': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
         return self._scan_and_load_folder(chunks_dir, 'Chunks')
 
+    def get_recent_projects(self):
+        """Список недавних проектов для стартового экрана."""
+        return recent_projects.list_recent()
+
+    def open_recent_project(self, path):
+        """Быстрое продолжение недавнего проекта в один клик: без диалогов
+        про Audacity — просто восстанавливаем состояние и открываем список
+        дублей на том месте, где остановились."""
+        if not path or not os.path.isdir(path):
+            return {"error": "Папка проекта больше не найдена на диске."}
+
+        self.work_dir = path
+        self.project_name = os.path.basename(path)
+        project_state.apply(self, project_state.load(path))
+
+        # Режим VarBatch нельзя восстановить с одного диска — каскад
+        # собирается заново из открытого Audacity или выбранной папки.
+        # Открываем обычный список дублей как безопасный старт.
+        mode = self.current_mode if self.current_mode in ('Chunks', 'Переменные', 'Проверенные') else 'Chunks'
+        self.current_mode = mode
+        return self._scan_and_load_folder(os.path.join(path, mode), mode)
+
     def load_chunks_folder(self):
         folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not folder:
             return self.get_ui_state()
 
         selected_path = folder[0]
-        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in ['chunks', 'good',
-                                                                                                      'переменные',
-                                                                                                      'trash',
-                                                                                                      'проверенные'] else selected_path
+        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in [
+            'chunks', 'переменные', 'проверенные'] else selected_path
         self.project_name = os.path.basename(self.work_dir)
 
         # Восстанавливаем сохранённый снимок проекта (тексты из Excel, номер
@@ -364,10 +401,6 @@ class ProjectMixin:
 
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'), 'Chunks')
 
-    def load_results_mode(self):
-        return self._scan_and_load_folder(os.path.join(self.work_dir, 'Good'),
-                                          'Good') if self.work_dir else self.get_ui_state()
-
     def load_main_mode(self):
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'),
                                           'Chunks') if self.work_dir else self.get_ui_state()
@@ -408,7 +441,7 @@ class ProjectMixin:
                     info['start'], info['end'] = timings[name_no_ext]['start'], timings[name_no_ext]['end']
                 self.chunks_data.append(info)
 
-        if mode_name in ['Good', 'Переменные', 'Проверенные'] and self.phrases_data:
+        if mode_name in ['Переменные', 'Проверенные'] and self.phrases_data:
             def sort_key(chunk):
                 name = chunk['filename'].replace('.wav', '')
                 for i, p in enumerate(self.phrases_data):

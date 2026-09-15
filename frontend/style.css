@@ -546,6 +546,27 @@ button[disabled]:active{ transform: none; }
     animation: markIn .75s var(--ease) .36s both;
 }
 
+.recent-projects{
+    margin-top: var(--space-6); text-align: left;
+    width: 100%; max-width: 360px; margin-left: auto; margin-right: auto;
+    animation: markIn .75s var(--ease) .44s both;
+}
+.recent-projects__title{
+    font-size: var(--fs-xs); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-faint); margin-bottom: var(--space-2);
+}
+.recent-projects__list{ display: flex; flex-direction: column; gap: 6px; }
+.recent-project{
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    width: 100%; padding: 10px 14px; border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft); background: var(--panel);
+    color: var(--text); cursor: pointer; text-align: left;
+    transition: border-color .15s, background .15s, transform .15s;
+}
+.recent-project:hover{ border-color: var(--accent-primary); background: var(--tint-info); transform: translateY(-1px); }
+.recent-project__name{ font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-project__time{ font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; }
+
 /* ============================================================
    ЭКРАН 1 — ПОДГОТОВКА ПРОЕКТА (широкая раскладка)
    ============================================================ */
@@ -1040,7 +1061,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     font-size: var(--fs-sm); font-weight: 650;
 }
 .folder-map__name--raw{ color: var(--text-dim); }
-.folder-map__name--good{ color: var(--accent-good); }
 .folder-map__name--var{ color: var(--accent-var); }
 .folder-map__name--checked{ color: var(--accent-primary); }
 .folder-map__desc{ font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; }
@@ -1231,6 +1251,12 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     display: flex; flex-direction: column; gap: var(--space-2);
     max-height: 300px; overflow-y: auto; padding-right: 6px;
 }
+
+.mode-choice-grid{
+    display: flex; flex-direction: column; gap: var(--space-3);
+    margin-top: var(--space-4);
+}
+.mode-choice-grid .option-card{ width: 100%; }
 
 /* --- Счётчик «Проверено» в шапке --- */
 .stat-checked{ color: var(--accent-primary); display: flex; align-items: center; gap: 6px; }

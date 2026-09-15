@@ -150,7 +150,10 @@ let isProcessing = false;
             if (h) showBeautifulAlert(`<b>${h.title}</b><br><br>${h.body}`);
         }
 
-        document.addEventListener('DOMContentLoaded', updateSettingsText);
+        document.addEventListener('DOMContentLoaded', () => {
+            updateSettingsText();
+            loadRecentProjects();
+        });
 
         function updateProgress(p, t) {
             document.getElementById('progressContainer').style.display = 'block';
@@ -182,6 +185,68 @@ let isProcessing = false;
 
         function showSplash() {
             showStage('stage0-splash');
+            loadRecentProjects();
+        }
+
+        // ===== НЕДАВНИЕ ПРОЕКТЫ =====
+        let recentProjectsCache = [];
+
+        function escapeHtml(s) {
+            let d = document.createElement('div');
+            d.innerText = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
+
+        function formatRecentTime(ts) {
+            if (!ts) return '';
+            let diffMin = Math.floor(Date.now() / 1000 - ts) / 60;
+            if (diffMin < 1) return 'только что';
+            if (diffMin < 60) return `${Math.floor(diffMin)} мин назад`;
+            let diffH = diffMin / 60;
+            if (diffH < 24) return `${Math.floor(diffH)} ч назад`;
+            return `${Math.floor(diffH / 24)} дн назад`;
+        }
+
+        async function loadRecentProjects() {
+            let panel = document.getElementById('recentProjectsPanel');
+            let list = document.getElementById('recentProjectsList');
+            if (!panel || !list) return;
+
+            let items = [];
+            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
+            recentProjectsCache = items || [];
+
+            if (!recentProjectsCache.length) {
+                panel.style.display = 'none';
+                return;
+            }
+
+            list.innerHTML = recentProjectsCache.map((it, idx) => `
+                <button class="recent-project" onclick="openRecentProject(${idx})">
+                    <span class="recent-project__name">${escapeHtml(it.name)}</span>
+                    <span class="recent-project__time">${formatRecentTime(it.updated_at)}</span>
+                </button>
+            `).join('');
+            panel.style.display = 'block';
+        }
+
+        async function openRecentProject(idx) {
+            let item = recentProjectsCache[idx];
+            if (!item) return;
+
+            updateProgress(0, 'Продолжаем проект...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.open_recent_project(item.path);
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                loadRecentProjects(); // вдруг папка пропала — обновим список
+                return;
+            }
+
+            updateUI(state);
+            showWorkspace();
         }
 
         // Заставка -> экран подготовки проекта
@@ -717,17 +782,40 @@ let isProcessing = false;
 
             closeAutoTune();
             updateProgress(0, 'Нарезка...');
-            await handleLoad(pywebview.api.load_raw_audio(pause, sens, pad));
+            let state = await pywebview.api.load_raw_audio(pause, sens, pad);
             document.getElementById('progressContainer').style.display = 'none';
+
+            // Чанки нарезаны — это фундамент в любом случае. Дальше решает
+            // пользователь, а не программа: обычный режим или каскад переменных.
+            if (state && state.await_mode_choice) {
+                document.getElementById('modeChoiceOverlay').style.display = 'flex';
+                return;
+            }
+
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
+        async function chooseCutMode(mode) {
+            document.getElementById('modeChoiceOverlay').style.display = 'none';
+            updateProgress(0, mode === 'premade' ? 'Готовим каскад переменных...' : 'Открываем Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let state = await pywebview.api.choose_mode_after_cut(mode);
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            updateUI(state);
+            if (state.has_audio || state.mode === 'VarBatch') { showWorkspace(); playAudio(); }
         }
 
         async function loadVariables() {
             if (currentState && currentState.mode === 'VarBatch') return;
             await handleLoad(pywebview.api.load_variables_mode());
-        }
-        async function loadResults() {
-            if (currentState && currentState.mode === 'VarBatch') return;
-            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'results'}));
         }
         async function loadChecked() {
             if (currentState && currentState.mode === 'VarBatch') return;
@@ -1258,7 +1346,7 @@ let isProcessing = false;
 
             if (excelName) {
                 if (state.is_done || state.is_var) {
-                    // Используем умное имя папки от Python (Проверенные, Good или Переменные)
+                    // Используем умное имя папки от Python (Проверенные или Переменные)
                     let folderName = state.folder_name || (state.is_done ? "Проверенные" : "Переменные");
 
                     // Если файл готов (is_done), красим в зеленый, иначе - в желтый
@@ -1402,7 +1490,7 @@ let isProcessing = false;
         function markPart(partNum) {
             if (!currentState || !currentState.chunk_name) return;
 
-            // БЕРЕМ ТОЧНЫЙ ПУТЬ ДО ФАЙЛА НА ДИСКЕ (из Good, Переменных или сырой папки)
+            // БЕРЕМ ТОЧНЫЙ ПУТЬ ДО ФАЙЛА НА ДИСКЕ (из Проверенных, Переменных или сырой папки)
             let exactFilePath = currentState.completed_filepath || currentState.filepath;
 
             // А для красоты на экране показываем имя
@@ -1448,7 +1536,7 @@ let isProcessing = false;
             if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
             if (isProcessing) return; isProcessing = true;
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
-            alert("✅ Склейка сохранена в Good!");
+            alert("✅ Склейка сохранена в Проверенные!");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -1565,6 +1653,13 @@ let isProcessing = false;
                 return;
             }
 
+            // Выбор режима после нарезки: явный клик, без горячих клавиш —
+            // тут не должно быть случайного выхода куда-то на полпути.
+            let modeChoiceOverlay = document.getElementById('modeChoiceOverlay');
+            if (modeChoiceOverlay && modeChoiceOverlay.style.display === 'flex') {
+                return;
+            }
+
             // Блокируем горячие клавиши программы, если открыт Аудит
             let auditOverlay = document.getElementById('auditOverlay');
             if (auditOverlay && auditOverlay.style.display === 'flex') {
@@ -1580,8 +1675,8 @@ let isProcessing = false;
             if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
 
             if (currentState && currentState.mode === 'VarBatch') {
-                // Добавили KeyR в разрешенные
-                if (['KeyC', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
+                // Цифры 1-5 — это разметка монтажа в основном режиме, здесь её нет
+                if (['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
                     e.preventDefault();
                     showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Здесь эта кнопка отключена. Для сохранения и перехода жмите <b>Z</b>, для навигации аудио — <b>A/D</b>, для навигации текста — <b>Q/E</b>, выгрузить готовое — <b>R</b>.');
                     return;
@@ -1601,6 +1696,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyZ') { e.preventDefault(); saveVarBatch(false); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
+                else if (e.code === 'KeyC') { e.preventDefault(); sendToAudacity(); }
                 return;
             }
 
@@ -1621,7 +1717,7 @@ let isProcessing = false;
                 chk.checked = !chk.checked;
             }
             else if (e.code === 'Digit1') { e.preventDefault(); startHold(1, 'btnPrepMerge', prepMerge); }
-            else if (e.code === 'Digit2') { e.preventDefault(); handleDoubleTap('btnSaveMerge', saveMerge, '2. В Good'); }
+            else if (e.code === 'Digit2') { e.preventDefault(); handleDoubleTap('btnSaveMerge', saveMerge, '2. В проверенные'); }
             else if (e.code === 'Digit3') { e.preventDefault(); handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные'); }
             else if (e.code === 'Digit4') { e.preventDefault(); markPart(4); }
             else if (e.code === 'Digit5') { e.preventDefault(); markPart(5); }

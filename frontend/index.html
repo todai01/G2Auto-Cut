@@ -58,6 +58,27 @@
         </div>
     </div>
 
+    <!-- Выбор режима сразу после нарезки чанков -->
+    <div id="modeChoiceOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Чанки нарезаны. В каком режиме работаем?</h3>
+            </div>
+            <div class="modal-hint">Дубли уже лежат в папке Chunks — это сделано в любом случае. Осталось выбрать, как собирать их дальше.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="chooseCutMode('normal')">
+                    <span class="option-icon">📝</span>
+                    <div><span class="option-title">Обычный режим</span><span class="option-desc">По одной фразе, с меткой в Audacity</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="chooseCutMode('premade')">
+                    <span class="option-icon">🔁</span>
+                    <div><span class="option-title">Готовые переменные</span><span class="option-desc">Каскад start + имя + end</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">
@@ -271,6 +292,11 @@
                     Начать работу <kbd>Enter</kbd>
                 </button>
                 <div class="splash-note">G2Studio · работает в связке с Audacity</div>
+
+                <div id="recentProjectsPanel" class="recent-projects" style="display:none;">
+                    <div class="recent-projects__title">Недавние проекты</div>
+                    <div id="recentProjectsList" class="recent-projects__list"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -351,7 +377,6 @@
                     <div class="info-panel__title">Куда попадают файлы</div>
                     <ul class="folder-map">
                         <li><span class="folder-map__name folder-map__name--raw">Chunks</span><span class="folder-map__desc">Черновые куски сразу после нарезки</span></li>
-                        <li><span class="folder-map__name folder-map__name--good">Good</span><span class="folder-map__desc">Отобранные дубли, которые вы оставили</span></li>
                         <li><span class="folder-map__name folder-map__name--var">Переменные</span><span class="folder-map__desc">Куски с датой, именем или суммой</span></li>
                         <li><span class="folder-map__name folder-map__name--checked">Проверенные</span><span class="folder-map__desc">Финальные файлы, готовые к сдаче</span></li>
                     </ul>
