@@ -10,6 +10,7 @@ from core.variables_handler import VariablesMixin
 from core.phrase_handler import PhrasesMixin
 from core.project_handler import ProjectMixin
 from core.audacity_montage import MontageMixin
+from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
 from utils.audacity_client import AudacityClient
@@ -268,6 +269,10 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
 
         # Лента дублей: статусы соседних дублей для полоски под счётчиком
         state["strip"] = self._build_chunk_strip()
+
+        # Автосохранение: снимок проекта пишется на диск при каждом обновлении
+        # экрана, поэтому закрытие программы больше не стирает прогресс.
+        project_state.save(self)
 
         # ВАЖНО: состояние возвращается всегда, даже если аудио ещё не загружено.
         # Раньше return стоял внутри блока "если есть чанки", и после загрузки
