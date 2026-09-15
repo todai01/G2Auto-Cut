@@ -247,6 +247,16 @@ button[disabled]:active{ transform: none; }
    и посреди правой колонки зияла пустота в треть экрана. */
 .panel-column { display: flex; flex-direction: column; justify-content: flex-start; gap: var(--space-4); min-width: 0; }
 
+.audacity-embed-area{
+    flex: 1; min-height: 420px; border-radius: 14px; border: 2px dashed var(--border-soft);
+    background: #0b0d10; position: relative; overflow: hidden;
+}
+.audacity-embed-area__label{
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: var(--text-dim); background: rgba(0,0,0,.55);
+    padding: 3px 10px; border-radius: 999px; pointer-events: none; z-index: 1;
+}
+
 .counter-pill{
     font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-dim);
     background: var(--screen); border: 1px solid var(--border-soft); border-radius: 999px;

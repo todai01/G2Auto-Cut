@@ -126,6 +126,103 @@ class MontageMixin:
         time.sleep(0.5)
         return True
 
+    # --- Вживление окна Audacity внутрь окна софта ---
+    #
+    # У Windows нет «официального» способа показать чужую программу
+    # внутри своего окна — есть системный приём SetParent, который
+    # переподчиняет чужое окно как дочернее нашему и убирает у него
+    # рамку/заголовок. Audacity не проектировался для этого, поэтому
+    # приём может повести себя не идеально (всплывающие диалоги Audacity
+    # всё равно будут отдельными окнами поверх — это нормально и не
+    # чинится). Если станет только хуже — есть unembed_audacity, который
+    # возвращает Audacity в обычное отдельное окно.
+
+    GWL_STYLE = -16
+    WS_CHILD = 0x40000000
+    WS_POPUP = 0x80000000
+    WS_CAPTION = 0x00C00000
+    WS_THICKFRAME = 0x00040000
+    WS_MINIMIZEBOX = 0x00020000
+    WS_MAXIMIZEBOX = 0x00010000
+    WS_SYSMENU = 0x00080000
+    SWP_NOZORDER = 0x0004
+    SWP_FRAMECHANGED = 0x0020
+    SWP_SHOWWINDOW = 0x0040
+
+    def _get_own_hwnd(self):
+        try:
+            return ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
+        except Exception:
+            return None
+
+    def embed_audacity(self, x, y, width, height):
+        if getattr(self, '_embedded_hwnd', None):
+            return self.sync_embed_position(x, y, width, height)
+
+        own_hwnd = self._get_own_hwnd()
+        if not own_hwnd:
+            return {"error": "Не удалось найти окно софта."}
+
+        windows = self.get_audacity_windows()
+        if not windows:
+            return {"error": "Audacity не найден. Сначала отправьте файл в Audacity."}
+        if len(windows) > 1:
+            return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы вживить нужное."}
+
+        hwnd = windows[0]['hwnd']
+        user32 = ctypes.windll.user32
+
+        try:
+            orig_style = user32.GetWindowLongW(hwnd, self.GWL_STYLE)
+            new_style = orig_style
+            new_style &= ~(self.WS_POPUP | self.WS_CAPTION | self.WS_THICKFRAME |
+                           self.WS_MINIMIZEBOX | self.WS_MAXIMIZEBOX | self.WS_SYSMENU)
+            new_style |= self.WS_CHILD
+
+            user32.SetWindowLongW(hwnd, self.GWL_STYLE, new_style)
+            user32.SetParent(hwnd, own_hwnd)
+            user32.SetWindowPos(hwnd, 0, int(x), int(y), int(width), int(height),
+                                 self.SWP_NOZORDER | self.SWP_FRAMECHANGED | self.SWP_SHOWWINDOW)
+
+            self._embedded_hwnd = hwnd
+            self._embed_orig_style = orig_style
+            return {"status": "ok"}
+        except Exception as e:
+            return {"error": f"Не удалось вживить окно Audacity: {e}"}
+
+    def sync_embed_position(self, x, y, width, height):
+        """Подвинуть уже вживлённое окно Audacity под новую позицию/размер
+        плашки (например, когда пользователь меняет размер окна софта)."""
+        hwnd = getattr(self, '_embedded_hwnd', None)
+        if not hwnd:
+            return {"status": "not_embedded"}
+        try:
+            ctypes.windll.user32.MoveWindow(hwnd, int(x), int(y), int(width), int(height), True)
+            return {"status": "ok"}
+        except Exception:
+            self._embedded_hwnd = None
+            return {"error": "Окно Audacity пропало — вживление отменено."}
+
+    def unembed_audacity(self):
+        """Вернуть Audacity обратно в обычное отдельное окно."""
+        hwnd = getattr(self, '_embedded_hwnd', None)
+        if not hwnd:
+            return True
+        user32 = ctypes.windll.user32
+        try:
+            user32.SetParent(hwnd, 0)
+            orig_style = getattr(self, '_embed_orig_style', None)
+            if orig_style is not None:
+                user32.SetWindowLongW(hwnd, self.GWL_STYLE, orig_style)
+            user32.SetWindowPos(hwnd, 0, 100, 100, 1000, 700,
+                                 self.SWP_NOZORDER | self.SWP_FRAMECHANGED | self.SWP_SHOWWINDOW)
+            self._force_foreground(hwnd)
+        except Exception:
+            pass
+        self._embedded_hwnd = None
+        self._embed_orig_style = None
+        return True
+
     def _get_montage_track_idx(self):
         resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
         try:

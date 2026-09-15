@@ -262,6 +262,7 @@ let isProcessing = false;
         }
 
         function showMenu() {
+            detachEmbeddedAudacity();
             showStage('stage1-loading');
 
             // Кнопка возврата появляется, только если работать уже есть с чем
@@ -1115,6 +1116,69 @@ let isProcessing = false;
                     isProcessing = false;
                 }
             }, 50);
+        }
+
+        // --- Вживление окна Audacity внутрь софта ---
+        // Приём системный (Windows SetParent) — Audacity не создан для этого,
+        // поэтому если поведение станет хуже, кнопка сразу отсоединяет обратно.
+        let audacityEmbedded = false;
+        let embedResizeTimer = null;
+
+        function toggleEmbedAudacity() {
+            if (audacityEmbedded) {
+                detachEmbeddedAudacity();
+            } else {
+                attachEmbeddedAudacity();
+            }
+        }
+
+        async function attachEmbeddedAudacity() {
+            const area = document.getElementById('audacityEmbedArea');
+            const btn = document.getElementById('btnEmbedAudacity');
+            const rect = area.getBoundingClientRect();
+            area.style.display = 'block';
+
+            const result = await pywebview.api.embed_audacity(
+                Math.round(rect.left), Math.round(rect.top),
+                Math.round(rect.width), Math.round(rect.height)
+            );
+
+            if (result && result.error) {
+                area.style.display = 'none';
+                showBeautifulAlert('⚠️ ' + result.error);
+                return;
+            }
+
+            audacityEmbedded = true;
+            if (btn) btn.innerText = 'Отсоединить Audacity';
+            window.addEventListener('resize', onEmbedWindowResize);
+        }
+
+        async function detachEmbeddedAudacity() {
+            if (!audacityEmbedded) return;
+            window.removeEventListener('resize', onEmbedWindowResize);
+            audacityEmbedded = false;
+            const area = document.getElementById('audacityEmbedArea');
+            const btn = document.getElementById('btnEmbedAudacity');
+            if (area) area.style.display = 'none';
+            if (btn) btn.innerText = 'Встроить окно Audacity сюда';
+            try {
+                await pywebview.api.unembed_audacity();
+            } catch (e) {}
+        }
+
+        function onEmbedWindowResize() {
+            clearTimeout(embedResizeTimer);
+            embedResizeTimer = setTimeout(() => {
+                if (!audacityEmbedded) return;
+                const area = document.getElementById('audacityEmbedArea');
+                if (!area) return;
+                const rect = area.getBoundingClientRect();
+                pywebview.api.sync_embed_position(
+                    Math.round(rect.left), Math.round(rect.top),
+                    Math.round(rect.width), Math.round(rect.height)
+                );
+            }, 150);
         }
 
         async function sendToAudacity() {

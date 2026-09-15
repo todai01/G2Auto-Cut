@@ -347,5 +347,8 @@ if __name__ == '__main__':
 
     html_path = resource_path('frontend/index.html')
 
-    webview.create_window('G2Studio | Автосрезка', html_path, js_api=api, width=1280, height=860)
+    window = webview.create_window('G2Studio | Автосрезка', html_path, js_api=api, width=1280, height=860)
+    # Если Audacity был вживлён в окно софта, при закрытии его нужно вернуть
+    # обратно отдельным окном — иначе он останется «сиротой» без родителя.
+    window.events.closing += lambda: api.unembed_audacity()
     webview.start()
