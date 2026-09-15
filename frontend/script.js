@@ -159,7 +159,13 @@ let isProcessing = false;
         // (например, когда Audacity выходит на передний план после C, R
         // или выбора исходника для start/end). Это стандартные события
         // window — их не нужно вызывать вручную из Python.
-        window.addEventListener('blur', () => document.body.classList.add('app-unfocused'));
+        // Когда Audacity вживлён внутрь софта, клик по нему технически уводит
+        // фокус браузерного слоя — но это всё ещё то же самое окно, а не
+        // отдельная программа, поэтому темнить/размывать фон не нужно.
+        window.addEventListener('blur', () => {
+            if (audacityEmbedded) return;
+            document.body.classList.add('app-unfocused');
+        });
         window.addEventListener('focus', () => document.body.classList.remove('app-unfocused'));
 
         function updateProgress(p, t) {
@@ -1589,6 +1595,7 @@ let isProcessing = false;
 
 
             if (state.mode === 'VarBatch') {
+                document.getElementById('workspaceGrid').classList.add('workspace-grid--varbatch');
                 document.getElementById('standardActions').style.display = 'none';
                 document.getElementById('varBatchActions').style.display = 'flex';
                 // Теперь берем правильный текст фразы, а если его нет — название папки
@@ -1601,6 +1608,7 @@ let isProcessing = false;
                 if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'none';
 
             } else {
+                document.getElementById('workspaceGrid').classList.remove('workspace-grid--varbatch');
                 document.getElementById('standardActions').style.display = 'flex';
                 document.getElementById('varBatchActions').style.display = 'none';
 
