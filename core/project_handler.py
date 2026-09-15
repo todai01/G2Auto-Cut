@@ -264,9 +264,32 @@ class ProjectMixin:
                 except:
                     pass
 
-        # --- БЕЗОПАСНАЯ ИНТЕГРАЦИЯ С AUDACITY ---
+        # Нарезка — это фундамент, он нужен в любом режиме. А вот что делать
+        # дальше (открывать Audacity с метками или сразу собирать каскад
+        # переменных) — решает пользователь на следующем экране, а не
+        # программа за него. Здесь только запоминаем, куда резали.
+        self._pending_chunks_dir = chunks_dir
+        self._pending_raw_filepath = raw_filepath
+        self._pending_labels_path = labels_path
+        return {"await_mode_choice": True}
+
+    def choose_mode_after_cut(self, mode):
+        """Второй шаг после нарезки: пользователь выбрал, в каком режиме
+        продолжать работать с только что нарезанными чанками."""
+        chunks_dir = getattr(self, '_pending_chunks_dir', None)
+        raw_filepath = getattr(self, '_pending_raw_filepath', None)
+        labels_path = getattr(self, '_pending_labels_path', None)
+        if not chunks_dir:
+            return self.get_ui_state()
+
+        if mode == 'premade':
+            # Этому режиму Audacity с метками не нужен вообще — каскад
+            # читает файлы прямо из папки Chunks и попросит start/end сам.
+            return self.load_premade_variables_folder(None, chunks_dir)
+
+        # --- ОБЫЧНЫЙ РЕЖИМ: БЕЗОПАСНАЯ ИНТЕГРАЦИЯ С AUDACITY ---
         try:
-            webview.windows[0].evaluate_js("updateProgress(100, 'Запуск Audacity (подождите пару секунд)...');")
+            webview.windows[0].evaluate_js("updateProgress(0, 'Запуск Audacity (подождите пару секунд)...');")
         except:
             pass
 
@@ -274,9 +297,6 @@ class ProjectMixin:
             self.audacity.send_command('New:', auto_start=True)
 
             # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит.
-            # Раньше перед этим циклом ещё стояла слепая пауза в 2.5с — она не
-            # нужна, потому что первая же попытка в цикле делает то же самое
-            # ожидание, просто с проверкой результата, а не наугад.
             resp = ""
             for _ in range(15):
                 resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')

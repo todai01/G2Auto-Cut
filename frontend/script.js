@@ -717,8 +717,35 @@ let isProcessing = false;
 
             closeAutoTune();
             updateProgress(0, 'Нарезка...');
-            await handleLoad(pywebview.api.load_raw_audio(pause, sens, pad));
+            let state = await pywebview.api.load_raw_audio(pause, sens, pad);
             document.getElementById('progressContainer').style.display = 'none';
+
+            // Чанки нарезаны — это фундамент в любом случае. Дальше решает
+            // пользователь, а не программа: обычный режим или каскад переменных.
+            if (state && state.await_mode_choice) {
+                document.getElementById('modeChoiceOverlay').style.display = 'flex';
+                return;
+            }
+
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
+        async function chooseCutMode(mode) {
+            document.getElementById('modeChoiceOverlay').style.display = 'none';
+            updateProgress(0, mode === 'premade' ? 'Готовим каскад переменных...' : 'Открываем Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let state = await pywebview.api.choose_mode_after_cut(mode);
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            updateUI(state);
+            if (state.has_audio || state.mode === 'VarBatch') { showWorkspace(); playAudio(); }
         }
 
         async function loadVariables() {
@@ -1558,6 +1585,13 @@ let isProcessing = false;
                     e.preventDefault();
                     closeManualSettings();
                 }
+                return;
+            }
+
+            // Выбор режима после нарезки: явный клик, без горячих клавиш —
+            // тут не должно быть случайного выхода куда-то на полпути.
+            let modeChoiceOverlay = document.getElementById('modeChoiceOverlay');
+            if (modeChoiceOverlay && modeChoiceOverlay.style.display === 'flex') {
                 return;
             }
 

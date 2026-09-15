@@ -1231,6 +1231,12 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     max-height: 300px; overflow-y: auto; padding-right: 6px;
 }
 
+.mode-choice-grid{
+    display: flex; flex-direction: column; gap: var(--space-3);
+    margin-top: var(--space-4);
+}
+.mode-choice-grid .option-card{ width: 100%; }
+
 /* --- Счётчик «Проверено» в шапке --- */
 .stat-checked{ color: var(--accent-primary); display: flex; align-items: center; gap: 6px; }
 .stat-checked::before{

@@ -58,6 +58,27 @@
         </div>
     </div>
 
+    <!-- Выбор режима сразу после нарезки чанков -->
+    <div id="modeChoiceOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Чанки нарезаны. В каком режиме работаем?</h3>
+            </div>
+            <div class="modal-hint">Дубли уже лежат в папке Chunks — это сделано в любом случае. Осталось выбрать, как собирать их дальше.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="chooseCutMode('normal')">
+                    <span class="option-icon">📝</span>
+                    <div><span class="option-title">Обычный режим</span><span class="option-desc">По одной фразе, с меткой в Audacity</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="chooseCutMode('premade')">
+                    <span class="option-icon">🔁</span>
+                    <div><span class="option-title">Готовые переменные</span><span class="option-desc">Каскад start + имя + end</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">
