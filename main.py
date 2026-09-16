@@ -2,8 +2,6 @@ import os
 import webview
 import sys
 from pydub import AudioSegment
-AudioSegment.converter = os.path.abspath("ffmpeg.exe")
-AudioSegment.ffprobe = os.path.abspath("ffprobe.exe")
 
 # 🧠 Основная логика (миксины из папки core)
 from core.variables_handler import VariablesMixin
@@ -17,6 +15,11 @@ from core import project_state
 from utils.audacity_client import AudacityClient
 from utils.audio_player import AudioPlayer
 from utils.file_utils import FileUtils
+from utils.ffmpeg_setup import ensure_ffmpeg
+
+# Папка, где реально лежит main.py — а не «текущая рабочая папка» (cwd),
+# которая зависит от того, откуда программу запустили.
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin):
@@ -434,6 +437,41 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+def _startup(window):
+    """Выполняется уже после того, как окно поднялось — можно показывать
+    прогресс через тот же progressContainer, что и вырезка/конвертация.
+    Если ffmpeg.exe/ffprobe.exe рядом с программой ещё нет (первый запуск
+    на новом компьютере) — скачивает их сам, не заставляя копировать вручную."""
+    def report(percent, text):
+        try:
+            window.evaluate_js(
+                f"document.getElementById('progressContainer').style.display='block';"
+                f"updateProgress({percent}, {text!r});"
+            )
+        except Exception:
+            pass
+
+    ok = ensure_ffmpeg(APP_DIR, on_progress=report)
+
+    try:
+        window.evaluate_js("document.getElementById('progressContainer').style.display='none';")
+    except Exception:
+        pass
+
+    if not ok:
+        try:
+            window.evaluate_js(
+                "showBeautifulAlert('⚠️ <b>Не удалось скачать ffmpeg автоматически</b>"
+                "<br><br>Проверьте интернет-соединение или положите ffmpeg.exe и "
+                "ffprobe.exe в папку программы вручную (рядом с main.py) и перезапустите.');"
+            )
+        except Exception:
+            pass
+
+    AudioSegment.converter = os.path.join(APP_DIR, "ffmpeg.exe")
+    AudioSegment.ffprobe = os.path.join(APP_DIR, "ffprobe.exe")
+
+
 if __name__ == '__main__':
     api = Api()
 
@@ -443,4 +481,4 @@ if __name__ == '__main__':
     # Если Audacity был вживлён в окно софта, при закрытии его нужно вернуть
     # обратно отдельным окном — иначе он останется «сиротой» без родителя.
     window.events.closing += lambda: api.unembed_audacity()
-    webview.start()
+    webview.start(_startup, window)
