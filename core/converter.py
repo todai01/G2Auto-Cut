@@ -47,10 +47,18 @@ class ConverterMixin:
         done, errors = 0, []
         for path in src_files:
             try:
-                audio = AudioSegment.from_file(path).set_frame_rate(hz)
+                audio = AudioSegment.from_file(path)
                 name = os.path.splitext(os.path.basename(path))[0] + '.' + out_format
                 target = os.path.join(out_dir, name)
-                audio.export(target, format=out_format)
+                # Смену герцовки отдаём ffmpeg (-ar), а не pydub'у: встроенный
+                # в pydub set_frame_rate() пересчитывает частоту «в лоб», без
+                # сглаживающего фильтра — отсюда и цифровые/роботские
+                # искажения, особенно заметные при сильном понижении (например,
+                # до 8000 Гц). ffmpeg делает это через качественный ресемплер.
+                export_kwargs = {"parameters": ["-ar", str(hz)]}
+                if out_format == 'mp3':
+                    export_kwargs["bitrate"] = "192k"
+                audio.export(target, format=out_format, **export_kwargs)
                 done += 1
             except Exception as e:
                 errors.append(f"{os.path.basename(path)}: {e}")
