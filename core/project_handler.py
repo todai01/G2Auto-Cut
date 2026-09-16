@@ -19,6 +19,13 @@ FRAME_MS = 20
 # Варианты длины паузы, которые перебирает автоподбор
 PAUSE_CANDIDATES = [120, 150, 200, 250, 300, 400, 500, 650, 800, 1000]
 
+# Папки, которые НЕ являются очередью дублей — их не нужно засчитывать при
+# сканировании «Chunks», даже если они (из-за старого проекта или ручной
+# перекладки файлов) оказались вложены прямо внутрь Chunks. «_Остатки» сюда
+# намеренно не входит: это неразобранные куски, они и должны возвращаться
+# в очередь.
+_SCAN_EXCLUDE_SUBDIRS = {'chunks', 'переменные', 'проверенные'}
+
 
 class ProjectMixin:
     """Модуль управления файлами проекта, нарезкой аудио и загрузкой папок."""
@@ -235,7 +242,12 @@ class ProjectMixin:
             if not filename:
                 return self.get_ui_state()
             raw_filepath = filename[0]
-        self.work_dir = os.path.dirname(raw_filepath)
+        raw_dir = os.path.dirname(raw_filepath)
+        # Если сырой файл лежит прямо в папке «Chunks»/«Переменные»/«Проверенные»
+        # (например, её же выбрали местом для записи) — рабочей папкой берём
+        # родителя, иначе Проверенные/_Остатки создались бы ВНУТРИ Chunks и
+        # засоряли бы её очередь при следующем открытии проекта.
+        self.work_dir = os.path.dirname(raw_dir) if os.path.basename(raw_dir).lower() in _SCAN_EXCLUDE_SUBDIRS else raw_dir
         self.project_name = os.path.basename(self.work_dir)
 
         # Если в этой папке уже есть сохранённый проект — подтягиваем тексты
@@ -376,8 +388,8 @@ class ProjectMixin:
             return self.get_ui_state()
 
         selected_path = folder[0]
-        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in [
-            'chunks', 'переменные', 'проверенные'] else selected_path
+        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in \
+            _SCAN_EXCLUDE_SUBDIRS else selected_path
         self.project_name = os.path.basename(self.work_dir)
 
         # Восстанавливаем сохранённый снимок проекта (тексты из Excel, номер
@@ -446,6 +458,12 @@ class ProjectMixin:
         if os.path.exists(target_folder):
             collected_files = []
             for root, dirs, files in os.walk(target_folder):
+                # Если «Проверенные»/«Переменные» когда-то оказались вложены
+                # прямо в эту папку (например, из старого проекта, где
+                # рабочей папкой по ошибке стала сама Chunks) — не спускаемся
+                # в них: это уже обработанные дубли, а не очередь.
+                if root == target_folder:
+                    dirs[:] = [d for d in dirs if d.lower() not in _SCAN_EXCLUDE_SUBDIRS]
                 for filename in files:
                     if filename.lower().endswith(('.wav', '.mp3')):
                         collected_files.append((filename, os.path.join(root, filename)))
