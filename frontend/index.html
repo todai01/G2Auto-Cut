@@ -88,6 +88,15 @@
             </div>
             <div class="modal-hint" id="startEndMissingText">В папке нет файлов start/end.</div>
 
+            <label class="opt-chip" style="margin-bottom: var(--space-3);">
+                <input type="checkbox" id="onlyStartCheck" onchange="toggleOnlyStart(this.checked)">
+                <span class="opt-chip__box" aria-hidden="true"></span>
+                <span class="opt-chip__text">
+                    Только start, без end
+                    <small>Есть запись только начальной фразы — конца нет и не будет</small>
+                </span>
+            </label>
+
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="pickStartEndManual()">
                     <span class="option-icon">📂</span>
@@ -111,6 +120,104 @@
                 Выделите нужный кусок записи и нажмите <b>Ctrl+B</b>, впишите название метки — <b>start</b> или <b>end</b> — и нажмите ОК в Audacity. Когда участки отмечены, нажмите кнопку ниже.
             </div>
             <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" onclick="finishStartEndLabels()">Готово, экспортировать</button>
+        </div>
+    </div>
+
+    <!-- Конвертер MP4 -> MP3/WAV -->
+    <div id="converterOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Конвертер MP4</h3>
+                <button class="modal-close" onclick="closeConverter()" title="Закрыть">&times;</button>
+            </div>
+
+            <label class="field">
+                <span class="field-label">Откуда брать (можно выбрать несколько MP4)</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickConvertSource()">Выбрать файлы</button>
+                    <span id="convertSourceLabel" class="modal-hint" style="margin:0;">Файлы не выбраны</span>
+                </div>
+            </label>
+
+            <label class="field">
+                <span class="field-label">Куда выгружать</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickConvertOutputDir()">Выбрать папку</button>
+                    <span id="convertOutputLabel" class="modal-hint" style="margin:0;">Папка не выбрана</span>
+                </div>
+            </label>
+
+            <div class="mode-options">
+                <span class="mode-options__label">Формат</span>
+                <label class="opt-chip">
+                    <input type="radio" name="convertFormat" value="mp3" checked>
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">MP3</span>
+                </label>
+                <label class="opt-chip">
+                    <input type="radio" name="convertFormat" value="wav">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">WAV</span>
+                </label>
+            </div>
+
+            <div class="mode-options">
+                <span class="mode-options__label">Герцовка</span>
+                <label class="opt-chip">
+                    <input type="radio" name="convertHz" value="44100" checked>
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">44100 Гц</span>
+                </label>
+                <label class="opt-chip">
+                    <input type="radio" name="convertHz" value="8000">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">8000 Гц</span>
+                </label>
+            </div>
+
+            <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" id="btnRunConvert" onclick="runConversion()">Конвертировать</button>
+        </div>
+    </div>
+
+    <!-- Ненавязчивая подсказка "что дальше" после конвертации -->
+    <div id="postConvertOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Готово! Что дальше?</h3>
+            </div>
+            <div class="modal-hint" id="postConvertText">Файл сконвертирован.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="startCutFromConverted()">
+                    <span class="option-icon">✂️</span>
+                    <div><span class="option-title">Начать нарезку</span><span class="option-desc">Взять этот файл и предложить настройки среза</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="closePostConvert()">
+                    <span class="option-icon">✋</span>
+                    <div><span class="option-title">Пока ничего</span><span class="option-desc">Просто закрыть окно</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ненавязчивая подсказка загрузить Excel после нарезки -->
+    <div id="postCutExcelOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Нарезка готова. Загрузим текст?</h3>
+            </div>
+            <div class="modal-hint">Excel с текстом фраз ещё не подключён. Без него можно работать и так, но с ним фразы сопоставляются автоматически.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="closePostCutExcel(); loadExcel();">
+                    <span class="option-icon">📄</span>
+                    <div><span class="option-title">Загрузить Excel</span><span class="option-desc">Подключить таблицу с текстом</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="closePostCutExcel()">
+                    <span class="option-icon">✋</span>
+                    <div><span class="option-title">Пока без Excel</span><span class="option-desc">Продолжить без таблицы</span></div>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -473,6 +580,12 @@
                         <span class="util-tile__icon">🔊</span>
                         <span class="util-tile__title">Массовая нормализация</span>
                         <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
+                    </button>
+
+                    <button class="util-tile util-tile--mode rise" style="--d: 8" onclick="openConverter()">
+                        <span class="util-tile__icon">🎬</span>
+                        <span class="util-tile__title">Конвертер MP4</span>
+                        <span class="util-tile__desc">Перевести MP4 в MP3 или WAV с нужной герцовкой</span>
                     </button>
                 </div>
 

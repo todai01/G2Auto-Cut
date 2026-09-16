@@ -456,7 +456,9 @@ let isProcessing = false;
 
         // Подсветка карточки «Загрузить текст (Excel)».
         // Раньше этот код был продублирован в двух местах и мог разойтись.
+        let excelIsLoaded = false;
         function markExcelLoaded(fileName) {
+            excelIsLoaded = true;
             let btnExcel = document.getElementById('btnLoadExcel');
             if (!btnExcel) return;
 
@@ -808,6 +810,7 @@ let isProcessing = false;
 
             updateUI(state);
             if (state.has_audio) { showWorkspace(); playAudio(); }
+            maybeNudgeExcelAfterCut();
         }
 
         async function chooseCutMode(mode) {
@@ -819,6 +822,8 @@ let isProcessing = false;
             document.getElementById('progressContainer').style.display = 'none';
 
             if (mode === 'premade') {
+                nudgeExcelAfterCut = false;
+                document.getElementById('onlyStartCheck').checked = false;
                 handlePremadeResult(state);
                 return;
             }
@@ -830,6 +835,7 @@ let isProcessing = false;
 
             updateUI(state);
             if (state.has_audio) { showWorkspace(); playAudio(); }
+            maybeNudgeExcelAfterCut();
         }
 
         // ===== «ГОТОВЫЕ ПЕРЕМЕННЫЕ»: НЕ ХВАТАЕТ start/end =====
@@ -860,8 +866,9 @@ let isProcessing = false;
             if (state && state.missing_start_end) {
                 pendingMissing = state.missing || [];
                 document.getElementById('waitLabelsOverlay').style.display = 'none';
-                document.getElementById('startEndMissingText').innerHTML =
-                    `В выбранной папке не найдено: <b>${pendingMissing.map(m => m + '.wav').join(', ')}</b>. Выберите, как их получить.`;
+                document.getElementById('startEndMissingText').innerHTML = pendingMissing.length
+                    ? `В выбранной папке не найдено: <b>${pendingMissing.map(m => m + '.wav').join(', ')}</b>. Выберите, как их получить.`
+                    : `Осталось получить: <b>start.wav</b>.`;
                 document.getElementById('startEndMissingOverlay').style.display = 'flex';
                 return;
             }
@@ -875,6 +882,11 @@ let isProcessing = false;
             document.getElementById('waitLabelsOverlay').style.display = 'none';
             updateUI(state);
             showWorkspace();
+        }
+
+        async function toggleOnlyStart(checked) {
+            let state = await pywebview.api.set_only_start_mode(checked);
+            handlePremadeResult(state);
         }
 
         async function pickStartEndManual() {
@@ -995,6 +1007,7 @@ let isProcessing = false;
             let state = await pywebview.api.load_premade_variables_folder(hwnd, inDir);
 
             document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('onlyStartCheck').checked = false;
             handlePremadeResult(state);
         }
 
@@ -1954,6 +1967,121 @@ let isProcessing = false;
             toast.innerText = msg;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2200);
+        }
+
+        // === Конвертер MP4 -> MP3/WAV ===
+        function openConverter() {
+            document.getElementById('convertSourceLabel').innerText = 'Файлы не выбраны';
+            document.getElementById('convertOutputLabel').innerText = 'Папка не выбрана';
+            document.getElementById('converterOverlay').style.display = 'flex';
+        }
+
+        function closeConverter() {
+            document.getElementById('converterOverlay').style.display = 'none';
+        }
+
+        async function pickConvertSource() {
+            let result = await pywebview.api.pick_convert_source();
+            let label = document.getElementById('convertSourceLabel');
+            if (!result || !result.count) {
+                label.innerText = 'Файлы не выбраны';
+                return;
+            }
+            label.innerText = result.count === 1 ? result.files[0] : `Выбрано файлов: ${result.count}`;
+        }
+
+        async function pickConvertOutputDir() {
+            let result = await pywebview.api.pick_convert_output_dir();
+            let label = document.getElementById('convertOutputLabel');
+            label.innerText = (result && result.path) ? result.path : 'Папка не выбрана';
+        }
+
+        let lastConvertedFiles = [];
+
+        async function runConversion() {
+            let btn = document.getElementById('btnRunConvert');
+            let format = document.querySelector('input[name="convertFormat"]:checked').value;
+            let hz = document.querySelector('input[name="convertHz"]:checked').value;
+
+            btn.disabled = true;
+            btn.innerText = 'Конвертирую...';
+            try {
+                let result = await pywebview.api.run_conversion(format, hz);
+                if (result && result.error) {
+                    showBeautifulAlert('⚠️ ' + result.error);
+                    return;
+                }
+                let msg = `✅ Готово: ${result.done} из ${result.total}`;
+                if (result.errors && result.errors.length) {
+                    msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
+                }
+
+                lastConvertedFiles = result.output_files || [];
+                closeConverter();
+
+                if (lastConvertedFiles.length) {
+                    document.getElementById('postConvertText').innerHTML = msg;
+                    document.getElementById('postConvertOverlay').style.display = 'flex';
+                } else {
+                    showBeautifulAlert(msg);
+                }
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Конвертировать';
+            }
+        }
+
+        // --- Ненавязчивая подсказка "что дальше" после конвертации ---
+        function closePostConvert() {
+            document.getElementById('postConvertOverlay').style.display = 'none';
+        }
+
+        async function startCutFromConverted() {
+            let path = lastConvertedFiles[0];
+            closePostConvert();
+            if (!path) return;
+
+            let picked = await pywebview.api.select_raw_audio_path(path);
+            if (!picked || picked.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked ? picked.error : 'Файл не найден'}`);
+                return;
+            }
+
+            showMenu();
+            updateProgress(30, `Анализ записи: ${picked.name}`);
+            let res;
+            try {
+                res = await pywebview.api.analyze_picked_audio();
+            } catch (e) {
+                document.getElementById('progressContainer').style.display = 'none';
+                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
+                return;
+            }
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
+                return;
+            }
+
+            nudgeExcelAfterCut = true;
+            openAutoTune(res);
+        }
+
+        // --- Ненавязчивая подсказка загрузить Excel после нарезки ---
+        // Срабатывает только для нарезки, начатой из конвертера, и только
+        // один раз — чтобы не надоедать при обычной работе.
+        let nudgeExcelAfterCut = false;
+
+        function closePostCutExcel() {
+            document.getElementById('postCutExcelOverlay').style.display = 'none';
+        }
+
+        function maybeNudgeExcelAfterCut() {
+            if (!nudgeExcelAfterCut) return;
+            nudgeExcelAfterCut = false;
+            if (excelIsLoaded) return;
+            document.getElementById('postCutExcelOverlay').style.display = 'flex';
         }
 
         // === НОВОВВЕДЕНИЕ: Логика системы поиска ===
