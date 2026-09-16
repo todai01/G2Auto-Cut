@@ -3,6 +3,11 @@ let isProcessing = false;
         let mergeParts = [null, null, null, null, null];
         let saveFilenameForMerge = null;
         let playTimeout = null;
+        let sumPlaybackTimers = [];
+        function clearSumPlaybackTimers() {
+            sumPlaybackTimers.forEach(id => clearTimeout(id));
+            sumPlaybackTimers = [];
+        }
 
         // Значения по умолчанию — используются кнопкой «Сбросить»
         const CUT_DEFAULTS = { pause: 500, sens: -35, pad: 250 };
@@ -1399,9 +1404,20 @@ let isProcessing = false;
             let phraseEl = document.getElementById('phraseText');
 
             clearTimeout(playTimeout);
+            clearSumPlaybackTimers();
             if(res && res.playing) {
                 phraseEl.classList.add('is-playing');
                 playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+
+                // Режим «Суммы»: играем всю цепочку целиком, а текст на экране
+                // переключаем в такт — под то, что звучит прямо сейчас.
+                if (res.segments && res.segments.length) {
+                    const originalText = phraseEl.innerText;
+                    res.segments.forEach(seg => {
+                        sumPlaybackTimers.push(setTimeout(() => { phraseEl.innerText = seg.label; }, seg.start * 1000));
+                    });
+                    sumPlaybackTimers.push(setTimeout(() => { phraseEl.innerText = originalText; }, res.duration * 1000));
+                }
             } else {
                 phraseEl.classList.remove('is-playing');
             }
@@ -1418,6 +1434,7 @@ let isProcessing = false;
 
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
+                clearSumPlaybackTimers();
                 phraseEl.classList.remove('is-playing');
 
                 if (state.completed_filepath) {
@@ -1492,6 +1509,7 @@ let isProcessing = false;
                         let res = await pywebview.api.dispatch('play_sync');
                         let phraseEl = document.getElementById('phraseText');
                         clearTimeout(playTimeout);
+                        clearSumPlaybackTimers();
                         if(res && res.playing) {
                             phraseEl.classList.add('is-playing');
                             playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
@@ -2290,6 +2308,7 @@ let isProcessing = false;
                 // Проигрываем файл, если он уже выгружен (как при навигации Q/E)
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
+                clearSumPlaybackTimers();
                 phraseEl.classList.remove('is-playing');
                 if (state.completed_filepath) {
                     let res = await pywebview.api.play_specific_file(state.completed_filepath);
@@ -2314,6 +2333,7 @@ let isProcessing = false;
                 let res = await pywebview.api.dispatch('play_sync');
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
+                clearSumPlaybackTimers();
                 if(res && res.playing) {
                     phraseEl.classList.add('is-playing');
                     playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);

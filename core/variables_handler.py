@@ -1775,6 +1775,38 @@ class VariablesMixin:
             save_name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
         return re.sub(r'[<>:"/\\|?*]', '', save_name)
 
+    def _sum_full_preview_segments(self):
+        """Для проигрывания в режиме «Суммы»: не только то, что открыто на
+        экране, а вся цепочка целиком — start + уже сохранённые ярусы (в
+        порядке Миллионы→Сотни→Тысячи→Тенге) + текущий, ещё не сохранённый,
+        ярус + end. Каждый сегмент несёт подпись для экрана: у уже
+        сохранённых ярусов это их имя файла (= исходный текст Excel), у
+        текущего — текст строки Excel прямо сейчас. start/end подписи не
+        получают — экран во время них не переключается."""
+        segments = []
+        if getattr(self, 'var_start_phrase', None) and os.path.exists(self.var_start_phrase):
+            segments.append({'label': None, 'path': self.var_start_phrase})
+
+        phrase = self._current_sum_phrase()
+        tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
+        active_file, _, err = self._sum_current_source()
+        last_file = getattr(self, 'sum_manual_last_file', {})
+
+        for t in SUM_TIER_ORDER:
+            if t == tier and not err and active_file:
+                label = (phrase.get('text') if phrase else '').strip() or SUM_TIER_LABELS[t]
+                segments.append({'label': label, 'path': active_file})
+            else:
+                ref = last_file.get(t)
+                if ref and os.path.exists(ref):
+                    label = os.path.splitext(os.path.basename(ref))[0]
+                    segments.append({'label': label, 'path': ref})
+
+        if getattr(self, 'var_end_phrase', None) and os.path.exists(self.var_end_phrase):
+            segments.append({'label': None, 'path': self.var_end_phrase})
+
+        return segments
+
     def get_sum_manual_state(self):
         counts = getattr(self, 'sum_manual_counts', None) or {t: 0 for t in SUM_TIER_ORDER}
         phrase = self._current_sum_phrase()
