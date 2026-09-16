@@ -1142,10 +1142,48 @@ let isProcessing = false;
 
         async function toggleSumMode(checked) {
             sumModeActive = checked;
+            // Снимаем фокус с галочки, иначе горячие клавиши (C, Z, A/D)
+            // считаются набором текста в поле и просто игнорируются.
+            let box = document.getElementById('sumModeCheck');
+            if (box) box.blur();
             let sumState = await pywebview.api.toggle_sum_mode(checked);
             renderSumPanel(sumState);
-            document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
-            document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+            applySumModeLayout();
+
+            if (sumModeActive) {
+                // Пробуем сразу занять освободившееся место окном Audacity.
+                // Если он ещё не запущен — просто оставляем пустую рамку,
+                // окно встанет туда само после первой отправки (C).
+                await attachEmbeddedAudacity(true);
+            } else {
+                await detachEmbeddedAudacity();
+            }
+        }
+
+        // В режиме «Суммы» на экране остаётся только то, что нужно для работы:
+        // счётчики, подсказка про папку и три кнопки. Всё лишнее (монтажный
+        // стол и кнопки режима переменных) прячется, а место под ними
+        // отдаётся окну Audacity.
+        function applySumModeLayout() {
+            const show = (id, on) => {
+                let el = document.getElementById(id);
+                if (el) el.style.display = on ? 'flex' : 'none';
+            };
+            show('standardActions', !sumModeActive);
+            show('sumManualActions', sumModeActive);
+            if (sumModeActive) show('varBatchActions', false);
+
+            let mergePanel = document.querySelector('.merge-panel');
+            if (mergePanel && sumModeActive) mergePanel.style.display = 'none';
+
+            let area = document.getElementById('audacityEmbedArea');
+            if (area && (sumModeActive || !audacityEmbedded)) {
+                area.style.display = sumModeActive ? 'block' : 'none';
+            }
+
+            // Рамка могла изменить размер после скрытия лишних кнопок —
+            // подгоняем под неё уже встроенное окно Audacity.
+            if (audacityEmbedded) onEmbedWindowResize();
         }
 
         // Панель режима «Суммы»: счётчики по ярусам и подсказка, в какую
@@ -1172,6 +1210,8 @@ let isProcessing = false;
                 return;
             }
             updateUI(state);
+            // Теперь Audacity точно запущен — сажаем его окно в отведённую рамку
+            if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
         }
 
         async function sumManualSave() {
@@ -1206,11 +1246,14 @@ let isProcessing = false;
             }
         }
 
-        async function attachEmbeddedAudacity() {
+        // silent = попытка встроить «между делом» (например, при включении
+        // режима «Суммы», когда Audacity может быть ещё не запущен) — тогда
+        // не ругаемся окном об ошибке и оставляем пустую рамку под окно.
+        async function attachEmbeddedAudacity(silent) {
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
-            const rect = area.getBoundingClientRect();
             area.style.display = 'block';
+            const rect = area.getBoundingClientRect();
 
             const result = await pywebview.api.embed_audacity(
                 Math.round(rect.left), Math.round(rect.top),
@@ -1218,7 +1261,8 @@ let isProcessing = false;
             );
 
             if (result && result.error) {
-                area.style.display = 'none';
+                if (silent) return;
+                area.style.display = sumModeActive ? 'block' : 'none';
                 showBeautifulAlert('⚠️ ' + result.error);
                 return;
             }
@@ -1234,7 +1278,9 @@ let isProcessing = false;
             audacityEmbedded = false;
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
-            if (area) area.style.display = 'none';
+            // В режиме «Суммы» рамка остаётся на экране: место под окно
+            // Audacity закреплено за ней, даже когда окно отсоединено.
+            if (area) area.style.display = sumModeActive ? 'block' : 'none';
             if (btn) btn.innerText = 'Встроить окно Audacity сюда';
             try {
                 await pywebview.api.unembed_audacity();
@@ -1665,7 +1711,8 @@ let isProcessing = false;
             if (state.mode === 'VarBatch') {
                 document.getElementById('workspaceGrid').classList.add('workspace-grid--varbatch');
                 document.getElementById('standardActions').style.display = 'none';
-                document.getElementById('varBatchActions').style.display = 'flex';
+                document.getElementById('varBatchActions').style.display = sumModeActive ? 'none' : 'flex';
+                document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
                 // Теперь берем правильный текст фразы, а если его нет — название папки
                 document.getElementById('phraseText').innerText = state.phrase_text || state.var_batch_cat;
                 document.getElementById('chunkName').innerText = state.var_batch_name || "";
@@ -1678,8 +1725,7 @@ let isProcessing = false;
             } else {
                 document.getElementById('workspaceGrid').classList.remove('workspace-grid--varbatch');
                 document.getElementById('varBatchActions').style.display = 'none';
-                document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
-                document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+                applySumModeLayout();
                 if (sumModeActive && state.sum_mode) renderSumPanel(state.sum_mode);
 
                 let mergePanel = document.querySelector('.merge-panel');
