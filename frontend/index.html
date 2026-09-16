@@ -114,6 +114,62 @@
         </div>
     </div>
 
+    <!-- Конвертер MP4 -> MP3/WAV -->
+    <div id="converterOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Конвертер MP4</h3>
+                <button class="modal-close" onclick="closeConverter()" title="Закрыть">&times;</button>
+            </div>
+
+            <label class="field">
+                <span class="field-label">Откуда брать (можно выбрать несколько MP4)</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickConvertSource()">Выбрать файлы</button>
+                    <span id="convertSourceLabel" class="modal-hint" style="margin:0;">Файлы не выбраны</span>
+                </div>
+            </label>
+
+            <label class="field">
+                <span class="field-label">Куда выгружать</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickConvertOutputDir()">Выбрать папку</button>
+                    <span id="convertOutputLabel" class="modal-hint" style="margin:0;">Папка не выбрана</span>
+                </div>
+            </label>
+
+            <div class="mode-options">
+                <span class="mode-options__label">Формат</span>
+                <label class="opt-chip">
+                    <input type="radio" name="convertFormat" value="mp3" checked>
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">MP3</span>
+                </label>
+                <label class="opt-chip">
+                    <input type="radio" name="convertFormat" value="wav">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">WAV</span>
+                </label>
+            </div>
+
+            <div class="mode-options">
+                <span class="mode-options__label">Герцовка</span>
+                <label class="opt-chip">
+                    <input type="radio" name="convertHz" value="44100" checked>
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">44100 Гц</span>
+                </label>
+                <label class="opt-chip">
+                    <input type="radio" name="convertHz" value="8000">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">8000 Гц</span>
+                </label>
+            </div>
+
+            <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" id="btnRunConvert" onclick="runConversion()">Конвертировать</button>
+        </div>
+    </div>
+
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">
@@ -473,6 +529,12 @@
                         <span class="util-tile__icon">🔊</span>
                         <span class="util-tile__title">Массовая нормализация</span>
                         <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
+                    </button>
+
+                    <button class="util-tile util-tile--mode rise" style="--d: 8" onclick="openConverter()">
+                        <span class="util-tile__icon">🎬</span>
+                        <span class="util-tile__title">Конвертер MP4</span>
+                        <span class="util-tile__desc">Перевести MP4 в MP3 или WAV с нужной герцовкой</span>
                     </button>
                 </div>
 

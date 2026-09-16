@@ -1956,6 +1956,58 @@ let isProcessing = false;
             setTimeout(() => toast.remove(), 2200);
         }
 
+        // === Конвертер MP4 -> MP3/WAV ===
+        function openConverter() {
+            document.getElementById('convertSourceLabel').innerText = 'Файлы не выбраны';
+            document.getElementById('convertOutputLabel').innerText = 'Папка не выбрана';
+            document.getElementById('converterOverlay').style.display = 'flex';
+        }
+
+        function closeConverter() {
+            document.getElementById('converterOverlay').style.display = 'none';
+        }
+
+        async function pickConvertSource() {
+            let result = await pywebview.api.pick_convert_source();
+            let label = document.getElementById('convertSourceLabel');
+            if (!result || !result.count) {
+                label.innerText = 'Файлы не выбраны';
+                return;
+            }
+            label.innerText = result.count === 1 ? result.files[0] : `Выбрано файлов: ${result.count}`;
+        }
+
+        async function pickConvertOutputDir() {
+            let result = await pywebview.api.pick_convert_output_dir();
+            let label = document.getElementById('convertOutputLabel');
+            label.innerText = (result && result.path) ? result.path : 'Папка не выбрана';
+        }
+
+        async function runConversion() {
+            let btn = document.getElementById('btnRunConvert');
+            let format = document.querySelector('input[name="convertFormat"]:checked').value;
+            let hz = document.querySelector('input[name="convertHz"]:checked').value;
+
+            btn.disabled = true;
+            btn.innerText = 'Конвертирую...';
+            try {
+                let result = await pywebview.api.run_conversion(format, hz);
+                if (result && result.error) {
+                    showBeautifulAlert('⚠️ ' + result.error);
+                    return;
+                }
+                let msg = `✅ Готово: ${result.done} из ${result.total}`;
+                if (result.errors && result.errors.length) {
+                    msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
+                }
+                showBeautifulAlert(msg);
+                if (!result.errors || !result.errors.length) closeConverter();
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Конвертировать';
+            }
+        }
+
         // === НОВОВВЕДЕНИЕ: Логика системы поиска ===
         function openSearch() {
             let totalChunks = currentState?.chunk_counter ? currentState.chunk_counter.split(' / ')[1] : 0;

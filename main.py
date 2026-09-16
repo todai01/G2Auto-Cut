@@ -10,6 +10,7 @@ from core.variables_handler import VariablesMixin
 from core.phrase_handler import PhrasesMixin
 from core.project_handler import ProjectMixin
 from core.audacity_montage import MontageMixin
+from core.converter import ConverterMixin
 from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
@@ -18,7 +19,7 @@ from utils.audio_player import AudioPlayer
 from utils.file_utils import FileUtils
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin):
     def __init__(self):
         super().__init__()
 
