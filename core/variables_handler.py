@@ -1837,9 +1837,17 @@ class VariablesMixin:
         self.audacity.send_command('RemoveTracks:')
         self.audacity.send_command('NewMonoTrack:')
 
+        # Запоминаем, какой ярус лёг в каждый клип по порядку — при сохранении
+        # так сопоставляем клипы с дорожки Audacity с ярусами напрямую, а не
+        # только по времени начала. Это же позволяет найти клип СОСЕДНЕГО
+        # яруса, если пользователь его чуть подрезал, чтобы красиво состыковать
+        # с текущим.
+        clip_layout = []
+
         cursor = 0.0
         if getattr(self, 'var_start_phrase', None) and os.path.exists(self.var_start_phrase):
             cursor += self._import_clip_to_track0(self.var_start_phrase, cursor)
+            clip_layout.append('start')
 
         active_clip_start = None
         last_file = getattr(self, 'sum_manual_last_file', {})
@@ -1847,14 +1855,17 @@ class VariablesMixin:
             if t == tier:
                 active_clip_start = cursor
                 cursor += self._import_clip_to_track0(active_file, cursor)
+                clip_layout.append(t)
             else:
                 ref = last_file.get(t)
                 if ref and os.path.exists(ref):
                     cursor += self._import_clip_to_track0(ref, cursor)
+                    clip_layout.append(t)
 
         if getattr(self, 'var_end_phrase', None) and os.path.exists(self.var_end_phrase):
             self._import_clip_to_track0(self.var_end_phrase, cursor)
             cursor += FileUtils.get_exact_audio_duration(self.var_end_phrase)
+            clip_layout.append('end')
 
         self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
         self.audacity.send_command(f'SelectTime: Start=0 End={cursor + 5.0} RelativeTo=ProjectStart')
@@ -1863,6 +1874,7 @@ class VariablesMixin:
 
         self.is_in_audacity = True
         self._sum_active_clip_start = active_clip_start
+        self._sum_clip_layout = clip_layout
 
         windows = self.get_audacity_windows()
         if windows:
@@ -1914,15 +1926,25 @@ class VariablesMixin:
                 return self.get_ui_state()
 
             # Клипов на дорожке может быть больше двух (start + рефы других
-            # ярусов + активный + end) — ищем активный по времени начала,
-            # которое запомнили при сборке, а не по фиксированному индексу.
-            target_start = getattr(self, '_sum_active_clip_start', None)
-            phrase_clip = None
-            if target_start is not None:
-                for c in track_0_clips:
-                    if abs(c.get('start', -999) - target_start) < 0.05:
-                        phrase_clip = c
-                        break
+            # ярусов + активный + end) — сопоставляем их с ярусами по порядку
+            # вставки (clip_layout), который совпадает с порядком по времени,
+            # пока пользователь не удалял и не разрезал клипы. Если раскладка
+            # недоступна или число клипов не совпало (склеили/удалили что-то
+            # руками) — подстраховка: ищем активный по времени начала, которое
+            # запомнили при сборке.
+            clip_layout = getattr(self, '_sum_clip_layout', None)
+            clip_map = {}
+            if clip_layout and len(clip_layout) == len(track_0_clips):
+                clip_map = dict(zip(clip_layout, track_0_clips))
+
+            phrase_clip = clip_map.get(tier)
+            if phrase_clip is None:
+                target_start = getattr(self, '_sum_active_clip_start', None)
+                if target_start is not None:
+                    for c in track_0_clips:
+                        if abs(c.get('start', -999) - target_start) < 0.05:
+                            phrase_clip = c
+                            break
             if phrase_clip is None:
                 phrase_clip = track_0_clips[min(1, len(track_0_clips) - 1)]
 
@@ -1931,6 +1953,24 @@ class VariablesMixin:
             self.audacity.send_command(f'SelectTime: Start={c_start} End={c_end} RelativeTo=ProjectStart')
             self.audacity.send_command(f'Export2: Filename="{safe_path}" NumChannels=1')
             time.sleep(0.1)
+
+            # Сосед по цепочке: если пользователь заодно чуть подрезал уже
+            # сохранённый предыдущий ярус (чтобы он лучше стыковался с
+            # текущим), переэкспортируем его тоже — прямо поверх старого
+            # файла, без создания нового и без изменения счётчика.
+            tier_idx = SUM_TIER_ORDER.index(tier)
+            if tier_idx > 0:
+                prev_tier = SUM_TIER_ORDER[tier_idx - 1]
+                prev_clip = clip_map.get(prev_tier)
+                prev_path = getattr(self, 'sum_manual_last_file', {}).get(prev_tier)
+                if prev_clip and prev_path and os.path.exists(prev_path):
+                    p_start, p_end = prev_clip.get('start', 0.0), prev_clip.get('end', 0.0)
+                    self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+                    self.audacity.send_command(f'SelectTime: Start={p_start} End={p_end} RelativeTo=ProjectStart')
+                    self.audacity.send_command(f'Export2: Filename="{prev_path}" NumChannels=1')
+                    time.sleep(0.1)
+                    webview.windows[0].evaluate_js(
+                        f"showToast('🔁 Ярус «{SUM_TIER_LABELS[prev_tier]}» тоже обновлён (подрезка учтена)');")
 
             if not self._block_if_audacity_ambiguous():
                 self.audacity.send_command('SelectAll:')
