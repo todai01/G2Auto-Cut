@@ -440,8 +440,17 @@ def resource_path(relative_path):
 def _startup(window):
     """Выполняется уже после того, как окно поднялось — можно показывать
     прогресс через тот же progressContainer, что и вырезка/конвертация.
-    Если ffmpeg.exe/ffprobe.exe рядом с программой ещё нет (первый запуск
-    на новом компьютере) — скачивает их сам, не заставляя копировать вручную."""
+
+    Собранный .exe (PyInstaller) везёт ffmpeg.exe/ffprobe.exe прямо внутри
+    себя — скачивать тут нечего, коллеги без интернета/за блокировками
+    получают рабочий софт из коробки. Автоскачивание нужно только когда
+    запускают main.py напрямую (не из собранного .exe) и файлов рядом ещё
+    нет — например, на компьютере разработчика при первой настройке."""
+    if getattr(sys, 'frozen', False):
+        AudioSegment.converter = resource_path("ffmpeg.exe")
+        AudioSegment.ffprobe = resource_path("ffprobe.exe")
+        return
+
     def report(percent, text):
         try:
             window.evaluate_js(
