@@ -27,5 +27,18 @@
 ## Зависимости
 
 Python: `pywebview`, `pydub`, `openpyxl`, `pywin32`.
-Внешние: `ffmpeg.exe`, `ffprobe.exe` рядом с `main.py`, установленный Audacity
-с включённым mod-script-pipe. Платформа — Windows.
+Внешние: `ffmpeg.exe`, `ffprobe.exe` рядом с `main.py` (при запуске из кода
+программа сама скачает их при первом старте, если их нет), установленный
+Audacity с включённым mod-script-pipe. Платформа — Windows.
+
+## Сборка одного .exe для раздачи коллегам
+
+```
+pip install pyinstaller
+pyinstaller main.spec
+```
+
+Готовый файл — `dist\G2Studio.exe`. `ffmpeg.exe`/`ffprobe.exe` зашиты внутрь
+(должны лежать рядом с `main.py` на момент сборки), поэтому коллегам не
+нужен ни Python, ни интернет при первом запуске — просто один файл,
+двойной клик.

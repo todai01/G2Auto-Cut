@@ -4,5 +4,6 @@ __pycache__/
 build/
 dist/
 *.spec
+!main.spec
 temp_play.wav
 temp_var_preview.wav
