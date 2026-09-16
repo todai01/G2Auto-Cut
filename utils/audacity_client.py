@@ -42,13 +42,19 @@ class AudacityClient:
             if not exe:
                 return False
             try:
-                subprocess.Popen([exe])
+                proc = subprocess.Popen([exe])
             except Exception:
                 return False
+
             # Холодный старт Audacity не укладывается в фиксированное время
             # на медленной машине — вместо одной слепой паузы опрашиваем
-            # канал каждые полсекунды примерно до 20 секунд.
+            # канал каждые полсекунды примерно до 20 секунд. Если процесс
+            # успел упасть сразу (например, уже запущен под другим
+            # пользователем и второй экземпляр не стартует) — не тратим
+            # на это все 20 секунд, а сдаёмся сразу.
             for _ in range(40):
+                if proc.poll() is not None:
+                    return False
                 time.sleep(0.5)
                 try:
                     self._pipe_to = open(pipe_to_name, 'w', encoding='utf-8')

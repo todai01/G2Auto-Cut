@@ -174,8 +174,14 @@ class MontageMixin:
             return None
 
     def embed_audacity(self, x, y, width, height):
-        if getattr(self, '_embedded_hwnd', None):
+        # _embedded_hwnd переживает закрытие самого Audacity (Python-процесс
+        # софта не узнаёт об этом сам) — раньше следующая попытка вживления
+        # молча «успешно» двигала уже несуществующее окно вместо того, чтобы
+        # заново найти реальное. Проверяем, что дескриптор ещё живой.
+        cached = getattr(self, '_embedded_hwnd', None)
+        if cached and ctypes.windll.user32.IsWindow(cached):
             return self.sync_embed_position(x, y, width, height)
+        self._embedded_hwnd = None
 
         own_hwnd = self._get_own_hwnd()
         if not own_hwnd:
@@ -215,7 +221,13 @@ class MontageMixin:
         if not hwnd:
             return {"status": "not_embedded"}
         try:
-            ctypes.windll.user32.MoveWindow(hwnd, int(x), int(y), int(width), int(height), True)
+            user32 = ctypes.windll.user32
+            if not user32.IsWindow(hwnd) or not user32.MoveWindow(hwnd, int(x), int(y), int(width), int(height), True):
+                # Дескриптор мёртв (Audacity закрыли) — сбрасываем, чтобы
+                # следующий embed_audacity() честно искал окно заново, а не
+                # притворялся, будто всё получилось.
+                self._embedded_hwnd = None
+                return {"error": "Окно Audacity пропало — вживление отменено."}
             return {"status": "ok"}
         except Exception:
             self._embedded_hwnd = None

@@ -1220,7 +1220,20 @@ let isProcessing = false;
         }
 
         async function sumSendToAudacity() {
-            let state = await pywebview.api.sum_send_to_audacity();
+            // Если Audacity закрыт, программа сама его запускает и ждёт
+            // ответа — это может занять до 20-30 секунд на холодном старте,
+            // а без индикатора кажется, что кнопка просто не работает.
+            let btn = document.querySelector('#sumManualActions .btn-tile--primary');
+            let origHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
+
+            let state;
+            try {
+                state = await pywebview.api.sum_send_to_audacity();
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+            }
+
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
@@ -1310,7 +1323,7 @@ let isProcessing = false;
 
         function startEmbedWatchdog() {
             stopEmbedWatchdog();
-            embedWatchdogTimer = setInterval(() => {
+            embedWatchdogTimer = setInterval(async () => {
                 if (!audacityEmbedded) { stopEmbedWatchdog(); return; }
                 const r = embedAreaRect();
                 if (!r) return;
@@ -1318,7 +1331,15 @@ let isProcessing = false;
                           && lastEmbedRect.w === r.w && lastEmbedRect.h === r.h;
                 if (same) return;
                 lastEmbedRect = r;
-                pywebview.api.sync_embed_position(r.x, r.y, r.w, r.h);
+                let res = await pywebview.api.sync_embed_position(r.x, r.y, r.w, r.h);
+                if (res && res.error) {
+                    // Audacity закрыли, пока был встроен — окно пропало,
+                    // сторож сам себя останавливает вместо бесконечных ошибок
+                    audacityEmbedded = false;
+                    stopEmbedWatchdog();
+                    let btn = document.getElementById('btnEmbedAudacity');
+                    if (btn) btn.innerText = 'Встроить окно Audacity сюда';
+                }
             }, 500);
         }
 
