@@ -1338,6 +1338,8 @@ let isProcessing = false;
             if (btn) btn.innerText = 'Отсоединить Audacity';
             window.addEventListener('resize', onEmbedWindowResize);
             startEmbedWatchdog();
+            modalOpenForAudacity = false;
+            refreshModalAudacityVisibility();
         }
 
         // Рамка уезжает не только при изменении размера окна: страницу можно
@@ -1374,11 +1376,35 @@ let isProcessing = false;
             embedWatchdogTimer = null;
         }
 
+        // Вживлённое окно Audacity — настоящее окно Windows поверх страницы,
+        // а не HTML-элемент: обычный CSS z-index на него не действует, и
+        // любое модальное окно софта (алерты, поиск, выбор проекта и т.д.)
+        // рисовалось у него ПОД низом. Следим за всеми такими модалками и на
+        // время их показа прячем Audacity, возвращая обратно при закрытии.
+        let modalOpenForAudacity = false;
+        function refreshModalAudacityVisibility() {
+            if (!audacityEmbedded) return;
+            const anyOpen = Array.from(document.querySelectorAll('.custom-alert-overlay'))
+                .some(el => el.style.display && el.style.display !== 'none');
+            if (anyOpen === modalOpenForAudacity) return;
+            modalOpenForAudacity = anyOpen;
+            if (anyOpen) pywebview.api.hide_embedded_audacity();
+            else pywebview.api.show_embedded_audacity();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.custom-alert-overlay').forEach(el => {
+                new MutationObserver(refreshModalAudacityVisibility)
+                    .observe(el, { attributes: true, attributeFilter: ['style'] });
+            });
+        });
+
         async function detachEmbeddedAudacity() {
             if (!audacityEmbedded) return;
             window.removeEventListener('resize', onEmbedWindowResize);
             stopEmbedWatchdog();
             audacityEmbedded = false;
+            modalOpenForAudacity = false;
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
             // В режиме «Суммы» рамка остаётся на экране: место под окно

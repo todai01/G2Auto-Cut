@@ -233,6 +233,25 @@ class MontageMixin:
             self._embedded_hwnd = None
             return {"error": "Окно Audacity пропало — вживление отменено."}
 
+    def hide_embedded_audacity(self):
+        """Прячет вживлённое окно Audacity, не отсоединяя его (позиция и
+        встроенность сохраняются). Нужно, когда поверх открывается модальное
+        окно самого софта: Audacity — настоящее окно Windows, а не часть
+        веб-страницы, поэтому обычный CSS z-index его не перекрывает, и
+        любой алерт рисовался у него ПОД низом. Прячем на время показа."""
+        hwnd = getattr(self, '_embedded_hwnd', None)
+        if hwnd and ctypes.windll.user32.IsWindow(hwnd):
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        return {"status": "ok"}
+
+    def show_embedded_audacity(self):
+        """Возвращает видимость вживлённому окну Audacity после закрытия
+        модального окна софта (см. hide_embedded_audacity)."""
+        hwnd = getattr(self, '_embedded_hwnd', None)
+        if hwnd and ctypes.windll.user32.IsWindow(hwnd):
+            ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+        return {"status": "ok"}
+
     def unembed_audacity(self):
         """Вернуть Audacity обратно в обычное отдельное окно."""
         hwnd = getattr(self, '_embedded_hwnd', None)
