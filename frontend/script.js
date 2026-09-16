@@ -456,7 +456,9 @@ let isProcessing = false;
 
         // Подсветка карточки «Загрузить текст (Excel)».
         // Раньше этот код был продублирован в двух местах и мог разойтись.
+        let excelIsLoaded = false;
         function markExcelLoaded(fileName) {
+            excelIsLoaded = true;
             let btnExcel = document.getElementById('btnLoadExcel');
             if (!btnExcel) return;
 
@@ -808,6 +810,7 @@ let isProcessing = false;
 
             updateUI(state);
             if (state.has_audio) { showWorkspace(); playAudio(); }
+            maybeNudgeExcelAfterCut();
         }
 
         async function chooseCutMode(mode) {
@@ -819,6 +822,7 @@ let isProcessing = false;
             document.getElementById('progressContainer').style.display = 'none';
 
             if (mode === 'premade') {
+                nudgeExcelAfterCut = false;
                 handlePremadeResult(state);
                 return;
             }
@@ -830,6 +834,7 @@ let isProcessing = false;
 
             updateUI(state);
             if (state.has_audio) { showWorkspace(); playAudio(); }
+            maybeNudgeExcelAfterCut();
         }
 
         // ===== «ГОТОВЫЕ ПЕРЕМЕННЫЕ»: НЕ ХВАТАЕТ start/end =====
@@ -1983,6 +1988,8 @@ let isProcessing = false;
             label.innerText = (result && result.path) ? result.path : 'Папка не выбрана';
         }
 
+        let lastConvertedFiles = [];
+
         async function runConversion() {
             let btn = document.getElementById('btnRunConvert');
             let format = document.querySelector('input[name="convertFormat"]:checked').value;
@@ -2000,12 +2007,73 @@ let isProcessing = false;
                 if (result.errors && result.errors.length) {
                     msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
                 }
-                showBeautifulAlert(msg);
-                if (!result.errors || !result.errors.length) closeConverter();
+
+                lastConvertedFiles = result.output_files || [];
+                closeConverter();
+
+                if (lastConvertedFiles.length) {
+                    document.getElementById('postConvertText').innerHTML = msg;
+                    document.getElementById('postConvertOverlay').style.display = 'flex';
+                } else {
+                    showBeautifulAlert(msg);
+                }
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Конвертировать';
             }
+        }
+
+        // --- Ненавязчивая подсказка "что дальше" после конвертации ---
+        function closePostConvert() {
+            document.getElementById('postConvertOverlay').style.display = 'none';
+        }
+
+        async function startCutFromConverted() {
+            let path = lastConvertedFiles[0];
+            closePostConvert();
+            if (!path) return;
+
+            let picked = await pywebview.api.select_raw_audio_path(path);
+            if (!picked || picked.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked ? picked.error : 'Файл не найден'}`);
+                return;
+            }
+
+            showMenu();
+            updateProgress(30, `Анализ записи: ${picked.name}`);
+            let res;
+            try {
+                res = await pywebview.api.analyze_picked_audio();
+            } catch (e) {
+                document.getElementById('progressContainer').style.display = 'none';
+                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
+                return;
+            }
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
+                return;
+            }
+
+            nudgeExcelAfterCut = true;
+            openAutoTune(res);
+        }
+
+        // --- Ненавязчивая подсказка загрузить Excel после нарезки ---
+        // Срабатывает только для нарезки, начатой из конвертера, и только
+        // один раз — чтобы не надоедать при обычной работе.
+        let nudgeExcelAfterCut = false;
+
+        function closePostCutExcel() {
+            document.getElementById('postCutExcelOverlay').style.display = 'none';
+        }
+
+        function maybeNudgeExcelAfterCut() {
+            if (!nudgeExcelAfterCut) return;
+            nudgeExcelAfterCut = false;
+            if (excelIsLoaded) return;
+            document.getElementById('postCutExcelOverlay').style.display = 'flex';
         }
 
         // === НОВОВВЕДЕНИЕ: Логика системы поиска ===

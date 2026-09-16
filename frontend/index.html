@@ -170,6 +170,48 @@
         </div>
     </div>
 
+    <!-- Ненавязчивая подсказка "что дальше" после конвертации -->
+    <div id="postConvertOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Готово! Что дальше?</h3>
+            </div>
+            <div class="modal-hint" id="postConvertText">Файл сконвертирован.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="startCutFromConverted()">
+                    <span class="option-icon">✂️</span>
+                    <div><span class="option-title">Начать нарезку</span><span class="option-desc">Взять этот файл и предложить настройки среза</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="closePostConvert()">
+                    <span class="option-icon">✋</span>
+                    <div><span class="option-title">Пока ничего</span><span class="option-desc">Просто закрыть окно</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ненавязчивая подсказка загрузить Excel после нарезки -->
+    <div id="postCutExcelOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Нарезка готова. Загрузим текст?</h3>
+            </div>
+            <div class="modal-hint">Excel с текстом фраз ещё не подключён. Без него можно работать и так, но с ним фразы сопоставляются автоматически.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="closePostCutExcel(); loadExcel();">
+                    <span class="option-icon">📄</span>
+                    <div><span class="option-title">Загрузить Excel</span><span class="option-desc">Подключить таблицу с текстом</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="closePostCutExcel()">
+                    <span class="option-icon">✋</span>
+                    <div><span class="option-title">Пока без Excel</span><span class="option-desc">Продолжить без таблицы</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">

@@ -39,6 +39,15 @@ class ProjectMixin:
         self.pending_levels = None
         return {"name": os.path.basename(filename[0])}
 
+    def select_raw_audio_path(self, path):
+        """Как pick_raw_audio, но без диалога выбора — путь уже известен
+        (например, файл только что вышел из конвертера MP4)."""
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден на диске."}
+        self.pending_raw_path = path
+        self.pending_levels = None
+        return {"name": os.path.basename(path)}
+
     def _frame_levels(self, audio):
         """Громкость записи по коротким окнам, в дБ. Это основа всех замеров."""
         mono = audio.set_channels(1)

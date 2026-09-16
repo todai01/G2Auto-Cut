@@ -44,7 +44,7 @@ class ConverterMixin:
         except Exception as e:
             return {"error": f"Не удалось подготовить папку для сохранения: {e}"}
 
-        done, errors = 0, []
+        done, errors, output_files = 0, [], []
         for path in src_files:
             try:
                 audio = AudioSegment.from_file(path)
@@ -60,7 +60,8 @@ class ConverterMixin:
                     export_kwargs["bitrate"] = "192k"
                 audio.export(target, format=out_format, **export_kwargs)
                 done += 1
+                output_files.append(target)
             except Exception as e:
                 errors.append(f"{os.path.basename(path)}: {e}")
 
-        return {"done": done, "total": len(src_files), "errors": errors}
+        return {"done": done, "total": len(src_files), "errors": errors, "output_files": output_files}
