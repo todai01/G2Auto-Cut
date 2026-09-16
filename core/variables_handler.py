@@ -2087,3 +2087,47 @@ class VariablesMixin:
 
         webview.windows[0].evaluate_js("showToast('💾 Остаток сохранён и добавлен в очередь следующим дублем');")
         return self.get_ui_state()
+
+    def _sum_queue_paths(self):
+        """(список путей очереди, текущий индекс) — общая абстракция что для
+        обычной нарезки (chunks_data — список словарей), что для конвейера
+        «Готовые переменные» (cascade_files — список путей)."""
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            return self.cascade_files.get(cat, []), self.cascade_ptrs.get(cat, 0)
+        return [item['filepath'] for item in getattr(self, 'chunks_data', [])], self.chunk_index
+
+    def sum_merge_with_next(self):
+        """Обратный случай «Сохранить остаток»: автонарезка иногда режет
+        ОДНО число на два отдельных дубля (например «55 тыс.» распалась на
+        «50» и «5 тыс.» из-за паузы внутри фразы). Склеивает текущий дубль
+        со следующим по очереди в один файл — прямо на диске, до отправки
+        в Audacity."""
+        paths, idx = self._sum_queue_paths()
+        if idx >= len(paths) - 1:
+            return {"error": "После текущего дубля нет следующего — склеивать не с чем."}
+
+        path_a, path_b = paths[idx], paths[idx + 1]
+        if not os.path.exists(path_a) or not os.path.exists(path_b):
+            return {"error": "Один из файлов для склейки не найден на диске."}
+
+        try:
+            merged = AudioSegment.from_file(path_a).set_frame_rate(8000) + \
+                     AudioSegment.from_file(path_b).set_frame_rate(8000)
+            merged.export(path_a, format="wav")
+        except Exception as e:
+            return {"error": f"Не удалось склеить файлы: {e}"}
+
+        try:
+            os.remove(path_b)
+        except OSError:
+            pass
+
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            del self.cascade_files[cat][idx + 1]
+        else:
+            del self.chunks_data[idx + 1]
+
+        webview.windows[0].evaluate_js("showToast('🔗 Дубли склеены в один кусок');")
+        return self.get_ui_state()
