@@ -257,6 +257,12 @@ button[disabled]:active{ transform: none; }
 }
 .sum-counts span{ white-space: nowrap; }
 
+.sum-target{
+    font-size: 13px; color: var(--text-dim); background: var(--screen);
+    border: 1px solid var(--border-soft); border-radius: 10px; padding: 8px 12px;
+}
+.sum-target b{ color: var(--accent-var, #c9a227); }
+
 .audacity-embed-area{
     flex: 1; min-height: 640px; border-radius: 14px; border: 2px dashed var(--border-soft);
     background: #0b0d10; position: relative; overflow: hidden;

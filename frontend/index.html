@@ -829,21 +829,17 @@
 
                     <div id="sumManualActions" class="action-col" style="display: none;">
                         <div id="sumCounts" class="sum-counts"></div>
+                        <div id="sumTarget" class="sum-target">Загрузите Excel</div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('millions')">Это Миллионы</button>
-                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('hundreds')">Это Сотни</button>
+                            <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sumSendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('thousands')">Это Тысячи</button>
-                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('tenge')">Это Тенге</button>
-                        </div>
-                        <div class="tile-row">
-                            <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumManualSave()">Сохранить активный кусок <kbd>Z</kbd></button>
+                            <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumManualSave()">Сохранить <kbd>Z</kbd></button>
                         </div>
                         <div class="tile-row">
                             <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()">💾 Сохранить остаток (то, что выделено в Audacity)</button>
                         </div>
-                        <div class="action-note">Сначала выделите в Audacity нужный кусок → «Сохранить активный кусок». Если в дубле слиплось несколько цифр — выделите оставшееся и жмите «Сохранить остаток», прежде чем закрывать проект.</div>
+                        <div class="action-note">Крутите дубли клавишами <kbd>A</kbd>/<kbd>D</kbd>, пока не услышите текст с экрана. Папку программа выберет сама по тексту. Если в дубле слиплось несколько цифр — выделите лишнее в Audacity и жмите «Сохранить остаток», прежде чем закрывать проект.</div>
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">

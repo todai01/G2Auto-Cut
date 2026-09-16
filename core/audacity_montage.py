@@ -126,6 +126,24 @@ class MontageMixin:
         time.sleep(0.5)
         return True
 
+    def _ensure_audacity_ready(self):
+        """Если Audacity закрыт — запускает его и ждёт, пока он начнёт
+        отвечать на команды. Без этого первая же команда уходила в пустоту:
+        канала управления ещё нет, ответа нет, и на экране просто ничего
+        не происходило — пользователю казалось, что кнопка не работает."""
+        resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON', auto_start=True)
+        if resp and '[' in resp:
+            return True
+
+        # Холодный старт: программа уже запущена, но окно ещё открывается
+        # и канал управления пока не отвечает — ждём до ~10 секунд.
+        for _ in range(20):
+            time.sleep(0.5)
+            resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
+            if resp and '[' in resp:
+                return True
+        return False
+
     # --- Вживление окна Audacity внутрь окна софта ---
     #
     # У Windows нет «официального» способа показать чужую программу

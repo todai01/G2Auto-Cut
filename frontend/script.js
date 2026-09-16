@@ -1142,23 +1142,31 @@ let isProcessing = false;
 
         async function toggleSumMode(checked) {
             sumModeActive = checked;
-            let state = await pywebview.api.toggle_sum_mode(checked);
-            renderSumCounts(state);
+            let sumState = await pywebview.api.toggle_sum_mode(checked);
+            renderSumPanel(sumState);
             document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
             document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
         }
 
-        function renderSumCounts(state) {
-            if (!state || !state.counts) return;
-            let el = document.getElementById('sumCounts');
-            if (!el) return;
-            el.innerHTML = Object.entries(state.counts)
-                .map(([label, count]) => `<span>${escapeHtml(label)}: <b>${count}</b></span>`)
-                .join('');
+        // Панель режима «Суммы»: счётчики по ярусам и подсказка, в какую
+        // папку уйдёт текущая строка (ярус программа определяет сама).
+        function renderSumPanel(sumState) {
+            if (!sumState) return;
+            let counts = document.getElementById('sumCounts');
+            if (counts && sumState.counts) {
+                counts.innerHTML = Object.entries(sumState.counts)
+                    .map(([label, count]) => `<span>${escapeHtml(label)}: <b>${count}</b></span>`)
+                    .join('');
+            }
+            let target = document.getElementById('sumTarget');
+            if (!target) return;
+            target.innerHTML = sumState.detected_tier
+                ? `«${escapeHtml(sumState.detected_from || '')}» → папка <b>${escapeHtml(sumState.detected_dir)}</b>`
+                : 'Загрузите Excel — по его тексту выбирается папка';
         }
 
-        async function sumTagAndSend(tier) {
-            let state = await pywebview.api.sum_tag_and_send(tier);
+        async function sumSendToAudacity() {
+            let state = await pywebview.api.sum_send_to_audacity();
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
@@ -1172,7 +1180,6 @@ let isProcessing = false;
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
             }
-            renderSumCounts(await pywebview.api.get_sum_manual_state());
             updateUI(state);
         }
 
@@ -1673,6 +1680,7 @@ let isProcessing = false;
                 document.getElementById('varBatchActions').style.display = 'none';
                 document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
                 document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+                if (sumModeActive && state.sum_mode) renderSumPanel(state.sum_mode);
 
                 let mergePanel = document.querySelector('.merge-panel');
                 if(mergePanel) mergePanel.style.display = 'block';
@@ -1942,7 +1950,7 @@ let isProcessing = false;
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumManualSave(); else processAction('good'); }
-            else if (e.code === 'KeyC') { e.preventDefault(); if (!sumModeActive) processAction('variable'); }
+            else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumSendToAudacity(); else processAction('variable'); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

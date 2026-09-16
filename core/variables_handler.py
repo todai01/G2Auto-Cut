@@ -34,7 +34,7 @@ SUM_SPECIFIC_TIER_KEYWORDS = {
 
 
 # Папки, которые «Режим Суммы» создаёт сам по мере работы (см. ниже,
-# методы sum_tag_and_send/sum_manual_save) — в отличие от старого сценария
+# методы sum_send_to_audacity/sum_manual_save) — в отличие от старого сценария
 # выше, здесь не требуется никакой готовой папки «Суммы» на диске заранее.
 SUM_TIER_DEFAULT_DIR = {
     'millions': '1 - 100 млн',
@@ -60,6 +60,12 @@ class VariablesMixin:
             return self.get_ui_state()
 
         if self._block_if_audacity_ambiguous():
+            return self._get_var_batch_ui_state()
+
+        if not self._ensure_audacity_ready():
+            webview.windows[0].evaluate_js(
+                "showBeautifulAlert('⚠️ <b>Audacity не отвечает</b><br><br>Программа попробовала запустить его сама, "
+                "но он не ответил. Откройте Audacity вручную и нажмите кнопку ещё раз.');")
             return self._get_var_batch_ui_state()
 
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
@@ -963,6 +969,11 @@ class VariablesMixin:
         if self._block_if_audacity_ambiguous():
             return self._get_var_batch_ui_state()
 
+        if not self._ensure_audacity_ready():
+            webview.windows[0].evaluate_js(
+                "showBeautifulAlert('⚠️ <b>Audacity не отвечает</b><br><br>Откройте его вручную и повторите.');")
+            return self._get_var_batch_ui_state()
+
         # 3. ПОЛНОСТЬЮ ПЕРЕСОБИРАЕМ СТОЛ (Как в send_to_audacity)
         self.audacity.send_command('SelectAll:')
         self.audacity.send_command('RemoveTracks:')
@@ -1693,12 +1704,49 @@ class VariablesMixin:
     def _sum_manual_tier_dir(self, tier):
         return SUM_TIER_DEFAULT_DIR[tier]
 
+    def _detect_sum_tier(self, text):
+        """Определяет ярус по тому, что стоит после числа в тексте Excel:
+        «1 млн» → Миллионы, «5 тыс» → Тысячи, «20 тенге» → Тенге,
+        просто «300» без единицы → Сотни. Если единиц несколько, берём
+        первую по старшинству (млн → тыс → тенге)."""
+        low = (text or '').lower().replace('ё', 'е')
+        if 'млн' in low or 'миллион' in low:
+            return 'millions'
+        if 'тыс' in low:
+            return 'thousands'
+        # «тг» ловим и без пробела («100тг»), но не внутри слова («отгрузка»)
+        if 'тенге' in low or re.search(r'тг(?![а-яa-z])', low):
+            return 'tenge'
+        return 'hundreds'
+
+    def _current_sum_phrase(self):
+        idx = getattr(self, 'phrase_index', 0)
+        if getattr(self, 'phrases_data', None) and idx < len(self.phrases_data):
+            return self.phrases_data[idx]
+        return None
+
+    def _current_sum_save_name(self):
+        """Имя файла берём из Excel (как в обычном режиме), а если его
+        нет — оставляем имя самого дубля."""
+        item = self.chunks_data[self.chunk_index]
+        save_name = item['filename']
+        phrase = self._current_sum_phrase()
+        custom = (phrase or {}).get('filename')
+        if custom:
+            custom = str(custom)
+            save_name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
+        return re.sub(r'[<>:"/\\|?*]', '', save_name)
+
     def get_sum_manual_state(self):
         counts = getattr(self, 'sum_manual_counts', None) or {t: 0 for t in SUM_TIER_ORDER}
+        phrase = self._current_sum_phrase()
+        tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
         return {
             "active": getattr(self, 'sum_manual_active', False),
             "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in SUM_TIER_ORDER},
-            "current_tier": SUM_TIER_LABELS.get(getattr(self, 'sum_manual_current_tier', None)),
+            "detected_tier": SUM_TIER_LABELS.get(tier),
+            "detected_dir": SUM_TIER_DEFAULT_DIR.get(tier),
+            "detected_from": (phrase or {}).get('text', ''),
         }
 
     def toggle_sum_mode(self, active):
@@ -1723,23 +1771,27 @@ class VariablesMixin:
             self.sum_manual_current_tier = None
         return self.get_sum_manual_state()
 
-    def sum_tag_and_send(self, tier):
-        """Пользователь послушал дубль и нажал «Это Миллионы/Сотни/Тысячи/
-        Тенге» — собираем на столе Audacity: start + последние сохранённые
-        значения ДРУГИХ ярусов (если такие уже есть) + этот дубль + end."""
-        if tier not in SUM_TIER_ORDER:
-            return {"error": "Неизвестный ярус."}
+    def sum_send_to_audacity(self):
+        """Кнопка C в режиме «Суммы». Ярус определяется сам — по тексту
+        текущей строки Excel («1 млн» → Миллионы и т.д.). На стол Audacity
+        уходит: start + последние сохранённые значения ДРУГИХ ярусов (если
+        они уже есть) + текущий дубль + end."""
         if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
             return {"error": "Дубли закончились."}
 
-        cap = SUM_TIER_CAP.get(tier)
-        done = getattr(self, 'sum_manual_counts', {}).get(tier, 0)
-        if cap and done >= cap:
-            return {"error": f"Ярус «{SUM_TIER_LABELS[tier]}» уже заморожен на потолке ({cap}) — "
-                              f"дальше он используется как готовый, новые значения в него не принимаются."}
+        phrase = self._current_sum_phrase()
+        if not phrase:
+            return {"error": "Сначала загрузите Excel — именно по его тексту программа понимает, "
+                              "миллионы это, тысячи, тенге или сотни."}
+
+        tier = self._detect_sum_tier(phrase.get('text'))
 
         if self._block_if_audacity_ambiguous():
             return self.get_ui_state()
+
+        if not self._ensure_audacity_ready():
+            return {"error": "Audacity не отвечает. Программа попробовала запустить его сама — "
+                              "откройте его вручную и нажмите кнопку ещё раз."}
 
         active_file = self.chunks_data[self.chunk_index]['filepath']
         self.sum_manual_current_tier = tier
@@ -1783,22 +1835,27 @@ class VariablesMixin:
         return self.get_ui_state()
 
     def sum_manual_save(self, normalize_chunks=False):
-        """Сохраняет ТОЛЬКО активный (текущий) кусок в Проверенные/Суммы/
-        <папка яруса>/ — папка создаётся сама при первом сохранении в неё."""
+        """Сохраняет ТОЛЬКО текущий кусок. Куда именно — программа решает
+        сама, разобрав текст строки Excel: «1 млн» уйдёт в папку миллионов,
+        «5 тыс» — в тысячи, «20 тенге» — в тенге, просто «300» — в сотни.
+        Папка создаётся сама, если её ещё нет."""
         import shutil
-        tier = getattr(self, 'sum_manual_current_tier', None)
-        if not tier:
-            return {"error": "Сначала выберите ярус — Миллионы/Сотни/Тысячи/Тенге."}
         if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
             return self.get_ui_state()
 
+        phrase = self._current_sum_phrase()
+        if not phrase:
+            return {"error": "Сначала загрузите Excel — именно по его тексту программа понимает, "
+                              "миллионы это, тысячи, тенге или сотни."}
+
+        tier = self._detect_sum_tier(phrase.get('text'))
         item = self.chunks_data[self.chunk_index]
         active_file = item['filepath']
 
         target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
         os.makedirs(target_dir, exist_ok=True)
 
-        save_name = re.sub(r'[<>:"/\\|?*]', '', item['filename'])
+        save_name = self._current_sum_save_name()
         safe_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
         if os.path.exists(safe_path):
             try: os.remove(safe_path)
@@ -1860,12 +1917,19 @@ class VariablesMixin:
         self.sum_manual_counts[tier] = self.sum_manual_counts.get(tier, 0) + 1
         self.sum_manual_last_file[tier] = safe_path
 
+        # Потолок теперь только предупреждает, а не запрещает: ярус выбирается
+        # не вручную, а по тексту Excel, и жёсткий запрет просто остановил бы
+        # работу на лишней строке, не дав обходного пути.
         cap = SUM_TIER_CAP.get(tier)
         if cap and self.sum_manual_counts[tier] >= cap:
             webview.windows[0].evaluate_js(
-                f"showToast('⚠️ Ярус «{SUM_TIER_LABELS[tier]}» достиг потолка ({cap}) — дальше он используется как готовый, без пересчёта.');")
+                f"showToast('⚠️ Ярус «{SUM_TIER_LABELS[tier]}» дошёл до потолка ({cap}) — проверьте, всё ли верно в таблице.');")
 
         self.sum_manual_current_tier = None
+
+        # Двигаем оба конвейера сразу — и текст Excel, и дубли
+        if getattr(self, 'phrases_data', None):
+            self.phrase_index += 1
         self.chunk_index += 1
 
         return self.get_ui_state()
@@ -1877,7 +1941,7 @@ class VariablesMixin:
         текущее выделение и ставит его следующим дублем в очередь, чтобы
         не потерять при последующей очистке стола."""
         if not getattr(self, 'is_in_audacity', False):
-            return {"error": "Сначала откройте дубль в Audacity (выберите ярус)."}
+            return {"error": "Сначала отправьте дубль в Audacity кнопкой C."}
 
         leftover_dir = os.path.join(self.work_dir, '_Остатки')
         os.makedirs(leftover_dir, exist_ok=True)

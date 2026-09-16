@@ -306,6 +306,10 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
         # Лента дублей: статусы соседних дублей для полоски под счётчиком
         state["strip"] = self._build_chunk_strip()
 
+        # Режим «Суммы»: счётчики ярусов и то, куда уйдёт текущая строка
+        if getattr(self, 'sum_manual_active', False):
+            state["sum_mode"] = self.get_sum_manual_state()
+
         # Автосохранение: снимок проекта пишется на диск при каждом обновлении
         # экрана, поэтому закрытие программы больше не стирает прогресс.
         project_state.save(self)
