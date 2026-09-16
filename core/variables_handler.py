@@ -42,10 +42,7 @@ SUM_TIER_DEFAULT_DIR = {
     'thousands': '1 - 99 тыс',
     'tenge': '1 - 100 тенге',
 }
-# Подтверждённый потолок есть только для Миллионов (1..100) — для
-# остальных ярусов жёсткий потолок не задаём, чтобы не заблокировать
-# реальную работу неверно угаданным числом.
-SUM_TIER_CAP = {'millions': 100}
+SUM_TIER_CAP = {'millions': 100, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
 
 
 def _numeric_sort_key(filepath):
@@ -1712,11 +1709,10 @@ class VariablesMixin:
             if not hasattr(self, 'sum_manual_last_file'):
                 self.sum_manual_last_file = {}
             root = self._sum_manual_tier_root()
+            os.makedirs(root, exist_ok=True)  # создаём «Суммы» сразу, не дожидаясь первого сохранения
             for tier in SUM_TIER_ORDER:
                 d = os.path.join(root, self._sum_manual_tier_dir(tier))
-                if not os.path.isdir(d):
-                    self.sum_manual_counts[tier] = self.sum_manual_counts.get(tier, 0)
-                    continue
+                os.makedirs(d, exist_ok=True)
                 files = [os.path.join(d, f) for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
                 self.sum_manual_counts[tier] = len(files)
                 if files:
@@ -1735,6 +1731,13 @@ class VariablesMixin:
             return {"error": "Неизвестный ярус."}
         if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
             return {"error": "Дубли закончились."}
+
+        cap = SUM_TIER_CAP.get(tier)
+        done = getattr(self, 'sum_manual_counts', {}).get(tier, 0)
+        if cap and done >= cap:
+            return {"error": f"Ярус «{SUM_TIER_LABELS[tier]}» уже заморожен на потолке ({cap}) — "
+                              f"дальше он используется как готовый, новые значения в него не принимаются."}
+
         if self._block_if_audacity_ambiguous():
             return self.get_ui_state()
 
