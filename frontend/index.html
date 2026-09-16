@@ -816,11 +816,34 @@
 
                 <section class="action-panel">
                     <label class="silence-toggle"><input type="checkbox" id="addSilence"> Авто-добавление тишины <kbd>S</kbd></label>
+                    <label class="silence-toggle silence-toggle--left">
+                        <input type="checkbox" id="sumModeCheck" onchange="toggleSumMode(this.checked)">
+                        Режим «Суммы» (Миллионы/Сотни/Тысячи/Тенге)
+                    </label>
 
                     <div id="standardActions" class="action-col">
                         <button class="btn-action btn-action--good" onclick="processAction('good')"><span>Проверено</span><kbd>Z</kbd></button>
                         <button class="btn-action btn-action--var" onclick="processAction('variable')"><span>В переменные</span><kbd>C</kbd></button>
                         <div class="action-note">Ненужный дубль просто пролистайте — <kbd>D</kbd></div>
+                    </div>
+
+                    <div id="sumManualActions" class="action-col" style="display: none;">
+                        <div id="sumCounts" class="sum-counts"></div>
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('millions')">Это Миллионы</button>
+                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('hundreds')">Это Сотни</button>
+                        </div>
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('thousands')">Это Тысячи</button>
+                            <button class="btn-tile btn-tile--primary" onclick="sumTagAndSend('tenge')">Это Тенге</button>
+                        </div>
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumManualSave()">Сохранить активный кусок <kbd>Z</kbd></button>
+                        </div>
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()">💾 Сохранить остаток (то, что выделено в Audacity)</button>
+                        </div>
+                        <div class="action-note">Сначала выделите в Audacity нужный кусок → «Сохранить активный кусок». Если в дубле слиплось несколько цифр — выделите оставшееся и жмите «Сохранить остаток», прежде чем закрывать проект.</div>
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">
