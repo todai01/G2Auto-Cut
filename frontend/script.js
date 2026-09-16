@@ -1287,6 +1287,18 @@ let isProcessing = false;
             updateUI(state);
         }
 
+        // Обратный случай «Сохранить остаток»: автонарезка иногда режет
+        // одно число на два куска (например «55 тыс.» → «50» + «5 тыс.»).
+        // Склеивает текущий дубль со следующим по списку в один файл.
+        async function sumMergeWithNext() {
+            let state = await pywebview.api.sum_merge_with_next();
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
+
         // --- Вживление окна Audacity внутрь софта ---
         // Приём системный (Windows SetParent) — Audacity не создан для этого,
         // поэтому если поведение станет хуже, кнопка сразу отсоединяет обратно.
@@ -2125,6 +2137,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumSendToAudacity(); else sendToAudacity(); }
+                else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
                 return;
             }
 
@@ -2136,6 +2149,7 @@ let isProcessing = false;
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumManualSave(); else processAction('good'); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumSendToAudacity(); else processAction('variable'); }
+            else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
