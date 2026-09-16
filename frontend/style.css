@@ -257,6 +257,20 @@ button[disabled]:active{ transform: none; }
 }
 .sum-counts span{ white-space: nowrap; }
 
+.sum-counts--clickable{ cursor: pointer; transition: border-color .15s, background .15s; }
+.sum-counts--clickable:hover{ border-color: var(--accent-var, #c9a227); background: rgba(201,162,39,0.08); }
+
+.sum-stats-modal h4{ margin: 0 0 12px; font-size: 15px; }
+.sum-stats-row{
+    display: flex; flex-direction: column; gap: 2px; padding: 8px 0;
+    border-top: 1px solid var(--border-soft); font-size: 13px; text-align: left;
+}
+.sum-stats-row:first-of-type{ border-top: none; }
+.sum-stats-tier{ font-weight: 600; }
+.sum-stats-dir{ font-weight: 400; color: var(--text-dim); font-size: 12px; }
+.sum-stats-nums{ color: var(--text-dim); }
+.sum-stats-last{ color: var(--accent-var, #c9a227); }
+
 .sum-target{
     font-size: 13px; color: var(--text-dim); background: var(--screen);
     border: 1px solid var(--border-soft); border-radius: 10px; padding: 8px 12px;

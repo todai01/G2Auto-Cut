@@ -1209,8 +1209,10 @@ let isProcessing = false;
 
         // Панель режима «Суммы»: счётчики по ярусам и подсказка, в какую
         // папку уйдёт текущая строка (ярус программа определяет сама).
+        let lastSumState = null;
         function renderSumPanel(sumState) {
             if (!sumState) return;
+            lastSumState = sumState;
             let counts = document.getElementById('sumCounts');
             if (counts && sumState.counts) {
                 counts.innerHTML = Object.entries(sumState.counts)
@@ -1222,6 +1224,25 @@ let isProcessing = false;
             target.innerHTML = sumState.detected_tier
                 ? `«${escapeHtml(sumState.detected_from || '')}» → папка <b>${escapeHtml(sumState.detected_dir)}</b>`
                 : 'Загрузите Excel — по его тексту выбирается папка';
+        }
+
+        // Клик по счётчикам «Суммы»: подробная карточка — сколько сохранено
+        // и осталось по каждому ярусу, и на каком числе юзер остановился
+        // в последний раз (чтобы не гадать, что уже сделано).
+        function showSumStatsModal() {
+            if (!lastSumState || !lastSumState.stats) return;
+            let rows = lastSumState.stats.map(s => {
+                let capText = s.cap ? `${s.done} из ${s.cap}` : `${s.done}`;
+                let remainingText = (s.remaining !== null && s.remaining !== undefined)
+                    ? `осталось ${s.remaining}` : '';
+                let lastText = s.last ? `последний: <b>${escapeHtml(s.last)}</b>` : 'ещё нет сохранённых';
+                return `<div class="sum-stats-row">
+                    <div class="sum-stats-tier">${escapeHtml(s.tier)} <span class="sum-stats-dir">(${escapeHtml(s.dir)})</span></div>
+                    <div class="sum-stats-nums">${capText}${remainingText ? ' · ' + remainingText : ''}</div>
+                    <div class="sum-stats-last">${lastText}</div>
+                </div>`;
+            }).join('');
+            showBeautifulAlert(`<div class="sum-stats-modal"><h4>Статистика по ярусам</h4>${rows}</div>`);
         }
 
         async function sumSendToAudacity() {

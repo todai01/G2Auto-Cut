@@ -1809,14 +1809,36 @@ class VariablesMixin:
 
     def get_sum_manual_state(self):
         counts = getattr(self, 'sum_manual_counts', None) or {t: 0 for t in SUM_TIER_ORDER}
+        last_file = getattr(self, 'sum_manual_last_file', {})
         phrase = self._current_sum_phrase()
         tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
+
+        # Для карточки статистики (клик по счётчикам): по каждому ярусу —
+        # сколько сохранено, сколько осталось до потолка и на каком числе
+        # юзер остановился в последний раз (берём из имени сохранённого
+        # файла — это и есть исходный текст из Excel).
+        stats = []
+        for t in SUM_TIER_ORDER:
+            done = counts.get(t, 0)
+            cap = SUM_TIER_CAP.get(t)
+            last_path = last_file.get(t)
+            last_label = os.path.splitext(os.path.basename(last_path))[0] if last_path else None
+            stats.append({
+                "tier": SUM_TIER_LABELS[t],
+                "dir": SUM_TIER_DEFAULT_DIR[t],
+                "done": done,
+                "cap": cap,
+                "remaining": max(0, cap - done) if cap else None,
+                "last": last_label,
+            })
+
         return {
             "active": getattr(self, 'sum_manual_active', False),
             "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in SUM_TIER_ORDER},
             "detected_tier": SUM_TIER_LABELS.get(tier),
             "detected_dir": SUM_TIER_DEFAULT_DIR.get(tier),
             "detected_from": (phrase or {}).get('text', ''),
+            "stats": stats,
         }
 
     def toggle_sum_mode(self, active):
