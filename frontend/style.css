@@ -271,8 +271,13 @@ button[disabled]:active{ transform: none; }
 /* Режим «Суммы»: рамка под Audacity занимает всю ширину под обеими
    колонками, а панели сверху ужимаются до необходимого минимума —
    чтобы на монтаж оставалось как можно больше места. */
-/* Ограничение ширины в 1400px здесь только отнимает место у Audacity */
-body.sum-mode .stage-workspace{ max-width: none; }
+/* Ограничение ширины в 1400px здесь только отнимает место у Audacity.
+   Отступы body тоже фиксированные (32px сверху / 48px снизу) — на весь
+   экран это заметная полоса впустую, поэтому в режиме «Суммы» их тоже
+   ужимаем и растягиваем страницу на всю высоту окна. */
+body.sum-mode{ padding: 10px 14px 10px; }
+body.sum-mode .stage-workspace{ max-width: none; min-height: calc(100vh - 20px); }
+body.sum-mode .workspace-header{ margin-bottom: 10px; }
 
 .workspace-grid--sum{ grid-template-rows: auto 1fr; }
 .workspace-grid--sum > .audacity-embed-area{
