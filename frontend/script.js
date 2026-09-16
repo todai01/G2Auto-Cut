@@ -1177,8 +1177,24 @@ let isProcessing = false;
             if (mergePanel && sumModeActive) mergePanel.style.display = 'none';
 
             let area = document.getElementById('audacityEmbedArea');
-            if (area && (sumModeActive || !audacityEmbedded)) {
-                area.style.display = sumModeActive ? 'block' : 'none';
+            let grid = document.getElementById('workspaceGrid');
+            if (area && grid) {
+                // В режиме «Суммы» рамка переезжает из правой колонки вниз, под
+                // обе колонки — так под окно Audacity уходит вся ширина экрана.
+                let columns = grid.querySelectorAll('.panel-column');
+                let column = columns[columns.length - 1];
+                if (sumModeActive && area.parentElement !== grid) {
+                    grid.appendChild(area);
+                } else if (!sumModeActive && area.parentElement === grid && column) {
+                    // Возвращаем рамку на своё место — перед списком горячих клавиш
+                    let hotkeys = column.querySelector('.work-hotkeys');
+                    column.insertBefore(area, hotkeys || null);
+                }
+                grid.classList.toggle('workspace-grid--sum', sumModeActive);
+                document.body.classList.toggle('sum-mode', sumModeActive);
+                if (sumModeActive || !audacityEmbedded) {
+                    area.style.display = sumModeActive ? 'block' : 'none';
+                }
             }
 
             // Рамка могла изменить размер после скрытия лишних кнопок —
@@ -1246,6 +1262,20 @@ let isProcessing = false;
             }
         }
 
+        // Окно Windows живёт в «настоящих» точках экрана, а вёрстка — в своих,
+        // и при масштабе экрана 125/150% это разные числа. Без пересчёта окно
+        // Audacity садилось мимо рамки и обрезалось.
+        function embedAreaRect() {
+            const area = document.getElementById('audacityEmbedArea');
+            if (!area) return null;
+            const r = area.getBoundingClientRect();
+            const k = window.devicePixelRatio || 1;
+            return {
+                x: Math.round(r.left * k), y: Math.round(r.top * k),
+                w: Math.round(r.width * k), h: Math.round(r.height * k)
+            };
+        }
+
         // silent = попытка встроить «между делом» (например, при включении
         // режима «Суммы», когда Audacity может быть ещё не запущен) — тогда
         // не ругаемся окном об ошибке и оставляем пустую рамку под окно.
@@ -1253,12 +1283,9 @@ let isProcessing = false;
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
             area.style.display = 'block';
-            const rect = area.getBoundingClientRect();
+            const rect = embedAreaRect();
 
-            const result = await pywebview.api.embed_audacity(
-                Math.round(rect.left), Math.round(rect.top),
-                Math.round(rect.width), Math.round(rect.height)
-            );
+            const result = await pywebview.api.embed_audacity(rect.x, rect.y, rect.w, rect.h);
 
             if (result && result.error) {
                 if (silent) return;
@@ -1268,13 +1295,42 @@ let isProcessing = false;
             }
 
             audacityEmbedded = true;
+            lastEmbedRect = null;
             if (btn) btn.innerText = 'Отсоединить Audacity';
             window.addEventListener('resize', onEmbedWindowResize);
+            startEmbedWatchdog();
+        }
+
+        // Рамка уезжает не только при изменении размера окна: страницу можно
+        // прокрутить, панели над ней — свернуть или развернуть. Событий на всё
+        // это нет, поэтому просто раз в полсекунды сверяем, где рамка сейчас,
+        // и двигаем окно Audacity, только если она реально сдвинулась.
+        let lastEmbedRect = null;
+        let embedWatchdogTimer = null;
+
+        function startEmbedWatchdog() {
+            stopEmbedWatchdog();
+            embedWatchdogTimer = setInterval(() => {
+                if (!audacityEmbedded) { stopEmbedWatchdog(); return; }
+                const r = embedAreaRect();
+                if (!r) return;
+                const same = lastEmbedRect && lastEmbedRect.x === r.x && lastEmbedRect.y === r.y
+                          && lastEmbedRect.w === r.w && lastEmbedRect.h === r.h;
+                if (same) return;
+                lastEmbedRect = r;
+                pywebview.api.sync_embed_position(r.x, r.y, r.w, r.h);
+            }, 500);
+        }
+
+        function stopEmbedWatchdog() {
+            if (embedWatchdogTimer) clearInterval(embedWatchdogTimer);
+            embedWatchdogTimer = null;
         }
 
         async function detachEmbeddedAudacity() {
             if (!audacityEmbedded) return;
             window.removeEventListener('resize', onEmbedWindowResize);
+            stopEmbedWatchdog();
             audacityEmbedded = false;
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
@@ -1291,13 +1347,10 @@ let isProcessing = false;
             clearTimeout(embedResizeTimer);
             embedResizeTimer = setTimeout(() => {
                 if (!audacityEmbedded) return;
-                const area = document.getElementById('audacityEmbedArea');
-                if (!area) return;
-                const rect = area.getBoundingClientRect();
-                pywebview.api.sync_embed_position(
-                    Math.round(rect.left), Math.round(rect.top),
-                    Math.round(rect.width), Math.round(rect.height)
-                );
+                const r = embedAreaRect();
+                if (!r) return;
+                lastEmbedRect = r;
+                pywebview.api.sync_embed_position(r.x, r.y, r.w, r.h);
             }, 150);
         }
 
