@@ -1137,6 +1137,54 @@ let isProcessing = false;
             }, 50);
         }
 
+        // === Режим «Суммы»: ручная разметка ярусов на обычной нарезке ===
+        let sumModeActive = false;
+
+        async function toggleSumMode(checked) {
+            sumModeActive = checked;
+            let state = await pywebview.api.toggle_sum_mode(checked);
+            renderSumCounts(state);
+            document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
+            document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+        }
+
+        function renderSumCounts(state) {
+            if (!state || !state.counts) return;
+            let el = document.getElementById('sumCounts');
+            if (!el) return;
+            el.innerHTML = Object.entries(state.counts)
+                .map(([label, count]) => `<span>${escapeHtml(label)}: <b>${count}</b></span>`)
+                .join('');
+        }
+
+        async function sumTagAndSend(tier) {
+            let state = await pywebview.api.sum_tag_and_send(tier);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
+
+        async function sumManualSave() {
+            let state = await pywebview.api.sum_manual_save(document.getElementById('addSilence').checked);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            renderSumCounts(await pywebview.api.get_sum_manual_state());
+            updateUI(state);
+        }
+
+        async function saveSumLeftover() {
+            let state = await pywebview.api.save_sum_leftover();
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
+
         // --- Вживление окна Audacity внутрь софта ---
         // Приём системный (Windows SetParent) — Audacity не создан для этого,
         // поэтому если поведение станет хуже, кнопка сразу отсоединяет обратно.
@@ -1622,8 +1670,9 @@ let isProcessing = false;
 
             } else {
                 document.getElementById('workspaceGrid').classList.remove('workspace-grid--varbatch');
-                document.getElementById('standardActions').style.display = 'flex';
                 document.getElementById('varBatchActions').style.display = 'none';
+                document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
+                document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
 
                 let mergePanel = document.querySelector('.merge-panel');
                 if(mergePanel) mergePanel.style.display = 'block';
@@ -1892,8 +1941,8 @@ let isProcessing = false;
             else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-            else if (e.code === 'KeyZ') { e.preventDefault(); processAction('good'); }
-            else if (e.code === 'KeyC') { e.preventDefault(); processAction('variable'); }
+            else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumManualSave(); else processAction('good'); }
+            else if (e.code === 'KeyC') { e.preventDefault(); if (!sumModeActive) processAction('variable'); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

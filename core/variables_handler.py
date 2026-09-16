@@ -8,6 +8,49 @@ import webview
 from utils.file_utils import FileUtils
 from pydub import AudioSegment, silence
 
+# --- «Суммы»: особая логика каскада (Миллионы → Сотни → Тысячи → Тенге) ---
+# Папка «Суммы» внутри «Готовых переменных» собирается не как обычный плоский
+# список файлов, а как 4 яруса, которые проходятся по очереди «по одному шагу
+# за раз» (как счётчик с несколькими разрядами): сначала Миллионы[0], потом
+# Сотни[0], Тысячи[0], Тенге[0], потом снова Миллионы[1] и так далее. Когда
+# ярус исчерпан (дошёл до последнего файла в своей папке) — он замораживается
+# навсегда на последнем значении и больше не участвует в очереди.
+SUM_TIER_ORDER = ['millions', 'hundreds', 'thousands', 'tenge']
+SUM_TIER_LABELS = {
+    'millions': 'Миллионы',
+    'hundreds': 'Сотни (100-900)',
+    'thousands': 'Тысячи',
+    'tenge': 'Тенге',
+}
+# Ярусы с однозначным словом в названии подпапки проверяем в первую очередь;
+# «Сотни» ключевым словом не ищем — слишком легко случайно совпасть с другим
+# ярусом (например, «1 - 100 тенге» тоже содержит «100») — вместо этого им
+# становится та подпапка, что осталась неопознанной после трёх остальных.
+SUM_SPECIFIC_TIER_KEYWORDS = {
+    'tenge': ['тенге', 'kzt', '₸'],
+    'millions': ['миллион', 'млн'],
+    'thousands': ['тысяч', 'тыс'],
+}
+
+
+# Папки, которые «Режим Суммы» создаёт сам по мере работы (см. ниже,
+# методы sum_tag_and_send/sum_manual_save) — в отличие от старого сценария
+# выше, здесь не требуется никакой готовой папки «Суммы» на диске заранее.
+SUM_TIER_DEFAULT_DIR = {
+    'millions': '1 - 100 млн',
+    'hundreds': '100 - 900',
+    'thousands': '1 - 99 тыс',
+    'tenge': '1 - 100 тенге',
+}
+SUM_TIER_CAP = {'millions': 100, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
+
+
+def _numeric_sort_key(filepath):
+    """Безопасная сортировка файлов по числу в названии (дубль 2 раньше дубля 10)."""
+    basename = os.path.basename(filepath)
+    nums = re.findall(r'\d+', basename)
+    return (0, int(nums[0]), basename) if nums else (1, 0, basename)
+
 
 class VariablesMixin:
 
@@ -20,6 +63,9 @@ class VariablesMixin:
             return self._get_var_batch_ui_state()
 
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+        if active_cat in getattr(self, 'sum_category_names', set()):
+            return self._sum_send_to_audacity(active_cat)
+
         active_idx = self.cascade_ptrs[active_cat]
         active_file = self.cascade_files[active_cat][active_idx]
 
@@ -451,11 +497,7 @@ class VariablesMixin:
         except Exception as e:
             return {"error": f"Ошибка чтения папки: {e}"}
 
-        def sort_key(filepath):
-            # БЕЗОПАСНАЯ СОРТИРОВКА: Извлекаем числа из названия файла.
-            basename = os.path.basename(filepath)
-            nums = re.findall(r'\d+', basename)
-            return (0, int(nums[0]), basename) if nums else (1, 0, basename)
+        sort_key = _numeric_sort_key
 
         # 5. ИНТЕЛЛЕКТУАЛЬНЫЙ РЕЖИМ "ИМЕНА": Если подпапок нет, читаем плоский список файлов
         if not subdirs:
@@ -487,6 +529,29 @@ class VariablesMixin:
 
             for cat_name in self.cascade_ordered_cats:
                 cat_dir = os.path.join(self.work_dir, cat_name)
+
+                # «Суммы» — особая папка: внутри не файлы, а 4 подпапки-яруса
+                # (Миллионы/Сотни/Тысячи/Тенге), которые собираются в
+                # последовательность счётчика, а не берутся плоским списком.
+                if cat_name.strip().lower() == 'суммы':
+                    seq, err = self._build_sum_sequence(cat_dir)
+                    if err:
+                        return {"error": err}
+                    self.cascade_files[cat_name] = seq['files']
+                    if not hasattr(self, 'sum_category_names'):
+                        self.sum_category_names = set()
+                    if not hasattr(self, 'sum_meta'):
+                        self.sum_meta = {}
+                    if not hasattr(self, 'sum_tier_dirs'):
+                        self.sum_tier_dirs = {}
+                    if not hasattr(self, 'sum_tier_files'):
+                        self.sum_tier_files = {}
+                    self.sum_category_names.add(cat_name)
+                    self.sum_meta[cat_name] = seq['meta']
+                    self.sum_tier_dirs[cat_name] = seq['tier_dirs']
+                    self.sum_tier_files[cat_name] = seq['tier_files']
+                    continue
+
                 files = [
                     os.path.join(cat_dir, f) for f in os.listdir(cat_dir)
                     if f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac'))
@@ -513,6 +578,20 @@ class VariablesMixin:
         # ещё не сделанную фразу вместо начала списка.
         resumed = self._resume_cascade_progress()
 
+        # У «Суммы» своя, независимая от Excel логика прогресса (проверяем
+        # реально сохранённые файлы по ярусам) — считаем и подставляем её
+        # отдельно, поверх того, что нашла обычная функция выше.
+        for cat_name in list(getattr(self, 'sum_category_names', set())):
+            if cat_name not in self.cascade_ordered_cats:
+                continue
+            sum_done = self._sum_resume_ptr(cat_name)
+            if sum_done:
+                self.cascade_ptrs[cat_name] = sum_done
+                if not hasattr(self, 'cascade_checked_files'):
+                    self.cascade_checked_files = set()
+                self.cascade_checked_files.update(self.cascade_files[cat_name][:sum_done])
+                resumed = (resumed or 0) + sum_done
+
         msg = "✅ <b>Готовая папка загружена.</b><br><br>Нажмите ОК, чтобы открыть конвейер!"
         if resumed:
             msg = f"✅ <b>Готовая папка загружена.</b><br><br>Уже сделано: <b>{resumed}</b>. Продолжаем с этого места — нажмите ОК!"
@@ -523,12 +602,336 @@ class VariablesMixin:
         # Просто переходим к загрузке!
         return self.load_next_var_batch()
 
+    # ==================================================================
+    #  «СУММЫ»: Миллионы → Сотни → Тысячи → Тенге по одному шагу за раз
+    # ==================================================================
+
+    def _build_sum_sequence(self, sum_dir):
+        """Читает 4 подпапки-яруса внутри «Суммы» и строит из них плоскую
+        очередь шагов в порядке «счётчика»: по одному файлу с каждого яруса
+        по кругу, пока не закончатся файлы во всех ярусах. Ярус, у которого
+        файлы закончились раньше других, просто выпадает из круга и дальше
+        его последнее значение используется как готовое (не пересчитывается)."""
+        try:
+            subdirs = [d for d in os.listdir(sum_dir) if os.path.isdir(os.path.join(sum_dir, d))]
+        except Exception as e:
+            return None, f"Ошибка чтения папки «Суммы»: {e}"
+
+        assigned = {}
+        remaining_dirs = list(subdirs)
+        for tier, keywords in SUM_SPECIFIC_TIER_KEYWORDS.items():
+            match = next((d for d in remaining_dirs if any(k in d.lower() for k in keywords)), None)
+            if match:
+                assigned[tier] = match
+                remaining_dirs.remove(match)
+
+        if 'hundreds' not in assigned:
+            if len(remaining_dirs) == 1:
+                assigned['hundreds'] = remaining_dirs[0]
+            elif len(remaining_dirs) > 1:
+                return None, ("Не удалось однозначно определить подпапку «Сотни (100-900)» в «Суммы» — "
+                              "лишние подпапки: " + ', '.join(remaining_dirs) +
+                              ". Оставьте по одной подпапке на каждый ярус.")
+
+        missing = [t for t in SUM_TIER_ORDER if t not in assigned]
+        if missing:
+            names = ', '.join(SUM_TIER_LABELS[t] for t in missing)
+            return None, (f"В папке «Суммы» не нашлись подпапки для яруса(-ов): {names}. "
+                           f"Название подпапки должно содержать слово «миллион», «тысяч» или «тенге» "
+                           f"(подпапка без такого слова считается «Сотни»).")
+
+        tier_files, tier_dirs = {}, {}
+        for tier, subdir_name in assigned.items():
+            d = os.path.join(sum_dir, subdir_name)
+            files = [os.path.join(d, f) for f in os.listdir(d)
+                    if f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac'))]
+            files.sort(key=_numeric_sort_key)
+            if not files:
+                return None, f"В подпапке «{subdir_name}» ({SUM_TIER_LABELS[tier]}) нет аудиофайлов."
+            tier_files[tier] = [os.path.abspath(f).replace('\\', '/') for f in files]
+            tier_dirs[tier] = subdir_name
+
+        consumed = {t: 0 for t in SUM_TIER_ORDER}
+        frozen = {t: False for t in SUM_TIER_ORDER}
+        sequence_files, sequence_meta = [], []
+
+        while not all(frozen.values()):
+            progressed = False
+            for tier in SUM_TIER_ORDER:
+                if frozen[tier]:
+                    continue
+                idx = consumed[tier]
+                sequence_files.append(tier_files[tier][idx])
+                sequence_meta.append({'tier': tier, 'refs': dict(consumed)})
+                consumed[tier] += 1
+                progressed = True
+                if consumed[tier] >= len(tier_files[tier]):
+                    frozen[tier] = True
+            if not progressed:
+                break
+
+        return {'files': sequence_files, 'meta': sequence_meta,
+                'tier_files': tier_files, 'tier_dirs': tier_dirs}, None
+
+    def _sum_resume_ptr(self, cat_name):
+        """Считает подряд идущие с начала очереди «Суммы» шаги, чьи файлы
+        уже реально лежат в Проверенные — чтобы при повторном открытии
+        проекта не начинать эту категорию заново."""
+        files = self.cascade_files.get(cat_name, [])
+        meta = self.sum_meta.get(cat_name, [])
+        tier_dirs = self.sum_tier_dirs.get(cat_name, {})
+        done = 0
+        for f, m in zip(files, meta):
+            save_name = re.sub(r'[<>:"/\\|?*]', '', os.path.basename(f))
+            check_path = os.path.join(self.work_dir, 'Проверенные', cat_name, tier_dirs.get(m['tier'], ''), save_name)
+            if os.path.exists(check_path):
+                done += 1
+            else:
+                break
+        return done
+
+    def _sum_ref_files(self, cat_name, virtual_idx):
+        """Для шага virtual_idx: какой ярус сейчас активный и какие уже
+        сохранённые референсы с других ярусов нужно подставить рядом с ним
+        (ярус, за который ещё не сохранили ни одного значения, пропускается)."""
+        meta = self.sum_meta[cat_name][virtual_idx]
+        active_tier = meta['tier']
+        refs = meta['refs']
+        tier_dirs = self.sum_tier_dirs[cat_name]
+        tier_files = self.sum_tier_files[cat_name]
+
+        result = []
+        for tier in SUM_TIER_ORDER:
+            if tier == active_tier:
+                continue
+            count = refs.get(tier, 0)
+            if count <= 0:
+                continue
+            saved_basename = re.sub(r'[<>:"/\\|?*]', '', os.path.basename(tier_files[tier][count - 1]))
+            saved_path = os.path.join(self.work_dir, 'Проверенные', cat_name, tier_dirs[tier], saved_basename)
+            result.append((tier, saved_path))
+        return result, active_tier
+
+    def _sum_ordered_segments(self, cat_name, active_file, virtual_idx):
+        """Полный порядок кусков для сборки в Audacity и для склейки
+        превью: start, затем ярусы в фиксированном порядке (Миллионы →
+        Сотни → Тысячи → Тенге) — либо уже сохранённый референс, либо
+        активный ярус на этом шаге; отсутствующие ярусы пропускаются."""
+        refs, active_tier = self._sum_ref_files(cat_name, virtual_idx)
+        ref_by_tier = dict(refs)
+
+        segments = []
+        if getattr(self, 'var_start_phrase', None) and os.path.exists(self.var_start_phrase):
+            segments.append(('start', self.var_start_phrase))
+        for tier in SUM_TIER_ORDER:
+            if tier == active_tier:
+                segments.append(('active', active_file))
+            else:
+                ref_path = ref_by_tier.get(tier)
+                if ref_path and os.path.exists(ref_path):
+                    segments.append(('ref', ref_path))
+        if getattr(self, 'var_end_phrase', None) and os.path.exists(self.var_end_phrase):
+            segments.append(('end', self.var_end_phrase))
+        return segments
+
+    def _sum_build_and_send(self, cat_name, active_file, virtual_idx, toast_msg):
+        """Собирает всю цепочку (start + референсы + активный ярус + end) на
+        монтажном столе Audacity, запоминая, где начинается активный кусок —
+        это нужно потом, при сохранении, чтобы экспортировать именно его,
+        а не соседние референсы."""
+        segments = self._sum_ordered_segments(cat_name, active_file, virtual_idx)
+
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('RemoveTracks:')
+        self.audacity.send_command('NewMonoTrack:')
+
+        cursor = 0.0
+        active_clip_start = None
+        for kind, path in segments:
+            seg_len = self._import_clip_to_track0(path, cursor)
+            if kind == 'active':
+                active_clip_start = cursor
+            cursor += seg_len
+
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start=0 End={cursor + 5.0} RelativeTo=ProjectStart')
+        self.audacity.send_command('ZoomSel:')
+        self.audacity.send_command('SetProject: Rate=8000')
+
+        self.is_in_audacity = True
+        self._sum_active_clip_start = active_clip_start
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        webview.windows[0].evaluate_js(f"showToast('{toast_msg}');")
+        return self._get_var_batch_ui_state()
+
+    def _sum_send_to_audacity(self, cat_name):
+        virtual_idx = self.cascade_ptrs[cat_name]
+        active_file = self.cascade_files[cat_name][virtual_idx]
+        return self._sum_build_and_send(cat_name, active_file, virtual_idx,
+                                        '✂️ Аудио отправлено на хирургический стол Audacity')
+
+    def _sum_load_checked_to_audacity(self, cat_name):
+        virtual_idx = self.cascade_ptrs[cat_name]
+        active_file = self.cascade_files[cat_name][virtual_idx]
+        meta = self.sum_meta[cat_name][virtual_idx]
+        tier_dir = self.sum_tier_dirs[cat_name][meta['tier']]
+        save_name = re.sub(r'[<>:"/\\|?*]', '', os.path.basename(active_file))
+        target_dir = os.path.join(self.work_dir, 'Проверенные', cat_name, tier_dir)
+        checked_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
+
+        if not os.path.exists(checked_path):
+            webview.windows[0].evaluate_js(
+                f"showBeautifulAlert('⚠️ <b>Файл не найден!</b><br><br>В папке Проверенные нет файла: <b>{save_name}</b>');")
+            return self._get_var_batch_ui_state()
+
+        if self._block_if_audacity_ambiguous():
+            return self._get_var_batch_ui_state()
+
+        return self._sum_build_and_send(cat_name, checked_path, virtual_idx,
+                                        '🔄 Файл загружен в Audacity для правки')
+
+    def _sum_save_var_batch(self, cat_name, normalize_chunks=False):
+        """Сохраняет ТОЛЬКО активный (текущий) кусок — не всю склейку — в
+        Проверенные/Суммы/<ярус>/, затем сдвигает очередь на следующий шаг."""
+        import shutil
+        virtual_idx = self.cascade_ptrs[cat_name]
+        total = len(self.cascade_files[cat_name])
+        if virtual_idx >= total:
+            return self._get_var_batch_ui_state()
+
+        active_file = self.cascade_files[cat_name][virtual_idx]
+        meta = self.sum_meta[cat_name][virtual_idx]
+        tier_dir = self.sum_tier_dirs[cat_name][meta['tier']]
+
+        save_name = re.sub(r'[<>:"/\\|?*]', '', os.path.basename(active_file))
+        target_dir = os.path.join(self.work_dir, 'Проверенные', cat_name, tier_dir)
+        os.makedirs(target_dir, exist_ok=True)
+        safe_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
+
+        if os.path.exists(safe_path):
+            try: os.remove(safe_path)
+            except: pass
+
+        if getattr(self, 'is_in_audacity', False):
+            resp_clips = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
+            try:
+                c_data = json.loads(resp_clips[resp_clips.find('['):resp_clips.rfind(']') + 1])
+                track_0_clips = []
+                for t in c_data:
+                    if t.get('track', -1) == 0:
+                        track_0_clips.extend(t.get('clips', [t]))
+                track_0_clips.sort(key=lambda x: x.get('start', 0))
+            except:
+                return self._get_var_batch_ui_state()
+
+            if not track_0_clips:
+                webview.windows[0].evaluate_js("showBeautifulAlert('⚠️ <b>Ошибка!</b><br>Фраза на дорожке не найдена (удалена или склеена).');")
+                return self._get_var_batch_ui_state()
+
+            # Клипов теперь может быть больше трёх (start + рефы + активный +
+            # end) — ищем активный не по фиксированному индексу, а по времени
+            # начала, которое запомнили при сборке на столе.
+            target_start = getattr(self, '_sum_active_clip_start', None)
+            phrase_clip = None
+            if target_start is not None:
+                for c in track_0_clips:
+                    if abs(c.get('start', -999) - target_start) < 0.05:
+                        phrase_clip = c
+                        break
+            if phrase_clip is None:
+                phrase_clip = track_0_clips[min(1, len(track_0_clips) - 1)]
+
+            c_start, c_end = phrase_clip.get('start', 0.0), phrase_clip.get('end', 0.0)
+            self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+            self.audacity.send_command(f'SelectTime: Start={c_start} End={c_end} RelativeTo=ProjectStart')
+            self.audacity.send_command(f'Export2: Filename="{safe_path}" NumChannels=1')
+            time.sleep(0.1)
+
+            if not self._block_if_audacity_ambiguous():
+                self.audacity.send_command('SelectAll:')
+                self.audacity.send_command('RemoveTracks:')
+            self.is_in_audacity = False
+
+            hwnd = ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
+            if hwnd:
+                self._force_foreground(hwnd)
+        else:
+            shutil.copy(active_file, safe_path)
+
+        if not hasattr(self, 'cascade_checked_files'):
+            self.cascade_checked_files = set()
+        self.cascade_checked_files.add(active_file)
+
+        if normalize_chunks and os.path.exists(safe_path):
+            self._normalize_all_chunks(safe_path)
+
+        self.cascade_ptrs[cat_name] += 1
+        new_idx = self.cascade_ptrs[cat_name]
+
+        if new_idx >= total:
+            next_cat_idx = self.cascade_active_cat_idx + 1
+            if next_cat_idx >= len(self.cascade_ordered_cats):
+                webview.windows[0].evaluate_js("showBeautifulAlert('🎉 <b>Поздравляем!</b><br><br>Весь каскад успешно пройден!');")
+                self.current_mode = 'Проверенные'
+                return self.get_ui_state()
+            self.cascade_active_cat_idx = next_cat_idx
+            webview.windows[0].evaluate_js(f"showToast('Категория изменена на: {self.cascade_ordered_cats[next_cat_idx]}');")
+
+        return self._get_var_batch_ui_state()
+
+    def _sum_get_ui_state(self, cat_name):
+        virtual_idx = self.cascade_ptrs[cat_name]
+        total = len(self.cascade_files[cat_name])
+        display_idx = min(virtual_idx, total - 1)
+        active_file = self.cascade_files[cat_name][display_idx]
+        meta = self.sum_meta[cat_name][display_idx]
+        tier = meta['tier']
+        tier_label = SUM_TIER_LABELS[tier]
+        tier_dir = self.sum_tier_dirs[cat_name][tier]
+        active_name = os.path.basename(active_file)
+
+        if not hasattr(self, 'cascade_checked_files'):
+            self.cascade_checked_files = set()
+        is_checked = active_file in self.cascade_checked_files
+
+        save_name = re.sub(r'[<>:"/\\|?*]', '', active_name)
+        target_dir = os.path.join(self.work_dir, 'Проверенные', cat_name, tier_dir)
+        is_done = os.path.exists(os.path.join(target_dir, save_name))
+
+        done_count = min(virtual_idx, total)
+
+        return {
+            "mode": "VarBatch",
+            "screen": "varbatch",
+            "var_batch_name": active_name,
+            "var_batch_cat": f"{cat_name}: {tier_label}",
+            "phrase_text": f"Сумма — ярус «{tier_label}»",
+            "phrase_counter": f"{done_count + 1} / {total}",
+            "custom_filename": save_name.replace('.wav', ''),
+            "chunk_name": active_name,
+            "chunk_counter": f"{done_count + 1} / {total}",
+            "has_audio": True,
+            "is_done": is_done,
+            "is_var": True,
+            "is_checked": is_checked,
+            "folder_name": "Проверенные" if is_done else "Переменные",
+            "raw_chunk_name": active_name, "filepath": active_file,
+            "stats": {"total": total, "good": done_count, "var": 0, "checked": 0}
+        }
+
     def load_checked_var_to_audacity(self):
         """Загружает уже готовый файл из папки 'Проверенные' на хирургический стол Audacity"""
         if not getattr(self, 'cascade_ordered_cats', None):
             return {"error": "Конвейер не запущен"}
 
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+        if active_cat in getattr(self, 'sum_category_names', set()):
+            return self._sum_load_checked_to_audacity(active_cat)
+
         active_idx = self.cascade_ptrs[active_cat]
         active_file = self.cascade_files[active_cat][active_idx]
 
@@ -590,6 +993,9 @@ class VariablesMixin:
     def _get_var_batch_ui_state(self):
         """Вспомогательный метод для обновления UI в режиме каскада"""
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+        if active_cat in getattr(self, 'sum_category_names', set()):
+            return self._sum_get_ui_state(active_cat)
+
         active_idx = self.cascade_ptrs[active_cat]
         active_file = self.cascade_files[active_cat][active_idx]
         active_name = os.path.basename(active_file)
@@ -1005,6 +1411,9 @@ class VariablesMixin:
         """Умное сохранение: либо моментальное копирование Pydub, либо экспорт из Audacity с возвратом фокуса"""
         import shutil
         active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+        if active_cat in getattr(self, 'sum_category_names', set()):
+            return self._sum_save_var_batch(active_cat, normalize_chunks)
+
         active_idx = self.cascade_ptrs[active_cat]
 
         if active_idx >= len(self.cascade_files[active_cat]):
@@ -1271,3 +1680,215 @@ class VariablesMixin:
             return {"status": "success"}
         except Exception as e:
             return {"error": f"Ошибка нормализации: {str(e)}"}
+
+    # ==================================================================
+    #  «РЕЖИМ СУММЫ» (ручной): работает поверх обычной нарезки Chunks —
+    #  никакой готовой папки «Суммы» заранее не нужно, программа сама
+    #  создаёт папки ярусов по мере сохранения.
+    # ==================================================================
+
+    def _sum_manual_tier_root(self):
+        return os.path.join(self.work_dir, 'Проверенные', 'Суммы')
+
+    def _sum_manual_tier_dir(self, tier):
+        return SUM_TIER_DEFAULT_DIR[tier]
+
+    def get_sum_manual_state(self):
+        counts = getattr(self, 'sum_manual_counts', None) or {t: 0 for t in SUM_TIER_ORDER}
+        return {
+            "active": getattr(self, 'sum_manual_active', False),
+            "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in SUM_TIER_ORDER},
+            "current_tier": SUM_TIER_LABELS.get(getattr(self, 'sum_manual_current_tier', None)),
+        }
+
+    def toggle_sum_mode(self, active):
+        self.sum_manual_active = bool(active)
+        if self.sum_manual_active:
+            if not hasattr(self, 'sum_manual_counts'):
+                self.sum_manual_counts = {}
+            if not hasattr(self, 'sum_manual_last_file'):
+                self.sum_manual_last_file = {}
+            root = self._sum_manual_tier_root()
+            os.makedirs(root, exist_ok=True)  # создаём «Суммы» сразу, не дожидаясь первого сохранения
+            for tier in SUM_TIER_ORDER:
+                d = os.path.join(root, self._sum_manual_tier_dir(tier))
+                os.makedirs(d, exist_ok=True)
+                files = [os.path.join(d, f) for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
+                self.sum_manual_counts[tier] = len(files)
+                if files:
+                    # Продолжаем прошлую работу: последний изменённый файл
+                    # считаем последним сохранённым значением этого яруса.
+                    files.sort(key=os.path.getmtime)
+                    self.sum_manual_last_file[tier] = files[-1]
+            self.sum_manual_current_tier = None
+        return self.get_sum_manual_state()
+
+    def sum_tag_and_send(self, tier):
+        """Пользователь послушал дубль и нажал «Это Миллионы/Сотни/Тысячи/
+        Тенге» — собираем на столе Audacity: start + последние сохранённые
+        значения ДРУГИХ ярусов (если такие уже есть) + этот дубль + end."""
+        if tier not in SUM_TIER_ORDER:
+            return {"error": "Неизвестный ярус."}
+        if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
+            return {"error": "Дубли закончились."}
+
+        cap = SUM_TIER_CAP.get(tier)
+        done = getattr(self, 'sum_manual_counts', {}).get(tier, 0)
+        if cap and done >= cap:
+            return {"error": f"Ярус «{SUM_TIER_LABELS[tier]}» уже заморожен на потолке ({cap}) — "
+                              f"дальше он используется как готовый, новые значения в него не принимаются."}
+
+        if self._block_if_audacity_ambiguous():
+            return self.get_ui_state()
+
+        active_file = self.chunks_data[self.chunk_index]['filepath']
+        self.sum_manual_current_tier = tier
+
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('RemoveTracks:')
+        self.audacity.send_command('NewMonoTrack:')
+
+        cursor = 0.0
+        if getattr(self, 'var_start_phrase', None) and os.path.exists(self.var_start_phrase):
+            cursor += self._import_clip_to_track0(self.var_start_phrase, cursor)
+
+        active_clip_start = None
+        last_file = getattr(self, 'sum_manual_last_file', {})
+        for t in SUM_TIER_ORDER:
+            if t == tier:
+                active_clip_start = cursor
+                cursor += self._import_clip_to_track0(active_file, cursor)
+            else:
+                ref = last_file.get(t)
+                if ref and os.path.exists(ref):
+                    cursor += self._import_clip_to_track0(ref, cursor)
+
+        if getattr(self, 'var_end_phrase', None) and os.path.exists(self.var_end_phrase):
+            self._import_clip_to_track0(self.var_end_phrase, cursor)
+            cursor += FileUtils.get_exact_audio_duration(self.var_end_phrase)
+
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start=0 End={cursor + 5.0} RelativeTo=ProjectStart')
+        self.audacity.send_command('ZoomSel:')
+        self.audacity.send_command('SetProject: Rate=8000')
+
+        self.is_in_audacity = True
+        self._sum_active_clip_start = active_clip_start
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        webview.windows[0].evaluate_js(f"showToast('✂️ Ярус «{SUM_TIER_LABELS[tier]}» отправлен в Audacity');")
+        return self.get_ui_state()
+
+    def sum_manual_save(self, normalize_chunks=False):
+        """Сохраняет ТОЛЬКО активный (текущий) кусок в Проверенные/Суммы/
+        <папка яруса>/ — папка создаётся сама при первом сохранении в неё."""
+        import shutil
+        tier = getattr(self, 'sum_manual_current_tier', None)
+        if not tier:
+            return {"error": "Сначала выберите ярус — Миллионы/Сотни/Тысячи/Тенге."}
+        if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
+            return self.get_ui_state()
+
+        item = self.chunks_data[self.chunk_index]
+        active_file = item['filepath']
+
+        target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
+        os.makedirs(target_dir, exist_ok=True)
+
+        save_name = re.sub(r'[<>:"/\\|?*]', '', item['filename'])
+        safe_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
+        if os.path.exists(safe_path):
+            try: os.remove(safe_path)
+            except: pass
+
+        if getattr(self, 'is_in_audacity', False):
+            resp_clips = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
+            try:
+                c_data = json.loads(resp_clips[resp_clips.find('['):resp_clips.rfind(']') + 1])
+                track_0_clips = []
+                for t in c_data:
+                    if t.get('track', -1) == 0:
+                        track_0_clips.extend(t.get('clips', [t]))
+                track_0_clips.sort(key=lambda x: x.get('start', 0))
+            except:
+                return self.get_ui_state()
+
+            if not track_0_clips:
+                webview.windows[0].evaluate_js("showBeautifulAlert('⚠️ <b>Ошибка!</b><br>Кусок на дорожке не найден (удалён или склеен).');")
+                return self.get_ui_state()
+
+            # Клипов на дорожке может быть больше двух (start + рефы других
+            # ярусов + активный + end) — ищем активный по времени начала,
+            # которое запомнили при сборке, а не по фиксированному индексу.
+            target_start = getattr(self, '_sum_active_clip_start', None)
+            phrase_clip = None
+            if target_start is not None:
+                for c in track_0_clips:
+                    if abs(c.get('start', -999) - target_start) < 0.05:
+                        phrase_clip = c
+                        break
+            if phrase_clip is None:
+                phrase_clip = track_0_clips[min(1, len(track_0_clips) - 1)]
+
+            c_start, c_end = phrase_clip.get('start', 0.0), phrase_clip.get('end', 0.0)
+            self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+            self.audacity.send_command(f'SelectTime: Start={c_start} End={c_end} RelativeTo=ProjectStart')
+            self.audacity.send_command(f'Export2: Filename="{safe_path}" NumChannels=1')
+            time.sleep(0.1)
+
+            if not self._block_if_audacity_ambiguous():
+                self.audacity.send_command('SelectAll:')
+                self.audacity.send_command('RemoveTracks:')
+            self.is_in_audacity = False
+
+            hwnd = ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
+            if hwnd:
+                self._force_foreground(hwnd)
+        else:
+            shutil.copy(active_file, safe_path)
+
+        if normalize_chunks and os.path.exists(safe_path):
+            self._normalize_all_chunks(safe_path)
+
+        if not hasattr(self, 'sum_manual_counts'):
+            self.sum_manual_counts = {t: 0 for t in SUM_TIER_ORDER}
+        if not hasattr(self, 'sum_manual_last_file'):
+            self.sum_manual_last_file = {}
+        self.sum_manual_counts[tier] = self.sum_manual_counts.get(tier, 0) + 1
+        self.sum_manual_last_file[tier] = safe_path
+
+        cap = SUM_TIER_CAP.get(tier)
+        if cap and self.sum_manual_counts[tier] >= cap:
+            webview.windows[0].evaluate_js(
+                f"showToast('⚠️ Ярус «{SUM_TIER_LABELS[tier]}» достиг потолка ({cap}) — дальше он используется как готовый, без пересчёта.');")
+
+        self.sum_manual_current_tier = None
+        self.chunk_index += 1
+
+        return self.get_ui_state()
+
+    def save_sum_leftover(self):
+        """Если автонарезка слепила несколько цифр в один дубль («2 тысячи
+        сто одна тенге») — выделите в Audacity оставшуюся часть (ту, что не
+        сохранили как активный кусок) и нажмите эту кнопку. Она экспортирует
+        текущее выделение и ставит его следующим дублем в очередь, чтобы
+        не потерять при последующей очистке стола."""
+        if not getattr(self, 'is_in_audacity', False):
+            return {"error": "Сначала откройте дубль в Audacity (выберите ярус)."}
+
+        leftover_dir = os.path.join(self.work_dir, '_Остатки')
+        os.makedirs(leftover_dir, exist_ok=True)
+        name = f'остаток_{int(time.time() * 1000)}.wav'
+        target_path = os.path.abspath(os.path.join(leftover_dir, name)).replace('\\', '/')
+
+        resp = self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+        if not resp or not os.path.exists(target_path):
+            return {"error": "Не удалось сохранить остаток — убедитесь, что в Audacity выделен нужный участок, и повторите."}
+
+        self.chunks_data.insert(self.chunk_index + 1, {'filepath': target_path, 'filename': name})
+
+        webview.windows[0].evaluate_js("showToast('💾 Остаток сохранён и добавлен в очередь следующим дублем');")
+        return self.get_ui_state()

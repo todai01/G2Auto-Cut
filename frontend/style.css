@@ -250,6 +250,13 @@ button[disabled]:active{ transform: none; }
    и посреди правой колонки зияла пустота в треть экрана. */
 .panel-column { display: flex; flex-direction: column; justify-content: flex-start; gap: var(--space-4); min-width: 0; }
 
+.sum-counts{
+    display: flex; flex-wrap: wrap; gap: 8px; font-family: var(--font-mono); font-size: 12px;
+    color: var(--text-dim); background: var(--screen); border: 1px solid var(--border-soft);
+    border-radius: 10px; padding: 8px 12px;
+}
+.sum-counts span{ white-space: nowrap; }
+
 .audacity-embed-area{
     flex: 1; min-height: 640px; border-radius: 14px; border: 2px dashed var(--border-soft);
     background: #0b0d10; position: relative; overflow: hidden;

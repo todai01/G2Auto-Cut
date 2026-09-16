@@ -60,7 +60,43 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
         if self.current_mode == 'VarBatch':
             active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
             active_idx = self.cascade_ptrs[active_cat]
+            if active_idx >= len(self.cascade_files[active_cat]):
+                return {"playing": False, "duration": 0}
             active_file = self.cascade_files[active_cat][active_idx]
+
+            # «Суммы»: своя склейка — start + уже сохранённые референсы
+            # с других ярусов (в порядке Миллионы→Сотни→Тысячи→Тенге) +
+            # активный ярус + end, а не просто start+фраза+end.
+            if active_cat in getattr(self, 'sum_category_names', set()):
+                meta = self.sum_meta[active_cat][active_idx]
+                tier_dir = self.sum_tier_dirs[active_cat][meta['tier']]
+                file_to_play = active_file
+                if hasattr(self, 'cascade_checked_files') and active_file in self.cascade_checked_files:
+                    save_name = os.path.basename(active_file)
+                    saved_path = os.path.join(self.work_dir, 'Проверенные', active_cat, tier_dir, save_name)
+                    if os.path.exists(saved_path):
+                        file_to_play = saved_path
+
+                if not os.path.exists(file_to_play):
+                    return {"playing": False, "duration": 0}
+
+                try:
+                    segments = self._sum_ordered_segments(active_cat, file_to_play, active_idx)
+                    self.player.stop()
+                    combined = None
+                    for _, path in segments:
+                        seg = AudioSegment.from_file(path).set_frame_rate(8000)
+                        combined = seg if combined is None else combined + seg
+                    if combined is not None:
+                        temp_path = os.path.join(self.work_dir, "temp_var_preview.wav")
+                        combined.export(temp_path, format="wav")
+                        file_to_play = temp_path
+                except Exception as e:
+                    print(f"Ошибка склейки превью (Суммы): {e}")
+
+                duration = FileUtils.get_exact_audio_duration(file_to_play)
+                self.player.play(file_to_play)
+                return {"playing": True, "duration": duration}
 
             file_to_play = active_file  # По умолчанию берем черновик
 
