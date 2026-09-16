@@ -81,7 +81,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
                 combined.export(temp_path, format="wav")
                 duration = FileUtils.get_exact_audio_duration(temp_path)
                 self.player.play(temp_path)
-                return {"playing": True, "duration": duration, "segments": markers}
+                return {"playing": True, "duration": duration, "segments": markers, "source": "chain"}
             except Exception as e:
                 print(f"Ошибка склейки превью (Суммы): {e}")
                 return {"playing": False, "duration": 0}
@@ -126,7 +126,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
                 duration = FileUtils.get_exact_audio_duration(file_to_play)
                 self.player.play(file_to_play)
-                return {"playing": True, "duration": duration}
+                return {"playing": True, "duration": duration, "source": "chain"}
 
             file_to_play = active_file  # По умолчанию берем черновик
 
@@ -149,6 +149,12 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
             if not os.path.exists(file_to_play):
                 return {"playing": False, "duration": 0}
+
+            # Источник для подсветки на экране: «saved» — уже сохранённая,
+            # проверенная версия, «draft» — черновик прямо из дублей, ещё
+            # не сохранённый. Раньше отличить на слух/на экране было нечем —
+            # обе подсвечивались одинаково жёлтым.
+            play_source = "saved" if file_to_play != active_file else "draft"
 
             # === МАГИЯ БЕСШОВНОЙ СКЛЕЙКИ START + PHRASE + END НА ЛЕТУ ===
             # end может отсутствовать (режим «только start») — тогда просто
@@ -182,7 +188,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
             duration = FileUtils.get_exact_audio_duration(file_to_play)
             self.player.play(file_to_play)
-            return {"playing": True, "duration": duration}
+            return {"playing": True, "duration": duration, "source": play_source}
 
         # 2. ЛОГИКА ДЛЯ ОСНОВНЫХ РЕЖИМОВ (Chunks, Проверенные и т.д.)
         if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
@@ -213,6 +219,11 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
             elif os.path.exists(var_path):
                 file_to_play = var_path
 
+        # Источник для подсветки на экране (см. пометку выше в VarBatch):
+        # «saved» — нашли уже сохранённую версию, «draft» — играем сырой
+        # дубль как есть.
+        play_source = "saved" if file_to_play != source_path else "draft"
+
         # Если файл так и не готов, и мы в режиме "Chunks" - вырезаем динамический кусок (черновик)
         if file_to_play == source_path and self.current_mode == 'Chunks' and 'start' in item and 'end' in item and self.raw_audio_full is not None:
             try:
@@ -229,15 +240,17 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
         duration = FileUtils.get_exact_audio_duration(file_to_play)
         self.player.play(file_to_play)
-        return {"playing": True, "duration": duration}
+        return {"playing": True, "duration": duration, "source": play_source}
 
     def play_specific_file(self, filepath):
-        """Проигрывание конкретного файла (используется для переменных)"""
+        """Проигрывание конкретного файла (используется для переменных).
+        Всегда уже сохранённый/проверенный файл — вызывается только когда
+        state.completed_filepath есть."""
         self.player.stop()
         if filepath and os.path.exists(filepath):
             duration = FileUtils.get_exact_audio_duration(filepath)
             self.player.play(filepath)
-            return {"playing": True, "duration": duration}
+            return {"playing": True, "duration": duration, "source": "saved"}
         return {"playing": False, "duration": 0}
 
     def stop_audio(self):

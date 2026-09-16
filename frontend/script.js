@@ -1411,6 +1411,32 @@ let isProcessing = false;
             });
         });
 
+        // Пометка «что сейчас играет» рядом с текстом: «готовая» (уже
+        // сохранённая/проверенная версия), «черновик» (сырой дубль,
+        // ещё не сохранён) или «цепочка» (склейка нескольких ярусов
+        // «Суммы»). Раньше подсветка при проигрывании была одинаковая для
+        // всех случаев (жёлтая), и было не понять, что именно звучит.
+        function playSourceLabel(src) {
+            if (src === 'saved') return '✅ Готовая версия';
+            if (src === 'chain') return '🔗 Цепочка «Суммы»';
+            return '🎙 Черновик (дубль)';
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const phraseEl = document.getElementById('phraseText');
+            const badge = document.getElementById('playSourceBadge');
+            if (!phraseEl || !badge) return;
+            const sync = () => {
+                if (phraseEl.classList.contains('is-playing') && phraseEl.dataset.playSource) {
+                    badge.className = 'play-source-badge is-visible src-' + phraseEl.dataset.playSource;
+                    badge.innerText = playSourceLabel(phraseEl.dataset.playSource);
+                } else {
+                    badge.className = 'play-source-badge';
+                    badge.innerText = '';
+                }
+            };
+            new MutationObserver(sync).observe(phraseEl, { attributes: true, attributeFilter: ['class'] });
+        });
+
         async function detachEmbeddedAudacity() {
             if (!audacityEmbedded) return;
             window.removeEventListener('resize', onEmbedWindowResize);
@@ -1465,6 +1491,7 @@ let isProcessing = false;
             clearTimeout(playTimeout);
             clearSumPlaybackTimers();
             if(res && res.playing) {
+                phraseEl.dataset.playSource = res.source || 'draft';
                 phraseEl.classList.add('is-playing');
                 playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
 
@@ -1499,6 +1526,7 @@ let isProcessing = false;
                 if (state.completed_filepath) {
                     let res = await pywebview.api.play_specific_file(state.completed_filepath);
                     if(res && res.playing) {
+                        phraseEl.dataset.playSource = res.source || 'saved';
                         phraseEl.classList.add('is-playing');
                         playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
                     }
@@ -1570,6 +1598,7 @@ let isProcessing = false;
                         clearTimeout(playTimeout);
                         clearSumPlaybackTimers();
                         if(res && res.playing) {
+                            phraseEl.dataset.playSource = res.source || 'draft';
                             phraseEl.classList.add('is-playing');
                             playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
                         } else {
@@ -2374,6 +2403,7 @@ let isProcessing = false;
                 if (state.completed_filepath) {
                     let res = await pywebview.api.play_specific_file(state.completed_filepath);
                     if(res && res.playing) {
+                        phraseEl.dataset.playSource = res.source || 'saved';
                         phraseEl.classList.add('is-playing');
                         playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
                     }
@@ -2396,6 +2426,7 @@ let isProcessing = false;
                 clearTimeout(playTimeout);
                 clearSumPlaybackTimers();
                 if(res && res.playing) {
+                    phraseEl.dataset.playSource = res.source || 'draft';
                     phraseEl.classList.add('is-playing');
                     playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
                 } else {
