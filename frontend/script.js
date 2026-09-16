@@ -3,6 +3,11 @@ let isProcessing = false;
         let mergeParts = [null, null, null, null, null];
         let saveFilenameForMerge = null;
         let playTimeout = null;
+        let sumPlaybackTimers = [];
+        function clearSumPlaybackTimers() {
+            sumPlaybackTimers.forEach(id => clearTimeout(id));
+            sumPlaybackTimers = [];
+        }
 
         // Значения по умолчанию — используются кнопкой «Сбросить»
         const CUT_DEFAULTS = { pause: 500, sens: -35, pad: 250 };
@@ -1142,28 +1147,126 @@ let isProcessing = false;
 
         async function toggleSumMode(checked) {
             sumModeActive = checked;
-            let state = await pywebview.api.toggle_sum_mode(checked);
-            renderSumCounts(state);
-            document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
-            document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+            // Снимаем фокус с галочки, иначе горячие клавиши (C, Z, A/D)
+            // считаются набором текста в поле и просто игнорируются.
+            let box = document.getElementById('sumModeCheck');
+            if (box) box.blur();
+            let sumState = await pywebview.api.toggle_sum_mode(checked);
+            renderSumPanel(sumState);
+            applySumModeLayout();
+
+            if (sumModeActive) {
+                // Пробуем сразу занять освободившееся место окном Audacity.
+                // Если он ещё не запущен — просто оставляем пустую рамку,
+                // окно встанет туда само после первой отправки (C).
+                await attachEmbeddedAudacity(true);
+            } else {
+                await detachEmbeddedAudacity();
+            }
         }
 
-        function renderSumCounts(state) {
-            if (!state || !state.counts) return;
-            let el = document.getElementById('sumCounts');
-            if (!el) return;
-            el.innerHTML = Object.entries(state.counts)
-                .map(([label, count]) => `<span>${escapeHtml(label)}: <b>${count}</b></span>`)
-                .join('');
+        // В режиме «Суммы» на экране остаётся только то, что нужно для работы:
+        // счётчики, подсказка про папку и три кнопки. Всё лишнее (монтажный
+        // стол и кнопки режима переменных) прячется, а место под ними
+        // отдаётся окну Audacity.
+        function applySumModeLayout() {
+            const show = (id, on) => {
+                let el = document.getElementById(id);
+                if (el) el.style.display = on ? 'flex' : 'none';
+            };
+            show('standardActions', !sumModeActive);
+            show('sumManualActions', sumModeActive);
+            if (sumModeActive) show('varBatchActions', false);
+
+            let mergePanel = document.querySelector('.merge-panel');
+            if (mergePanel && sumModeActive) mergePanel.style.display = 'none';
+
+            let area = document.getElementById('audacityEmbedArea');
+            let grid = document.getElementById('workspaceGrid');
+            if (area && grid) {
+                // В режиме «Суммы» рамка переезжает из правой колонки вниз, под
+                // обе колонки — так под окно Audacity уходит вся ширина экрана.
+                let columns = grid.querySelectorAll('.panel-column');
+                let column = columns[columns.length - 1];
+                if (sumModeActive && area.parentElement !== grid) {
+                    grid.appendChild(area);
+                } else if (!sumModeActive && area.parentElement === grid && column) {
+                    // Возвращаем рамку на своё место — перед списком горячих клавиш
+                    let hotkeys = column.querySelector('.work-hotkeys');
+                    column.insertBefore(area, hotkeys || null);
+                }
+                grid.classList.toggle('workspace-grid--sum', sumModeActive);
+                document.body.classList.toggle('sum-mode', sumModeActive);
+                if (sumModeActive || !audacityEmbedded) {
+                    area.style.display = sumModeActive ? 'block' : 'none';
+                }
+            }
+
+            // Рамка могла изменить размер после скрытия лишних кнопок —
+            // подгоняем под неё уже встроенное окно Audacity.
+            if (audacityEmbedded) onEmbedWindowResize();
         }
 
-        async function sumTagAndSend(tier) {
-            let state = await pywebview.api.sum_tag_and_send(tier);
+        // Панель режима «Суммы»: счётчики по ярусам и подсказка, в какую
+        // папку уйдёт текущая строка (ярус программа определяет сама).
+        let lastSumState = null;
+        function renderSumPanel(sumState) {
+            if (!sumState) return;
+            lastSumState = sumState;
+            let counts = document.getElementById('sumCounts');
+            if (counts && sumState.counts) {
+                counts.innerHTML = Object.entries(sumState.counts)
+                    .map(([label, count]) => `<span>${escapeHtml(label)}: <b>${count}</b></span>`)
+                    .join('');
+            }
+            let target = document.getElementById('sumTarget');
+            if (!target) return;
+            target.innerHTML = sumState.detected_tier
+                ? `«${escapeHtml(sumState.detected_from || '')}» → папка <b>${escapeHtml(sumState.detected_dir)}</b>`
+                : 'Загрузите Excel — по его тексту выбирается папка';
+        }
+
+        // Клик по счётчикам «Суммы»: подробная карточка — сколько сохранено
+        // и осталось по каждому ярусу, и на каком числе юзер остановился
+        // в последний раз (чтобы не гадать, что уже сделано).
+        function showSumStatsModal() {
+            if (!lastSumState || !lastSumState.stats) return;
+            let rows = lastSumState.stats.map(s => {
+                let capText = s.cap ? `${s.done} из ${s.cap}` : `${s.done}`;
+                let remainingText = (s.remaining !== null && s.remaining !== undefined)
+                    ? `осталось ${s.remaining}` : '';
+                let lastText = s.last ? `последний: <b>${escapeHtml(s.last)}</b>` : 'ещё нет сохранённых';
+                return `<div class="sum-stats-row">
+                    <div class="sum-stats-tier">${escapeHtml(s.tier)} <span class="sum-stats-dir">(${escapeHtml(s.dir)})</span></div>
+                    <div class="sum-stats-nums">${capText}${remainingText ? ' · ' + remainingText : ''}</div>
+                    <div class="sum-stats-last">${lastText}</div>
+                </div>`;
+            }).join('');
+            showBeautifulAlert(`<div class="sum-stats-modal"><h4>Статистика по ярусам</h4>${rows}</div>`);
+        }
+
+        async function sumSendToAudacity() {
+            // Если Audacity закрыт, программа сама его запускает и ждёт
+            // ответа — это может занять до 20-30 секунд на холодном старте,
+            // а без индикатора кажется, что кнопка просто не работает.
+            let btn = document.querySelector('#sumManualActions .btn-tile--primary');
+            let origHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
+
+            let state;
+            try {
+                state = await pywebview.api.sum_send_to_audacity();
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+            }
+
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
             }
             updateUI(state);
+            // Теперь Audacity точно запущен — сажаем его окно в отведённую рамку
+            if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
         }
 
         async function sumManualSave() {
@@ -1172,7 +1275,6 @@ let isProcessing = false;
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
             }
-            renderSumCounts(await pywebview.api.get_sum_manual_state());
             updateUI(state);
         }
 
@@ -1199,35 +1301,89 @@ let isProcessing = false;
             }
         }
 
-        async function attachEmbeddedAudacity() {
+        // Окно Windows живёт в «настоящих» точках экрана, а вёрстка — в своих,
+        // и при масштабе экрана 125/150% это разные числа. Без пересчёта окно
+        // Audacity садилось мимо рамки и обрезалось.
+        function embedAreaRect() {
+            const area = document.getElementById('audacityEmbedArea');
+            if (!area) return null;
+            const r = area.getBoundingClientRect();
+            const k = window.devicePixelRatio || 1;
+            return {
+                x: Math.round(r.left * k), y: Math.round(r.top * k),
+                w: Math.round(r.width * k), h: Math.round(r.height * k)
+            };
+        }
+
+        // silent = попытка встроить «между делом» (например, при включении
+        // режима «Суммы», когда Audacity может быть ещё не запущен) — тогда
+        // не ругаемся окном об ошибке и оставляем пустую рамку под окно.
+        async function attachEmbeddedAudacity(silent) {
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
-            const rect = area.getBoundingClientRect();
             area.style.display = 'block';
+            const rect = embedAreaRect();
 
-            const result = await pywebview.api.embed_audacity(
-                Math.round(rect.left), Math.round(rect.top),
-                Math.round(rect.width), Math.round(rect.height)
-            );
+            const result = await pywebview.api.embed_audacity(rect.x, rect.y, rect.w, rect.h);
 
             if (result && result.error) {
-                area.style.display = 'none';
+                if (silent) return;
+                area.style.display = sumModeActive ? 'block' : 'none';
                 showBeautifulAlert('⚠️ ' + result.error);
                 return;
             }
 
             audacityEmbedded = true;
+            lastEmbedRect = null;
             if (btn) btn.innerText = 'Отсоединить Audacity';
             window.addEventListener('resize', onEmbedWindowResize);
+            startEmbedWatchdog();
+        }
+
+        // Рамка уезжает не только при изменении размера окна: страницу можно
+        // прокрутить, панели над ней — свернуть или развернуть. Событий на всё
+        // это нет, поэтому просто раз в полсекунды сверяем, где рамка сейчас,
+        // и двигаем окно Audacity, только если она реально сдвинулась.
+        let lastEmbedRect = null;
+        let embedWatchdogTimer = null;
+
+        function startEmbedWatchdog() {
+            stopEmbedWatchdog();
+            embedWatchdogTimer = setInterval(async () => {
+                if (!audacityEmbedded) { stopEmbedWatchdog(); return; }
+                const r = embedAreaRect();
+                if (!r) return;
+                const same = lastEmbedRect && lastEmbedRect.x === r.x && lastEmbedRect.y === r.y
+                          && lastEmbedRect.w === r.w && lastEmbedRect.h === r.h;
+                if (same) return;
+                lastEmbedRect = r;
+                let res = await pywebview.api.sync_embed_position(r.x, r.y, r.w, r.h);
+                if (res && res.error) {
+                    // Audacity закрыли, пока был встроен — окно пропало,
+                    // сторож сам себя останавливает вместо бесконечных ошибок
+                    audacityEmbedded = false;
+                    stopEmbedWatchdog();
+                    let btn = document.getElementById('btnEmbedAudacity');
+                    if (btn) btn.innerText = 'Встроить окно Audacity сюда';
+                }
+            }, 500);
+        }
+
+        function stopEmbedWatchdog() {
+            if (embedWatchdogTimer) clearInterval(embedWatchdogTimer);
+            embedWatchdogTimer = null;
         }
 
         async function detachEmbeddedAudacity() {
             if (!audacityEmbedded) return;
             window.removeEventListener('resize', onEmbedWindowResize);
+            stopEmbedWatchdog();
             audacityEmbedded = false;
             const area = document.getElementById('audacityEmbedArea');
             const btn = document.getElementById('btnEmbedAudacity');
-            if (area) area.style.display = 'none';
+            // В режиме «Суммы» рамка остаётся на экране: место под окно
+            // Audacity закреплено за ней, даже когда окно отсоединено.
+            if (area) area.style.display = sumModeActive ? 'block' : 'none';
             if (btn) btn.innerText = 'Встроить окно Audacity сюда';
             try {
                 await pywebview.api.unembed_audacity();
@@ -1238,13 +1394,10 @@ let isProcessing = false;
             clearTimeout(embedResizeTimer);
             embedResizeTimer = setTimeout(() => {
                 if (!audacityEmbedded) return;
-                const area = document.getElementById('audacityEmbedArea');
-                if (!area) return;
-                const rect = area.getBoundingClientRect();
-                pywebview.api.sync_embed_position(
-                    Math.round(rect.left), Math.round(rect.top),
-                    Math.round(rect.width), Math.round(rect.height)
-                );
+                const r = embedAreaRect();
+                if (!r) return;
+                lastEmbedRect = r;
+                pywebview.api.sync_embed_position(r.x, r.y, r.w, r.h);
             }, 150);
         }
 
@@ -1272,9 +1425,20 @@ let isProcessing = false;
             let phraseEl = document.getElementById('phraseText');
 
             clearTimeout(playTimeout);
+            clearSumPlaybackTimers();
             if(res && res.playing) {
                 phraseEl.classList.add('is-playing');
                 playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
+
+                // Режим «Суммы»: играем всю цепочку целиком, а текст на экране
+                // переключаем в такт — под то, что звучит прямо сейчас.
+                if (res.segments && res.segments.length) {
+                    const originalText = phraseEl.innerText;
+                    res.segments.forEach(seg => {
+                        sumPlaybackTimers.push(setTimeout(() => { phraseEl.innerText = seg.label; }, seg.start * 1000));
+                    });
+                    sumPlaybackTimers.push(setTimeout(() => { phraseEl.innerText = originalText; }, res.duration * 1000));
+                }
             } else {
                 phraseEl.classList.remove('is-playing');
             }
@@ -1291,6 +1455,7 @@ let isProcessing = false;
 
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
+                clearSumPlaybackTimers();
                 phraseEl.classList.remove('is-playing');
 
                 if (state.completed_filepath) {
@@ -1365,6 +1530,7 @@ let isProcessing = false;
                         let res = await pywebview.api.dispatch('play_sync');
                         let phraseEl = document.getElementById('phraseText');
                         clearTimeout(playTimeout);
+                        clearSumPlaybackTimers();
                         if(res && res.playing) {
                             phraseEl.classList.add('is-playing');
                             playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);
@@ -1658,7 +1824,8 @@ let isProcessing = false;
             if (state.mode === 'VarBatch') {
                 document.getElementById('workspaceGrid').classList.add('workspace-grid--varbatch');
                 document.getElementById('standardActions').style.display = 'none';
-                document.getElementById('varBatchActions').style.display = 'flex';
+                document.getElementById('varBatchActions').style.display = sumModeActive ? 'none' : 'flex';
+                document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
                 // Теперь берем правильный текст фразы, а если его нет — название папки
                 document.getElementById('phraseText').innerText = state.phrase_text || state.var_batch_cat;
                 document.getElementById('chunkName').innerText = state.var_batch_name || "";
@@ -1671,8 +1838,8 @@ let isProcessing = false;
             } else {
                 document.getElementById('workspaceGrid').classList.remove('workspace-grid--varbatch');
                 document.getElementById('varBatchActions').style.display = 'none';
-                document.getElementById('standardActions').style.display = sumModeActive ? 'none' : 'flex';
-                document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+                applySumModeLayout();
+                if (sumModeActive && state.sum_mode) renderSumPanel(state.sum_mode);
 
                 let mergePanel = document.querySelector('.merge-panel');
                 if(mergePanel) mergePanel.style.display = 'block';
@@ -1928,10 +2095,10 @@ let isProcessing = false;
                 else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
                 else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
                 else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-                else if (e.code === 'KeyZ') { e.preventDefault(); saveVarBatch(false); }
+                else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumManualSave(); else saveVarBatch(false); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
-                else if (e.code === 'KeyC') { e.preventDefault(); sendToAudacity(); }
+                else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumSendToAudacity(); else sendToAudacity(); }
                 return;
             }
 
@@ -1942,7 +2109,7 @@ let isProcessing = false;
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumManualSave(); else processAction('good'); }
-            else if (e.code === 'KeyC') { e.preventDefault(); if (!sumModeActive) processAction('variable'); }
+            else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumSendToAudacity(); else processAction('variable'); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
@@ -2162,6 +2329,7 @@ let isProcessing = false;
                 // Проигрываем файл, если он уже выгружен (как при навигации Q/E)
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
+                clearSumPlaybackTimers();
                 phraseEl.classList.remove('is-playing');
                 if (state.completed_filepath) {
                     let res = await pywebview.api.play_specific_file(state.completed_filepath);
@@ -2186,6 +2354,7 @@ let isProcessing = false;
                 let res = await pywebview.api.dispatch('play_sync');
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
+                clearSumPlaybackTimers();
                 if(res && res.playing) {
                     phraseEl.classList.add('is-playing');
                     playTimeout = setTimeout(() => { phraseEl.classList.remove('is-playing'); }, res.duration * 1000);

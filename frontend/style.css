@@ -257,10 +257,59 @@ button[disabled]:active{ transform: none; }
 }
 .sum-counts span{ white-space: nowrap; }
 
+.sum-counts--clickable{ cursor: pointer; transition: border-color .15s, background .15s; }
+.sum-counts--clickable:hover{ border-color: var(--accent-var, #c9a227); background: rgba(201,162,39,0.08); }
+
+.sum-stats-modal h4{ margin: 0 0 12px; font-size: 15px; }
+.sum-stats-row{
+    display: flex; flex-direction: column; gap: 2px; padding: 8px 0;
+    border-top: 1px solid var(--border-soft); font-size: 13px; text-align: left;
+}
+.sum-stats-row:first-of-type{ border-top: none; }
+.sum-stats-tier{ font-weight: 600; }
+.sum-stats-dir{ font-weight: 400; color: var(--text-dim); font-size: 12px; }
+.sum-stats-nums{ color: var(--text-dim); }
+.sum-stats-last{ color: var(--accent-var, #c9a227); }
+
+.sum-target{
+    font-size: 13px; color: var(--text-dim); background: var(--screen);
+    border: 1px solid var(--border-soft); border-radius: 10px; padding: 8px 12px;
+}
+.sum-target b{ color: var(--accent-var, #c9a227); }
+
 .audacity-embed-area{
-    flex: 1; min-height: 640px; border-radius: 14px; border: 2px dashed var(--border-soft);
+    flex: 1; min-height: 820px; border-radius: 14px; border: 2px dashed var(--border-soft);
     background: #0b0d10; position: relative; overflow: hidden;
 }
+
+/* Режим «Суммы»: рамка под Audacity занимает всю ширину под обеими
+   колонками, а панели сверху ужимаются до необходимого минимума —
+   чтобы на монтаж оставалось как можно больше места. */
+/* Ограничение ширины в 1400px здесь только отнимает место у Audacity.
+   Отступы body тоже фиксированные (32px сверху / 48px снизу) — на весь
+   экран это заметная полоса впустую, поэтому в режиме «Суммы» их тоже
+   ужимаем и растягиваем страницу на всю высоту окна. */
+body.sum-mode{ padding: 10px 14px 10px; }
+body.sum-mode .stage-workspace{ max-width: none; min-height: calc(100vh - 20px); }
+body.sum-mode .workspace-header{ margin-bottom: 10px; }
+
+.workspace-grid--sum{ grid-template-rows: auto 1fr; }
+.workspace-grid--sum > .audacity-embed-area{
+    grid-column: 1 / -1; align-self: stretch; min-height: 600px;
+}
+.workspace-grid--sum .screen{ min-height: 120px; flex: 0 0 auto; }
+.workspace-grid--sum .panel-column{ align-self: start; }
+/* Верх ужимаем, чтобы окно Audacity помещалось на экране без прокрутки:
+   прокрутка — главный источник «съезжания» встроенного окна. */
+.workspace-grid--sum .hero-phrase{ font-size: 2em; }
+.workspace-grid--sum .screen{ padding: 16px 20px; }
+.workspace-grid--sum .action-panel{ padding: 16px 18px; }
+.workspace-grid--sum .work-hotkeys{ display: none; }
+.workspace-grid--sum .hint-copy{ display: none; }
+.workspace-grid--sum .btn-tile--tall{ height: 44px; font-size: var(--fs-md); }
+.workspace-grid--sum .action-note{ font-size: 11px; line-height: 1.4; }
+.workspace-grid--sum .sum-counts,
+.workspace-grid--sum .sum-target{ padding: 6px 10px; }
 .audacity-embed-area__label{
     position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
     font-size: 12px; color: var(--text-dim); background: rgba(0,0,0,.55);

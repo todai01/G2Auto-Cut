@@ -56,6 +56,36 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
         file_to_play = None
 
+        # 0. РЕЖИМ «СУММЫ»: проигрываем всю накопленную цепочку целиком —
+        # уже сохранённые ярусы + тот, над которым сейчас работаем — без
+        # пауз между ними, а не только то, что видно на экране сейчас.
+        # Работает и поверх обычной нарезки, и внутри конвейера «Готовые
+        # переменные», поэтому проверяем это раньше остальных режимов.
+        if getattr(self, 'sum_manual_active', False):
+            segments = self._sum_full_preview_segments()
+            if not segments:
+                return {"playing": False, "duration": 0}
+            try:
+                self.player.stop()
+                combined = None
+                markers = []
+                cursor = 0.0
+                for seg in segments:
+                    clip = AudioSegment.from_file(seg['path']).set_frame_rate(8000)
+                    dur = len(clip) / 1000.0
+                    if seg['label']:
+                        markers.append({"label": seg['label'], "start": cursor, "end": cursor + dur})
+                    combined = clip if combined is None else combined + clip
+                    cursor += dur
+                temp_path = os.path.join(self.work_dir, "temp_sum_preview.wav")
+                combined.export(temp_path, format="wav")
+                duration = FileUtils.get_exact_audio_duration(temp_path)
+                self.player.play(temp_path)
+                return {"playing": True, "duration": duration, "segments": markers}
+            except Exception as e:
+                print(f"Ошибка склейки превью (Суммы): {e}")
+                return {"playing": False, "duration": 0}
+
         # 1. ЛОГИКА ДЛЯ РЕЖИМА ПЕРЕМЕННЫХ (VarBatch)
         if self.current_mode == 'VarBatch':
             active_cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
@@ -229,7 +259,12 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
         # НОВОВВЕДЕНИЕ: Полная блокировка стандартного UI во время работы конвейера.
         # Это предотвратит любую попытку бекенда сбросить экран переменных на стандартный.
         if getattr(self, 'current_mode', '') == 'VarBatch':
-            return self._get_var_batch_ui_state()
+            state = self._get_var_batch_ui_state()
+            # Режим «Суммы» работает и внутри конвейера — панель должна
+            # обновляться и здесь, иначе счётчики застывают.
+            if getattr(self, 'sum_manual_active', False) and isinstance(state, dict):
+                state["sum_mode"] = self.get_sum_manual_state()
+            return state
 
         # «Готово» — это файлы в «Проверенных». Папка Good — наследие
         # двухступенчатого отбора, которого в программе больше нет.
@@ -305,6 +340,10 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
         # Лента дублей: статусы соседних дублей для полоски под счётчиком
         state["strip"] = self._build_chunk_strip()
+
+        # Режим «Суммы»: счётчики ярусов и то, куда уйдёт текущая строка
+        if getattr(self, 'sum_manual_active', False):
+            state["sum_mode"] = self.get_sum_manual_state()
 
         # Автосохранение: снимок проекта пишется на диск при каждом обновлении
         # экрана, поэтому закрытие программы больше не стирает прогресс.
