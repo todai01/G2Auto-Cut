@@ -823,6 +823,7 @@ let isProcessing = false;
 
             if (mode === 'premade') {
                 nudgeExcelAfterCut = false;
+                document.getElementById('onlyStartCheck').checked = false;
                 handlePremadeResult(state);
                 return;
             }
@@ -865,8 +866,9 @@ let isProcessing = false;
             if (state && state.missing_start_end) {
                 pendingMissing = state.missing || [];
                 document.getElementById('waitLabelsOverlay').style.display = 'none';
-                document.getElementById('startEndMissingText').innerHTML =
-                    `В выбранной папке не найдено: <b>${pendingMissing.map(m => m + '.wav').join(', ')}</b>. Выберите, как их получить.`;
+                document.getElementById('startEndMissingText').innerHTML = pendingMissing.length
+                    ? `В выбранной папке не найдено: <b>${pendingMissing.map(m => m + '.wav').join(', ')}</b>. Выберите, как их получить.`
+                    : `Осталось получить: <b>start.wav</b>.`;
                 document.getElementById('startEndMissingOverlay').style.display = 'flex';
                 return;
             }
@@ -880,6 +882,11 @@ let isProcessing = false;
             document.getElementById('waitLabelsOverlay').style.display = 'none';
             updateUI(state);
             showWorkspace();
+        }
+
+        async function toggleOnlyStart(checked) {
+            let state = await pywebview.api.set_only_start_mode(checked);
+            handlePremadeResult(state);
         }
 
         async function pickStartEndManual() {
@@ -1000,6 +1007,7 @@ let isProcessing = false;
             let state = await pywebview.api.load_premade_variables_folder(hwnd, inDir);
 
             document.getElementById('progressContainer').style.display = 'none';
+            document.getElementById('onlyStartCheck').checked = false;
             handlePremadeResult(state);
         }
 

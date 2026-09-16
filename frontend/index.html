@@ -88,6 +88,15 @@
             </div>
             <div class="modal-hint" id="startEndMissingText">В папке нет файлов start/end.</div>
 
+            <label class="opt-chip" style="margin-bottom: var(--space-3);">
+                <input type="checkbox" id="onlyStartCheck" onchange="toggleOnlyStart(this.checked)">
+                <span class="opt-chip__box" aria-hidden="true"></span>
+                <span class="opt-chip__text">
+                    Только start, без end
+                    <small>Есть запись только начальной фразы — конца нет и не будет</small>
+                </span>
+            </label>
+
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="pickStartEndManual()">
                     <span class="option-icon">📂</span>

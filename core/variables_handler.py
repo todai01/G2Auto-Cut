@@ -293,26 +293,38 @@ class VariablesMixin:
         self._pending_premade_dir = in_dir
         self._pending_start_file = self._find_reference_file(in_dir, "start")
         self._pending_end_file = self._find_reference_file(in_dir, "end")
+        self._pending_only_start = False
 
         return self._try_finish_premade_pending()
 
     def _try_finish_premade_pending(self):
-        """Проверяет, нашлись ли уже оба эталонных файла (start/end) для
+        """Проверяет, нашлись ли уже эталонные файлы (start/end) для
         отложенной загрузки «Готовых переменных». Если да — запускает
         сборку каскада; если нет — сообщает фронтенду, каких файлов не
-        хватает, чтобы тот предложил выбрать их или создать заново."""
+        хватает, чтобы тот предложил выбрать их или создать заново.
+
+        Если включён режим «только start» (у пользователя нет записи
+        окончания фразы), end можно не искать вовсе — дальше по коду
+        отсутствующий end просто не подставляется никуда."""
         in_dir = getattr(self, '_pending_premade_dir', None)
         if not in_dir:
             return {"error": "Сессия загрузки истекла, начните заново."}
 
         start_f = getattr(self, '_pending_start_file', None)
         end_f = getattr(self, '_pending_end_file', None)
+        only_start = getattr(self, '_pending_only_start', False)
 
-        if start_f and end_f:
-            return self._finish_premade_load(in_dir, start_f, end_f)
+        if start_f and (end_f or only_start):
+            return self._finish_premade_load(in_dir, start_f, end_f or "")
 
-        missing = [name for name, f in (('start', start_f), ('end', end_f)) if not f]
+        missing = [name for name, f in (('start', start_f), ('end', end_f)) if not f and not (only_start and name == 'end')]
         return {"missing_start_end": True, "missing": missing}
+
+    def set_only_start_mode(self, value):
+        """Пользователь отметил чекбокс «Только start, без end» — обычно
+        когда есть запись только начальной фразы, а окончания попросту нет."""
+        self._pending_only_start = bool(value)
+        return self._try_finish_premade_pending()
 
     def pick_start_end_file(self, which):
         """Пользователь выбирает файл start/end вручную с диска."""
@@ -342,7 +354,9 @@ class VariablesMixin:
         if not raw_file:
             return {"error": "cancel"}
 
-        needed = [name for name in ('start', 'end') if not getattr(self, f'_pending_{name}_file', None)]
+        only_start = getattr(self, '_pending_only_start', False)
+        wanted = ('start',) if only_start else ('start', 'end')
+        needed = [name for name in wanted if not getattr(self, f'_pending_{name}_file', None)]
 
         try:
             resp = self.audacity.send_command('New:', auto_start=True)
@@ -448,12 +462,17 @@ class VariablesMixin:
             cat_name = "Имена (Плоский список)"
             self.cascade_ordered_cats.append(cat_name)
 
+            # Исключаем эталонные файлы, чтобы они не попали в конвейер как имена.
+            # end может отсутствовать (режим «только start») — тогда его просто нет в списке.
+            reference_paths = {os.path.abspath(start_f)}
+            if end_f:
+                reference_paths.add(os.path.abspath(end_f))
+
             files = []
             for f in os.listdir(self.work_dir):
                 if f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac')):
                     full_p = os.path.abspath(os.path.join(self.work_dir, f))
-                    # Исключаем эталонные файлы, чтобы они не попали в конвейер как имена
-                    if full_p not in [os.path.abspath(start_f), os.path.abspath(end_f)]:
+                    if full_p not in reference_paths:
                         files.append(full_p)
 
             files.sort(key=sort_key)
