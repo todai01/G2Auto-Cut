@@ -264,7 +264,7 @@ button[disabled]:active{ transform: none; }
 .sum-target b{ color: var(--accent-var, #c9a227); }
 
 .audacity-embed-area{
-    flex: 1; min-height: 640px; border-radius: 14px; border: 2px dashed var(--border-soft);
+    flex: 1; min-height: 820px; border-radius: 14px; border: 2px dashed var(--border-soft);
     background: #0b0d10; position: relative; overflow: hidden;
 }
 
@@ -281,7 +281,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 
 .workspace-grid--sum{ grid-template-rows: auto 1fr; }
 .workspace-grid--sum > .audacity-embed-area{
-    grid-column: 1 / -1; align-self: stretch; min-height: 340px;
+    grid-column: 1 / -1; align-self: stretch; min-height: 600px;
 }
 .workspace-grid--sum .screen{ min-height: 120px; flex: 0 0 auto; }
 .workspace-grid--sum .panel-column{ align-self: start; }
