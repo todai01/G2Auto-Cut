@@ -6,8 +6,8 @@ import time
 # Audacity ставят в разные места, а раньше программа знала ровно один путь
 # и молча сдавалась, если его там не было. Проверяем обычные места установки.
 AUDACITY_PATHS = [
+    r"C:\Program Files\Audacity\Audacity.exe",  # подтверждённый путь на машине пользователя
     r"C:\Audacity\Audacity.exe",
-    r"C:\Program Files\Audacity\Audacity.exe",
     r"C:\Program Files (x86)\Audacity\Audacity.exe",
     os.path.expandvars(r"%LOCALAPPDATA%\Programs\Audacity\Audacity.exe"),
     os.path.expandvars(r"%PROGRAMFILES%\Audacity\Audacity.exe"),
