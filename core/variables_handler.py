@@ -1719,17 +1719,55 @@ class VariablesMixin:
             return 'tenge'
         return 'hundreds'
 
+    def _sum_in_cascade(self):
+        return getattr(self, 'current_mode', '') == 'VarBatch' and getattr(self, 'cascade_ordered_cats', None)
+
+    def _sum_current_source(self):
+        """Кусок, с которым пользователь работает прямо сейчас. Режим «Суммы»
+        одинаково работает и в обычной нарезке (очередь Chunks), и внутри
+        конвейера «Готовые переменные» (активный файл каскада) — берём тот
+        источник, который открыт на экране.
+
+        Возвращает (путь, имя файла, текст ошибки)."""
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            files = self.cascade_files.get(cat, [])
+            idx = self.cascade_ptrs.get(cat, 0)
+            if not files:
+                return None, None, f"В категории «{cat}» нет файлов."
+            if idx >= len(files):
+                return None, None, (f"Категория «{cat}» пройдена до конца ({len(files)} из {len(files)}). "
+                                     f"Вернитесь назад клавишей A или переключите категорию.")
+            return files[idx], os.path.basename(files[idx]), None
+
+        if not getattr(self, 'chunks_data', None):
+            return None, None, ("Дубли не загружены. Нарежьте сырой WAV или откройте готовую папку с дублями.")
+        if self.chunk_index >= len(self.chunks_data):
+            return None, None, (f"Вы в конце списка дублей ({len(self.chunks_data)} из {len(self.chunks_data)}). "
+                                 f"Вернитесь назад клавишей A.")
+        item = self.chunks_data[self.chunk_index]
+        return item['filepath'], item['filename'], None
+
+    def _sum_advance_pointer(self):
+        """После сохранения двигаем оба конвейера — и текст Excel, и аудио."""
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            self.cascade_ptrs[cat] = self.cascade_ptrs.get(cat, 0) + 1
+        else:
+            self.chunk_index += 1
+        if getattr(self, 'phrases_data', None):
+            self.phrase_index += 1
+
     def _current_sum_phrase(self):
         idx = getattr(self, 'phrase_index', 0)
         if getattr(self, 'phrases_data', None) and idx < len(self.phrases_data):
             return self.phrases_data[idx]
         return None
 
-    def _current_sum_save_name(self):
+    def _current_sum_save_name(self, fallback_name):
         """Имя файла берём из Excel (как в обычном режиме), а если его
         нет — оставляем имя самого дубля."""
-        item = self.chunks_data[self.chunk_index]
-        save_name = item['filename']
+        save_name = fallback_name
         phrase = self._current_sum_phrase()
         custom = (phrase or {}).get('filename')
         if custom:
@@ -1776,8 +1814,9 @@ class VariablesMixin:
         текущей строки Excel («1 млн» → Миллионы и т.д.). На стол Audacity
         уходит: start + последние сохранённые значения ДРУГИХ ярусов (если
         они уже есть) + текущий дубль + end."""
-        if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
-            return {"error": "Дубли закончились."}
+        active_file, _, err = self._sum_current_source()
+        if err:
+            return {"error": err}
 
         phrase = self._current_sum_phrase()
         if not phrase:
@@ -1790,10 +1829,8 @@ class VariablesMixin:
             return self.get_ui_state()
 
         if not self._ensure_audacity_ready():
-            return {"error": "Audacity не отвечает. Программа попробовала запустить его сама — "
-                              "откройте его вручную и нажмите кнопку ещё раз."}
+            return {"error": "Не удалось запустить Audacity. Откройте его вручную и нажмите кнопку ещё раз."}
 
-        active_file = self.chunks_data[self.chunk_index]['filepath']
         self.sum_manual_current_tier = tier
 
         self.audacity.send_command('SelectAll:')
@@ -1840,8 +1877,9 @@ class VariablesMixin:
         «5 тыс» — в тысячи, «20 тенге» — в тенге, просто «300» — в сотни.
         Папка создаётся сама, если её ещё нет."""
         import shutil
-        if not self.chunks_data or self.chunk_index >= len(self.chunks_data):
-            return self.get_ui_state()
+        active_file, source_name, err = self._sum_current_source()
+        if err:
+            return {"error": err}
 
         phrase = self._current_sum_phrase()
         if not phrase:
@@ -1849,13 +1887,11 @@ class VariablesMixin:
                               "миллионы это, тысячи, тенге или сотни."}
 
         tier = self._detect_sum_tier(phrase.get('text'))
-        item = self.chunks_data[self.chunk_index]
-        active_file = item['filepath']
 
         target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
         os.makedirs(target_dir, exist_ok=True)
 
-        save_name = self._current_sum_save_name()
+        save_name = self._current_sum_save_name(source_name)
         safe_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
         if os.path.exists(safe_path):
             try: os.remove(safe_path)
@@ -1926,11 +1962,7 @@ class VariablesMixin:
                 f"showToast('⚠️ Ярус «{SUM_TIER_LABELS[tier]}» дошёл до потолка ({cap}) — проверьте, всё ли верно в таблице.');")
 
         self.sum_manual_current_tier = None
-
-        # Двигаем оба конвейера сразу — и текст Excel, и дубли
-        if getattr(self, 'phrases_data', None):
-            self.phrase_index += 1
-        self.chunk_index += 1
+        self._sum_advance_pointer()
 
         return self.get_ui_state()
 
@@ -1952,7 +1984,12 @@ class VariablesMixin:
         if not resp or not os.path.exists(target_path):
             return {"error": "Не удалось сохранить остаток — убедитесь, что в Audacity выделен нужный участок, и повторите."}
 
-        self.chunks_data.insert(self.chunk_index + 1, {'filepath': target_path, 'filename': name})
+        # Ставим остаток следующим в ту очередь, которая сейчас открыта
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            self.cascade_files.setdefault(cat, []).insert(self.cascade_ptrs.get(cat, 0) + 1, target_path)
+        else:
+            self.chunks_data.insert(self.chunk_index + 1, {'filepath': target_path, 'filename': name})
 
         webview.windows[0].evaluate_js("showToast('💾 Остаток сохранён и добавлен в очередь следующим дублем');")
         return self.get_ui_state()

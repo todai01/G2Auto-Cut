@@ -2035,10 +2035,10 @@ let isProcessing = false;
                 else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
                 else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
                 else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-                else if (e.code === 'KeyZ') { e.preventDefault(); saveVarBatch(false); }
+                else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumManualSave(); else saveVarBatch(false); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
-                else if (e.code === 'KeyC') { e.preventDefault(); sendToAudacity(); }
+                else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumSendToAudacity(); else sendToAudacity(); }
                 return;
             }
 

@@ -229,7 +229,12 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
         # НОВОВВЕДЕНИЕ: Полная блокировка стандартного UI во время работы конвейера.
         # Это предотвратит любую попытку бекенда сбросить экран переменных на стандартный.
         if getattr(self, 'current_mode', '') == 'VarBatch':
-            return self._get_var_batch_ui_state()
+            state = self._get_var_batch_ui_state()
+            # Режим «Суммы» работает и внутри конвейера — панель должна
+            # обновляться и здесь, иначе счётчики застывают.
+            if getattr(self, 'sum_manual_active', False) and isinstance(state, dict):
+                state["sum_mode"] = self.get_sum_manual_state()
+            return state
 
         # «Готово» — это файлы в «Проверенных». Папка Good — наследие
         # двухступенчатого отбора, которого в программе больше нет.
