@@ -1070,6 +1070,41 @@ let isProcessing = false;
             }
         }
 
+        async function startPauseTrim() {
+            if (isProcessing) return; isProcessing = true;
+
+            updateProgress(0, 'Выбор папки и загрузка в Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let res = await pywebview.api.prepare_pause_trim();
+            document.getElementById('progressContainer').style.display = 'none';
+            isProcessing = false;
+
+            if (res && res.error === "cancel") return;
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res?.error || 'Неизвестная ошибка'}`);
+                return;
+            }
+
+            await showBeautifulAlert(`✂️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Подрежьте паузы до и после речи так, как хотите видеть во всех файлах.<br>2. Вернитесь сюда и нажмите ОК — программа измерит, сколько тишины вы оставили, и применит то же самое ко всем <b>${res.total}</b> файлам в папке (у каждого — по его собственной длине).`);
+
+            isProcessing = true;
+            updateProgress(0, 'Чтение эталона и обработка файлов...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let applyRes = await pywebview.api.apply_pause_trim();
+            document.getElementById('progressContainer').style.display = 'none';
+            isProcessing = false;
+
+            if (applyRes && applyRes.error) {
+                showBeautifulAlert(`❌ <b>Ошибка подравнивания</b><br><br>${applyRes.error}`);
+            } else if (applyRes && applyRes.skipped) {
+                showBeautifulAlert(`✅ <b>Готово!</b><br><br>Паузы подровнены. ${applyRes.skipped} файл(ов) пропущено — в них не нашлось речи (проверьте вручную).`);
+            } else {
+                showBeautifulAlert('✅ <b>Готово!</b><br><br>Паузы во всех файлах папки подровнены под ваш эталон.');
+            }
+        }
+
         async function selectAudacityProject(hwnd) {
             document.getElementById('projectSelectorOverlay').style.display = 'none';
 
