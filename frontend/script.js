@@ -1893,6 +1893,10 @@ let isProcessing = false;
                 document.getElementById('standardActions').style.display = 'none';
                 document.getElementById('varBatchActions').style.display = sumModeActive ? 'none' : 'flex';
                 document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
+                // Счётчики по ярусам застывали на значениях первого включения — сюда
+                // (в отличие от обычного режима ниже) обновление панели забыли добавить,
+                // хотя «Суммы» точно так же работают и внутри конвейера «Переменные».
+                if (sumModeActive && state.sum_mode) renderSumPanel(state.sum_mode);
                 // Теперь берем правильный текст фразы, а если его нет — название папки
                 document.getElementById('phraseText').innerText = state.phrase_text || state.var_batch_cat;
                 document.getElementById('chunkName').innerText = state.var_batch_name || "";
