@@ -380,6 +380,16 @@ class ProjectMixin:
         # Открываем обычный список дублей как безопасный старт.
         mode = self.current_mode if self.current_mode in ('Chunks', 'Переменные', 'Проверенные') else 'Chunks'
         self.current_mode = mode
+
+        # project_state.apply() выше уже восстановил точную позицию
+        # (chunk_index/phrase_index) из сохранённого снимка — но
+        # _scan_and_load_folder() ниже сама берёт позицию из state_memory,
+        # а не из них, и там для текущего режима могло остаться старое
+        # значение (state_memory обновляется только при переключении между
+        # режимами, а не на каждом шаге). Без этой строчки только что
+        # восстановленная позиция тут же затиралась дефолтной.
+        self.state_memory[mode] = [self.chunk_index, self.phrase_index]
+
         return self._scan_and_load_folder(os.path.join(path, mode), mode)
 
     def load_chunks_folder(self):

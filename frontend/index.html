@@ -59,6 +59,27 @@
     </div>
 
     <!-- Выбор режима сразу после нарезки чанков -->
+    <!-- Продолжить недавний проект? — всплывает перед экраном подготовки -->
+    <div id="resumeProjectOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Хотите продолжить проект?</h3>
+            </div>
+            <div class="modal-hint">Последний открытый проект: <b id="resumeProjectName">—</b></div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="confirmResumeProject()">
+                    <span class="option-icon">▶️</span>
+                    <div><span class="option-title">Продолжить</span><span class="option-desc">Открыть с того места, где остановились</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="declineResumeProject()">
+                    <span class="option-icon">🆕</span>
+                    <div><span class="option-title">Начать заново</span><span class="option-desc">Перейти к подготовке нового проекта</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="modeChoiceOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
@@ -428,7 +449,6 @@
                 <span></span><span></span><span></span><span></span><span></span>
             </div>
             <div class="splash-inner">
-                <img class="splash-logo" src="logo.png" alt="G2Studio">
                 <div class="splash-mark">G2<span>Auto</span>Cut</div>
                 <div class="splash-tagline">Студийная нарезка и монтаж озвучки</div>
                 <button class="splash-btn" onclick="enterApp()">
@@ -581,12 +601,6 @@
                         <span class="util-tile__icon">🔊</span>
                         <span class="util-tile__title">Массовая нормализация</span>
                         <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
-                    </button>
-
-                    <button class="util-tile util-tile--info rise" style="--d: 7" onclick="startPauseTrim()">
-                        <span class="util-tile__icon">✂️</span>
-                        <span class="util-tile__title">Подровнять паузы по эталону</span>
-                        <span class="util-tile__desc">Подрежьте один файл в Audacity — остальные подстроятся сами, под свою длину</span>
                     </button>
 
                     <button class="util-tile util-tile--mode rise" style="--d: 8" onclick="openConverter()">

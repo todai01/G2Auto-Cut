@@ -585,17 +585,10 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 
 .splash-inner{ position: relative; z-index: 1; }
 
-.splash-logo{
-    width: 132px; height: 132px; border-radius: 30px;
-    box-shadow: 0 18px 40px rgba(0,0,0,0.35);
-    animation: markIn .75s var(--ease) both;
-}
-
 .splash-mark{
-    margin-top: var(--space-4);
     font-size: clamp(42px, 7vw, 74px); font-weight: 800; letter-spacing: -0.035em;
     line-height: 1.05; color: var(--text);
-    animation: markIn .75s var(--ease) .08s both;
+    animation: markIn .75s var(--ease) both;
 }
 .splash-mark span{
     background: linear-gradient(92deg, var(--accent-primary), var(--accent-mode));
