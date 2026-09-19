@@ -176,7 +176,7 @@ class ConstructorMixin:
             self._force_foreground(windows[0]['hwnd'])
 
         webview.windows[0].evaluate_js(
-            "showToast('✂️ Сумма отправлена в Audacity — поправьте и нажмите «Сохранить»');")
+            "showToast('Сумма отправлена в Audacity — поправьте и нажмите «Сохранить»');")
         return {"status": "ok"}
 
     def constructor_save(self):

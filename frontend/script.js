@@ -2588,7 +2588,6 @@ let isProcessing = false;
             millions: 'var(--accent-var)', hundreds: 'var(--accent-primary)',
             thousands: 'var(--accent-good)', tenge: 'var(--accent-info)'
         };
-        const CONSTRUCTOR_TIER_ICON = { millions: '💎', hundreds: '💵', thousands: '💰', tenge: '🪙' };
         let constructorState = null;
         let constructorReelInstances = {};
 
@@ -2729,16 +2728,16 @@ let isProcessing = false;
         }
 
         async function startConstructor() {
-            await showBeautifulAlert('📁 <b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат 4 подпапки ярусов.');
+            await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат 4 подпапки ярусов.');
             let state = await pywebview.api.constructor_pick_sum_folder();
             if (state && state.error === 'cancel') return;
             if (!state || state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state && state.error ? state.error : 'Неизвестная ошибка'}`);
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${state && state.error ? state.error : 'Неизвестная ошибка'}`);
                 return;
             }
             constructorState = state;
 
-            await showBeautifulAlert('🎙️ <b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
+            await showBeautifulAlert('<b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
             let startRes = await pywebview.api.constructor_pick_start();
             if (startRes && startRes.error === 'cancel') return;
             if (startRes && !startRes.error) constructorState = startRes;
@@ -2784,7 +2783,7 @@ let isProcessing = false;
                 let isEmpty = items.length === 0;
                 return `
                 <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
-                    <div class="reel-col__label"><span>${CONSTRUCTOR_TIER_ICON[tier]}</span>${escapeHtml(constructorState.tiers[tier].label)}</div>
+                    <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
                     <div class="reel" id="reel-${tier}">
                         <div class="reel-indicator"></div>
                         <div class="reel-track"></div>
@@ -2833,7 +2832,7 @@ let isProcessing = false;
         async function constructorPlay() {
             let res = await pywebview.api.constructor_play(constructorIndices());
             if (res && res.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
             }
         }
 
@@ -2848,7 +2847,7 @@ let isProcessing = false;
                 if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
             }
             if (res && res.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
                 return;
             }
             // Теперь Audacity точно запущен — сажаем его окно в рамку конструктора
@@ -2858,8 +2857,8 @@ let isProcessing = false;
         async function constructorSaveResult() {
             let res = await pywebview.api.constructor_save();
             if (res && res.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
             } else if (res) {
-                showToast(`💾 Сохранено кусков: ${res.saved}`);
+                showToast(`Сохранено кусков: ${res.saved}`);
             }
         }
