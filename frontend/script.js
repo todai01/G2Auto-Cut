@@ -185,9 +185,10 @@ let isProcessing = false;
         // подставлялось руками в каждой функции, и стоило один раз ошибиться —
         // заставка съезжала в левый край. Теперь оно живёт в одном месте.
         const STAGE_DISPLAY = {
-            'stage0-splash':    'flex',
-            'stage1-loading':   'flex',
-            'stage2-workspace': 'block'
+            'stage0-splash':      'flex',
+            'stage1-loading':     'flex',
+            'stage2-workspace':   'block',
+            'stage3-constructor': 'block'
         };
 
         function showStage(activeId) {
@@ -2552,5 +2553,236 @@ let isProcessing = false;
             if (window.lastAuditReportText) {
                 navigator.clipboard.writeText(window.lastAuditReportText);
                 showToast("Отчет аудита скопирован в буфер обмена!");
+            }
+        }
+
+        // ==================================================================
+        //  КОНСТРУКТОР ПЕРЕМЕННЫХ («Суммы») — рулетки с физикой прокрутки.
+        //  Не завязан на очередь Excel/дублей: пользователь листает уже
+        //  сохранённые значения по каждому ярусу и вручную собирает любую
+        //  комбинацию — послушать целиком или отправить в Audacity на
+        //  точечную правку.
+        // ==================================================================
+
+        const CONSTRUCTOR_TIER_ORDER = ['millions', 'hundreds', 'thousands', 'tenge'];
+        let constructorState = null;
+        let constructorReelInstances = {};
+
+        class Reel {
+            constructor(container, items, itemHeight) {
+                this.container = container;
+                this.track = container.querySelector('.reel-track');
+                this.items = items;
+                this.itemHeight = itemHeight;
+                this.index = items.length ? Math.floor(items.length / 2) : 0;
+                this.offset = -this.index * this.itemHeight;
+                this.velocity = 0;
+                this.dragging = false;
+                this.lastY = 0;
+                this.lastT = 0;
+                this.rafId = null;
+                this._snapTimer = null;
+                this._render();
+                this._bind();
+            }
+            _render() {
+                this.track.innerHTML = this.items.map(t => `<div class="reel-item">${escapeHtml(t)}</div>`).join('');
+                this._applyOffset();
+            }
+            _applyOffset() {
+                this.track.style.transform = `translateY(${this.offset}px)`;
+            }
+            _clampOffset(v) {
+                if (!this.items.length) return 0;
+                const min = -(this.items.length - 1) * this.itemHeight;
+                return Math.min(0, Math.max(min, v));
+            }
+            _bind() {
+                if (!this.items.length) return;
+                const pointY = (e) => (e.touches ? e.touches[0].clientY : e.clientY);
+                const onDown = (e) => {
+                    this.dragging = true;
+                    cancelAnimationFrame(this.rafId);
+                    this.lastY = pointY(e);
+                    this.lastT = performance.now();
+                    this.velocity = 0;
+                    e.preventDefault();
+                };
+                const onMove = (e) => {
+                    if (!this.dragging) return;
+                    const y = pointY(e);
+                    const dy = y - this.lastY;
+                    const now = performance.now();
+                    const dt = Math.max(1, now - this.lastT);
+                    this.velocity = dy / dt;
+                    this.offset = this._clampOffset(this.offset + dy);
+                    this._applyOffset();
+                    this.lastY = y;
+                    this.lastT = now;
+                };
+                const onUp = () => {
+                    if (!this.dragging) return;
+                    this.dragging = false;
+                    this._momentum();
+                };
+                this.container.addEventListener('mousedown', onDown);
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+                this.container.addEventListener('touchstart', onDown, { passive: false });
+                this.container.addEventListener('touchmove', onMove, { passive: false });
+                this.container.addEventListener('touchend', onUp);
+                this.container.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    cancelAnimationFrame(this.rafId);
+                    this.offset = this._clampOffset(this.offset - e.deltaY * 0.6);
+                    this._applyOffset();
+                    clearTimeout(this._snapTimer);
+                    this._snapTimer = setTimeout(() => this._snap(), 120);
+                }, { passive: false });
+            }
+            _momentum() {
+                const friction = 0.94;
+                const step = () => {
+                    if (Math.abs(this.velocity) < 0.02) { this._snap(); return; }
+                    this.velocity *= friction;
+                    this.offset = this._clampOffset(this.offset + this.velocity * 16);
+                    this._applyOffset();
+                    this.rafId = requestAnimationFrame(step);
+                };
+                this.rafId = requestAnimationFrame(step);
+            }
+            _snap() {
+                if (!this.items.length) return;
+                const idx = Math.round(-this.offset / this.itemHeight);
+                const clamped = Math.min(this.items.length - 1, Math.max(0, idx));
+                this._animateTo(-clamped * this.itemHeight, clamped);
+            }
+            _animateTo(target, newIndex) {
+                cancelAnimationFrame(this.rafId);
+                const start = this.offset;
+                const startT = performance.now();
+                const dur = 220;
+                const step = (now) => {
+                    const t = Math.min(1, (now - startT) / dur);
+                    const eased = 1 - Math.pow(1 - t, 3);
+                    this.offset = start + (target - start) * eased;
+                    this._applyOffset();
+                    if (t < 1) {
+                        this.rafId = requestAnimationFrame(step);
+                    } else {
+                        this.index = newIndex;
+                    }
+                };
+                this.rafId = requestAnimationFrame(step);
+            }
+            getIndex() { return this.items.length ? this.index : -1; }
+        }
+
+        async function startConstructor() {
+            let state = await pywebview.api.constructor_pick_sum_folder();
+            if (state && state.error === 'cancel') return;
+            if (!state || state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state && state.error ? state.error : 'Неизвестная ошибка'}`);
+                return;
+            }
+            constructorState = state;
+
+            let startRes = await pywebview.api.constructor_pick_start();
+            if (startRes && startRes.error === 'cancel') return;
+            if (startRes && !startRes.error) constructorState = startRes;
+
+            document.getElementById('constructorEndOverlay').style.display = 'flex';
+        }
+
+        async function constructorPickEnd() {
+            document.getElementById('constructorEndOverlay').style.display = 'none';
+            let res = await pywebview.api.constructor_pick_end();
+            if (res && !res.error) constructorState = res;
+            openConstructorScreen();
+        }
+
+        function constructorSkipEnd() {
+            document.getElementById('constructorEndOverlay').style.display = 'none';
+            openConstructorScreen();
+        }
+
+        function openConstructorScreen() {
+            showStage('stage3-constructor');
+            renderConstructorMeta();
+            renderConstructorReels();
+        }
+
+        function renderConstructorMeta() {
+            if (!constructorState) return;
+            let bits = [
+                constructorState.start ? `start: ${constructorState.start}` : 'start: не выбран',
+                constructorState.end ? `end: ${constructorState.end}` : 'end: без окончания'
+            ];
+            document.getElementById('constructorMeta').innerText = bits.join(' · ');
+        }
+
+        function renderConstructorReels() {
+            let wrap = document.getElementById('constructorReels');
+            if (!constructorState || !constructorState.tiers) { wrap.innerHTML = ''; return; }
+
+            wrap.innerHTML = CONSTRUCTOR_TIER_ORDER.map(tier => `
+                <div class="reel-col">
+                    <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
+                    <div class="reel" id="reel-${tier}">
+                        <div class="reel-indicator"></div>
+                        <div class="reel-track"></div>
+                    </div>
+                    <div class="reel-col__count">${constructorState.tiers[tier].items.length} шт.</div>
+                </div>
+            `).join('');
+
+            constructorReelInstances = {};
+            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+                let items = constructorState.tiers[tier].items;
+                let container = document.getElementById(`reel-${tier}`);
+                constructorReelInstances[tier] = new Reel(container, items, 44);
+            });
+        }
+
+        function constructorIndices() {
+            let indices = {};
+            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+                let reel = constructorReelInstances[tier];
+                if (reel) {
+                    let idx = reel.getIndex();
+                    if (idx >= 0) indices[tier] = idx;
+                }
+            });
+            return indices;
+        }
+
+        async function constructorPlay() {
+            let res = await pywebview.api.constructor_play(constructorIndices());
+            if (res && res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+            }
+        }
+
+        async function constructorSendToAudacity() {
+            let btn = document.querySelector('#stage3-constructor .btn-tile--primary');
+            let origHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
+            let res;
+            try {
+                res = await pywebview.api.constructor_send_to_audacity(constructorIndices());
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+            }
+            if (res && res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+            }
+        }
+
+        async function constructorSaveResult() {
+            let res = await pywebview.api.constructor_save();
+            if (res && res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+            } else if (res) {
+                showToast(`💾 Сохранено кусков: ${res.saved}`);
             }
         }

@@ -740,6 +740,11 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .mode-card--good .mode-card__go{ color: var(--accent-good); }
 .mode-card--good .mode-card__icon{ color: var(--accent-good); }
 
+.mode-card--info::before{ background: repeating-linear-gradient(90deg, var(--accent-primary) 0 14px, transparent 14px 18px); }
+.mode-card--info:hover{ border-color: var(--accent-primary); }
+.mode-card--info .mode-card__go{ color: var(--accent-primary); }
+.mode-card--info .mode-card__icon{ color: var(--accent-primary); }
+
 /* --- Плитки утилит --- */
 .util-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: var(--space-3); }
 .util-tile{
@@ -1602,6 +1607,54 @@ input:focus-visible + .opt-chip__box{
     .var-slot__mix{ width: 100%; }
     .chunk-nav{ gap: 12px; }
     .chunk-display{ width: auto; flex: 1; min-width: 0; }
+}
+
+/* ---------- Конструктор переменных (рулетки) ---------- */
+.stage-constructor{ display: flex; flex-direction: column; min-height: calc(100vh - 80px); }
+
+.constructor-title{ display: flex; flex-direction: column; gap: 2px; text-align: right; }
+.constructor-title__main{ font-size: var(--fs-lg); font-weight: 700; color: var(--text); }
+.constructor-title__sub{ font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+
+.constructor-body{
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--space-6); padding: var(--space-6) var(--space-4);
+}
+
+.constructor-reels{ display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+
+.reel-col{ display: flex; flex-direction: column; align-items: center; gap: 8px; width: 200px; }
+.reel-col__label{ font-size: 13px; font-weight: 700; color: var(--text); text-align: center; }
+.reel-col__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+
+.reel{
+    position: relative; width: 100%; height: 220px; overflow: hidden;
+    background: var(--screen); border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+    cursor: grab; user-select: none; touch-action: none;
+}
+.reel:active{ cursor: grabbing; }
+.reel-track{ position: absolute; top: 88px; left: 0; right: 0; will-change: transform; }
+.reel-item{
+    height: 44px; line-height: 44px; text-align: center; font-family: var(--font-mono);
+    font-size: 15px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 10px;
+}
+.reel-indicator{
+    position: absolute; top: 88px; left: 0; right: 0; height: 44px;
+    border-top: 1px solid var(--accent-var, #c9a227); border-bottom: 1px solid var(--accent-var, #c9a227);
+    background: rgba(201,162,39,0.08); pointer-events: none; z-index: 1;
+}
+.reel::before, .reel::after{
+    content: ""; position: absolute; left: 0; right: 0; height: 88px; pointer-events: none; z-index: 2;
+}
+.reel::before{ top: 0; background: linear-gradient(180deg, var(--screen), transparent); }
+.reel::after{ bottom: 0; background: linear-gradient(0deg, var(--screen), transparent); }
+
+.constructor-actions{ display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+.constructor-actions .btn-tile{ min-width: 190px; }
+
+@media (max-width: 900px){
+    .reel-col{ width: 44%; }
 }
 
 @media (prefers-reduced-motion: reduce){

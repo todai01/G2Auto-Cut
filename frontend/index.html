@@ -59,6 +59,27 @@
     </div>
 
     <!-- Выбор режима сразу после нарезки чанков -->
+    <!-- Конструктор переменных: добавить файл окончания фразы? -->
+    <div id="constructorEndOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Добавить файл окончания (end)?</h3>
+            </div>
+            <div class="modal-hint">Не обязательно — если записи конца фразы нет, просто пропустите.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="constructorPickEnd()">
+                    <span class="option-icon">📄</span>
+                    <div><span class="option-title">Выбрать end.wav</span><span class="option-desc">Указать файл с диска</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="constructorSkipEnd()">
+                    <span class="option-icon">🚫</span>
+                    <div><span class="option-title">Без end</span><span class="option-desc">Только start</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Продолжить недавний проект? — всплывает перед экраном подготовки -->
     <div id="resumeProjectOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -564,6 +585,13 @@
                         <span class="mode-card__desc">Загрузить уже рассортированные суммы с диска вместе с файлами start.wav и end.wav.</span>
                         <span class="mode-card__go">Выбрать папку &#8594;</span>
                     </button>
+
+                    <button class="mode-card mode-card--info rise" style="--d: 5" onclick="startConstructor()">
+                        <span class="mode-card__icon">🎛️</span>
+                        <span class="mode-card__title">Конструктор переменных</span>
+                        <span class="mode-card__desc">Рулетками листаете уже сохранённые суммы, собираете любую комбинацию и правите точечно.</span>
+                        <span class="mode-card__go">Открыть &#8594;</span>
+                    </button>
                 </div>
 
                 <div class="mode-options rise" style="--d: 5">
@@ -913,6 +941,33 @@
                     <span class="hotkey"><kbd>F</kbd> Поиск</span>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div id="stage3-constructor" class="stage stage-constructor" style="display: none;">
+        <header class="workspace-header">
+            <div class="header-actions">
+                <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
+            </div>
+            <div class="constructor-title">
+                <span class="constructor-title__main">Конструктор переменных — Суммы</span>
+                <span class="constructor-title__sub" id="constructorMeta">Папка не выбрана</span>
+            </div>
+        </header>
+
+        <div class="constructor-body">
+            <div class="constructor-reels" id="constructorReels">
+                <!-- 4 рулетки рендерятся из JS: renderConstructorReels() -->
+            </div>
+
+            <div class="constructor-actions">
+                <button class="btn-tile btn-tile--tall" onclick="constructorPlay()">▶ Играть</button>
+                <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="constructorSendToAudacity()">✂️ Обновить сумму</button>
+                <button class="btn-tile btn-tile--good btn-tile--tall" onclick="constructorSaveResult()">💾 Сохранить</button>
+            </div>
+            <div class="action-note">Крутите рулетки мышью (тяните вверх/вниз) или колёсиком. «Играть» — послушать
+                собранную сумму целиком. «Обновить сумму» — отправить в Audacity для правки. «Сохранить» —
+                записать скорректированные куски обратно поверх исходных файлов, только по нажатию.</div>
         </div>
     </div>
 
