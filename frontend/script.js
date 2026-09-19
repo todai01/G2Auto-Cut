@@ -167,8 +167,14 @@ let isProcessing = false;
         // Когда Audacity вживлён внутрь софта, клик по нему технически уводит
         // фокус браузерного слоя — но это всё ещё то же самое окно, а не
         // отдельная программа, поэтому темнить/размывать фон не нужно.
+        // В «Конструкторе переменных» своей рамки под встраивание пока нет —
+        // Audacity там всегда выходит отдельным окном по кнопке «Обновить
+        // сумму», и это нормальная часть работы с этим экраном, а не повод
+        // затемнять программу.
         window.addEventListener('blur', () => {
             if (audacityEmbedded) return;
+            let constructorStage = document.getElementById('stage3-constructor');
+            if (constructorStage && constructorStage.style.display !== 'none') return;
             document.body.classList.add('app-unfocused');
         });
         window.addEventListener('focus', () => document.body.classList.remove('app-unfocused'));
