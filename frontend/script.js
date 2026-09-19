@@ -2679,6 +2679,7 @@ let isProcessing = false;
         }
 
         async function startConstructor() {
+            await showBeautifulAlert('📁 <b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат 4 подпапки ярусов.');
             let state = await pywebview.api.constructor_pick_sum_folder();
             if (state && state.error === 'cancel') return;
             if (!state || state.error) {
@@ -2687,6 +2688,7 @@ let isProcessing = false;
             }
             constructorState = state;
 
+            await showBeautifulAlert('🎙️ <b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
             let startRes = await pywebview.api.constructor_pick_start();
             if (startRes && startRes.error === 'cancel') return;
             if (startRes && !startRes.error) constructorState = startRes;
