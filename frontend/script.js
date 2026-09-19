@@ -2581,15 +2581,24 @@ let isProcessing = false;
         // ==================================================================
 
         const CONSTRUCTOR_TIER_ORDER = ['millions', 'hundreds', 'thousands', 'tenge'];
+        // У каждого яруса — свой акцентный цвет (уже есть в общей палитре
+        // софта), чтобы рулетки визуально отличались друг от друга, а не
+        // сливались в одинаковые серые колонки.
+        const CONSTRUCTOR_TIER_ACCENT = {
+            millions: 'var(--accent-var)', hundreds: 'var(--accent-primary)',
+            thousands: 'var(--accent-good)', tenge: 'var(--accent-info)'
+        };
+        const CONSTRUCTOR_TIER_ICON = { millions: '💎', hundreds: '💵', thousands: '💰', tenge: '🪙' };
         let constructorState = null;
         let constructorReelInstances = {};
 
         class Reel {
-            constructor(container, items, itemHeight) {
+            constructor(container, items, itemHeight, onChange) {
                 this.container = container;
                 this.track = container.querySelector('.reel-track');
                 this.items = items;
                 this.itemHeight = itemHeight;
+                this.onChange = onChange;
                 // Открываем рулетку сразу на первом (самом маленьком) значении
                 // — «1 миллион», «100», «1 тысяча» и т.д., а не с середины списка.
                 this.index = 0;
@@ -2609,6 +2618,18 @@ let isProcessing = false;
             }
             _applyOffset() {
                 this.track.style.transform = `translateY(${this.offset}px)`;
+                this._markActive();
+                if (this.onChange) this.onChange();
+            }
+            _markActive() {
+                // Подсвечиваем крупным цветным текстом ровно то значение,
+                // что сейчас под индикатором — живьём, на каждый пиксель
+                // прокрутки, а не только когда рулетка окончательно встала.
+                if (this._activeEl) this._activeEl.classList.remove('reel-item--active');
+                if (!this.items.length) { this._activeEl = null; return; }
+                const idx = this.getIndex();
+                this._activeEl = this.track.children[idx] || null;
+                if (this._activeEl) this._activeEl.classList.add('reel-item--active');
             }
             _clampOffset(v) {
                 if (!this.items.length) return 0;
@@ -2762,8 +2783,8 @@ let isProcessing = false;
                 let items = constructorState.tiers[tier].items;
                 let isEmpty = items.length === 0;
                 return `
-                <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}">
-                    <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
+                <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
+                    <div class="reel-col__label"><span>${CONSTRUCTOR_TIER_ICON[tier]}</span>${escapeHtml(constructorState.tiers[tier].label)}</div>
                     <div class="reel" id="reel-${tier}">
                         <div class="reel-indicator"></div>
                         <div class="reel-track"></div>
@@ -2776,8 +2797,25 @@ let isProcessing = false;
             CONSTRUCTOR_TIER_ORDER.forEach(tier => {
                 let items = constructorState.tiers[tier].items;
                 let container = document.getElementById(`reel-${tier}`);
-                constructorReelInstances[tier] = new Reel(container, items, 44);
+                constructorReelInstances[tier] = new Reel(container, items, 44, updateConstructorPreview);
             });
+            updateConstructorPreview();
+        }
+
+        function updateConstructorPreview() {
+            let el = document.getElementById('constructorPreview');
+            if (!el || !constructorState) return;
+            let parts = [];
+            if (constructorState.start) parts.push(escapeHtml(constructorState.start));
+            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+                let items = constructorState.tiers[tier].items;
+                let reel = constructorReelInstances[tier];
+                if (!items.length) { parts.push(`<em>${escapeHtml(constructorState.tiers[tier].label)} — пропущено</em>`); return; }
+                let idx = reel ? reel.getIndex() : 0;
+                parts.push(`<b>${escapeHtml(items[idx] ?? '')}</b>`);
+            });
+            if (constructorState.end) parts.push(escapeHtml(constructorState.end));
+            el.innerHTML = parts.join(' &nbsp;→&nbsp; ');
         }
 
         function constructorIndices() {

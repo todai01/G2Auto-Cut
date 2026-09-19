@@ -1626,43 +1626,76 @@ input:focus-visible + .opt-chip__box{
     gap: var(--space-6); padding: var(--space-6) var(--space-4);
 }
 
+/* Карточка-подложка вокруг рулеток — та же логика, что и у остальных
+   экранов (панель на фоне var(--panel) с мягкой тенью), чтобы блок не
+   висел сиротой на пустом фоне. */
+.constructor-panel{
+    width: 100%; max-width: 1000px; display: flex; flex-direction: column; align-items: center;
+    gap: var(--space-5); background: var(--panel); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); padding: var(--space-6) var(--space-5) var(--space-5);
+}
+
 .constructor-reels{ display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 100%; }
 
-.reel-col{ display: flex; flex-direction: column; align-items: center; gap: 8px; width: 200px; }
-.reel-col__label{ font-size: 13px; font-weight: 700; color: var(--text); text-align: center; }
+.reel-col{ display: flex; flex-direction: column; align-items: center; gap: 10px; width: 200px; }
+.reel-col__label{
+    font-size: 13px; font-weight: 700; color: var(--tier-accent, var(--text)); text-align: center;
+    display: flex; align-items: center; gap: 6px;
+}
 .reel-col__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
 
 /* Ярус, для которого в папке не нашлось подпапки/файлов — подсвечиваем
    красным, а не молчим: пользователь должен сразу увидеть, что этой
    суммы нет, а не гадать, почему рулетка пустая. При проигрывании и
    отправке в Audacity такой ярус просто пропускается (см. бэкенд). */
-.reel-col--empty .reel-col__label{ color: var(--accent-bad, #ef6f63); }
-.reel-col--empty .reel-col__count{ color: var(--accent-bad, #ef6f63); }
-.reel-col--empty .reel{ border-color: var(--accent-bad, #ef6f63); background: rgba(239,111,99,0.06); }
-.reel-col--empty .reel-indicator{ border-color: var(--accent-bad, #ef6f63); background: rgba(239,111,99,0.08); }
+.reel-col--empty .reel-col__label{ color: var(--accent-trash); }
+.reel-col--empty .reel-col__count{ color: var(--accent-trash); }
+.reel-col--empty .reel{ border-color: var(--accent-trash); background: var(--tint-trash); }
+.reel-col--empty .reel-indicator{ border-color: var(--accent-trash); background: rgba(239,91,80,0.1); box-shadow: none; }
 
 .reel{
     position: relative; width: 100%; height: 220px; overflow: hidden;
     background: var(--screen); border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-screen);
     cursor: grab; user-select: none; touch-action: none;
+    transition: border-color 0.2s ease;
 }
+.reel:hover{ border-color: var(--tier-accent, var(--border)); }
 .reel:active{ cursor: grabbing; }
 .reel-track{ position: absolute; top: 88px; left: 0; right: 0; will-change: transform; }
 .reel-item{
     height: 44px; line-height: 44px; text-align: center; font-family: var(--font-mono);
-    font-size: 15px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    padding: 0 10px;
+    font-size: 15px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 10px; transition: color 0.15s ease, transform 0.15s ease, font-weight 0.15s ease;
+}
+/* Значение, которое сейчас точно под индикатором — то самое, что уйдёт
+   в «Играть»/«Обновить сумму». Подсвечиваем крупнее и цветом яруса,
+   чтобы глазами сразу было видно текущий выбор, а не только по рамке. */
+.reel-item--active{
+    color: var(--tier-accent, var(--text)); font-weight: 700; transform: scale(1.06);
 }
 .reel-indicator{
     position: absolute; top: 88px; left: 0; right: 0; height: 44px;
-    border-top: 1px solid var(--accent-var, #c9a227); border-bottom: 1px solid var(--accent-var, #c9a227);
-    background: rgba(201,162,39,0.08); pointer-events: none; z-index: 1;
+    border-top: 1px solid var(--tier-accent, var(--accent-var)); border-bottom: 1px solid var(--tier-accent, var(--accent-var));
+    background: color-mix(in srgb, var(--tier-accent, var(--accent-var)) 10%, transparent);
+    box-shadow: 0 0 14px -2px var(--tier-accent, var(--accent-var)) inset;
+    pointer-events: none; z-index: 1;
 }
 .reel::before, .reel::after{
     content: ""; position: absolute; left: 0; right: 0; height: 88px; pointer-events: none; z-index: 2;
 }
 .reel::before{ top: 0; background: linear-gradient(180deg, var(--screen), transparent); }
 .reel::after{ bottom: 0; background: linear-gradient(0deg, var(--screen), transparent); }
+
+/* Строка-«чек» с собранной суммой прямо сейчас — обновляется на лету
+   при любой прокрутке, чтобы не приходилось нажимать «Играть» вслепую. */
+.constructor-preview{
+    width: 100%; text-align: center; font-family: var(--font-mono); font-size: var(--fs-md);
+    color: var(--text-dim); background: var(--screen); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md); padding: 10px 16px; box-shadow: var(--shadow-screen);
+}
+.constructor-preview b{ color: var(--accent-var); font-weight: 700; }
+.constructor-preview em{ color: var(--accent-trash); font-style: normal; }
 
 .constructor-actions{ display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .constructor-actions .btn-tile{ min-width: 190px; }
