@@ -964,10 +964,15 @@
                 <button class="btn-tile btn-tile--tall" onclick="constructorPlay()">▶ Играть</button>
                 <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="constructorSendToAudacity()">✂️ Обновить сумму</button>
                 <button class="btn-tile btn-tile--good btn-tile--tall" onclick="constructorSaveResult()">💾 Сохранить</button>
+                <button class="btn-tile btn-tile--sub" id="constructorEmbedBtn" onclick="toggleEmbedAudacity()">Встроить окно Audacity сюда</button>
             </div>
             <div class="action-note">Крутите рулетки мышью (тяните вверх/вниз) или колёсиком. «Играть» — послушать
                 собранную сумму целиком. «Обновить сумму» — отправить в Audacity для правки. «Сохранить» —
                 записать скорректированные куски обратно поверх исходных файлов, только по нажатию.</div>
+
+            <div class="audacity-embed-area" id="constructorEmbedArea" style="display: none;">
+                <div class="audacity-embed-area__label">Здесь окно Audacity — двигайте и правьте прямо тут</div>
+            </div>
         </div>
     </div>
 

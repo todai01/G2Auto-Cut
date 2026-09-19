@@ -310,6 +310,11 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .workspace-grid--sum .action-note{ font-size: 11px; line-height: 1.4; }
 .workspace-grid--sum .sum-counts,
 .workspace-grid--sum .sum-target{ padding: 6px 10px; }
+/* .constructor-body — это flex-колонка с align-items: center, поэтому
+   без явной ширины рамка под Audacity сжимается по контенту почти до
+   нуля (реально видели w=4px). Растягиваем её саму на всю ширину. */
+.constructor-body > .audacity-embed-area{ align-self: stretch; width: 100%; }
+
 .audacity-embed-area__label{
     position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
     font-size: 12px; color: var(--text-dim); background: rgba(0,0,0,.55);
@@ -1617,15 +1622,24 @@ input:focus-visible + .opt-chip__box{
 .constructor-title__sub{ font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
 
 .constructor-body{
-    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
     gap: var(--space-6); padding: var(--space-6) var(--space-4);
 }
 
-.constructor-reels{ display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+.constructor-reels{ display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 100%; }
 
 .reel-col{ display: flex; flex-direction: column; align-items: center; gap: 8px; width: 200px; }
 .reel-col__label{ font-size: 13px; font-weight: 700; color: var(--text); text-align: center; }
 .reel-col__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+
+/* Ярус, для которого в папке не нашлось подпапки/файлов — подсвечиваем
+   красным, а не молчим: пользователь должен сразу увидеть, что этой
+   суммы нет, а не гадать, почему рулетка пустая. При проигрывании и
+   отправке в Audacity такой ярус просто пропускается (см. бэкенд). */
+.reel-col--empty .reel-col__label{ color: var(--accent-bad, #ef6f63); }
+.reel-col--empty .reel-col__count{ color: var(--accent-bad, #ef6f63); }
+.reel-col--empty .reel{ border-color: var(--accent-bad, #ef6f63); background: rgba(239,111,99,0.06); }
+.reel-col--empty .reel-indicator{ border-color: var(--accent-bad, #ef6f63); background: rgba(239,111,99,0.08); }
 
 .reel{
     position: relative; width: 100%; height: 220px; overflow: hidden;
@@ -1652,6 +1666,7 @@ input:focus-visible + .opt-chip__box{
 
 .constructor-actions{ display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .constructor-actions .btn-tile{ min-width: 190px; }
+.constructor-actions #constructorEmbedBtn{ min-width: 260px; flex-basis: 260px; }
 
 @media (max-width: 900px){
     .reel-col{ width: 44%; }

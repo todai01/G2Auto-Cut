@@ -302,6 +302,8 @@ let isProcessing = false;
 
         function showMenu() {
             detachEmbeddedAudacity();
+            embedAreaId = 'audacityEmbedArea';
+            embedBtnId = 'btnEmbedAudacity';
             showStage('stage1-loading');
 
             // Кнопка возврата появляется, только если работать уже есть с чем
@@ -318,6 +320,8 @@ let isProcessing = false;
 
         function showWorkspace() {
             workspaceReady = true;
+            embedAreaId = 'audacityEmbedArea';
+            embedBtnId = 'btnEmbedAudacity';
             showStage('stage2-workspace');
         }
 
@@ -1331,8 +1335,14 @@ let isProcessing = false;
         // --- Вживление окна Audacity внутрь софта ---
         // Приём системный (Windows SetParent) — Audacity не создан для этого,
         // поэтому если поведение станет хуже, кнопка сразу отсоединяет обратно.
+        // embedAreaId/embedBtnId — на какой экран сейчас нацелено вживление:
+        // у рабочего экрана и у конструктора своя рамка и своя кнопка, но
+        // вся остальная логика (позиционирование, сторож, пряталка под
+        // модалки) общая — переключаем цель, а не дублируем код.
         let audacityEmbedded = false;
         let embedResizeTimer = null;
+        let embedAreaId = 'audacityEmbedArea';
+        let embedBtnId = 'btnEmbedAudacity';
 
         function toggleEmbedAudacity() {
             if (audacityEmbedded) {
@@ -1346,7 +1356,7 @@ let isProcessing = false;
         // и при масштабе экрана 125/150% это разные числа. Без пересчёта окно
         // Audacity садилось мимо рамки и обрезалось.
         function embedAreaRect() {
-            const area = document.getElementById('audacityEmbedArea');
+            const area = document.getElementById(embedAreaId);
             if (!area) return null;
             const r = area.getBoundingClientRect();
             const k = window.devicePixelRatio || 1;
@@ -1360,8 +1370,8 @@ let isProcessing = false;
         // режима «Суммы», когда Audacity может быть ещё не запущен) — тогда
         // не ругаемся окном об ошибке и оставляем пустую рамку под окно.
         async function attachEmbeddedAudacity(silent) {
-            const area = document.getElementById('audacityEmbedArea');
-            const btn = document.getElementById('btnEmbedAudacity');
+            const area = document.getElementById(embedAreaId);
+            const btn = document.getElementById(embedBtnId);
             area.style.display = 'block';
             const rect = embedAreaRect();
 
@@ -1406,7 +1416,7 @@ let isProcessing = false;
                     // сторож сам себя останавливает вместо бесконечных ошибок
                     audacityEmbedded = false;
                     stopEmbedWatchdog();
-                    let btn = document.getElementById('btnEmbedAudacity');
+                    let btn = document.getElementById(embedBtnId);
                     if (btn) btn.innerText = 'Встроить окно Audacity сюда';
                 }
             }, 500);
@@ -1472,8 +1482,8 @@ let isProcessing = false;
             stopEmbedWatchdog();
             audacityEmbedded = false;
             modalOpenForAudacity = false;
-            const area = document.getElementById('audacityEmbedArea');
-            const btn = document.getElementById('btnEmbedAudacity');
+            const area = document.getElementById(embedAreaId);
+            const btn = document.getElementById(embedBtnId);
             // В режиме «Суммы» рамка остаётся на экране: место под окно
             // Audacity закреплено за ней, даже когда окно отсоединено.
             if (area) area.style.display = sumModeActive ? 'block' : 'none';
@@ -2580,7 +2590,9 @@ let isProcessing = false;
                 this.track = container.querySelector('.reel-track');
                 this.items = items;
                 this.itemHeight = itemHeight;
-                this.index = items.length ? Math.floor(items.length / 2) : 0;
+                // Открываем рулетку сразу на первом (самом маленьком) значении
+                // — «1 миллион», «100», «1 тысяча» и т.д., а не с середины списка.
+                this.index = 0;
                 this.offset = -this.index * this.itemHeight;
                 this.velocity = 0;
                 this.dragging = false;
@@ -2726,6 +2738,8 @@ let isProcessing = false;
         }
 
         function openConstructorScreen() {
+            embedAreaId = 'constructorEmbedArea';
+            embedBtnId = 'constructorEmbedBtn';
             showStage('stage3-constructor');
             renderConstructorMeta();
             renderConstructorReels();
@@ -2744,16 +2758,19 @@ let isProcessing = false;
             let wrap = document.getElementById('constructorReels');
             if (!constructorState || !constructorState.tiers) { wrap.innerHTML = ''; return; }
 
-            wrap.innerHTML = CONSTRUCTOR_TIER_ORDER.map(tier => `
-                <div class="reel-col">
+            wrap.innerHTML = CONSTRUCTOR_TIER_ORDER.map(tier => {
+                let items = constructorState.tiers[tier].items;
+                let isEmpty = items.length === 0;
+                return `
+                <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}">
                     <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
                     <div class="reel" id="reel-${tier}">
                         <div class="reel-indicator"></div>
                         <div class="reel-track"></div>
                     </div>
-                    <div class="reel-col__count">${constructorState.tiers[tier].items.length} шт.</div>
-                </div>
-            `).join('');
+                    <div class="reel-col__count">${isEmpty ? 'не найдено — пропускается' : items.length + ' шт.'}</div>
+                </div>`;
+            }).join('');
 
             constructorReelInstances = {};
             CONSTRUCTOR_TIER_ORDER.forEach(tier => {
@@ -2794,7 +2811,10 @@ let isProcessing = false;
             }
             if (res && res.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                return;
             }
+            // Теперь Audacity точно запущен — сажаем его окно в рамку конструктора
+            if (!audacityEmbedded) await attachEmbeddedAudacity(true);
         }
 
         async function constructorSaveResult() {
