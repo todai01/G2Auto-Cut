@@ -2681,7 +2681,18 @@ let isProcessing = false;
                 };
                 this.rafId = requestAnimationFrame(step);
             }
-            getIndex() { return this.items.length ? this.index : -1; }
+            getIndex() {
+                // Считаем прямо по текущему положению на экране, а не по
+                // закэшированному this.index — тот обновлялся только когда
+                // анимация прилипания к ближайшему пункту полностью
+                // доигрывала до конца. Если нажать «Играть» посреди
+                // прокрутки/анимации, значение всегда должно быть то, что
+                // видно на экране прямо сейчас, а не то, что стояло секунду
+                // назад.
+                if (!this.items.length) return -1;
+                const idx = Math.round(-this.offset / this.itemHeight);
+                return Math.min(this.items.length - 1, Math.max(0, idx));
+            }
         }
 
         async function startConstructor() {
