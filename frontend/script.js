@@ -2494,16 +2494,28 @@ let isProcessing = false;
             let parts = [`${iconHTML('check-circle')} Переименовано и разложено: <b>${result.renamed_count}</b>`];
             if (result.unmatched_count) {
                 parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Не нашлось пары в Excel (${result.unmatched_count}):<br>` +
-                    result.unmatched.map(escapeHtml).join('<br>') + `</div>`);
+                    result.unmatched.map(u => `${escapeHtml(u.file)} — ${escapeHtml(u.detail)}`).join('<br>') + `</div>`);
             }
             if (result.ambiguous_count) {
                 parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Неоднозначно, оставлено как есть (${result.ambiguous_count}):<br>` +
                     result.ambiguous.map(a => `${escapeHtml(a.file)} — ${escapeHtml(a.reason)}`).join('<br>') + `</div>`);
             }
+            parts.push(`<button class="custom-alert-btn" style="margin-top:14px; width:100%;" onclick="exportRenameMatchReport()">${iconHTML('file-text')} Экспортировать полный отчёт в Excel</button>`);
 
             let box = document.getElementById('renameMatchResult');
             box.innerHTML = parts.join('');
             box.style.display = 'block';
+        }
+
+        async function exportRenameMatchReport() {
+            let result = await pywebview.api.rename_match_export_report();
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') {
+                    showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                }
+                return;
+            }
+            showToast(`Отчёт сохранён: ${result.path}`);
         }
 
         // --- Ненавязчивая подсказка "что дальше" после конвертации ---

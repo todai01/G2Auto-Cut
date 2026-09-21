@@ -3,6 +3,8 @@ import re
 import shutil
 import openpyxl
 import webview
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 
 AUDIO_EXTS = ('.wav', '.mp3', '.ogg', '.flac')
 LANG_CODES = ('ru', 'kz')
@@ -96,13 +98,13 @@ class FilenameMatchMixin:
         # совпадение с da_1_1 не находится (в конце-то «.wav», а не сам
         # ярус). Расширение самого сохранённого файла отдельно — оно всегда
         # от исходного аудио, не от текста в Excel.
-        unique_full = list(dict.fromkeys(re.sub(r'\.wav$', '', n, flags=re.IGNORECASE) for n in full_names))
+        unique_full_all = list(dict.fromkeys(re.sub(r'\.wav$', '', n, flags=re.IGNORECASE) for n in full_names))
 
         lang_filter = set(langs) if langs else None
-        if lang_filter:
-            unique_full = [full for full in unique_full if self._rename_match_detect_lang(full) in lang_filter]
+        unique_full = ([full for full in unique_full_all if self._rename_match_detect_lang(full) in lang_filter]
+                        if lang_filter else unique_full_all)
 
-        renamed, unmatched, ambiguous = [], [], []
+        renamed, unmatched, ambiguous, rows = [], [], [], []
         claimed = {}  # полное имя -> какой короткий файл уже его занял
 
         for fname in files:
@@ -111,18 +113,38 @@ class FilenameMatchMixin:
             matches = [full for full in unique_full if pattern.search(full)]
 
             if not matches:
-                unmatched.append(fname)
+                # Подробная причина: если ограничили языком и совпадение всё
+                # же ЕСТЬ в полном (нефильтрованном) списке — значит дело
+                # именно в фильтре, а не в том, что строки в Excel вообще
+                # нет. Это и есть та самая «подробность», которую не видно,
+                # если просто сказать «не нашлось».
+                matches_unfiltered = ([full for full in unique_full_all if pattern.search(full)]
+                                       if lang_filter else [])
+                if matches_unfiltered:
+                    found_langs = sorted({self._rename_match_detect_lang(f) or OTHER_LANG_DIR
+                                           for f in matches_unfiltered})
+                    detail = (f"совпадение есть в Excel, но его язык ({'/'.join(found_langs)}) "
+                              f"не входит в выбранный фильтр «Искать только»")
+                else:
+                    detail = "в Excel не нашлось ни одной строки, заканчивающейся на это короткое имя"
+                unmatched.append({"file": fname, "detail": detail})
+                rows.append({"status": "Не найдено", "file": fname, "short": short,
+                              "detail": detail, "matches": '; '.join(matches_unfiltered)})
                 continue
+
             if len(matches) > 1:
-                ambiguous.append({"file": fname, "reason": f"нашлось {len(matches)} совпадений в Excel",
-                                   "matches": matches})
+                detail = f"нашлось {len(matches)} совпадений в Excel сразу — непонятно, какое верное"
+                ambiguous.append({"file": fname, "reason": detail, "matches": matches})
+                rows.append({"status": "Неоднозначно", "file": fname, "short": short,
+                              "detail": detail, "matches": '; '.join(matches)})
                 continue
 
             full = matches[0]
             if full in claimed:
-                ambiguous.append({"file": fname,
-                                   "reason": f"это же полное имя уже занял файл «{claimed[full]}»",
-                                   "matches": [full]})
+                detail = f"это же полное имя уже занял файл «{claimed[full]}»"
+                ambiguous.append({"file": fname, "reason": detail, "matches": [full]})
+                rows.append({"status": "Неоднозначно", "file": fname, "short": short,
+                              "detail": detail, "matches": full})
                 continue
 
             lang = self._rename_match_detect_lang(full) or OTHER_LANG_DIR
@@ -131,18 +153,66 @@ class FilenameMatchMixin:
             target_path = os.path.join(target_dir, safe_full + ext)
 
             if os.path.exists(target_path):
-                ambiguous.append({"file": fname,
-                                   "reason": "файл с таким итоговым именем уже есть в папке назначения",
-                                   "matches": [full]})
+                detail = "файл с таким итоговым именем уже есть в папке назначения"
+                ambiguous.append({"file": fname, "reason": detail, "matches": [full]})
+                rows.append({"status": "Неоднозначно", "file": fname, "short": short,
+                              "detail": detail, "matches": full})
                 continue
 
             os.makedirs(target_dir, exist_ok=True)
             shutil.move(os.path.join(root, fname), target_path)
             claimed[full] = fname
-            renamed.append({"from": fname, "to": f"{lang}/{safe_full}{ext}"})
+            result_path = f"{lang}/{safe_full}{ext}"
+            renamed.append({"from": fname, "to": result_path})
+            rows.append({"status": "Переименовано", "file": fname, "short": short,
+                          "detail": result_path, "matches": full})
 
-        return {
+        result = {
             "status": "ok",
             "renamed": renamed, "unmatched": unmatched, "ambiguous": ambiguous,
             "renamed_count": len(renamed), "unmatched_count": len(unmatched), "ambiguous_count": len(ambiguous),
+            "rows": rows,
         }
+        self.rename_match_last_report = result
+        return result
+
+    def rename_match_export_report(self):
+        """Полный отчёт последнего запуска в Excel — по строке на каждый
+        файл: что с ним стало и почему, плюс со всеми совпадениями,
+        которые для него нашлись (или почти нашлись)."""
+        report = getattr(self, 'rename_match_last_report', None)
+        if not report or not report.get('rows'):
+            return {"error": "Сначала запустите «Сопоставить и разложить» — экспортировать пока нечего."}
+
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.SAVE, save_filename='Отчёт сопоставления.xlsx',
+            file_types=('Excel files (*.xlsx)',))
+        if not picked:
+            return {"error": "cancel"}
+        path = picked if isinstance(picked, str) else picked[0]
+        if not path.lower().endswith('.xlsx'):
+            path += '.xlsx'
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Отчёт'
+        headers = ['Статус', 'Файл', 'Короткое имя', 'Результат / причина', 'Совпадения в Excel']
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+
+        for row in report['rows']:
+            ws.append([row['status'], row['file'], row.get('short', ''),
+                       row.get('detail', ''), row.get('matches', '')])
+
+        for col_idx, header in enumerate(headers, start=1):
+            letter = get_column_letter(col_idx)
+            values = [str(ws.cell(row=r, column=col_idx).value or '') for r in range(1, ws.max_row + 1)]
+            ws.column_dimensions[letter].width = min(60, max(len(v) for v in values) + 2)
+
+        try:
+            wb.save(path)
+        except Exception as e:
+            return {"error": f"Не удалось сохранить отчёт.\n\n{e}"}
+
+        return {"status": "ok", "path": path}
