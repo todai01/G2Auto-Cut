@@ -1072,7 +1072,8 @@ let isProcessing = false;
 
         // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ГОТОВАЯ ПАПКА С ПЕРЕМЕННЫМИ" ---
         async function continueInitVarBatchPremade(hwnd) {
-            await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
+            let confirmed = await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
+            if (!confirmed) return;
             let inDir = await pywebview.api.pick_folder();
             if (!inDir) return;
 
@@ -1122,7 +1123,8 @@ let isProcessing = false;
             }
 
             // Ждем, пока пользователь настроит звук и нажмет ОК в нашем красивом алерте
-            await showBeautifulAlert(`🎚️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Настройте идеальную громкость этого файла в Audacity (Эффекты -> Нормализация или Усиление).<br>2. Вернитесь сюда и нажмите ОК, чтобы применить эту громкость ко всем <b>${res.total}</b> файлам в папке.`);
+            let confirmed = await showBeautifulAlert(`🎚️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Настройте идеальную громкость этого файла в Audacity (Эффекты -> Нормализация или Усиление).<br>2. Вернитесь сюда и нажмите ОК, чтобы применить эту громкость ко всем <b>${res.total}</b> файлам в папке.`);
+            if (!confirmed) return;
 
             // Пользователь нажал ОК, запускаем процесс!
             isProcessing = true;
@@ -1163,7 +1165,8 @@ let isProcessing = false;
                 ? "📁 <b>Простой экспорт (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут рассортированы переменные."
                 : `📁 <b>Пакетная сборка (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут экспортироваться переменные.<br><br><span style='font-size:12px;color:var(--text-dim)'>${iconHTML('alert-triangle')} Убедитесь, что в этой папке уже лежат эталонные файлы <b>start.wav</b> и <b>end.wav</b>!</span>`;
 
-            await showBeautifulAlert(alertMsg);
+            let confirmed = await showBeautifulAlert(alertMsg);
+            if (!confirmed) return;
             let outDir = await pywebview.api.pick_folder();
             if (!outDir) return;
 
@@ -2156,9 +2159,12 @@ let isProcessing = false;
 
             let alertOverlay = document.getElementById('customAlertOverlay');
             if (alertOverlay && alertOverlay.style.display === 'flex') {
-                if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
+                if (e.code === 'Enter' || e.code === 'Space') {
                     e.preventDefault();
-                    closeCustomAlert();
+                    closeCustomAlert(true);
+                } else if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeCustomAlert(false);
                 }
                 return;
             }
@@ -2313,16 +2319,20 @@ let isProcessing = false;
                     document.getElementById('customAlertOverlay').style.display = 'flex';
                     window.customAlertCallback = resolve;
                 } else {
-                    resolve();
+                    resolve(true);
                 }
             });
         }
 
-        function closeCustomAlert() {
+        // confirmed=true — закрыли по «ОК»/Enter/Space (действие после алерта
+        // продолжается); confirmed=false — закрыли крестиком/Escape (это
+        // отмена, вызвавший код должен остановиться, а не продолжать как
+        // будто нажали «ОК»).
+        function closeCustomAlert(confirmed = true) {
             document.getElementById('customAlertOverlay').style.display = 'none';
             // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
             if (window.customAlertCallback) {
-                window.customAlertCallback();
+                window.customAlertCallback(confirmed);
                 window.customAlertCallback = null;
             }
         }
@@ -2773,7 +2783,8 @@ let isProcessing = false;
         }
 
         async function startConstructor() {
-            await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат 4 подпапки ярусов.');
+            let confirmed1 = await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат 4 подпапки ярусов.');
+            if (!confirmed1) return;
             let state = await pywebview.api.constructor_pick_sum_folder();
             if (state && state.error === 'cancel') return;
             if (!state || state.error) {
@@ -2782,7 +2793,8 @@ let isProcessing = false;
             }
             constructorState = state;
 
-            await showBeautifulAlert('<b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
+            let confirmed2 = await showBeautifulAlert('<b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
+            if (!confirmed2) return;
             let startRes = await pywebview.api.constructor_pick_start();
             if (startRes && startRes.error === 'cancel') return;
             if (startRes && !startRes.error) constructorState = startRes;
