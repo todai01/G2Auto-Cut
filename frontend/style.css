@@ -513,6 +513,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 #customAlertOverlay{ z-index: 10000; }
 
 .custom-alert-box {
+    position: relative;
     max-height: 92vh; overflow-y: auto;
     background: linear-gradient(180deg, var(--panel-raised), var(--panel));
     border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -1283,6 +1284,15 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     color: var(--text-faint); font-size: 20px; line-height: 1; cursor: pointer;
 }
 .modal-close:hover{ color: var(--accent-trash); border-color: rgba(239,91,80,0.3); background: var(--tint-trash); }
+
+.custom-alert-close{
+    position: absolute; top: 10px; right: 10px;
+    width: 28px; height: 28px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+    color: var(--text-faint); font-size: 19px; line-height: 1; cursor: pointer;
+}
+.custom-alert-close:hover{ color: var(--accent-trash); border-color: rgba(239,91,80,0.3); background: var(--tint-trash); }
 
 .modal-hint{
     font-size: var(--fs-md); color: var(--text-dim);

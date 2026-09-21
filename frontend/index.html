@@ -36,10 +36,12 @@
         <symbol id="icon-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
         <symbol id="icon-dollar-sign" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
         <symbol id="icon-headphones" viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></symbol>
+        <symbol id="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
     </svg>
 
     <div id="customAlertOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box">
+            <button class="custom-alert-close" onclick="closeCustomAlert()" title="Закрыть">&times;</button>
             <div class="custom-alert-icon" id="customAlertIcon"><svg class="icon"><use href="#icon-alert-circle"></use></svg></div>
             <div id="customAlertText" class="custom-alert-text">Сообщение</div>
             <button class="custom-alert-btn" onclick="closeCustomAlert()">ОК <kbd>Enter</kbd></button>
@@ -93,6 +95,7 @@
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
                 <h3 class="modal-title">Добавить файл окончания (end)?</h3>
+                <button class="modal-close" onclick="constructorSkipEnd()" title="Закрыть">&times;</button>
             </div>
             <div class="modal-hint">Не обязательно — если записи конца фразы нет, просто пропустите.</div>
 
@@ -119,7 +122,7 @@
 
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="confirmResumeProject()">
-                    <span class="option-icon">▶️</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-play"></use></svg></span>
                     <div><span class="option-title">Продолжить</span><span class="option-desc">Открыть с того места, где остановились</span></div>
                 </button>
                 <button class="option-card option-card--alt rise" onclick="declineResumeProject()">
@@ -255,6 +258,7 @@
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
                 <h3 class="modal-title">Готово! Что дальше?</h3>
+                <button class="modal-close" onclick="closePostConvert()" title="Закрыть">&times;</button>
             </div>
             <div class="modal-hint" id="postConvertText">Файл сконвертирован.</div>
 
@@ -276,6 +280,7 @@
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
                 <h3 class="modal-title">Нарезка готова. Загрузим текст?</h3>
+                <button class="modal-close" onclick="closePostCutExcel()" title="Закрыть">&times;</button>
             </div>
             <div class="modal-hint">Excel с текстом фраз ещё не подключён. Без него можно работать и так, но с ним фразы сопоставляются автоматически.</div>
 
