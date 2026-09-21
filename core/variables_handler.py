@@ -1749,6 +1749,31 @@ class VariablesMixin:
         cap = SUM_TIER_CAP.get(tier)
         return cap is not None and counts.get(tier, 0) >= cap
 
+    def _sum_last_saved_file(self, tier):
+        """Последний сохранённый файл яруса — берёт из кэша в памяти
+        (sum_manual_last_file), а если там пусто (например, галочка «Режим
+        «Суммы»» была включена ещё до того, как в папке яруса появились
+        файлы, и с тех пор кэш не обновлялся) — подстраховкой смотрит
+        прямо на диск, в саму папку яруса. Так уже сохранённые ярусы всегда
+        попадают в предпрослушку и на стол Audacity, даже если кэш в
+        памяти отстал от реальных файлов на диске."""
+        cached = getattr(self, 'sum_manual_last_file', {}).get(tier)
+        if cached and os.path.exists(cached):
+            return cached
+        d = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
+        try:
+            files = [os.path.join(d, f) for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
+        except OSError:
+            return None
+        if not files:
+            return None
+        files.sort(key=os.path.getmtime)
+        latest = files[-1]
+        if not hasattr(self, 'sum_manual_last_file'):
+            self.sum_manual_last_file = {}
+        self.sum_manual_last_file[tier] = latest
+        return latest
+
     def _sum_tier_excluded(self, tier, counts=None):
         """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
         для подрезки) — либо он сам упёрся в потолок, либо включена ручная
@@ -1851,14 +1876,13 @@ class VariablesMixin:
         phrase = self._current_sum_phrase()
         tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
         active_file, _, err = self._sum_current_source()
-        last_file = getattr(self, 'sum_manual_last_file', {})
 
         for t in SUM_TIER_ORDER:
             if t == tier and not err and active_file:
                 label = (phrase.get('text') if phrase else '').strip() or SUM_TIER_LABELS[t]
                 segments.append({'label': label, 'path': active_file})
             elif not self._sum_tier_excluded(t):
-                ref = last_file.get(t)
+                ref = self._sum_last_saved_file(t)
                 if ref and os.path.exists(ref):
                     label = os.path.splitext(os.path.basename(ref))[0]
                     segments.append({'label': label, 'path': ref})
@@ -1973,14 +1997,13 @@ class VariablesMixin:
             clip_layout.append('start')
 
         active_clip_start = None
-        last_file = getattr(self, 'sum_manual_last_file', {})
         for t in SUM_TIER_ORDER:
             if t == tier:
                 active_clip_start = cursor
                 cursor += self._import_clip_to_track0(active_file, cursor)
                 clip_layout.append(t)
             elif not self._sum_tier_excluded(t):
-                ref = last_file.get(t)
+                ref = self._sum_last_saved_file(t)
                 if ref and os.path.exists(ref):
                     cursor += self._import_clip_to_track0(ref, cursor)
                     clip_layout.append(t)
