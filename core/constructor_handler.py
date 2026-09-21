@@ -14,6 +14,22 @@ class ConstructorMixin:
     целиком или отправить на точечную правку в Audacity. Начинаем с
     «Суммы»; та же идея потом ляжет и на другие категории переменных."""
 
+    def constructor_open_from_sum_mode(self):
+        """Быстрый вход из уже запущенного режима «Суммы»: папка, старт и
+        энд уже загружены этим режимом — просто переиспользуем их вместо
+        того, чтобы заново спрашивать через диалоги выбора файлов."""
+        cat_name = next(iter(getattr(self, 'sum_category_names', set()) or []), None)
+        tier_files = getattr(self, 'sum_tier_files', {}).get(cat_name) if cat_name else None
+        if not cat_name or not tier_files:
+            return {"error": "Режим «Суммы» ещё не запущен в этом проекте — сначала включите его галочкой."}
+
+        self.constructor_root = os.path.join(self.work_dir, cat_name)
+        self.constructor_tier_files = {tier: list(tier_files.get(tier, [])) for tier in SUM_TIER_ORDER}
+        self.constructor_start_file = getattr(self, 'var_start_phrase', None)
+        self.constructor_end_file = getattr(self, 'var_end_phrase', None)
+
+        return self._constructor_state()
+
     def constructor_pick_sum_folder(self):
         """Шаг 1: папка «Суммы» — та же, что режим «Суммы» создаёт сам,
         с 4 подпапками-ярусами внутри. Яруса без своей подпапки остаются

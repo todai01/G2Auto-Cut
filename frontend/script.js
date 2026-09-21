@@ -2745,6 +2745,19 @@ let isProcessing = false;
             document.getElementById('constructorEndOverlay').style.display = 'flex';
         }
 
+        async function openConstructorFromSumMode() {
+            // Режим «Суммы» уже знает папку, старт и энд — конструктору не
+            // нужно спрашивать их заново диалогами, как при заходе из
+            // главного меню.
+            let state = await pywebview.api.constructor_open_from_sum_mode();
+            if (state && state.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            constructorState = state;
+            openConstructorScreen();
+        }
+
         async function constructorPickEnd() {
             document.getElementById('constructorEndOverlay').style.display = 'none';
             let res = await pywebview.api.constructor_pick_end();
