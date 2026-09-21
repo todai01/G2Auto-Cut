@@ -279,6 +279,21 @@
                 </div>
             </label>
 
+            <div class="mode-options">
+                <span class="mode-options__label">Искать только</span>
+                <label class="opt-chip">
+                    <input type="checkbox" id="renameMatchLangRu">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">RU</span>
+                </label>
+                <label class="opt-chip">
+                    <input type="checkbox" id="renameMatchLangKz">
+                    <span class="opt-chip__box" aria-hidden="true"></span>
+                    <span class="opt-chip__text">KZ</span>
+                </label>
+                <span class="modal-hint" style="margin:0 0 0 4px;">ничего не отмечено — ищем везде</span>
+            </div>
+
             <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" id="btnRunRenameMatch" onclick="runRenameMatch()">Сопоставить и разложить</button>
 
             <div id="renameMatchResult" style="display:none; margin-top: var(--space-4);"></div>

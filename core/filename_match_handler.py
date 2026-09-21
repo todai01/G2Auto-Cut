@@ -70,7 +70,13 @@ class FilenameMatchMixin:
                 return code
         return None
 
-    def rename_match_run(self):
+    def rename_match_run(self, langs=None):
+        """langs — список языков, которым ограничить поиск («ru», «kz»)
+        или пусто/None — без ограничения (как раньше). Строки из Excel не
+        из выбранного языка (или без метки языка вовсе) в пул кандидатов
+        не попадают, будто их в таблице нет — так файл, у которого
+        «настоящее» совпадение другого языка, просто не найдётся, а не
+        подхватится по ошибке."""
         root = getattr(self, 'rename_match_folder', None)
         full_names = getattr(self, 'rename_match_full_names', None)
         if not root or not os.path.isdir(root):
@@ -91,6 +97,10 @@ class FilenameMatchMixin:
         # ярус). Расширение самого сохранённого файла отдельно — оно всегда
         # от исходного аудио, не от текста в Excel.
         unique_full = list(dict.fromkeys(re.sub(r'\.wav$', '', n, flags=re.IGNORECASE) for n in full_names))
+
+        lang_filter = set(langs) if langs else None
+        if lang_filter:
+            unique_full = [full for full in unique_full if self._rename_match_detect_lang(full) in lang_filter]
 
         renamed, unmatched, ambiguous = [], [], []
         claimed = {}  # полное имя -> какой короткий файл уже его занял

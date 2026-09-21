@@ -2441,6 +2441,8 @@ let isProcessing = false;
             document.getElementById('renameMatchFolderLabel').innerText = 'Папка не выбрана';
             document.getElementById('renameMatchExcelLabel').innerText = 'Файл не выбран';
             document.getElementById('renameMatchResult').style.display = 'none';
+            document.getElementById('renameMatchLangRu').checked = false;
+            document.getElementById('renameMatchLangKz').checked = false;
             document.getElementById('renameMatchOverlay').style.display = 'flex';
         }
 
@@ -2470,11 +2472,15 @@ let isProcessing = false;
 
         async function runRenameMatch() {
             let btn = document.getElementById('btnRunRenameMatch');
+            let langs = [];
+            if (document.getElementById('renameMatchLangRu').checked) langs.push('ru');
+            if (document.getElementById('renameMatchLangKz').checked) langs.push('kz');
+
             btn.disabled = true;
             btn.innerText = 'Сопоставляю...';
             let result;
             try {
-                result = await pywebview.api.rename_match_run();
+                result = await pywebview.api.rename_match_run(langs);
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Сопоставить и разложить';
