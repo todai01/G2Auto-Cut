@@ -2971,14 +2971,24 @@ let isProcessing = false;
         // Общий «держатель» для W/S: первый шаг сразу по нажатию, затем,
         // пока клавиша зажата, повторяем со всё уменьшающейся паузой —
         // это и есть ускорение прокрутки при удержании.
+        // «Передачи» скорости: пока клавиша зажата, ускорение не упирается
+        // в один и тот же потолок, а ступенчато переключается на всё более
+        // быструю передачу — держишь дольше, следующая передача ощутимо
+        // быстрее финальной скорости предыдущей, а не топчется на месте.
+        function constructorHoldInterval(elapsedMs) {
+            if (elapsedMs < 1200) return 220 - (220 - 70) * (elapsedMs / 1200);
+            if (elapsedMs < 3000) return 70 - (70 - 25) * ((elapsedMs - 1200) / 1800);
+            if (elapsedMs < 5000) return 25 - (25 - 10) * ((elapsedMs - 3000) / 2000);
+            return 10;
+        }
         function constructorStartHold(code, action) {
             if (constructorHoldTimers[code]) return;
             action();
-            let speed = 220;
+            const startedAt = performance.now();
             const tick = () => {
                 action();
-                speed = Math.max(45, speed - 18);
-                constructorHoldTimers[code].id = setTimeout(tick, speed);
+                let interval = constructorHoldInterval(performance.now() - startedAt);
+                constructorHoldTimers[code].id = setTimeout(tick, interval);
             };
             constructorHoldTimers[code] = { id: setTimeout(tick, 380) };
         }
