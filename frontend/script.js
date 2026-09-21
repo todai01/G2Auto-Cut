@@ -1232,12 +1232,18 @@ let isProcessing = false;
             if (box) box.blur();
             let sumState = await pywebview.api.toggle_sum_mode(checked);
             renderSumPanel(sumState);
+            // Раньше экран переключался только при следующей навигации по
+            // дублям — галочка визуально «не срабатывала» сразу.
+            applySumModeLayout();
+            if (sumModeActive) {
+                await attachEmbeddedAudacity(true);
+            } else {
+                await detachEmbeddedAudacity();
+            }
         }
 
-        async function toggleSumStage2(checked) {
-            let box = document.getElementById('sumStage2Check');
-            if (box) box.blur();
-            let sumState = await pywebview.api.toggle_sum_stage2(checked);
+        async function setSumLogic(stage2) {
+            let sumState = await pywebview.api.toggle_sum_stage2(stage2);
             renderSumPanel(sumState);
             applySumModeLayout();
 
@@ -1299,8 +1305,10 @@ let isProcessing = false;
         function renderSumPanel(sumState) {
             if (!sumState) return;
             lastSumState = sumState;
-            let stage2Box = document.getElementById('sumStage2Check');
-            if (stage2Box) stage2Box.checked = !!sumState.stage2;
+            let logic1Btn = document.getElementById('sumLogic1Btn');
+            let logic2Btn = document.getElementById('sumLogic2Btn');
+            if (logic1Btn) logic1Btn.classList.toggle('is-active', !sumState.stage2);
+            if (logic2Btn) logic2Btn.classList.toggle('is-active', !!sumState.stage2);
             let counts = document.getElementById('sumCounts');
             if (counts && sumState.counts) {
                 counts.innerHTML = Object.entries(sumState.counts)

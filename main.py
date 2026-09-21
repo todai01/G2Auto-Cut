@@ -1,4 +1,5 @@
 import os
+import time
 import webview
 import sys
 from pydub import AudioSegment
@@ -82,7 +83,11 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
                         markers.append({"label": seg['label'], "start": cursor, "end": cursor + dur})
                     combined = clip if combined is None else combined + clip
                     cursor += dur
-                temp_path = os.path.join(self.work_dir, "temp_sum_preview.wav")
+                # Имя временного файла — с меткой времени, а не одно и то же
+                # каждый раз: если предыдущее воспроизведение (Windows,
+                # winsound) не успело до конца отпустить файл, перезапись
+                # того же имени обрывала звук на середине первого яруса.
+                temp_path = os.path.join(self.work_dir, f"temp_sum_preview_{int(time.time() * 1000)}.wav")
                 combined.export(temp_path, format="wav")
                 duration = FileUtils.get_exact_audio_duration(temp_path)
                 self.player.play(temp_path)

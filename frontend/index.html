@@ -965,14 +965,18 @@
                     </div>
 
                     <div id="sumManualActions" class="action-col" style="display: none;">
+                        <div class="tile-row sum-logic-row">
+                            <button class="sum-logic-btn" id="sumLogic1Btn" onclick="setSumLogic(false)">
+                                <span class="sum-logic-btn__title">Логика 1</span>
+                                <span class="sum-logic-btn__sub">Млн + Сотни + Тысячи + Тенге</span>
+                            </button>
+                            <button class="sum-logic-btn" id="sumLogic2Btn" onclick="setSumLogic(true)">
+                                <span class="sum-logic-btn__title">Логика 2</span>
+                                <span class="sum-logic-btn__sub">Млн + Сотни тысяч + Тенге</span>
+                            </button>
+                        </div>
                         <div id="sumCounts" class="sum-counts sum-counts--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам"></div>
                         <div id="sumTarget" class="sum-target">Загрузите Excel</div>
-                        <div class="tile-row">
-                            <label class="silence-toggle silence-toggle--left" title="Убирает «Сотни» и «Тысячи» из проигрывания — звучит Миллионы + Сотни тысяч + Тенге, не дожидаясь потолка 900/99">
-                                <input type="checkbox" id="sumStage2Check" onchange="toggleSumStage2(this.checked)">
-                                Этап 2: Миллионы + Сотни тысяч + Тенге
-                            </label>
-                        </div>
                         <div class="tile-row">
                             <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sumSendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
                         </div>
@@ -980,15 +984,11 @@
                             <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumManualSave()">Сохранить <kbd>Z</kbd></button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()"><svg class="icon"><use href="#icon-save"></use></svg> Сохранить остаток (то, что выделено в Audacity)</button>
+                            <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>
+                            <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить <kbd>M</kbd></button>
+                            <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>
                         </div>
-                        <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить со следующим <kbd>M</kbd></button>
-                        </div>
-                        <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор переменных</button>
-                        </div>
-                        <div class="action-note">Крутите дубли клавишами <kbd>A</kbd>/<kbd>D</kbd>, пока не услышите текст с экрана. Папку программа выберет сама по тексту. Если в дубле слиплось несколько цифр — выделите лишнее в Audacity и жмите «Сохранить остаток». А если наоборот число разрезало на два дубля («50» и «5 тыс.» вместо «55 тыс.») — встаньте на первый и жмите «Склеить со следующим», прежде чем закрывать проект.</div>
+                        <div class="action-note">Крутите дубли клавишами <kbd>A</kbd>/<kbd>D</kbd>, пока не услышите текст с экрана. Папку программа выберет сама по тексту. Слиплось несколько цифр в одном дубле — жмите «Остаток». Число разрезало на два дубля — жмите «Склеить», стоя на первом.</div>
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">

@@ -55,6 +55,13 @@ SUM_TIER_DEFAULT_DIR = {
 }
 SUM_TIER_CAP = {'millions': 100, 'hundred_thousands': 900, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
 
+# Ровно две логики звучания суммы — переключаются кнопкой в интерфейсе,
+# программа между ними больше не выбирает сама (ни по тексту Excel, ни по
+# тому, дошли ли «Сотни»/«Тысячи» до потолка). Ярус, которого нет в списке
+# активной логики, просто не участвует — ни в сборке звука, ни в счётчиках.
+SUM_LOGIC_1_TIERS = ['millions', 'hundreds', 'thousands', 'tenge']
+SUM_LOGIC_2_TIERS = ['millions', 'hundred_thousands', 'tenge']
+
 
 def _thousands_subtier(text):
     """«Тысячи» разбиты на два яруса с одним и тем же словом в названии —
@@ -1774,13 +1781,15 @@ class VariablesMixin:
         self.sum_manual_last_file[tier] = latest
         return latest
 
+    def _sum_active_logic_tiers(self):
+        return SUM_LOGIC_2_TIERS if getattr(self, 'sum_manual_stage2', False) else SUM_LOGIC_1_TIERS
+
     def _sum_tier_excluded(self, tier, counts=None):
         """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
-        для подрезки) — либо он сам упёрся в потолок, либо включена ручная
-        кнопка «Этап 2» (Миллионы + Сотни тысяч + Тенге), которая
-        принудительно убирает «Сотни»/«Тысячи» из сборки, не дожидаясь,
-        пока они реально дойдут до потолка."""
-        if getattr(self, 'sum_manual_stage2', False) and tier in ('hundreds', 'thousands'):
+        для подрезки), если он не входит в выбранную логику — «Логика 1»
+        (Миллионы+Сотни+Тысячи+Тенге) или «Логика 2» (Миллионы+Сотни
+        тысяч+Тенге) — либо сам упёрся в потолок."""
+        if tier not in self._sum_active_logic_tiers():
             return True
         return self._sum_tier_capped(tier, counts)
 
@@ -1897,13 +1906,15 @@ class VariablesMixin:
         last_file = getattr(self, 'sum_manual_last_file', {})
         phrase = self._current_sum_phrase()
         tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
+        active_tiers = self._sum_active_logic_tiers()
 
-        # Для карточки статистики (клик по счётчикам): по каждому ярусу —
-        # сколько сохранено, сколько осталось до потолка и на каком числе
-        # юзер остановился в последний раз (берём из имени сохранённого
-        # файла — это и есть исходный текст из Excel).
+        # Для карточки статистики (клик по счётчикам): по каждому ярусу
+        # ВЫБРАННОЙ логики — сколько сохранено, сколько осталось до потолка
+        # и на каком числе юзер остановился в последний раз (берём из имени
+        # сохранённого файла — это и есть исходный текст из Excel). Ярусы
+        # другой логики не показываем — они сейчас не участвуют в работе.
         stats = []
-        for t in SUM_TIER_ORDER:
+        for t in active_tiers:
             done = counts.get(t, 0)
             cap = SUM_TIER_CAP.get(t)
             last_path = last_file.get(t)
@@ -1920,7 +1931,7 @@ class VariablesMixin:
         return {
             "active": getattr(self, 'sum_manual_active', False),
             "stage2": getattr(self, 'sum_manual_stage2', False),
-            "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in SUM_TIER_ORDER},
+            "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in active_tiers},
             "detected_tier": SUM_TIER_LABELS.get(tier),
             "detected_dir": SUM_TIER_DEFAULT_DIR.get(tier),
             "detected_from": (phrase or {}).get('text', ''),
