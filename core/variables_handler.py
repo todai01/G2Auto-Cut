@@ -1795,17 +1795,30 @@ class VariablesMixin:
         значением, пока входит в активную логику."""
         return tier not in self._sum_active_logic_tiers()
 
-    def _detect_sum_tier(self, text):
-        """Определяет ярус по тому, что стоит после числа в тексте Excel:
-        «1 млн» → Миллионы, «5 тыс» → Тысячи, «100 тыс» → Сотни тысяч
-        (100-900 тыс. — новый ярус для сумм за миллион), «20 тенге» → Тенге.
+    def _sum_next_cycle_tier(self):
+        """Следующий ярус по очереди активной логики (Логика 1:
+        Миллионы→Сотни→Тысячи→Тенге, Логика 2: Миллионы→Сотни тысяч→Тенге),
+        как счётчик — не завязан на текст Excel вообще."""
+        active = self._sum_active_logic_tiers()
+        idx = getattr(self, 'sum_manual_cycle_idx', 0) % len(active)
+        return active[idx]
 
-        Голое число без единицы («300») — самый частый случай для этапа 2:
-        в Excel «Сотни тысяч» тоже пишут просто числом, без слова «тыс»
-        (иначе от обычных «Сотен» их не отличить). Какой это ярус, решает
-        кнопка «Этап 2»: выключена — «Сотни», включена — «Сотни тысяч».
-        Без слова «тыс» в тексте и без потолков программа сама не угадает —
-        поэтому больше не пытается, ждёт явного переключателя."""
+    def _sum_advance_cycle(self, tier):
+        """Сдвигает очередь на шаг ВПЕРЁД от того яруса, который только что
+        сохранили — даже если ярус определился по слову в тексте, а не по
+        самой очереди. Так очередь сама подстраивается под ручную правку."""
+        active = self._sum_active_logic_tiers()
+        if tier in active:
+            self.sum_manual_cycle_idx = (active.index(tier) + 1) % len(active)
+
+    def _detect_sum_tier(self, text):
+        """Определяет ярус текущей строки. Если в тексте Excel явно
+        написано слово единицы — «1 млн» → Миллионы, «5 тыс» → Тысячи,
+        «100 тыс» → Сотни тысяч (100-900 тыс.), «20 тенге» → Тенге —
+        используем его. Слов в тексте может не быть вовсе (голые числа —
+        именно так теперь ведут Excel): тогда ярус берём по очереди —
+        какой шаг активной логики сейчас идёт по счёту (Миллионы, затем
+        следующий ярус и т.д.), а не гадаем по числу."""
         low = (text or '').lower().replace('ё', 'е')
         if 'млн' in low or 'миллион' in low:
             return 'millions'
@@ -1814,7 +1827,7 @@ class VariablesMixin:
         # «тг» ловим и без пробела («100тг»), но не внутри слова («отгрузка»)
         if 'тенге' in low or re.search(r'тг(?![а-яa-z])', low):
             return 'tenge'
-        return 'hundred_thousands' if getattr(self, 'sum_manual_stage2', False) else 'hundreds'
+        return self._sum_next_cycle_tier()
 
     def _sum_in_cascade(self):
         return getattr(self, 'current_mode', '') == 'VarBatch' and getattr(self, 'cascade_ordered_cats', None)
@@ -2159,6 +2172,7 @@ class VariablesMixin:
             self.sum_manual_last_file = {}
         self.sum_manual_counts[tier] = self.sum_manual_counts.get(tier, 0) + 1
         self.sum_manual_last_file[tier] = safe_path
+        self._sum_advance_cycle(tier)
 
         # Потолок теперь только предупреждает, а не запрещает: ярус выбирается
         # не вручную, а по тексту Excel, и жёсткий запрет просто остановил бы

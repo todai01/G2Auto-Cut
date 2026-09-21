@@ -1307,8 +1307,8 @@ let isProcessing = false;
             lastSumState = sumState;
             let logic1Btn = document.getElementById('sumLogic1Btn');
             let logic2Btn = document.getElementById('sumLogic2Btn');
-            if (logic1Btn) logic1Btn.classList.toggle('is-active', !sumState.stage2);
-            if (logic2Btn) logic2Btn.classList.toggle('is-active', !!sumState.stage2);
+            if (logic1Btn) logic1Btn.classList.toggle('btn-tile--solid-mode', !sumState.stage2);
+            if (logic2Btn) logic2Btn.classList.toggle('btn-tile--solid-mode', !!sumState.stage2);
             let counts = document.getElementById('sumCounts');
             if (counts && sumState.counts) {
                 counts.innerHTML = Object.entries(sumState.counts)
