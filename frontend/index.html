@@ -968,6 +968,12 @@
                         <div id="sumCounts" class="sum-counts sum-counts--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам"></div>
                         <div id="sumTarget" class="sum-target">Загрузите Excel</div>
                         <div class="tile-row">
+                            <label class="silence-toggle silence-toggle--left" title="Убирает «Сотни» и «Тысячи» из проигрывания — звучит Миллионы + Сотни тысяч + Тенге, не дожидаясь потолка 900/99">
+                                <input type="checkbox" id="sumStage2Check" onchange="toggleSumStage2(this.checked)">
+                                Этап 2: Миллионы + Сотни тысяч + Тенге
+                            </label>
+                        </div>
+                        <div class="tile-row">
                             <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sumSendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
                         </div>
                         <div class="tile-row">

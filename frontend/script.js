@@ -1232,6 +1232,13 @@ let isProcessing = false;
             if (box) box.blur();
             let sumState = await pywebview.api.toggle_sum_mode(checked);
             renderSumPanel(sumState);
+        }
+
+        async function toggleSumStage2(checked) {
+            let box = document.getElementById('sumStage2Check');
+            if (box) box.blur();
+            let sumState = await pywebview.api.toggle_sum_stage2(checked);
+            renderSumPanel(sumState);
             applySumModeLayout();
 
             if (sumModeActive) {
@@ -1292,6 +1299,8 @@ let isProcessing = false;
         function renderSumPanel(sumState) {
             if (!sumState) return;
             lastSumState = sumState;
+            let stage2Box = document.getElementById('sumStage2Check');
+            if (stage2Box) stage2Box.checked = !!sumState.stage2;
             let counts = document.getElementById('sumCounts');
             if (counts && sumState.counts) {
                 counts.innerHTML = Object.entries(sumState.counts)

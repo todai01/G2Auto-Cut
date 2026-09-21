@@ -1749,6 +1749,16 @@ class VariablesMixin:
         cap = SUM_TIER_CAP.get(tier)
         return cap is not None and counts.get(tier, 0) >= cap
 
+    def _sum_tier_excluded(self, tier, counts=None):
+        """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
+        для подрезки) — либо он сам упёрся в потолок, либо включена ручная
+        кнопка «Этап 2» (Миллионы + Сотни тысяч + Тенге), которая
+        принудительно убирает «Сотни»/«Тысячи» из сборки, не дожидаясь,
+        пока они реально дойдут до потолка."""
+        if getattr(self, 'sum_manual_stage2', False) and tier in ('hundreds', 'thousands'):
+            return True
+        return self._sum_tier_capped(tier, counts)
+
     def _detect_sum_tier(self, text):
         """Определяет ярус по тому, что стоит после числа в тексте Excel:
         «1 млн» → Миллионы, «5 тыс» → Тысячи, «100 тыс» → Сотни тысяч
@@ -1756,11 +1766,10 @@ class VariablesMixin:
 
         Голое число без единицы («300») — самый частый случай для этапа 2:
         в Excel «Сотни тысяч» тоже пишут просто числом, без слова «тыс»
-        (иначе от обычных «Сотен» их не отличить). Поэтому голое число —
-        это «Сотни», ПОКА «Сотни» и «Тысячи» не дошли до своего потолка
-        (900 и 99). Как только оба яруса упёрлись в потолок — значит,
-        работа перешла на этап 2, и то же голое число теперь значит
-        «Сотни тысяч»."""
+        (иначе от обычных «Сотен» их не отличить). Какой это ярус, решает
+        кнопка «Этап 2»: выключена — «Сотни», включена — «Сотни тысяч».
+        Без слова «тыс» в тексте и без потолков программа сама не угадает —
+        поэтому больше не пытается, ждёт явного переключателя."""
         low = (text or '').lower().replace('ё', 'е')
         if 'млн' in low or 'миллион' in low:
             return 'millions'
@@ -1769,10 +1778,7 @@ class VariablesMixin:
         # «тг» ловим и без пробела («100тг»), но не внутри слова («отгрузка»)
         if 'тенге' in low or re.search(r'тг(?![а-яa-z])', low):
             return 'tenge'
-        counts = getattr(self, 'sum_manual_counts', None) or {}
-        if self._sum_tier_capped('hundreds', counts) and self._sum_tier_capped('thousands', counts):
-            return 'hundred_thousands'
-        return 'hundreds'
+        return 'hundred_thousands' if getattr(self, 'sum_manual_stage2', False) else 'hundreds'
 
     def _sum_in_cascade(self):
         return getattr(self, 'current_mode', '') == 'VarBatch' and getattr(self, 'cascade_ordered_cats', None)
@@ -1851,7 +1857,7 @@ class VariablesMixin:
             if t == tier and not err and active_file:
                 label = (phrase.get('text') if phrase else '').strip() or SUM_TIER_LABELS[t]
                 segments.append({'label': label, 'path': active_file})
-            elif not self._sum_tier_capped(t):
+            elif not self._sum_tier_excluded(t):
                 ref = last_file.get(t)
                 if ref and os.path.exists(ref):
                     label = os.path.splitext(os.path.basename(ref))[0]
@@ -1889,12 +1895,20 @@ class VariablesMixin:
 
         return {
             "active": getattr(self, 'sum_manual_active', False),
+            "stage2": getattr(self, 'sum_manual_stage2', False),
             "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in SUM_TIER_ORDER},
             "detected_tier": SUM_TIER_LABELS.get(tier),
             "detected_dir": SUM_TIER_DEFAULT_DIR.get(tier),
             "detected_from": (phrase or {}).get('text', ''),
             "stats": stats,
         }
+
+    def toggle_sum_stage2(self, active):
+        """Кнопка «Этап 2»: Миллионы + Сотни тысяч + Тенге, без «Сотни» и
+        «Тысячи» — включается вручную, а не по достижению потолка (900/99),
+        потому что до конца доходить не обязательно."""
+        self.sum_manual_stage2 = bool(active)
+        return self.get_sum_manual_state()
 
     def toggle_sum_mode(self, active):
         self.sum_manual_active = bool(active)
@@ -1965,7 +1979,7 @@ class VariablesMixin:
                 active_clip_start = cursor
                 cursor += self._import_clip_to_track0(active_file, cursor)
                 clip_layout.append(t)
-            elif not self._sum_tier_capped(t):
+            elif not self._sum_tier_excluded(t):
                 ref = last_file.get(t)
                 if ref and os.path.exists(ref):
                     cursor += self._import_clip_to_track0(ref, cursor)
@@ -2076,7 +2090,7 @@ class VariablesMixin:
             counts_now = getattr(self, 'sum_manual_counts', None) or {}
             prev_tier = next((SUM_TIER_ORDER[i] for i in range(tier_idx - 1, -1, -1)
                                if counts_now.get(SUM_TIER_ORDER[i], 0) > 0
-                               and not self._sum_tier_capped(SUM_TIER_ORDER[i], counts_now)), None)
+                               and not self._sum_tier_excluded(SUM_TIER_ORDER[i], counts_now)), None)
             if prev_tier:
                 prev_clip = clip_map.get(prev_tier)
                 prev_path = getattr(self, 'sum_manual_last_file', {}).get(prev_tier)
