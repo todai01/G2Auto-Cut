@@ -2239,8 +2239,8 @@ let isProcessing = false;
                 if (e.code === 'Space') { e.preventDefault(); constructorTogglePlay(); }
                 else if (e.code === 'KeyA' && !e.repeat) { e.preventDefault(); constructorMoveSelection(-1); }
                 else if (e.code === 'KeyD' && !e.repeat) { e.preventDefault(); constructorMoveSelection(1); }
-                else if (e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyW', () => constructorStepSelected(-1)); }
-                else if (e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyS', () => constructorStepSelected(1)); }
+                else if (e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyW', (animate) => constructorStepSelected(-1, animate)); }
+                else if (e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyS', (animate) => constructorStepSelected(1, animate)); }
                 return;
             }
 
@@ -2713,6 +2713,7 @@ let isProcessing = false;
                 this.lastT = 0;
                 this.rafId = null;
                 this._snapTimer = null;
+                this._onChangeRaf = null;
                 this._render();
                 this._bind();
             }
@@ -2723,7 +2724,18 @@ let isProcessing = false;
             _applyOffset() {
                 this.track.style.transform = `translateY(${this.offset}px)`;
                 this._markActive();
-                if (this.onChange) this.onChange();
+                this._scheduleOnChange();
+            }
+            // На быстрой передаче W/S дёргает шаг чаще, чем раз в кадр —
+            // без объединения вызовов onChange (перерисовка строки
+            // предпросмотра) пересобирался бы на каждый шаг, а не на
+            // каждый кадр экрана, и всё вместе подтормаживало.
+            _scheduleOnChange() {
+                if (!this.onChange || this._onChangeRaf) return;
+                this._onChangeRaf = requestAnimationFrame(() => {
+                    this._onChangeRaf = null;
+                    this.onChange();
+                });
             }
             _markActive() {
                 // Подсвечиваем крупным цветным текстом ровно то значение,
@@ -2802,11 +2814,24 @@ let isProcessing = false;
             }
             // Программный шаг на delta позиций (клавиатура W/S) — та же
             // плавная анимация прилипания, что и у обычной прокрутки.
-            step(delta) {
+            // animate=false — мгновенный прыжок без 220мс плавной анимации.
+            // На быстрой передаче удержания W/S шаги идут чаще, чем сама
+            // анимация успевает доиграть — каждый новый шаг обрывал
+            // предыдущую на середине, отчего прокрутка визуально дёргалась
+            // и «тормозила» вместо того, чтобы ускоряться. Плавную анимацию
+            // оставляем только для одиночного нажатия.
+            step(delta, animate = true) {
                 if (!this.items.length) return;
                 const idx = this.getIndex();
                 const clamped = Math.min(this.items.length - 1, Math.max(0, idx + delta));
-                this._animateTo(-clamped * this.itemHeight, clamped);
+                if (animate) {
+                    this._animateTo(-clamped * this.itemHeight, clamped);
+                } else {
+                    cancelAnimationFrame(this.rafId);
+                    this.offset = -clamped * this.itemHeight;
+                    this.index = clamped;
+                    this._applyOffset();
+                }
             }
             _animateTo(target, newIndex) {
                 cancelAnimationFrame(this.rafId);
@@ -2962,10 +2987,10 @@ let isProcessing = false;
             constructorRenderSelection();
         }
 
-        function constructorStepSelected(dir) {
+        function constructorStepSelected(dir, animate = true) {
             constructorEnsureSelection();
             let reel = constructorReelInstances[constructorSelectedTier];
-            if (reel) reel.step(dir);
+            if (reel) reel.step(dir, animate);
         }
 
         // Общий «держатель» для W/S: первый шаг сразу по нажатию, затем,
@@ -2983,10 +3008,13 @@ let isProcessing = false;
         }
         function constructorStartHold(code, action) {
             if (constructorHoldTimers[code]) return;
-            action();
+            action(true);
             const startedAt = performance.now();
             const tick = () => {
-                action();
+                // Повторы при удержании идут чаще, чем успевает доиграть
+                // плавная анимация шага — прыгаем мгновенно (см. Reel.step),
+                // иначе на быстрой передаче прокрутка дёргается и «тормозит».
+                action(false);
                 let interval = constructorHoldInterval(performance.now() - startedAt);
                 constructorHoldTimers[code].id = setTimeout(tick, interval);
             };
