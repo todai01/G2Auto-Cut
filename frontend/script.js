@@ -2226,6 +2226,15 @@ let isProcessing = false;
                 return;
             }
 
+            // Конструктор переменных — свой мини-режим со своим плеером:
+            // Space играет/останавливает собранную сумму, остальные горячие
+            // клавиши основного конвейера здесь не имеют смысла.
+            let constructorStage = document.getElementById('stage3-constructor');
+            if (constructorStage && constructorStage.style.display !== 'none') {
+                if (e.code === 'Space') { e.preventDefault(); constructorTogglePlay(); }
+                return;
+            }
+
             if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
 
             if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
@@ -2930,11 +2939,38 @@ let isProcessing = false;
             return indices;
         }
 
+        // Play/Стоп по Space — так же, как в основном рабочем экране.
+        // Раз в конструкторе нет длинной цепочки фраз, а просто одна
+        // склеенная сумма, состояние держим одним флагом плюс таймер на
+        // длительность (чтобы флаг сам сбросился, когда проигрывание
+        // закончилось само, без нажатия Space второй раз).
+        let constructorIsPlaying = false;
+        let constructorPlayTimeout = null;
+
         async function constructorPlay() {
             let res = await pywebview.api.constructor_play(constructorIndices());
             if (res && res.error) {
                 showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
+                return;
             }
+            clearTimeout(constructorPlayTimeout);
+            if (res && res.playing) {
+                constructorIsPlaying = true;
+                constructorPlayTimeout = setTimeout(() => { constructorIsPlaying = false; }, (res.duration || 0) * 1000);
+            } else {
+                constructorIsPlaying = false;
+            }
+        }
+
+        async function constructorStop() {
+            clearTimeout(constructorPlayTimeout);
+            constructorIsPlaying = false;
+            await pywebview.api.stop_audio();
+        }
+
+        async function constructorTogglePlay() {
+            if (constructorIsPlaying) await constructorStop();
+            else await constructorPlay();
         }
 
         async function constructorSendToAudacity() {
