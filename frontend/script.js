@@ -2643,6 +2643,36 @@ let isProcessing = false;
             millions: 'var(--accent-var)', hundreds: 'var(--accent-primary)',
             thousands: 'var(--accent-good)', tenge: 'var(--accent-info)'
         };
+        // Файлы с голыми цифрами («70.wav», «500.wav») читаются на рулетке и
+        // в превью тоже голыми цифрами — а должны звучать как «70 миллионов»,
+        // «500», «20 тысяч», «50 тенге» (у «Сотен» единица не нужна, число
+        // само по себе понятно). Если слово единицы уже есть в названии файла
+        // («1 миллион.wav») — трогать не нужно, просто показываем как есть.
+        const CONSTRUCTOR_TIER_UNIT_KEYWORDS = {
+            millions: ['миллион', 'млн'], thousands: ['тысяч', 'тыс'], tenge: ['тенге', 'kzt', '₸'],
+        };
+        const CONSTRUCTOR_TIER_UNIT_FORMS = {
+            millions: ['миллион', 'миллиона', 'миллионов'],
+            thousands: ['тысяча', 'тысячи', 'тысяч'],
+        };
+        function ruPluralForm(n, forms) {
+            let n100 = Math.abs(n) % 100, n10 = n100 % 10;
+            if (n100 > 10 && n100 < 20) return forms[2];
+            if (n10 === 1) return forms[0];
+            if (n10 >= 2 && n10 <= 4) return forms[1];
+            return forms[2];
+        }
+        function humanizeTierItem(tier, raw) {
+            if (tier === 'hundreds' || !raw) return raw;
+            let keywords = CONSTRUCTOR_TIER_UNIT_KEYWORDS[tier] || [];
+            if (keywords.some(k => raw.toLowerCase().includes(k))) return raw;
+            let m = raw.match(/\d+/);
+            if (!m) return raw;
+            if (tier === 'tenge') return `${raw} тенге`;
+            let forms = CONSTRUCTOR_TIER_UNIT_FORMS[tier];
+            return forms ? `${raw} ${ruPluralForm(parseInt(m[0], 10), forms)}` : raw;
+        }
+
         let constructorState = null;
         let constructorReelInstances = {};
 
@@ -2864,7 +2894,7 @@ let isProcessing = false;
 
             constructorReelInstances = {};
             CONSTRUCTOR_TIER_ORDER.forEach(tier => {
-                let items = constructorState.tiers[tier].items;
+                let items = constructorState.tiers[tier].items.map(t => humanizeTierItem(tier, t));
                 let container = document.getElementById(`reel-${tier}`);
                 constructorReelInstances[tier] = new Reel(container, items, 44, updateConstructorPreview);
             });
@@ -2881,7 +2911,8 @@ let isProcessing = false;
                 let reel = constructorReelInstances[tier];
                 if (!items.length) { parts.push(`<em>${escapeHtml(constructorState.tiers[tier].label)} — пропущено</em>`); return; }
                 let idx = reel ? reel.getIndex() : 0;
-                parts.push(`<b>${escapeHtml(items[idx] ?? '')}</b>`);
+                let shown = reel ? reel.items[idx] : humanizeTierItem(tier, items[idx]);
+                parts.push(`<b>${escapeHtml(shown ?? '')}</b>`);
             });
             if (constructorState.end) parts.push(escapeHtml(constructorState.end));
             el.innerHTML = parts.join(' &nbsp;→&nbsp; ');
