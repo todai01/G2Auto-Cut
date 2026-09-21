@@ -32,7 +32,8 @@ class ConstructorMixin:
 
     def constructor_pick_sum_folder(self):
         """Шаг 1: папка «Суммы» — та же, что режим «Суммы» создаёт сам,
-        с 4 подпапками-ярусами внутри. Яруса без своей подпапки остаются
+        с подпапками-ярусами внутри (по одной на каждый ярус из
+        SUM_TIER_ORDER). Яруса без своей подпапки остаются
         просто пустыми рулетками, а не ошибкой."""
         folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not folder:

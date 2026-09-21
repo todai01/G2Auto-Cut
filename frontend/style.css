@@ -1658,14 +1658,16 @@ input:focus-visible + .opt-chip__box{
    экранов (панель на фоне var(--panel) с мягкой тенью), чтобы блок не
    висел сиротой на пустом фоне. */
 .constructor-panel{
-    width: 100%; max-width: 1000px; display: flex; flex-direction: column; align-items: center;
+    width: 100%; max-width: 1180px; display: flex; flex-direction: column; align-items: center;
     gap: var(--space-5); background: var(--panel); border: 1px solid var(--border-soft);
     border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); padding: var(--space-6) var(--space-5) var(--space-5);
 }
 
-.constructor-reels{ display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: 100%; }
+.constructor-reels{ display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; width: 100%; }
 
-.reel-col{ display: flex; flex-direction: column; align-items: center; gap: 10px; width: 200px; }
+/* Пятый ярус («Сотни тысяч») сузил колонки, чтобы все помещались в ряд
+   без переноса на большинстве экранов. */
+.reel-col{ display: flex; flex-direction: column; align-items: center; gap: 10px; width: 180px; }
 .reel-col__label{
     font-size: 13px; font-weight: 700; color: var(--tier-accent, var(--text)); text-align: center;
     display: flex; align-items: center; gap: 6px;

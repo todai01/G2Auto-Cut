@@ -2655,12 +2655,16 @@ let isProcessing = false;
         //  точечную правку.
         // ==================================================================
 
-        const CONSTRUCTOR_TIER_ORDER = ['millions', 'hundreds', 'thousands', 'tenge'];
+        // Пятый ярус «Сотни тысяч» (100-900 тыс.) — для сумм за миллион,
+        // когда старые «Сотни (100-900)» и «Тысячи (1-99 тыс.)» упёрлись в
+        // потолок. Порядок и имена ярусов совпадают с SUM_TIER_ORDER в
+        // core/variables_handler.py — держите их в паре, если меняете одно.
+        const CONSTRUCTOR_TIER_ORDER = ['millions', 'hundred_thousands', 'hundreds', 'thousands', 'tenge'];
         // У каждого яруса — свой акцентный цвет (уже есть в общей палитре
         // софта), чтобы рулетки визуально отличались друг от друга, а не
         // сливались в одинаковые серые колонки.
         const CONSTRUCTOR_TIER_ACCENT = {
-            millions: 'var(--accent-var)', hundreds: 'var(--accent-primary)',
+            millions: 'var(--accent-var)', hundred_thousands: 'var(--accent-mode)', hundreds: 'var(--accent-primary)',
             thousands: 'var(--accent-good)', tenge: 'var(--accent-info)'
         };
         // Файлы с голыми цифрами («70.wav», «500.wav») читаются на рулетке и
@@ -2669,10 +2673,12 @@ let isProcessing = false;
         // само по себе понятно). Если слово единицы уже есть в названии файла
         // («1 миллион.wav») — трогать не нужно, просто показываем как есть.
         const CONSTRUCTOR_TIER_UNIT_KEYWORDS = {
-            millions: ['миллион', 'млн'], thousands: ['тысяч', 'тыс'], tenge: ['тенге', 'kzt', '₸'],
+            millions: ['миллион', 'млн'], hundred_thousands: ['тысяч', 'тыс'],
+            thousands: ['тысяч', 'тыс'], tenge: ['тенге', 'kzt', '₸'],
         };
         const CONSTRUCTOR_TIER_UNIT_FORMS = {
             millions: ['миллион', 'миллиона', 'миллионов'],
+            hundred_thousands: ['тысяча', 'тысячи', 'тысяч'],
             thousands: ['тысяча', 'тысячи', 'тысяч'],
         };
         function ruPluralForm(n, forms) {
@@ -2866,7 +2872,7 @@ let isProcessing = false;
         }
 
         async function startConstructor() {
-            let confirmed1 = await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат 4 подпапки ярусов.');
+            let confirmed1 = await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат подпапки ярусов.');
             if (!confirmed1) return;
             let state = await pywebview.api.constructor_pick_sum_folder();
             if (state && state.error === 'cancel') return;
