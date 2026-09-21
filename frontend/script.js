@@ -210,6 +210,11 @@ let isProcessing = false;
         // сумму», и это нормальная часть работы с этим экраном, а не повод
         // затемнять программу.
         window.addEventListener('blur', () => {
+            // Окно потеряло фокус — если W/S были зажаты, keyup может не
+            // прийти вовсе (например, alt-tab), и прокрутка иначе крутилась
+            // бы бесконечно быстрее и быстрее сама по себе.
+            constructorStopHold('KeyW');
+            constructorStopHold('KeyS');
             if (audacityEmbedded) return;
             let constructorStage = document.getElementById('stage3-constructor');
             if (constructorStage && constructorStage.style.display !== 'none') return;
@@ -2232,6 +2237,10 @@ let isProcessing = false;
             let constructorStage = document.getElementById('stage3-constructor');
             if (constructorStage && constructorStage.style.display !== 'none') {
                 if (e.code === 'Space') { e.preventDefault(); constructorTogglePlay(); }
+                else if (e.code === 'KeyA' && !e.repeat) { e.preventDefault(); constructorMoveSelection(-1); }
+                else if (e.code === 'KeyD' && !e.repeat) { e.preventDefault(); constructorMoveSelection(1); }
+                else if (e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyW', () => constructorStepSelected(-1)); }
+                else if (e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyS', () => constructorStepSelected(1)); }
                 return;
             }
 
@@ -2300,6 +2309,8 @@ let isProcessing = false;
             if (e.code === 'Digit1') { releaseHold(1, 'btnPrepMerge', () => markPart(1)); }
             else if (e.code === 'Digit2') { releaseHold(2, 'btnSaveMerge', () => markPart(2)); }
             if (e.code === 'Digit3') { releaseHold(3, 'btnSaveMergeVar', () => markPart(3)); }
+
+            if (e.code === 'KeyW' || e.code === 'KeyS') { constructorStopHold(e.code); }
         });
 
         window.alert = function(message) {
@@ -2789,6 +2800,14 @@ let isProcessing = false;
                 const clamped = Math.min(this.items.length - 1, Math.max(0, idx));
                 this._animateTo(-clamped * this.itemHeight, clamped);
             }
+            // Программный шаг на delta позиций (клавиатура W/S) — та же
+            // плавная анимация прилипания, что и у обычной прокрутки.
+            step(delta) {
+                if (!this.items.length) return;
+                const idx = this.getIndex();
+                const clamped = Math.min(this.items.length - 1, Math.max(0, idx + delta));
+                this._animateTo(-clamped * this.itemHeight, clamped);
+            }
             _animateTo(target, newIndex) {
                 cancelAnimationFrame(this.rafId);
                 const start = this.offset;
@@ -2891,7 +2910,7 @@ let isProcessing = false;
                 let items = constructorState.tiers[tier].items;
                 let isEmpty = items.length === 0;
                 return `
-                <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
+                <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
                     <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
                     <div class="reel" id="reel-${tier}">
                         <div class="reel-indicator"></div>
@@ -2908,6 +2927,64 @@ let isProcessing = false;
                 constructorReelInstances[tier] = new Reel(container, items, 44, updateConstructorPreview);
             });
             updateConstructorPreview();
+            constructorEnsureSelection();
+            constructorRenderSelection();
+        }
+
+        // ==================================================================
+        // Управление конструктором с клавиатуры (WASD): A/D переключают,
+        // какая рулетка сейчас «активна», W/S крутят её вверх/вниз. При
+        // удержании W/S прокрутка постепенно ускоряется — так удобнее
+        // долистать от «1» до «99», чем щёлкать по одному шагу.
+        // ==================================================================
+        let constructorSelectedTier = null;
+        let constructorHoldTimers = {};
+
+        function constructorEnsureSelection() {
+            if (!constructorState || !constructorState.tiers) return;
+            if (constructorSelectedTier && constructorState.tiers[constructorSelectedTier]) return;
+            constructorSelectedTier = CONSTRUCTOR_TIER_ORDER.find(t => constructorState.tiers[t].items.length)
+                || CONSTRUCTOR_TIER_ORDER[0];
+        }
+
+        function constructorRenderSelection() {
+            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+                let col = document.querySelector(`.reel-col[data-tier="${tier}"]`);
+                if (col) col.classList.toggle('reel-col--selected', tier === constructorSelectedTier);
+            });
+        }
+
+        function constructorMoveSelection(dir) {
+            constructorEnsureSelection();
+            let idx = CONSTRUCTOR_TIER_ORDER.indexOf(constructorSelectedTier);
+            let next = Math.min(CONSTRUCTOR_TIER_ORDER.length - 1, Math.max(0, idx + dir));
+            constructorSelectedTier = CONSTRUCTOR_TIER_ORDER[next];
+            constructorRenderSelection();
+        }
+
+        function constructorStepSelected(dir) {
+            constructorEnsureSelection();
+            let reel = constructorReelInstances[constructorSelectedTier];
+            if (reel) reel.step(dir);
+        }
+
+        // Общий «держатель» для W/S: первый шаг сразу по нажатию, затем,
+        // пока клавиша зажата, повторяем со всё уменьшающейся паузой —
+        // это и есть ускорение прокрутки при удержании.
+        function constructorStartHold(code, action) {
+            if (constructorHoldTimers[code]) return;
+            action();
+            let speed = 220;
+            const tick = () => {
+                action();
+                speed = Math.max(45, speed - 18);
+                constructorHoldTimers[code].id = setTimeout(tick, speed);
+            };
+            constructorHoldTimers[code] = { id: setTimeout(tick, 380) };
+        }
+        function constructorStopHold(code) {
+            let timer = constructorHoldTimers[code];
+            if (timer) { clearTimeout(timer.id); delete constructorHoldTimers[code]; }
         }
 
         function updateConstructorPreview() {
