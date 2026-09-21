@@ -2954,11 +2954,12 @@ let isProcessing = false;
             document.getElementById('constructorMeta').innerText = bits.join(' · ');
         }
 
-        function constructorReelColHTML(tier) {
+        function constructorReelColHTML(tier, wide = false) {
             let items = constructorState.tiers[tier].items;
             let isEmpty = items.length === 0;
+            let cls = 'reel-col' + (isEmpty ? ' reel-col--empty' : '') + (wide ? ' reel-col--wide' : '');
             return `
-            <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
+            <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
                 <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
                 <div class="reel" id="reel-${tier}">
                     <div class="reel-indicator"></div>
@@ -2981,7 +2982,7 @@ let isProcessing = false;
             let flipGroup = `
                 <div class="constructor-flip-group">
                     <div class="constructor-flip-group__reels">
-                        ${constructorBigMode ? constructorReelColHTML('hundred_thousands')
+                        ${constructorBigMode ? constructorReelColHTML('hundred_thousands', true)
                                               : constructorReelColHTML('hundreds') + constructorReelColHTML('thousands')}
                     </div>
                     <button class="constructor-flip-btn" onclick="constructorToggleBigMode()">

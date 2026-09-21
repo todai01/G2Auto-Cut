@@ -1677,7 +1677,12 @@ input:focus-visible + .opt-chip__box{
 /* «Сотни»/«Тысячи» и «Сотни тысяч» занимают одно и то же место в ряду —
    видна только одна сторона, между ними переключает кнопка под низом. */
 .constructor-flip-group{ display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.constructor-flip-group__reels{ display: flex; gap: 16px; }
+/* Ширина ряда фиксирована под 2 обычные карточки (180px + 180px + зазор) —
+   и в перевёрнутом виде тоже, чтобы Миллионы и Тенге по бокам не съезжали
+   при переключении. Широкая карточка «Сотни тысяч» растягивается на всю
+   эту ширину через .reel-col--wide. */
+.constructor-flip-group__reels{ display: flex; gap: 16px; width: 376px; }
+.reel-col--wide{ width: 100%; }
 .constructor-flip-btn{
     display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650;
     text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
