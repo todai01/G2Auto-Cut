@@ -1674,6 +1674,19 @@ input:focus-visible + .opt-chip__box{
 }
 .reel-col__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
 
+/* «Сотни»/«Тысячи» и «Сотни тысяч» занимают одно и то же место в ряду —
+   видна только одна сторона, между ними переключает кнопка под низом. */
+.constructor-flip-group{ display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.constructor-flip-group__reels{ display: flex; gap: 16px; }
+.constructor-flip-btn{
+    display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
+    background: var(--screen); border: 1px dashed var(--border-soft); border-radius: 999px;
+    padding: 6px 14px; cursor: pointer; white-space: nowrap;
+}
+.constructor-flip-btn:hover{ color: var(--accent-mode); border-color: var(--accent-mode); background: var(--tint-mode); }
+.constructor-flip-btn .icon{ width: 13px; height: 13px; }
+
 /* Ярус, для которого в папке не нашлось подпапки/файлов — подсвечиваем
    красным, а не молчим: пользователь должен сразу увидеть, что этой
    суммы нет, а не гадать, почему рулетка пустая. При проигрывании и

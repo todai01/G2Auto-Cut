@@ -2919,8 +2919,29 @@ let isProcessing = false;
         function openConstructorScreen() {
             embedAreaId = 'constructorEmbedArea';
             embedBtnId = 'constructorEmbedBtn';
+            constructorBigMode = false;
             showStage('stage3-constructor');
             renderConstructorMeta();
+            renderConstructorReels();
+        }
+
+        // Сотни (100-900) и Тысячи (1-99 тыс.) — это обычные суммы. Для сумм
+        // за миллион та же пара клеток переворачивается в одну большую —
+        // «Сотни тысяч» (100-900 тыс.) — кнопкой под ними. Одновременно
+        // видна только одна сторона, поэтому «Играть»/«Обновить сумму»
+        // автоматически берут либо Сотни+Тысячи, либо Сотни тысяч — то, что
+        // сейчас показано — и звучит либо «...900, 99 тысяч, 100 тенге»,
+        // либо «...100 тысяч, 100 тенге», как и должно быть.
+        let constructorBigMode = false;
+        function constructorVisibleTiers() {
+            return CONSTRUCTOR_TIER_ORDER.filter(t => {
+                if (t === 'hundred_thousands') return constructorBigMode;
+                if (t === 'hundreds' || t === 'thousands') return !constructorBigMode;
+                return true;
+            });
+        }
+        function constructorToggleBigMode() {
+            constructorBigMode = !constructorBigMode;
             renderConstructorReels();
         }
 
@@ -2933,31 +2954,51 @@ let isProcessing = false;
             document.getElementById('constructorMeta').innerText = bits.join(' · ');
         }
 
+        function constructorReelColHTML(tier) {
+            let items = constructorState.tiers[tier].items;
+            let isEmpty = items.length === 0;
+            return `
+            <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
+                <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
+                <div class="reel" id="reel-${tier}">
+                    <div class="reel-indicator"></div>
+                    <div class="reel-track"></div>
+                </div>
+                <div class="reel-col__count">${isEmpty ? 'не найдено — пропускается' : items.length + ' шт.'}</div>
+            </div>`;
+        }
+
         function renderConstructorReels() {
             let wrap = document.getElementById('constructorReels');
             if (!constructorState || !constructorState.tiers) { wrap.innerHTML = ''; return; }
 
-            wrap.innerHTML = CONSTRUCTOR_TIER_ORDER.map(tier => {
-                let items = constructorState.tiers[tier].items;
-                let isEmpty = items.length === 0;
-                return `
-                <div class="reel-col${isEmpty ? ' reel-col--empty' : ''}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
-                    <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
-                    <div class="reel" id="reel-${tier}">
-                        <div class="reel-indicator"></div>
-                        <div class="reel-track"></div>
+            // «Сотни» + «Тысячи» и «Сотни тысяч» занимают одно и то же место
+            // в ряду — переворачиваются кнопкой между собой, а не стоят
+            // рядом впятером.
+            let flipLabel = constructorBigMode
+                ? 'Обычные суммы (Сотни и Тысячи)'
+                : 'Сумма за миллион (Сотни тысяч)';
+            let flipGroup = `
+                <div class="constructor-flip-group">
+                    <div class="constructor-flip-group__reels">
+                        ${constructorBigMode ? constructorReelColHTML('hundred_thousands')
+                                              : constructorReelColHTML('hundreds') + constructorReelColHTML('thousands')}
                     </div>
-                    <div class="reel-col__count">${isEmpty ? 'не найдено — пропускается' : items.length + ' шт.'}</div>
+                    <button class="constructor-flip-btn" onclick="constructorToggleBigMode()">
+                        ${iconHTML('refresh-cw')} ${flipLabel}
+                    </button>
                 </div>`;
-            }).join('');
+
+            wrap.innerHTML = constructorReelColHTML('millions') + flipGroup + constructorReelColHTML('tenge');
 
             constructorReelInstances = {};
-            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+            constructorVisibleTiers().forEach(tier => {
                 let items = constructorState.tiers[tier].items.map(t => humanizeTierItem(tier, t));
                 let container = document.getElementById(`reel-${tier}`);
                 constructorReelInstances[tier] = new Reel(container, items, 44, updateConstructorPreview);
             });
             updateConstructorPreview();
+            constructorSelectedTier = null;
             constructorEnsureSelection();
             constructorRenderSelection();
         }
@@ -2973,9 +3014,9 @@ let isProcessing = false;
 
         function constructorEnsureSelection() {
             if (!constructorState || !constructorState.tiers) return;
-            if (constructorSelectedTier && constructorState.tiers[constructorSelectedTier]) return;
-            constructorSelectedTier = CONSTRUCTOR_TIER_ORDER.find(t => constructorState.tiers[t].items.length)
-                || CONSTRUCTOR_TIER_ORDER[0];
+            let visible = constructorVisibleTiers();
+            if (constructorSelectedTier && visible.includes(constructorSelectedTier)) return;
+            constructorSelectedTier = visible.find(t => constructorState.tiers[t].items.length) || visible[0];
         }
 
         function constructorRenderSelection() {
@@ -2987,9 +3028,10 @@ let isProcessing = false;
 
         function constructorMoveSelection(dir) {
             constructorEnsureSelection();
-            let idx = CONSTRUCTOR_TIER_ORDER.indexOf(constructorSelectedTier);
-            let next = Math.min(CONSTRUCTOR_TIER_ORDER.length - 1, Math.max(0, idx + dir));
-            constructorSelectedTier = CONSTRUCTOR_TIER_ORDER[next];
+            let visible = constructorVisibleTiers();
+            let idx = visible.indexOf(constructorSelectedTier);
+            let next = Math.min(visible.length - 1, Math.max(0, idx + dir));
+            constructorSelectedTier = visible[next];
             constructorRenderSelection();
         }
 
@@ -3036,7 +3078,7 @@ let isProcessing = false;
             if (!el || !constructorState) return;
             let parts = [];
             if (constructorState.start) parts.push(escapeHtml(constructorState.start));
-            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+            constructorVisibleTiers().forEach(tier => {
                 let items = constructorState.tiers[tier].items;
                 let reel = constructorReelInstances[tier];
                 if (!items.length) { parts.push(`<em>${escapeHtml(constructorState.tiers[tier].label)} — пропущено</em>`); return; }
