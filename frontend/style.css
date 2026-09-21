@@ -96,6 +96,16 @@ button:focus-visible, input:focus-visible{ outline: 2px solid var(--accent-prima
 
 a{ color: var(--accent-primary); }
 
+/* Единый набор линейных иконок (см. спрайт <symbol> в index.html) —
+   размер идёт от font-size окружающего блока, цвет — от currentColor,
+   поэтому существующие правила вида ".option-card--good .option-icon"
+   (которые красят через color) продолжают работать без изменений. */
+.icon{
+    width: 1em; height: 1em; display: inline-block; flex: none;
+    fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.15em;
+}
+
 kbd{
     display:inline-block; font-family: var(--font-mono); font-size: 10px; font-weight: 600;
     letter-spacing: 0.02em;
@@ -161,7 +171,7 @@ kbd{
 .option-icon{
     flex: none; font-size: 19px; width: 40px; height:40px; display:flex; align-items:center; justify-content:center;
     background: var(--screen); border-radius: var(--radius-sm); border: 1px solid var(--border-soft);
-    box-shadow: var(--shadow-screen);
+    box-shadow: var(--shadow-screen); color: var(--text-dim);
 }
 .option-title{ display:block; font-size: 14.5px; font-weight: 650; color: var(--text); letter-spacing: -0.01em; }
 .option-desc{ display:block; font-size: 12.5px; color: var(--text-dim); margin-top:3px; }
@@ -310,6 +320,11 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .workspace-grid--sum .action-note{ font-size: 11px; line-height: 1.4; }
 .workspace-grid--sum .sum-counts,
 .workspace-grid--sum .sum-target{ padding: 6px 10px; }
+/* .constructor-body — это flex-колонка с align-items: center, поэтому
+   без явной ширины рамка под Audacity сжимается по контенту почти до
+   нуля (реально видели w=4px). Растягиваем её саму на всю ширину. */
+.constructor-body > .audacity-embed-area{ align-self: stretch; width: 100%; }
+
 .audacity-embed-area__label{
     position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
     font-size: 12px; color: var(--text-dim); background: rgba(0,0,0,.55);
@@ -498,6 +513,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 #customAlertOverlay{ z-index: 10000; }
 
 .custom-alert-box {
+    position: relative;
     max-height: 92vh; overflow-y: auto;
     background: linear-gradient(180deg, var(--panel-raised), var(--panel));
     border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -506,7 +522,10 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
     transform: scale(0.95); animation: popInAlert 0.2s var(--ease) forwards;
 }
 @keyframes popInAlert { to { transform: scale(1); } }
-.custom-alert-icon { font-size: 32px; margin-bottom: 15px; }
+.custom-alert-icon { font-size: 32px; margin-bottom: 15px; color: var(--accent-info); display: flex; justify-content: center; }
+.custom-alert-icon.icon-tone--error{ color: var(--accent-trash); }
+.custom-alert-icon.icon-tone--warning{ color: var(--accent-var); }
+.custom-alert-icon.icon-tone--success{ color: var(--accent-good); }
 .custom-alert-text { color: var(--text); font-size: 15px; line-height: 1.55; margin-bottom: 26px; white-space: pre-wrap; font-weight: 600;}
 .custom-alert-btn {
     background: linear-gradient(180deg, #64a8f3, var(--accent-primary)); color: #fff; border: none;
@@ -714,7 +733,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .mode-card__icon{
     width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
     font-size: 21px; background: var(--screen); border: 1px solid var(--border-soft);
-    border-radius: var(--radius-md); box-shadow: var(--shadow-screen);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-screen); color: var(--text-dim);
 }
 .mode-card__title{
     font-size: var(--fs-lg); font-weight: 700; color: var(--text);
@@ -740,6 +759,11 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .mode-card--good .mode-card__go{ color: var(--accent-good); }
 .mode-card--good .mode-card__icon{ color: var(--accent-good); }
 
+.mode-card--info::before{ background: repeating-linear-gradient(90deg, var(--accent-primary) 0 14px, transparent 14px 18px); }
+.mode-card--info:hover{ border-color: var(--accent-primary); }
+.mode-card--info .mode-card__go{ color: var(--accent-primary); }
+.mode-card--info .mode-card__icon{ color: var(--accent-primary); }
+
 /* --- Плитки утилит --- */
 .util-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: var(--space-3); }
 .util-tile{
@@ -749,7 +773,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
     border-radius: var(--radius-md); cursor: pointer;
 }
 .util-tile:hover{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.32); }
-.util-tile__icon{ font-size: 18px; }
+.util-tile__icon{ font-size: 18px; color: var(--text-dim); }
 .util-tile__title{ font-size: var(--fs-md); font-weight: 650; color: var(--text); }
 .util-tile__desc{ font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; }
 
@@ -1261,6 +1285,15 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .modal-close:hover{ color: var(--accent-trash); border-color: rgba(239,91,80,0.3); background: var(--tint-trash); }
 
+.custom-alert-close{
+    position: absolute; top: 10px; right: 10px;
+    width: 28px; height: 28px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+    color: var(--text-faint); font-size: 19px; line-height: 1; cursor: pointer;
+}
+.custom-alert-close:hover{ color: var(--accent-trash); border-color: rgba(239,91,80,0.3); background: var(--tint-trash); }
+
 .modal-hint{
     font-size: var(--fs-md); color: var(--text-dim);
     line-height: 1.5; margin-bottom: var(--space-5);
@@ -1576,6 +1609,7 @@ input:focus-visible + .opt-chip__box{
     background: linear-gradient(180deg, #45cf8f, var(--accent-good)); color: #06281a;
     border-radius: var(--radius-md); font-size: var(--fs-md); font-weight: 700;
     box-shadow: var(--shadow-pop);
+    display: flex; align-items: center; gap: 8px;
     animation: toastIn .22s var(--ease);
 }
 @keyframes toastIn{ from{ opacity: 0; transform: translate(-50%, 10px); } to{ opacity: 1; transform: translate(-50%, 0); } }
@@ -1602,6 +1636,130 @@ input:focus-visible + .opt-chip__box{
     .var-slot__mix{ width: 100%; }
     .chunk-nav{ gap: 12px; }
     .chunk-display{ width: auto; flex: 1; min-width: 0; }
+}
+
+/* ---------- Конструктор переменных (рулетки) ---------- */
+.stage-constructor{ display: flex; flex-direction: column; min-height: calc(100vh - 80px); }
+
+.constructor-title{ display: flex; flex-direction: column; gap: 2px; text-align: right; }
+.constructor-title__main{
+    font-size: var(--fs-lg); font-weight: 700; color: var(--text);
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+}
+.constructor-title__main .icon{ color: var(--accent-info); }
+.constructor-title__sub{ font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+
+.constructor-body{
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: var(--space-6); padding: var(--space-6) var(--space-4);
+}
+
+/* Карточка-подложка вокруг рулеток — та же логика, что и у остальных
+   экранов (панель на фоне var(--panel) с мягкой тенью), чтобы блок не
+   висел сиротой на пустом фоне. */
+.constructor-panel{
+    width: 100%; max-width: 1180px; display: flex; flex-direction: column; align-items: center;
+    gap: var(--space-5); background: var(--panel); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); padding: var(--space-6) var(--space-5) var(--space-5);
+}
+
+.constructor-reels{ display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; width: 100%; }
+
+/* Пятый ярус («Сотни тысяч») сузил колонки, чтобы все помещались в ряд
+   без переноса на большинстве экранов. */
+.reel-col{ display: flex; flex-direction: column; align-items: center; gap: 10px; width: 180px; }
+.reel-col__label{
+    font-size: 13px; font-weight: 700; color: var(--tier-accent, var(--text)); text-align: center;
+    display: flex; align-items: center; gap: 6px;
+}
+.reel-col__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+
+/* «Сотни»/«Тысячи» и «Сотни тысяч» занимают одно и то же место в ряду —
+   видна только одна сторона, между ними переключает кнопка под низом. */
+.constructor-flip-group{ display: flex; flex-direction: column; align-items: center; gap: 10px; }
+/* Ширина ряда фиксирована под 2 обычные карточки (180px + 180px + зазор) —
+   и в перевёрнутом виде тоже, чтобы Миллионы и Тенге по бокам не съезжали
+   при переключении. Широкая карточка «Сотни тысяч» растягивается на всю
+   эту ширину через .reel-col--wide. */
+.constructor-flip-group__reels{ display: flex; gap: 16px; width: 376px; }
+.reel-col--wide{ width: 100%; }
+.constructor-flip-btn{
+    display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
+    background: var(--screen); border: 1px dashed var(--border-soft); border-radius: 999px;
+    padding: 6px 14px; cursor: pointer; white-space: nowrap;
+}
+.constructor-flip-btn:hover{ color: var(--accent-mode); border-color: var(--accent-mode); background: var(--tint-mode); }
+.constructor-flip-btn .icon{ width: 13px; height: 13px; }
+
+/* Ярус, для которого в папке не нашлось подпапки/файлов — подсвечиваем
+   красным, а не молчим: пользователь должен сразу увидеть, что этой
+   суммы нет, а не гадать, почему рулетка пустая. При проигрывании и
+   отправке в Audacity такой ярус просто пропускается (см. бэкенд). */
+.reel-col--empty .reel-col__label{ color: var(--accent-trash); }
+.reel-col--empty .reel-col__count{ color: var(--accent-trash); }
+.reel-col--empty .reel{ border-color: var(--accent-trash); background: var(--tint-trash); }
+.reel-col--empty .reel-indicator{ border-color: var(--accent-trash); background: rgba(239,91,80,0.1); box-shadow: none; }
+
+/* Ярус, выбранный сейчас клавиатурой (A/D) — W/S крутят именно его.
+   Подсвечиваем рамку и приподнимаем подпись, чтобы всегда было видно,
+   куда прилетит следующее нажатие W/S, не глядя на рулетки. */
+.reel-col--selected .reel-col__label{ text-shadow: 0 0 12px var(--tier-accent, transparent); }
+.reel-col--selected .reel{
+    border-color: var(--tier-accent, var(--accent-primary));
+    box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary));
+}
+
+.reel{
+    position: relative; width: 100%; height: 220px; overflow: hidden;
+    background: var(--screen); border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-screen);
+    cursor: grab; user-select: none; touch-action: none;
+    transition: border-color 0.2s ease;
+}
+.reel:hover{ border-color: var(--tier-accent, var(--border)); }
+.reel:active{ cursor: grabbing; }
+.reel-track{ position: absolute; top: 88px; left: 0; right: 0; will-change: transform; }
+.reel-item{
+    height: 44px; line-height: 44px; text-align: center; font-family: var(--font-mono);
+    font-size: 15px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 10px; transition: color 0.15s ease, transform 0.15s ease, font-weight 0.15s ease;
+}
+/* Значение, которое сейчас точно под индикатором — то самое, что уйдёт
+   в «Играть»/«Обновить сумму». Подсвечиваем крупнее и цветом яруса,
+   чтобы глазами сразу было видно текущий выбор, а не только по рамке. */
+.reel-item--active{
+    color: var(--tier-accent, var(--text)); font-weight: 700; transform: scale(1.06);
+}
+.reel-indicator{
+    position: absolute; top: 88px; left: 0; right: 0; height: 44px;
+    border-top: 1px solid var(--tier-accent, var(--accent-var)); border-bottom: 1px solid var(--tier-accent, var(--accent-var));
+    background: color-mix(in srgb, var(--tier-accent, var(--accent-var)) 10%, transparent);
+    box-shadow: 0 0 14px -2px var(--tier-accent, var(--accent-var)) inset;
+    pointer-events: none; z-index: 1;
+}
+.reel::before, .reel::after{
+    content: ""; position: absolute; left: 0; right: 0; height: 88px; pointer-events: none; z-index: 2;
+}
+.reel::before{ top: 0; background: linear-gradient(180deg, var(--screen), transparent); }
+.reel::after{ bottom: 0; background: linear-gradient(0deg, var(--screen), transparent); }
+
+/* Строка-«чек» с собранной суммой прямо сейчас — обновляется на лету
+   при любой прокрутке, чтобы не приходилось нажимать «Играть» вслепую. */
+.constructor-preview{
+    width: 100%; text-align: center; font-family: var(--font-mono); font-size: var(--fs-md);
+    color: var(--text-dim); background: var(--screen); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md); padding: 10px 16px; box-shadow: var(--shadow-screen);
+}
+.constructor-preview b{ color: var(--accent-var); font-weight: 700; }
+.constructor-preview em{ color: var(--accent-trash); font-style: normal; }
+
+.constructor-actions{ display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+.constructor-actions .btn-tile{ min-width: 190px; }
+.constructor-actions #constructorEmbedBtn{ min-width: 260px; flex-basis: 260px; }
+
+@media (max-width: 900px){
+    .reel-col{ width: 44%; }
 }
 
 @media (prefers-reduced-motion: reduce){

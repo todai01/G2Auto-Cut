@@ -9,9 +9,40 @@
 </head>
 <body>
 
+    <!-- Единый набор линейных иконок вместо смайликов — используется через
+         <svg class="icon"><use href="#icon-ИМЯ"></use></svg> по всему софту. -->
+    <svg style="display:none">
+        <symbol id="icon-alert-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></symbol>
+        <symbol id="icon-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></symbol>
+        <symbol id="icon-check-circle" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></symbol>
+        <symbol id="icon-alert-triangle" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+        <symbol id="icon-refresh-cw" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+        <symbol id="icon-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></symbol>
+        <symbol id="icon-link-2" viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></symbol>
+        <symbol id="icon-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></symbol>
+        <symbol id="icon-zap" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+        <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+        <symbol id="icon-file-text" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+        <symbol id="icon-slash" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></symbol>
+        <symbol id="icon-plus-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></symbol>
+        <symbol id="icon-edit-2" viewBox="0 0 24 24"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+        <symbol id="icon-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></symbol>
+        <symbol id="icon-octagon" viewBox="0 0 24 24"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/></symbol>
+        <symbol id="icon-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+        <symbol id="icon-type" viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></symbol>
+        <symbol id="icon-volume-2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></symbol>
+        <symbol id="icon-film" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></symbol>
+        <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
+        <symbol id="icon-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+        <symbol id="icon-dollar-sign" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
+        <symbol id="icon-headphones" viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></symbol>
+        <symbol id="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
+    </svg>
+
     <div id="customAlertOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box">
-            <div class="custom-alert-icon">🔔</div>
+            <button class="custom-alert-close" onclick="closeCustomAlert(false)" title="Закрыть">&times;</button>
+            <div class="custom-alert-icon" id="customAlertIcon"><svg class="icon"><use href="#icon-alert-circle"></use></svg></div>
             <div id="customAlertText" class="custom-alert-text">Сообщение</div>
             <button class="custom-alert-btn" onclick="closeCustomAlert()">ОК <kbd>Enter</kbd></button>
         </div>
@@ -59,6 +90,49 @@
     </div>
 
     <!-- Выбор режима сразу после нарезки чанков -->
+    <!-- Конструктор переменных: добавить файл окончания фразы? -->
+    <div id="constructorEndOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Добавить файл окончания (end)?</h3>
+                <button class="modal-close" onclick="constructorSkipEnd()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Не обязательно — если записи конца фразы нет, просто пропустите.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="constructorPickEnd()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
+                    <div><span class="option-title">Выбрать end.wav</span><span class="option-desc">Указать файл с диска</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="constructorSkipEnd()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-slash"></use></svg></span>
+                    <div><span class="option-title">Без end</span><span class="option-desc">Только start</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Продолжить недавний проект? — всплывает перед экраном подготовки -->
+    <div id="resumeProjectOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Хотите продолжить проект?</h3>
+            </div>
+            <div class="modal-hint">Последний открытый проект: <b id="resumeProjectName">—</b></div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="confirmResumeProject()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-play"></use></svg></span>
+                    <div><span class="option-title">Продолжить</span><span class="option-desc">Открыть с того места, где остановились</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="declineResumeProject()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-plus-circle"></use></svg></span>
+                    <div><span class="option-title">Начать заново</span><span class="option-desc">Перейти к подготовке нового проекта</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="modeChoiceOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
@@ -68,11 +142,11 @@
 
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="chooseCutMode('normal')">
-                    <span class="option-icon">📝</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-edit-2"></use></svg></span>
                     <div><span class="option-title">Обычный режим</span><span class="option-desc">По одной фразе, с меткой в Audacity</span></div>
                 </button>
                 <button class="option-card option-card--alt rise" onclick="chooseCutMode('premade')">
-                    <span class="option-icon">🔁</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-refresh-cw"></use></svg></span>
                     <div><span class="option-title">Готовые переменные</span><span class="option-desc">Каскад start + имя + end</span></div>
                 </button>
             </div>
@@ -99,11 +173,11 @@
 
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="pickStartEndManual()">
-                    <span class="option-icon">📂</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                     <div><span class="option-title">Выбрать с диска</span><span class="option-desc">Указать готовые файлы вручную</span></div>
                 </button>
                 <button class="option-card option-card--alt rise" onclick="createStartEndFromRecording()">
-                    <span class="option-icon">🎙️</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-mic"></use></svg></span>
                     <div><span class="option-title">Создать из записи</span><span class="option-desc">Открыть исходник, отметить метками в Audacity</span></div>
                 </button>
             </div>
@@ -179,21 +253,54 @@
         </div>
     </div>
 
+    <!-- Сопоставить укороченные имена файлов с полными из Excel и разложить по языкам -->
+    <div id="renameMatchOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Сопоставить названия по Excel</h3>
+                <button class="modal-close" onclick="closeRenameMatch()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Короткое имя файла ищем как конец полного из Excel (da_1_1 → gizat_ru_da_1_1),
+                переименовываем и раскладываем по подпапкам ru/kz/Прочее — судя по метке языка в полном имени.</div>
+
+            <label class="field">
+                <span class="field-label">Папка с файлами (короткие названия)</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickRenameMatchFolder()">Выбрать папку</button>
+                    <span id="renameMatchFolderLabel" class="modal-hint" style="margin:0;">Папка не выбрана</span>
+                </div>
+            </label>
+
+            <label class="field">
+                <span class="field-label">Excel со списком полных названий</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickRenameMatchExcel()">Выбрать файл</button>
+                    <span id="renameMatchExcelLabel" class="modal-hint" style="margin:0;">Файл не выбран</span>
+                </div>
+            </label>
+
+            <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" id="btnRunRenameMatch" onclick="runRenameMatch()">Сопоставить и разложить</button>
+
+            <div id="renameMatchResult" style="display:none; margin-top: var(--space-4);"></div>
+        </div>
+    </div>
+
     <!-- Ненавязчивая подсказка "что дальше" после конвертации -->
     <div id="postConvertOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
                 <h3 class="modal-title">Готово! Что дальше?</h3>
+                <button class="modal-close" onclick="closePostConvert()" title="Закрыть">&times;</button>
             </div>
             <div class="modal-hint" id="postConvertText">Файл сконвертирован.</div>
 
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="startCutFromConverted()">
-                    <span class="option-icon">✂️</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-scissors"></use></svg></span>
                     <div><span class="option-title">Начать нарезку</span><span class="option-desc">Взять этот файл и предложить настройки среза</span></div>
                 </button>
                 <button class="option-card option-card--alt rise" onclick="closePostConvert()">
-                    <span class="option-icon">✋</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-octagon"></use></svg></span>
                     <div><span class="option-title">Пока ничего</span><span class="option-desc">Просто закрыть окно</span></div>
                 </button>
             </div>
@@ -205,16 +312,17 @@
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
                 <h3 class="modal-title">Нарезка готова. Загрузим текст?</h3>
+                <button class="modal-close" onclick="closePostCutExcel()" title="Закрыть">&times;</button>
             </div>
             <div class="modal-hint">Excel с текстом фраз ещё не подключён. Без него можно работать и так, но с ним фразы сопоставляются автоматически.</div>
 
             <div class="mode-choice-grid">
                 <button class="option-card rise" onclick="closePostCutExcel(); loadExcel();">
-                    <span class="option-icon">📄</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
                     <div><span class="option-title">Загрузить Excel</span><span class="option-desc">Подключить таблицу с текстом</span></div>
                 </button>
                 <button class="option-card option-card--alt rise" onclick="closePostCutExcel()">
-                    <span class="option-icon">✋</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-octagon"></use></svg></span>
                     <div><span class="option-title">Пока без Excel</span><span class="option-desc">Продолжить без таблицы</span></div>
                 </button>
             </div>
@@ -465,12 +573,12 @@
                 <div class="section-label"><span>Источник материала</span></div>
 
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
-                    <span class="option-icon">📄</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
                     <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
                 </button>
 
                 <button class="option-card option-card--attached rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
-                    <span class="option-icon">🎚️</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
                     <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
                 </button>
 
@@ -506,7 +614,7 @@
                 </div>
 
                 <button class="option-card option-card--alt rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
-                    <span class="option-icon">📁</span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                     <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
                 </button>
 
@@ -531,17 +639,24 @@
 
                 <div class="mode-grid">
                     <button class="mode-card mode-card--var rise" style="--d: 3" onclick="initVarBatch()">
-                        <span class="mode-card__icon">🔄</span>
+                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-refresh-cw"></use></svg></span>
                         <span class="mode-card__title">Пакетная сборка переменных</span>
                         <span class="mode-card__desc">Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity.</span>
                         <span class="mode-card__go">Запустить &#8594;</span>
                     </button>
 
                     <button class="mode-card mode-card--good rise" style="--d: 4" onclick="initVarBatchPremade()">
-                        <span class="mode-card__icon">📂</span>
+                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                         <span class="mode-card__title">Готовая папка с переменными</span>
                         <span class="mode-card__desc">Загрузить уже рассортированные суммы с диска вместе с файлами start.wav и end.wav.</span>
                         <span class="mode-card__go">Выбрать папку &#8594;</span>
+                    </button>
+
+                    <button class="mode-card mode-card--info rise" style="--d: 5" onclick="startConstructor()">
+                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
+                        <span class="mode-card__title">Конструктор переменных</span>
+                        <span class="mode-card__desc">Рулетками листаете уже сохранённые суммы, собираете любую комбинацию и правите точечно.</span>
+                        <span class="mode-card__go">Открыть &#8594;</span>
                     </button>
                 </div>
 
@@ -571,21 +686,27 @@
 
                 <div class="util-grid">
                     <button class="util-tile util-tile--mode rise" style="--d: 6" onclick="stripFilenames()">
-                        <span class="util-tile__icon">🔤</span>
+                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-type"></use></svg></span>
                         <span class="util-tile__title">Очистить названия файлов</span>
                         <span class="util-tile__desc">Убрать слова «миллион», «тысяч» — оставить цифры</span>
                     </button>
 
                     <button class="util-tile util-tile--info rise" style="--d: 7" onclick="startBatchNormalization()">
-                        <span class="util-tile__icon">🔊</span>
+                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-volume-2"></use></svg></span>
                         <span class="util-tile__title">Массовая нормализация</span>
                         <span class="util-tile__desc">Подогнать громкость всех файлов папки под эталон</span>
                     </button>
 
                     <button class="util-tile util-tile--mode rise" style="--d: 8" onclick="openConverter()">
-                        <span class="util-tile__icon">🎬</span>
+                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-film"></use></svg></span>
                         <span class="util-tile__title">Конвертер MP4</span>
                         <span class="util-tile__desc">Перевести MP4 в MP3 или WAV с нужной герцовкой</span>
+                    </button>
+
+                    <button class="util-tile util-tile--info rise" style="--d: 9" onclick="openRenameMatch()">
+                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-link-2"></use></svg></span>
+                        <span class="util-tile__title">Сопоставить названия по Excel</span>
+                        <span class="util-tile__desc">Найти короткие имена файлов в Excel и разложить по языкам ru/kz</span>
                     </button>
                 </div>
 
@@ -672,7 +793,7 @@
         <div id="missingPanel" class="missing-panel" style="display: none;">
             <div class="missing-header">
                 <h3>Недостающие записи</h3>
-                <button class="btn-ghost" onclick="toggleMissingPanel()">&#10006;&nbsp; Назад к дублям</button>
+                <button class="btn-ghost" onclick="toggleMissingPanel()"><svg class="icon"><use href="#icon-x-circle"></use></svg>&nbsp; Назад к дублям</button>
             </div>
             <div id="missingList" class="missing-list">
                 <!-- Сюда JS загрузит список -->
@@ -797,17 +918,17 @@
                     <div class="var-slots">
                         <!-- Слот 1: Дата -->
                         <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('date')" id="btnVarDateLoad">📅 Дата: кликните для загрузки</button>
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('date')" id="btnVarDateLoad"><svg class="icon"><use href="#icon-calendar"></use></svg> Дата: кликните для загрузки</button>
                             <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('date')" id="btnVarDateMix" disabled>Собрать</button>
                         </div>
                         <!-- Слот 2: Имя -->
                         <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('name')" id="btnVarNameLoad">👤 Имя: кликните для загрузки</button>
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('name')" id="btnVarNameLoad"><svg class="icon"><use href="#icon-user"></use></svg> Имя: кликните для загрузки</button>
                             <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('name')" id="btnVarNameMix" disabled>Собрать</button>
                         </div>
                         <!-- Слот 3: Сумма -->
                         <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('amount')" id="btnVarAmountLoad">💰 Сумма: кликните для загрузки</button>
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('amount')" id="btnVarAmountLoad"><svg class="icon"><use href="#icon-dollar-sign"></use></svg> Сумма: кликните для загрузки</button>
                             <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('amount')" id="btnVarAmountMix" disabled>Собрать</button>
                         </div>
                     </div>
@@ -838,10 +959,13 @@
                             <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumManualSave()">Сохранить <kbd>Z</kbd></button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()">💾 Сохранить остаток (то, что выделено в Audacity)</button>
+                            <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()"><svg class="icon"><use href="#icon-save"></use></svg> Сохранить остаток (то, что выделено в Audacity)</button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()">🔗 Склеить со следующим <kbd>M</kbd></button>
+                            <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить со следующим <kbd>M</kbd></button>
+                        </div>
+                        <div class="tile-row">
+                            <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор переменных</button>
                         </div>
                         <div class="action-note">Крутите дубли клавишами <kbd>A</kbd>/<kbd>D</kbd>, пока не услышите текст с экрана. Папку программа выберет сама по тексту. Если в дубле слиплось несколько цифр — выделите лишнее в Audacity и жмите «Сохранить остаток». А если наоборот число разрезало на два дубля («50» и «5 тыс.» вместо «55 тыс.») — встаньте на первый и жмите «Склеить со следующим», прежде чем закрывать проект.</div>
                     </div>
@@ -891,6 +1015,44 @@
                     <span class="hotkey"><kbd>S</kbd> Тишина</span>
                     <span class="hotkey"><kbd>F</kbd> Поиск</span>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="stage3-constructor" class="stage stage-constructor" style="display: none;">
+        <header class="workspace-header">
+            <div class="header-actions">
+                <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
+            </div>
+            <div class="constructor-title">
+                <span class="constructor-title__main"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор переменных — Суммы</span>
+                <span class="constructor-title__sub" id="constructorMeta">Папка не выбрана</span>
+            </div>
+        </header>
+
+        <div class="constructor-body">
+            <div class="constructor-panel">
+                <div class="constructor-reels" id="constructorReels">
+                    <!-- 4 рулетки рендерятся из JS: renderConstructorReels() -->
+                </div>
+
+                <div class="constructor-preview" id="constructorPreview">Крутите рулетки, чтобы собрать сумму</div>
+            </div>
+
+            <div class="constructor-actions">
+                <button class="btn-tile btn-tile--tall" onclick="constructorTogglePlay()">Играть <kbd>Space</kbd></button>
+                <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="constructorSendToAudacity()">Обновить сумму</button>
+                <button class="btn-tile btn-tile--good btn-tile--tall" onclick="constructorSaveResult()">Сохранить</button>
+                <button class="btn-tile btn-tile--sub" id="constructorEmbedBtn" onclick="toggleEmbedAudacity()">Встроить окно Audacity сюда</button>
+            </div>
+            <div class="action-note">Крутите рулетки мышью (тяните вверх/вниз) или колёсиком — либо клавиатурой:
+                <kbd>A</kbd>/<kbd>D</kbd> переключают активный ярус (подсвечен рамкой), <kbd>W</kbd>/<kbd>S</kbd>
+                листают его вверх/вниз, а если зажать — прокрутка постепенно ускоряется. <kbd>Space</kbd> — играть/стоп.
+                «Обновить сумму» — отправить в Audacity для правки. «Сохранить» —
+                записать скорректированные куски обратно поверх исходных файлов, только по нажатию.</div>
+
+            <div class="audacity-embed-area" id="constructorEmbedArea" style="display: none;">
+                <div class="audacity-embed-area__label">Здесь окно Audacity — двигайте и правьте прямо тут</div>
             </div>
         </div>
     </div>

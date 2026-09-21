@@ -450,7 +450,7 @@ class MontageMixin:
             self.audacity.send_command('SelectTime: Start=0 End=99999 RelativeTo=ProjectStart')
             self.audacity.send_command('Delete:')
             webview.windows[0].evaluate_js(
-                "alert('✅ Отредактированные фразы успешно вырезаны и сохранены в папку Проверенные (без переменной)!');")
+                "alert('Отредактированные фразы успешно вырезаны и сохранены в папку Проверенные (без переменной)!');")
 
         return self.get_ui_state()
 

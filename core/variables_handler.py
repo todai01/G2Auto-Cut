@@ -8,28 +8,38 @@ import webview
 from utils.file_utils import FileUtils
 from pydub import AudioSegment, silence
 
-# --- «Суммы»: особая логика каскада (Миллионы → Сотни → Тысячи → Тенге) ---
+# --- «Суммы»: особая логика каскада (Миллионы → Сотни тысяч → Сотни →
+#     Тысячи → Тенге) ---
 # Папка «Суммы» внутри «Готовых переменных» собирается не как обычный плоский
-# список файлов, а как 4 яруса, которые проходятся по очереди «по одному шагу
+# список файлов, а как яруса, которые проходятся по очереди «по одному шагу
 # за раз» (как счётчик с несколькими разрядами): сначала Миллионы[0], потом
-# Сотни[0], Тысячи[0], Тенге[0], потом снова Миллионы[1] и так далее. Когда
-# ярус исчерпан (дошёл до последнего файла в своей папке) — он замораживается
-# навсегда на последнем значении и больше не участвует в очереди.
-SUM_TIER_ORDER = ['millions', 'hundreds', 'thousands', 'tenge']
+# Сотни тысяч[0], Сотни[0], Тысячи[0], Тенге[0], потом снова Миллионы[1] и
+# так далее. Когда ярус исчерпан (дошёл до последнего файла в своей папке) —
+# он замораживается навсегда на последнем значении и больше не участвует в
+# очереди. Именно на этом и держится переход «после потолка»: как только
+# «Сотни (100-900)» и «Тысячи (1-99 тыс.)» упираются в свой потолок и
+# замораживаются, в очереди сами по себе остаются только Миллионы, Сотни
+# тысяч и Тенге — например «100 миллионов, 900, 99 тысяч, 100 тенге» на
+# первом этапе, а дальше «100 миллионов, 100 тысяч, 100 тенге», «200 тысяч»,
+# «300 тысяч» и т.д. на втором.
+SUM_TIER_ORDER = ['millions', 'hundred_thousands', 'hundreds', 'thousands', 'tenge']
 SUM_TIER_LABELS = {
     'millions': 'Миллионы',
+    'hundred_thousands': 'Сотни тысяч (100-900 тыс.)',
     'hundreds': 'Сотни (100-900)',
-    'thousands': 'Тысячи',
+    'thousands': 'Тысячи (1-99 тыс.)',
     'tenge': 'Тенге',
 }
 # Ярусы с однозначным словом в названии подпапки проверяем в первую очередь;
 # «Сотни» ключевым словом не ищем — слишком легко случайно совпасть с другим
 # ярусом (например, «1 - 100 тенге» тоже содержит «100») — вместо этого им
-# становится та подпапка, что осталась неопознанной после трёх остальных.
+# становится та подпапка, что осталась неопознанной после остальных.
+# «Тысячи» здесь нет — у «1-99 тыс.» и «100-900 тыс.» одно и то же ключевое
+# слово «тыс», их различает не слово, а число в названии папки/тексте
+# (см. _thousands_subtier).
 SUM_SPECIFIC_TIER_KEYWORDS = {
     'tenge': ['тенге', 'kzt', '₸'],
     'millions': ['миллион', 'млн'],
-    'thousands': ['тысяч', 'тыс'],
 }
 
 
@@ -38,11 +48,24 @@ SUM_SPECIFIC_TIER_KEYWORDS = {
 # выше, здесь не требуется никакой готовой папки «Суммы» на диске заранее.
 SUM_TIER_DEFAULT_DIR = {
     'millions': '1 - 100 млн',
+    'hundred_thousands': '100 - 900 тыс',
     'hundreds': '100 - 900',
     'thousands': '1 - 99 тыс',
     'tenge': '1 - 100 тенге',
 }
-SUM_TIER_CAP = {'millions': 100, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
+SUM_TIER_CAP = {'millions': 100, 'hundred_thousands': 900, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
+
+
+def _thousands_subtier(text):
+    """«Тысячи» разбиты на два яруса с одним и тем же словом в названии —
+    различаем их по числу: «100» и больше — это «Сотни тысяч» (100-900 тыс.,
+    новый ярус для крупных сумм), «1-99» — обычные «Тысячи». Число ищем в
+    любом тексте, где уже подтверждено слово «тыс» (текст Excel или название
+    подпапки)."""
+    nums = re.findall(r'\d+', text or '')
+    if nums and int(nums[0]) >= 100:
+        return 'hundred_thousands'
+    return 'thousands'
 
 
 def _numeric_sort_key(filepath):
@@ -536,9 +559,10 @@ class VariablesMixin:
             for cat_name in self.cascade_ordered_cats:
                 cat_dir = os.path.join(self.work_dir, cat_name)
 
-                # «Суммы» — особая папка: внутри не файлы, а 4 подпапки-яруса
-                # (Миллионы/Сотни/Тысячи/Тенге), которые собираются в
-                # последовательность счётчика, а не берутся плоским списком.
+                # «Суммы» — особая папка: внутри не файлы, а подпапки-яруса
+                # (Миллионы/Сотни тысяч/Сотни/Тысячи/Тенге), которые
+                # собираются в последовательность счётчика, а не берутся
+                # плоским списком.
                 if cat_name.strip().lower() == 'суммы':
                     seq, err = self._build_sum_sequence(cat_dir)
                     if err:
@@ -613,7 +637,7 @@ class VariablesMixin:
     # ==================================================================
 
     def _build_sum_sequence(self, sum_dir):
-        """Читает 4 подпапки-яруса внутри «Суммы» и строит из них плоскую
+        """Читает подпапки-яруса внутри «Суммы» и строит из них плоскую
         очередь шагов в порядке «счётчика»: по одному файлу с каждого яруса
         по кругу, пока не закончатся файлы во всех ярусах. Ярус, у которого
         файлы закончились раньше других, просто выпадает из круга и дальше
@@ -631,6 +655,15 @@ class VariablesMixin:
                 assigned[tier] = match
                 remaining_dirs.remove(match)
 
+        # Обе «тысячные» подпапки содержат слово «тыс» — различаем их по
+        # числу в названии (см. _thousands_subtier): «100 - 900 тыс» это
+        # Сотни тысяч, «1 - 99 тыс» это обычные Тысячи.
+        for d in [d for d in remaining_dirs if 'тыс' in d.lower()]:
+            tier = _thousands_subtier(d)
+            if tier not in assigned:
+                assigned[tier] = d
+                remaining_dirs.remove(d)
+
         if 'hundreds' not in assigned:
             if len(remaining_dirs) == 1:
                 assigned['hundreds'] = remaining_dirs[0]
@@ -643,8 +676,9 @@ class VariablesMixin:
         if missing:
             names = ', '.join(SUM_TIER_LABELS[t] for t in missing)
             return None, (f"В папке «Суммы» не нашлись подпапки для яруса(-ов): {names}. "
-                           f"Название подпапки должно содержать слово «миллион», «тысяч» или «тенге» "
-                           f"(подпапка без такого слова считается «Сотни»).")
+                           f"Название подпапки должно содержать слово «миллион» или «тенге», для тысяч — "
+                           f"слово «тыс» и число (до 99 — «Тысячи», от 100 — «Сотни тысяч») "
+                           f"(подпапка без всего этого считается «Сотни»).")
 
         tier_files, tier_dirs = {}, {}
         for tier, subdir_name in assigned.items():
@@ -1704,16 +1738,28 @@ class VariablesMixin:
     def _sum_manual_tier_dir(self, tier):
         return SUM_TIER_DEFAULT_DIR[tier]
 
+    def _sum_tier_capped(self, tier, counts=None):
+        """Ярус дошёл до потолка (см. SUM_TIER_CAP) и больше не растёт —
+        например «Сотни (100-900)» и «Тысячи (1-99 тыс.)» после перехода
+        сумм за миллион. Такой ярус не должен попадать в новую сборку
+        (ни справочным клипом в Audacity, ни как «сосед» для автоправки),
+        иначе туда лез бы устаревший файл из старой, уже закрытой суммы."""
+        if counts is None:
+            counts = getattr(self, 'sum_manual_counts', None) or {}
+        cap = SUM_TIER_CAP.get(tier)
+        return cap is not None and counts.get(tier, 0) >= cap
+
     def _detect_sum_tier(self, text):
         """Определяет ярус по тому, что стоит после числа в тексте Excel:
-        «1 млн» → Миллионы, «5 тыс» → Тысячи, «20 тенге» → Тенге,
+        «1 млн» → Миллионы, «5 тыс» → Тысячи, «100 тыс» → Сотни тысяч
+        (100-900 тыс. — новый ярус для сумм за миллион), «20 тенге» → Тенге,
         просто «300» без единицы → Сотни. Если единиц несколько, берём
         первую по старшинству (млн → тыс → тенге)."""
         low = (text or '').lower().replace('ё', 'е')
         if 'млн' in low or 'миллион' in low:
             return 'millions'
         if 'тыс' in low:
-            return 'thousands'
+            return _thousands_subtier(low)
         # «тг» ловим и без пробела («100тг»), но не внутри слова («отгрузка»)
         if 'тенге' in low or re.search(r'тг(?![а-яa-z])', low):
             return 'tenge'
@@ -1796,7 +1842,7 @@ class VariablesMixin:
             if t == tier and not err and active_file:
                 label = (phrase.get('text') if phrase else '').strip() or SUM_TIER_LABELS[t]
                 segments.append({'label': label, 'path': active_file})
-            else:
+            elif not self._sum_tier_capped(t):
                 ref = last_file.get(t)
                 if ref and os.path.exists(ref):
                     label = os.path.splitext(os.path.basename(ref))[0]
@@ -1910,7 +1956,7 @@ class VariablesMixin:
                 active_clip_start = cursor
                 cursor += self._import_clip_to_track0(active_file, cursor)
                 clip_layout.append(t)
-            else:
+            elif not self._sum_tier_capped(t):
                 ref = last_file.get(t)
                 if ref and os.path.exists(ref):
                     cursor += self._import_clip_to_track0(ref, cursor)
@@ -2011,10 +2057,18 @@ class VariablesMixin:
             # Сосед по цепочке: если пользователь заодно чуть подрезал уже
             # сохранённый предыдущий ярус (чтобы он лучше стыковался с
             # текущим), переэкспортируем его тоже — прямо поверх старого
-            # файла, без создания нового и без изменения счётчика.
+            # файла, без создания нового и без изменения счётчика. «Сосед»
+            # ищем не строго на 1 позицию назад, а пропуская ярусы, которых
+            # ещё не было (0 сохранений) или которые уже упёрлись в потолок —
+            # иначе, например, после перехода сумм за миллион «Тенге» считал
+            # бы соседом устаревшие, уже закрытые «Тысячи», а не актуальный
+            # новый ярус «Сотни тысяч».
             tier_idx = SUM_TIER_ORDER.index(tier)
-            if tier_idx > 0:
-                prev_tier = SUM_TIER_ORDER[tier_idx - 1]
+            counts_now = getattr(self, 'sum_manual_counts', None) or {}
+            prev_tier = next((SUM_TIER_ORDER[i] for i in range(tier_idx - 1, -1, -1)
+                               if counts_now.get(SUM_TIER_ORDER[i], 0) > 0
+                               and not self._sum_tier_capped(SUM_TIER_ORDER[i], counts_now)), None)
+            if prev_tier:
                 prev_clip = clip_map.get(prev_tier)
                 prev_path = getattr(self, 'sum_manual_last_file', {}).get(prev_tier)
                 if prev_clip and prev_path and os.path.exists(prev_path):

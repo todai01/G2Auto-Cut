@@ -1,3 +1,41 @@
+// Единая замена смайликов иконками (спрайт <symbol> лежит в index.html):
+// возвращает <svg class="icon"><use .../></svg> по имени иконки.
+function iconHTML(name) {
+    return `<svg class="icon"><use href="#icon-${name}"></use></svg>`;
+}
+
+// Многие тексты алертов/тостов приходят из бэкенда с эмодзи-префиксом
+// (например "✅ Готово"). Вместо правки полусотни строк в Python — одно
+// место, где эмодзи в начале строки распознаётся, убирается из текста,
+// а на его месте показывается иконка + цветовой тон (ошибка/успех/т.д.).
+const EMOJI_ICON_MAP = {
+    '❌': { icon: 'x-circle', tone: 'error' },
+    '⚠️': { icon: 'alert-triangle', tone: 'warning' },
+    '⚠': { icon: 'alert-triangle', tone: 'warning' },
+    '✅': { icon: 'check-circle', tone: 'success' },
+    '🎉': { icon: 'check-circle', tone: 'success' },
+    '🔄': { icon: 'refresh-cw', tone: 'info' },
+    '🔁': { icon: 'refresh-cw', tone: 'info' },
+    '✂️': { icon: 'scissors', tone: 'info' },
+    '✂': { icon: 'scissors', tone: 'info' },
+    '🔗': { icon: 'link-2', tone: 'info' },
+    '💾': { icon: 'save', tone: 'info' },
+    '⚡': { icon: 'zap', tone: 'info' },
+    '📁': { icon: 'folder', tone: 'info' },
+    '📂': { icon: 'folder', tone: 'info' },
+    '🎙️': { icon: 'mic', tone: 'info' },
+    '🎙': { icon: 'mic', tone: 'info' },
+    '🎚️': { icon: 'sliders', tone: 'info' },
+    '🎚': { icon: 'sliders', tone: 'info' },
+    '🎧': { icon: 'headphones', tone: 'info' },
+};
+function extractLeadingIcon(text) {
+    let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}])️?\s*/u.exec(text || '');
+    if (!m) return { icon: 'alert-circle', tone: 'info', text: text || '' };
+    let mapped = EMOJI_ICON_MAP[m[0].trim()] || EMOJI_ICON_MAP[m[1]] || { icon: 'alert-circle', tone: 'info' };
+    return { icon: mapped.icon, tone: mapped.tone, text: (text || '').slice(m[0].length) };
+}
+
 let isProcessing = false;
         let currentState = null;
         let mergeParts = [null, null, null, null, null];
@@ -167,8 +205,19 @@ let isProcessing = false;
         // Когда Audacity вживлён внутрь софта, клик по нему технически уводит
         // фокус браузерного слоя — но это всё ещё то же самое окно, а не
         // отдельная программа, поэтому темнить/размывать фон не нужно.
+        // В «Конструкторе переменных» своей рамки под встраивание пока нет —
+        // Audacity там всегда выходит отдельным окном по кнопке «Обновить
+        // сумму», и это нормальная часть работы с этим экраном, а не повод
+        // затемнять программу.
         window.addEventListener('blur', () => {
+            // Окно потеряло фокус — если W/S были зажаты, keyup может не
+            // прийти вовсе (например, alt-tab), и прокрутка иначе крутилась
+            // бы бесконечно быстрее и быстрее сама по себе.
+            constructorStopHold('KeyW');
+            constructorStopHold('KeyS');
             if (audacityEmbedded) return;
+            let constructorStage = document.getElementById('stage3-constructor');
+            if (constructorStage && constructorStage.style.display !== 'none') return;
             document.body.classList.add('app-unfocused');
         });
         window.addEventListener('focus', () => document.body.classList.remove('app-unfocused'));
@@ -185,9 +234,10 @@ let isProcessing = false;
         // подставлялось руками в каждой функции, и стоило один раз ошибиться —
         // заставка съезжала в левый край. Теперь оно живёт в одном месте.
         const STAGE_DISPLAY = {
-            'stage0-splash':    'flex',
-            'stage1-loading':   'flex',
-            'stage2-workspace': 'block'
+            'stage0-splash':      'flex',
+            'stage1-loading':     'flex',
+            'stage2-workspace':   'block',
+            'stage3-constructor': 'block'
         };
 
         function showStage(activeId) {
@@ -267,13 +317,36 @@ let isProcessing = false;
             showWorkspace();
         }
 
-        // Заставка -> экран подготовки проекта
-        function enterApp() {
+        // Заставка -> экран подготовки проекта. Если есть недавний проект —
+        // сперва спрашиваем, продолжать ли его, а не сразу открываем
+        // подготовку нового.
+        async function enterApp() {
+            let items = [];
+            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
+            recentProjectsCache = items || [];
+
+            if (recentProjectsCache.length) {
+                document.getElementById('resumeProjectName').innerText = recentProjectsCache[0].name;
+                document.getElementById('resumeProjectOverlay').style.display = 'flex';
+            } else {
+                showMenu();
+            }
+        }
+
+        async function confirmResumeProject() {
+            document.getElementById('resumeProjectOverlay').style.display = 'none';
+            await openRecentProject(0);
+        }
+
+        function declineResumeProject() {
+            document.getElementById('resumeProjectOverlay').style.display = 'none';
             showMenu();
         }
 
         function showMenu() {
             detachEmbeddedAudacity();
+            embedAreaId = 'audacityEmbedArea';
+            embedBtnId = 'btnEmbedAudacity';
             showStage('stage1-loading');
 
             // Кнопка возврата появляется, только если работать уже есть с чем
@@ -290,6 +363,8 @@ let isProcessing = false;
 
         function showWorkspace() {
             workspaceReady = true;
+            embedAreaId = 'audacityEmbedArea';
+            embedBtnId = 'btnEmbedAudacity';
             showStage('stage2-workspace');
         }
 
@@ -964,7 +1039,7 @@ let isProcessing = false;
                 let listHtml = '';
                 windows.forEach(w => {
                     listHtml += `<button class="option-card project-option" onclick="selectAudacityProject(${w.hwnd})">
-                                    <span class="option-icon">🎧</span>
+                                    <span class="option-icon">${iconHTML('headphones')}</span>
                                     <span class="project-option__title">${w.title}</span>
                                  </button>`;
                 });
@@ -1002,7 +1077,8 @@ let isProcessing = false;
 
         // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ГОТОВАЯ ПАПКА С ПЕРЕМЕННЫМИ" ---
         async function continueInitVarBatchPremade(hwnd) {
-            await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
+            let confirmed = await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
+            if (!confirmed) return;
             let inDir = await pywebview.api.pick_folder();
             if (!inDir) return;
 
@@ -1052,7 +1128,8 @@ let isProcessing = false;
             }
 
             // Ждем, пока пользователь настроит звук и нажмет ОК в нашем красивом алерте
-            await showBeautifulAlert(`🎚️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Настройте идеальную громкость этого файла в Audacity (Эффекты -> Нормализация или Усиление).<br>2. Вернитесь сюда и нажмите ОК, чтобы применить эту громкость ко всем <b>${res.total}</b> файлам в папке.`);
+            let confirmed = await showBeautifulAlert(`🎚️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Настройте идеальную громкость этого файла в Audacity (Эффекты -> Нормализация или Усиление).<br>2. Вернитесь сюда и нажмите ОК, чтобы применить эту громкость ко всем <b>${res.total}</b> файлам в папке.`);
+            if (!confirmed) return;
 
             // Пользователь нажал ОК, запускаем процесс!
             isProcessing = true;
@@ -1069,6 +1146,7 @@ let isProcessing = false;
                 showBeautifulAlert('✅ <b>Успешно!</b><br><br>Все файлы в папке выровнены по громкости эталона.');
             }
         }
+
 
         async function selectAudacityProject(hwnd) {
             document.getElementById('projectSelectorOverlay').style.display = 'none';
@@ -1090,9 +1168,10 @@ let isProcessing = false;
             // 2. Меняем текст предупреждения в зависимости от галочки
             let alertMsg = isReadyExport
                 ? "📁 <b>Простой экспорт (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут рассортированы переменные."
-                : "📁 <b>Пакетная сборка (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут экспортироваться переменные.<br><br><span style='font-size:12px;color:var(--text-dim)'>⚠️ Убедитесь, что в этой папке уже лежат эталонные файлы <b>start.wav</b> и <b>end.wav</b>!</span>";
+                : `📁 <b>Пакетная сборка (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут экспортироваться переменные.<br><br><span style='font-size:12px;color:var(--text-dim)'>${iconHTML('alert-triangle')} Убедитесь, что в этой папке уже лежат эталонные файлы <b>start.wav</b> и <b>end.wav</b>!</span>`;
 
-            await showBeautifulAlert(alertMsg);
+            let confirmed = await showBeautifulAlert(alertMsg);
+            if (!confirmed) return;
             let outDir = await pywebview.api.pick_folder();
             if (!outDir) return;
 
@@ -1302,8 +1381,14 @@ let isProcessing = false;
         // --- Вживление окна Audacity внутрь софта ---
         // Приём системный (Windows SetParent) — Audacity не создан для этого,
         // поэтому если поведение станет хуже, кнопка сразу отсоединяет обратно.
+        // embedAreaId/embedBtnId — на какой экран сейчас нацелено вживление:
+        // у рабочего экрана и у конструктора своя рамка и своя кнопка, но
+        // вся остальная логика (позиционирование, сторож, пряталка под
+        // модалки) общая — переключаем цель, а не дублируем код.
         let audacityEmbedded = false;
         let embedResizeTimer = null;
+        let embedAreaId = 'audacityEmbedArea';
+        let embedBtnId = 'btnEmbedAudacity';
 
         function toggleEmbedAudacity() {
             if (audacityEmbedded) {
@@ -1317,7 +1402,7 @@ let isProcessing = false;
         // и при масштабе экрана 125/150% это разные числа. Без пересчёта окно
         // Audacity садилось мимо рамки и обрезалось.
         function embedAreaRect() {
-            const area = document.getElementById('audacityEmbedArea');
+            const area = document.getElementById(embedAreaId);
             if (!area) return null;
             const r = area.getBoundingClientRect();
             const k = window.devicePixelRatio || 1;
@@ -1331,8 +1416,8 @@ let isProcessing = false;
         // режима «Суммы», когда Audacity может быть ещё не запущен) — тогда
         // не ругаемся окном об ошибке и оставляем пустую рамку под окно.
         async function attachEmbeddedAudacity(silent) {
-            const area = document.getElementById('audacityEmbedArea');
-            const btn = document.getElementById('btnEmbedAudacity');
+            const area = document.getElementById(embedAreaId);
+            const btn = document.getElementById(embedBtnId);
             area.style.display = 'block';
             const rect = embedAreaRect();
 
@@ -1377,7 +1462,7 @@ let isProcessing = false;
                     // сторож сам себя останавливает вместо бесконечных ошибок
                     audacityEmbedded = false;
                     stopEmbedWatchdog();
-                    let btn = document.getElementById('btnEmbedAudacity');
+                    let btn = document.getElementById(embedBtnId);
                     if (btn) btn.innerText = 'Встроить окно Audacity сюда';
                 }
             }, 500);
@@ -1417,9 +1502,9 @@ let isProcessing = false;
         // «Суммы»). Раньше подсветка при проигрывании была одинаковая для
         // всех случаев (жёлтая), и было не понять, что именно звучит.
         function playSourceLabel(src) {
-            if (src === 'saved') return '✅ Готовая версия';
-            if (src === 'chain') return '🔗 Цепочка «Суммы»';
-            return '🎙 Черновик (дубль)';
+            if (src === 'saved') return iconHTML('check-circle') + ' Готовая версия';
+            if (src === 'chain') return iconHTML('link-2') + ' Цепочка «Суммы»';
+            return iconHTML('mic') + ' Черновик (дубль)';
         }
         document.addEventListener('DOMContentLoaded', () => {
             const phraseEl = document.getElementById('phraseText');
@@ -1428,10 +1513,10 @@ let isProcessing = false;
             const sync = () => {
                 if (phraseEl.classList.contains('is-playing') && phraseEl.dataset.playSource) {
                     badge.className = 'play-source-badge is-visible src-' + phraseEl.dataset.playSource;
-                    badge.innerText = playSourceLabel(phraseEl.dataset.playSource);
+                    badge.innerHTML = playSourceLabel(phraseEl.dataset.playSource);
                 } else {
                     badge.className = 'play-source-badge';
-                    badge.innerText = '';
+                    badge.innerHTML = '';
                 }
             };
             new MutationObserver(sync).observe(phraseEl, { attributes: true, attributeFilter: ['class'] });
@@ -1443,8 +1528,8 @@ let isProcessing = false;
             stopEmbedWatchdog();
             audacityEmbedded = false;
             modalOpenForAudacity = false;
-            const area = document.getElementById('audacityEmbedArea');
-            const btn = document.getElementById('btnEmbedAudacity');
+            const area = document.getElementById(embedAreaId);
+            const btn = document.getElementById(embedBtnId);
             // В режиме «Суммы» рамка остаётся на экране: место под окно
             // Audacity закреплено за ней, даже когда окно отсоединено.
             if (area) area.style.display = sumModeActive ? 'block' : 'none';
@@ -1688,9 +1773,9 @@ let isProcessing = false;
         }
 
         function getVarIcon(type) {
-            if(type === 'date') return "📅";
-            if(type === 'name') return "👤";
-            if(type === 'amount') return "💰";
+            if(type === 'date') return iconHTML('calendar');
+            if(type === 'name') return iconHTML('user');
+            if(type === 'amount') return iconHTML('dollar-sign');
             return "";
         }
 
@@ -1701,7 +1786,7 @@ let isProcessing = false;
                 let btnMix = document.getElementById(`btnVar${capitalize(varType)}Mix`);
 
                 // Красим кнопку файла, давая понять, что он заряжен
-                btnLoad.innerText = `${getVarIcon(varType)} ${getVarName(varType)}: ${result.filename}`;
+                btnLoad.innerHTML = `${getVarIcon(varType)} ${escapeHtml(getVarName(varType))}: ${escapeHtml(result.filename)}`;
                 btnLoad.style.color = 'var(--text)';
                 btnLoad.style.borderColor = 'var(--accent-var)';
                 btnLoad.style.background = 'var(--tint-var)';
@@ -1793,7 +1878,7 @@ let isProcessing = false;
             phraseEl.innerText = state.phrase_text;
 
             let customNameEl = document.getElementById('customFileName');
-            customNameEl.innerHTML = state.custom_filename ? `💾 Сохранится как: <b>${state.custom_filename}</b>` : "";
+            customNameEl.innerHTML = state.custom_filename ? `${iconHTML('save')} Сохранится как: <b>${state.custom_filename}</b>` : "";
             customNameEl.dataset.rawname = state.custom_filename || "";
 
             let excelName = state.custom_filename ? state.custom_filename.replace('.wav', '') : "";
@@ -1999,7 +2084,7 @@ let isProcessing = false;
             if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
             if (isProcessing) return; isProcessing = true;
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
-            alert("✅ Склейка сохранена в Проверенные!");
+            alert("Склейка сохранена в Проверенные!");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -2017,7 +2102,7 @@ let isProcessing = false;
             if (isProcessing) return; isProcessing = true;
             // Передаем true в Python, чтобы файл ушел в папку Переменные
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, true);
-            alert("✅ Склейка сохранена в Переменные!");
+            alert("Склейка сохранена в Переменные!");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -2079,9 +2164,12 @@ let isProcessing = false;
 
             let alertOverlay = document.getElementById('customAlertOverlay');
             if (alertOverlay && alertOverlay.style.display === 'flex') {
-                if (e.code === 'Enter' || e.code === 'Space' || e.code === 'Escape') {
+                if (e.code === 'Enter' || e.code === 'Space') {
                     e.preventDefault();
-                    closeCustomAlert();
+                    closeCustomAlert(true);
+                } else if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeCustomAlert(false);
                 }
                 return;
             }
@@ -2140,6 +2228,19 @@ let isProcessing = false;
                     e.preventDefault();
                     closeAudit();
                 }
+                return;
+            }
+
+            // Конструктор переменных — свой мини-режим со своим плеером:
+            // Space играет/останавливает собранную сумму, остальные горячие
+            // клавиши основного конвейера здесь не имеют смысла.
+            let constructorStage = document.getElementById('stage3-constructor');
+            if (constructorStage && constructorStage.style.display !== 'none') {
+                if (e.code === 'Space') { e.preventDefault(); constructorTogglePlay(); }
+                else if (e.code === 'KeyA' && !e.repeat) { e.preventDefault(); constructorMoveSelection(-1); }
+                else if (e.code === 'KeyD' && !e.repeat) { e.preventDefault(); constructorMoveSelection(1); }
+                else if (e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyW', (animate) => constructorStepSelected(-1, animate)); }
+                else if (e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) constructorStartHold('KeyS', (animate) => constructorStepSelected(1, animate)); }
                 return;
             }
 
@@ -2208,6 +2309,8 @@ let isProcessing = false;
             if (e.code === 'Digit1') { releaseHold(1, 'btnPrepMerge', () => markPart(1)); }
             else if (e.code === 'Digit2') { releaseHold(2, 'btnSaveMerge', () => markPart(2)); }
             if (e.code === 'Digit3') { releaseHold(3, 'btnSaveMergeVar', () => markPart(3)); }
+
+            if (e.code === 'KeyW' || e.code === 'KeyS') { constructorStopHold(e.code); }
         });
 
         window.alert = function(message) {
@@ -2225,21 +2328,31 @@ let isProcessing = false;
             return new Promise((resolve) => {
                 let el = document.getElementById('customAlertText');
                 if (el) {
+                    let { icon, tone, text } = extractLeadingIcon(message);
+                    let iconEl = document.getElementById('customAlertIcon');
+                    if (iconEl) {
+                        iconEl.innerHTML = iconHTML(icon);
+                        iconEl.className = 'custom-alert-icon icon-tone--' + tone;
+                    }
                     // Используем HTML для форматирования текста (жирный шрифт, переносы)
-                    el.innerHTML = `<div class="alert-body">${message}</div>`;
+                    el.innerHTML = `<div class="alert-body">${text}</div>`;
                     document.getElementById('customAlertOverlay').style.display = 'flex';
                     window.customAlertCallback = resolve;
                 } else {
-                    resolve();
+                    resolve(true);
                 }
             });
         }
 
-        function closeCustomAlert() {
+        // confirmed=true — закрыли по «ОК»/Enter/Space (действие после алерта
+        // продолжается); confirmed=false — закрыли крестиком/Escape (это
+        // отмена, вызвавший код должен остановиться, а не продолжать как
+        // будто нажали «ОК»).
+        function closeCustomAlert(confirmed = true) {
             document.getElementById('customAlertOverlay').style.display = 'none';
             // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
             if (window.customAlertCallback) {
-                window.customAlertCallback();
+                window.customAlertCallback(confirmed);
                 window.customAlertCallback = null;
             }
         }
@@ -2251,9 +2364,10 @@ let isProcessing = false;
         }
 
         function showToast(msg) {
+            let { icon, text } = extractLeadingIcon(msg);
             let toast = document.createElement('div');
             toast.className = 'toast';
-            toast.innerText = msg;
+            toast.innerHTML = `${iconHTML(icon)}<span>${escapeHtml(text)}</span>`;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2200);
         }
@@ -2300,7 +2414,7 @@ let isProcessing = false;
                     showBeautifulAlert('⚠️ ' + result.error);
                     return;
                 }
-                let msg = `✅ Готово: ${result.done} из ${result.total}`;
+                let msg = `${iconHTML('check-circle')} Готово: ${result.done} из ${result.total}`;
                 if (result.errors && result.errors.length) {
                     msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
                 }
@@ -2318,6 +2432,72 @@ let isProcessing = false;
                 btn.disabled = false;
                 btn.innerText = 'Конвертировать';
             }
+        }
+
+        // === «Сопоставить названия по Excel»: короткое имя файла (da_1_1)
+        // ищем как конец полного из Excel (gizat_ru_da_1_1), переименовываем
+        // и раскладываем по языкам ru/kz/Прочее ===
+        function openRenameMatch() {
+            document.getElementById('renameMatchFolderLabel').innerText = 'Папка не выбрана';
+            document.getElementById('renameMatchExcelLabel').innerText = 'Файл не выбран';
+            document.getElementById('renameMatchResult').style.display = 'none';
+            document.getElementById('renameMatchOverlay').style.display = 'flex';
+        }
+
+        function closeRenameMatch() {
+            document.getElementById('renameMatchOverlay').style.display = 'none';
+        }
+
+        async function pickRenameMatchFolder() {
+            let result = await pywebview.api.rename_match_pick_folder();
+            let label = document.getElementById('renameMatchFolderLabel');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Папка не выбрана';
+                return;
+            }
+            label.innerText = `${result.folder} — файлов: ${result.count}`;
+        }
+
+        async function pickRenameMatchExcel() {
+            let result = await pywebview.api.rename_match_pick_excel();
+            let label = document.getElementById('renameMatchExcelLabel');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Файл не выбран';
+                return;
+            }
+            label.innerText = `${result.file} — названий: ${result.count}`;
+        }
+
+        async function runRenameMatch() {
+            let btn = document.getElementById('btnRunRenameMatch');
+            btn.disabled = true;
+            btn.innerText = 'Сопоставляю...';
+            let result;
+            try {
+                result = await pywebview.api.rename_match_run();
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Сопоставить и разложить';
+            }
+
+            if (!result || result.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                return;
+            }
+
+            let parts = [`${iconHTML('check-circle')} Переименовано и разложено: <b>${result.renamed_count}</b>`];
+            if (result.unmatched_count) {
+                parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Не нашлось пары в Excel (${result.unmatched_count}):<br>` +
+                    result.unmatched.map(escapeHtml).join('<br>') + `</div>`);
+            }
+            if (result.ambiguous_count) {
+                parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Неоднозначно, оставлено как есть (${result.ambiguous_count}):<br>` +
+                    result.ambiguous.map(a => `${escapeHtml(a.file)} — ${escapeHtml(a.reason)}`).join('<br>') + `</div>`);
+            }
+
+            let box = document.getElementById('renameMatchResult');
+            box.innerHTML = parts.join('');
+            box.style.display = 'block';
         }
 
         // --- Ненавязчивая подсказка "что дальше" после конвертации ---
@@ -2474,7 +2654,7 @@ let isProcessing = false;
 
             // Показываем красивое модальное окно
             document.getElementById('auditOverlay').style.display = 'flex';
-            document.getElementById('auditPath').innerText = "📁 Директория сканирования: " + res.scan_dir;
+            document.getElementById('auditPath').innerHTML = iconHTML('folder') + " Директория сканирования: " + escapeHtml(res.scan_dir);
 
             // Запускаем анимацию счетчиков (на 1200 миллисекунд)
             animateValue(document.getElementById('auditTotalExcel'), 0, res.total_excel, 1200);
@@ -2484,13 +2664,13 @@ let isProcessing = false;
 
             // Генерируем детальные списки и чистый текст для копирования
             let detailsHtml = '';
-            window.lastAuditReportText = `📊 ОТЧЕТ АУДИТА ПРОЕКТА\n📁 Директория: ${res.scan_dir}\n`;
+            window.lastAuditReportText = `ОТЧЁТ АУДИТА ПРОЕКТА\nДиректория: ${res.scan_dir}\n`;
             window.lastAuditReportText += `Excel база: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n\n`;
 
             // Блок отсутствующих файлов
             if (res.missing_count > 0) {
                 detailsHtml += `<h4 class="audit-group-title audit-group-title--lost">Отсутствуют — ${res.missing_count}</h4>`;
-                window.lastAuditReportText += `❌ ОТСУТСТВУЮТ (${res.missing_count}):\n`;
+                window.lastAuditReportText += `ОТСУТСТВУЮТ (${res.missing_count}):\n`;
 
                 res.missing.forEach(m => {
                     detailsHtml += `
@@ -2508,7 +2688,7 @@ let isProcessing = false;
             // Блок дубликатов
             if (res.duplicates_count > 0) {
                 detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Дубликаты — ${res.duplicates_count}</h4>`;
-                window.lastAuditReportText += `⚠️ ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
+                window.lastAuditReportText += `ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
 
                 res.duplicates.forEach(d => {
                     detailsHtml += `
@@ -2530,5 +2710,522 @@ let isProcessing = false;
             if (window.lastAuditReportText) {
                 navigator.clipboard.writeText(window.lastAuditReportText);
                 showToast("Отчет аудита скопирован в буфер обмена!");
+            }
+        }
+
+        // ==================================================================
+        //  КОНСТРУКТОР ПЕРЕМЕННЫХ («Суммы») — рулетки с физикой прокрутки.
+        //  Не завязан на очередь Excel/дублей: пользователь листает уже
+        //  сохранённые значения по каждому ярусу и вручную собирает любую
+        //  комбинацию — послушать целиком или отправить в Audacity на
+        //  точечную правку.
+        // ==================================================================
+
+        // Пятый ярус «Сотни тысяч» (100-900 тыс.) — для сумм за миллион,
+        // когда старые «Сотни (100-900)» и «Тысячи (1-99 тыс.)» упёрлись в
+        // потолок. Порядок и имена ярусов совпадают с SUM_TIER_ORDER в
+        // core/variables_handler.py — держите их в паре, если меняете одно.
+        const CONSTRUCTOR_TIER_ORDER = ['millions', 'hundred_thousands', 'hundreds', 'thousands', 'tenge'];
+        // У каждого яруса — свой акцентный цвет (уже есть в общей палитре
+        // софта), чтобы рулетки визуально отличались друг от друга, а не
+        // сливались в одинаковые серые колонки.
+        const CONSTRUCTOR_TIER_ACCENT = {
+            millions: 'var(--accent-var)', hundred_thousands: 'var(--accent-mode)', hundreds: 'var(--accent-primary)',
+            thousands: 'var(--accent-good)', tenge: 'var(--accent-info)'
+        };
+        // Файлы с голыми цифрами («70.wav», «500.wav») читаются на рулетке и
+        // в превью тоже голыми цифрами — а должны звучать как «70 миллионов»,
+        // «500», «20 тысяч», «50 тенге» (у «Сотен» единица не нужна, число
+        // само по себе понятно). Если слово единицы уже есть в названии файла
+        // («1 миллион.wav») — трогать не нужно, просто показываем как есть.
+        const CONSTRUCTOR_TIER_UNIT_KEYWORDS = {
+            millions: ['миллион', 'млн'], hundred_thousands: ['тысяч', 'тыс'],
+            thousands: ['тысяч', 'тыс'], tenge: ['тенге', 'kzt', '₸'],
+        };
+        const CONSTRUCTOR_TIER_UNIT_FORMS = {
+            millions: ['миллион', 'миллиона', 'миллионов'],
+            hundred_thousands: ['тысяча', 'тысячи', 'тысяч'],
+            thousands: ['тысяча', 'тысячи', 'тысяч'],
+        };
+        function ruPluralForm(n, forms) {
+            let n100 = Math.abs(n) % 100, n10 = n100 % 10;
+            if (n100 > 10 && n100 < 20) return forms[2];
+            if (n10 === 1) return forms[0];
+            if (n10 >= 2 && n10 <= 4) return forms[1];
+            return forms[2];
+        }
+        function humanizeTierItem(tier, raw) {
+            if (tier === 'hundreds' || !raw) return raw;
+            let keywords = CONSTRUCTOR_TIER_UNIT_KEYWORDS[tier] || [];
+            if (keywords.some(k => raw.toLowerCase().includes(k))) return raw;
+            let m = raw.match(/\d+/);
+            if (!m) return raw;
+            if (tier === 'tenge') return `${raw} тенге`;
+            let forms = CONSTRUCTOR_TIER_UNIT_FORMS[tier];
+            return forms ? `${raw} ${ruPluralForm(parseInt(m[0], 10), forms)}` : raw;
+        }
+
+        let constructorState = null;
+        let constructorReelInstances = {};
+
+        class Reel {
+            constructor(container, items, itemHeight, onChange) {
+                this.container = container;
+                this.track = container.querySelector('.reel-track');
+                this.items = items;
+                this.itemHeight = itemHeight;
+                this.onChange = onChange;
+                // Открываем рулетку сразу на первом (самом маленьком) значении
+                // — «1 миллион», «100», «1 тысяча» и т.д., а не с середины списка.
+                this.index = 0;
+                this.offset = -this.index * this.itemHeight;
+                this.velocity = 0;
+                this.dragging = false;
+                this.lastY = 0;
+                this.lastT = 0;
+                this.rafId = null;
+                this._snapTimer = null;
+                this._onChangeRaf = null;
+                this._render();
+                this._bind();
+            }
+            _render() {
+                this.track.innerHTML = this.items.map(t => `<div class="reel-item">${escapeHtml(t)}</div>`).join('');
+                this._applyOffset();
+            }
+            _applyOffset() {
+                this.track.style.transform = `translateY(${this.offset}px)`;
+                this._markActive();
+                this._scheduleOnChange();
+            }
+            // На быстрой передаче W/S дёргает шаг чаще, чем раз в кадр —
+            // без объединения вызовов onChange (перерисовка строки
+            // предпросмотра) пересобирался бы на каждый шаг, а не на
+            // каждый кадр экрана, и всё вместе подтормаживало.
+            _scheduleOnChange() {
+                if (!this.onChange || this._onChangeRaf) return;
+                this._onChangeRaf = requestAnimationFrame(() => {
+                    this._onChangeRaf = null;
+                    this.onChange();
+                });
+            }
+            _markActive() {
+                // Подсвечиваем крупным цветным текстом ровно то значение,
+                // что сейчас под индикатором — живьём, на каждый пиксель
+                // прокрутки, а не только когда рулетка окончательно встала.
+                if (this._activeEl) this._activeEl.classList.remove('reel-item--active');
+                if (!this.items.length) { this._activeEl = null; return; }
+                const idx = this.getIndex();
+                this._activeEl = this.track.children[idx] || null;
+                if (this._activeEl) this._activeEl.classList.add('reel-item--active');
+            }
+            _clampOffset(v) {
+                if (!this.items.length) return 0;
+                const min = -(this.items.length - 1) * this.itemHeight;
+                return Math.min(0, Math.max(min, v));
+            }
+            _bind() {
+                if (!this.items.length) return;
+                const pointY = (e) => (e.touches ? e.touches[0].clientY : e.clientY);
+                const onDown = (e) => {
+                    this.dragging = true;
+                    cancelAnimationFrame(this.rafId);
+                    this.lastY = pointY(e);
+                    this.lastT = performance.now();
+                    this.velocity = 0;
+                    e.preventDefault();
+                };
+                const onMove = (e) => {
+                    if (!this.dragging) return;
+                    const y = pointY(e);
+                    const dy = y - this.lastY;
+                    const now = performance.now();
+                    const dt = Math.max(1, now - this.lastT);
+                    this.velocity = dy / dt;
+                    this.offset = this._clampOffset(this.offset + dy);
+                    this._applyOffset();
+                    this.lastY = y;
+                    this.lastT = now;
+                };
+                const onUp = () => {
+                    if (!this.dragging) return;
+                    this.dragging = false;
+                    this._momentum();
+                };
+                this.container.addEventListener('mousedown', onDown);
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+                this.container.addEventListener('touchstart', onDown, { passive: false });
+                this.container.addEventListener('touchmove', onMove, { passive: false });
+                this.container.addEventListener('touchend', onUp);
+                this.container.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    cancelAnimationFrame(this.rafId);
+                    this.offset = this._clampOffset(this.offset - e.deltaY * 0.6);
+                    this._applyOffset();
+                    clearTimeout(this._snapTimer);
+                    this._snapTimer = setTimeout(() => this._snap(), 120);
+                }, { passive: false });
+            }
+            _momentum() {
+                const friction = 0.94;
+                const step = () => {
+                    if (Math.abs(this.velocity) < 0.02) { this._snap(); return; }
+                    this.velocity *= friction;
+                    this.offset = this._clampOffset(this.offset + this.velocity * 16);
+                    this._applyOffset();
+                    this.rafId = requestAnimationFrame(step);
+                };
+                this.rafId = requestAnimationFrame(step);
+            }
+            _snap() {
+                if (!this.items.length) return;
+                const idx = Math.round(-this.offset / this.itemHeight);
+                const clamped = Math.min(this.items.length - 1, Math.max(0, idx));
+                this._animateTo(-clamped * this.itemHeight, clamped);
+            }
+            // Программный шаг на delta позиций (клавиатура W/S) — та же
+            // плавная анимация прилипания, что и у обычной прокрутки.
+            // animate=false — мгновенный прыжок без 220мс плавной анимации.
+            // На быстрой передаче удержания W/S шаги идут чаще, чем сама
+            // анимация успевает доиграть — каждый новый шаг обрывал
+            // предыдущую на середине, отчего прокрутка визуально дёргалась
+            // и «тормозила» вместо того, чтобы ускоряться. Плавную анимацию
+            // оставляем только для одиночного нажатия.
+            step(delta, animate = true) {
+                if (!this.items.length) return;
+                const idx = this.getIndex();
+                const clamped = Math.min(this.items.length - 1, Math.max(0, idx + delta));
+                if (animate) {
+                    this._animateTo(-clamped * this.itemHeight, clamped);
+                } else {
+                    cancelAnimationFrame(this.rafId);
+                    this.offset = -clamped * this.itemHeight;
+                    this.index = clamped;
+                    this._applyOffset();
+                }
+            }
+            _animateTo(target, newIndex) {
+                cancelAnimationFrame(this.rafId);
+                const start = this.offset;
+                const startT = performance.now();
+                const dur = 220;
+                const step = (now) => {
+                    const t = Math.min(1, (now - startT) / dur);
+                    const eased = 1 - Math.pow(1 - t, 3);
+                    this.offset = start + (target - start) * eased;
+                    this._applyOffset();
+                    if (t < 1) {
+                        this.rafId = requestAnimationFrame(step);
+                    } else {
+                        this.index = newIndex;
+                    }
+                };
+                this.rafId = requestAnimationFrame(step);
+            }
+            getIndex() {
+                // Считаем прямо по текущему положению на экране, а не по
+                // закэшированному this.index — тот обновлялся только когда
+                // анимация прилипания к ближайшему пункту полностью
+                // доигрывала до конца. Если нажать «Играть» посреди
+                // прокрутки/анимации, значение всегда должно быть то, что
+                // видно на экране прямо сейчас, а не то, что стояло секунду
+                // назад.
+                if (!this.items.length) return -1;
+                const idx = Math.round(-this.offset / this.itemHeight);
+                return Math.min(this.items.length - 1, Math.max(0, idx));
+            }
+        }
+
+        async function startConstructor() {
+            let confirmed1 = await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат подпапки ярусов.');
+            if (!confirmed1) return;
+            let state = await pywebview.api.constructor_pick_sum_folder();
+            if (state && state.error === 'cancel') return;
+            if (!state || state.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${state && state.error ? state.error : 'Неизвестная ошибка'}`);
+                return;
+            }
+            constructorState = state;
+
+            let confirmed2 = await showBeautifulAlert('<b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
+            if (!confirmed2) return;
+            let startRes = await pywebview.api.constructor_pick_start();
+            if (startRes && startRes.error === 'cancel') return;
+            if (startRes && !startRes.error) constructorState = startRes;
+
+            document.getElementById('constructorEndOverlay').style.display = 'flex';
+        }
+
+        async function openConstructorFromSumMode() {
+            // Режим «Суммы» уже знает папку, старт и энд — конструктору не
+            // нужно спрашивать их заново диалогами, как при заходе из
+            // главного меню.
+            let state = await pywebview.api.constructor_open_from_sum_mode();
+            if (state && state.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            constructorState = state;
+            openConstructorScreen();
+        }
+
+        async function constructorPickEnd() {
+            document.getElementById('constructorEndOverlay').style.display = 'none';
+            let res = await pywebview.api.constructor_pick_end();
+            if (res && !res.error) constructorState = res;
+            openConstructorScreen();
+        }
+
+        function constructorSkipEnd() {
+            document.getElementById('constructorEndOverlay').style.display = 'none';
+            openConstructorScreen();
+        }
+
+        function openConstructorScreen() {
+            embedAreaId = 'constructorEmbedArea';
+            embedBtnId = 'constructorEmbedBtn';
+            constructorBigMode = false;
+            showStage('stage3-constructor');
+            renderConstructorMeta();
+            renderConstructorReels();
+        }
+
+        // Сотни (100-900) и Тысячи (1-99 тыс.) — это обычные суммы. Для сумм
+        // за миллион та же пара клеток переворачивается в одну большую —
+        // «Сотни тысяч» (100-900 тыс.) — кнопкой под ними. Одновременно
+        // видна только одна сторона, поэтому «Играть»/«Обновить сумму»
+        // автоматически берут либо Сотни+Тысячи, либо Сотни тысяч — то, что
+        // сейчас показано — и звучит либо «...900, 99 тысяч, 100 тенге»,
+        // либо «...100 тысяч, 100 тенге», как и должно быть.
+        let constructorBigMode = false;
+        function constructorVisibleTiers() {
+            return CONSTRUCTOR_TIER_ORDER.filter(t => {
+                if (t === 'hundred_thousands') return constructorBigMode;
+                if (t === 'hundreds' || t === 'thousands') return !constructorBigMode;
+                return true;
+            });
+        }
+        function constructorToggleBigMode() {
+            constructorBigMode = !constructorBigMode;
+            renderConstructorReels();
+        }
+
+        function renderConstructorMeta() {
+            if (!constructorState) return;
+            let bits = [
+                constructorState.start ? `start: ${constructorState.start}` : 'start: не выбран',
+                constructorState.end ? `end: ${constructorState.end}` : 'end: без окончания'
+            ];
+            document.getElementById('constructorMeta').innerText = bits.join(' · ');
+        }
+
+        function constructorReelColHTML(tier, wide = false) {
+            let items = constructorState.tiers[tier].items;
+            let isEmpty = items.length === 0;
+            let cls = 'reel-col' + (isEmpty ? ' reel-col--empty' : '') + (wide ? ' reel-col--wide' : '');
+            return `
+            <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
+                <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
+                <div class="reel" id="reel-${tier}">
+                    <div class="reel-indicator"></div>
+                    <div class="reel-track"></div>
+                </div>
+                <div class="reel-col__count">${isEmpty ? 'не найдено — пропускается' : items.length + ' шт.'}</div>
+            </div>`;
+        }
+
+        function renderConstructorReels() {
+            let wrap = document.getElementById('constructorReels');
+            if (!constructorState || !constructorState.tiers) { wrap.innerHTML = ''; return; }
+
+            // «Сотни» + «Тысячи» и «Сотни тысяч» занимают одно и то же место
+            // в ряду — переворачиваются кнопкой между собой, а не стоят
+            // рядом впятером.
+            let flipLabel = constructorBigMode
+                ? 'Обычные суммы (Сотни и Тысячи)'
+                : 'Сумма за миллион (Сотни тысяч)';
+            let flipGroup = `
+                <div class="constructor-flip-group">
+                    <div class="constructor-flip-group__reels">
+                        ${constructorBigMode ? constructorReelColHTML('hundred_thousands', true)
+                                              : constructorReelColHTML('hundreds') + constructorReelColHTML('thousands')}
+                    </div>
+                    <button class="constructor-flip-btn" onclick="constructorToggleBigMode()">
+                        ${iconHTML('refresh-cw')} ${flipLabel}
+                    </button>
+                </div>`;
+
+            wrap.innerHTML = constructorReelColHTML('millions') + flipGroup + constructorReelColHTML('tenge');
+
+            constructorReelInstances = {};
+            constructorVisibleTiers().forEach(tier => {
+                let items = constructorState.tiers[tier].items.map(t => humanizeTierItem(tier, t));
+                let container = document.getElementById(`reel-${tier}`);
+                constructorReelInstances[tier] = new Reel(container, items, 44, updateConstructorPreview);
+            });
+            updateConstructorPreview();
+            constructorSelectedTier = null;
+            constructorEnsureSelection();
+            constructorRenderSelection();
+        }
+
+        // ==================================================================
+        // Управление конструктором с клавиатуры (WASD): A/D переключают,
+        // какая рулетка сейчас «активна», W/S крутят её вверх/вниз. При
+        // удержании W/S прокрутка постепенно ускоряется — так удобнее
+        // долистать от «1» до «99», чем щёлкать по одному шагу.
+        // ==================================================================
+        let constructorSelectedTier = null;
+        let constructorHoldTimers = {};
+
+        function constructorEnsureSelection() {
+            if (!constructorState || !constructorState.tiers) return;
+            let visible = constructorVisibleTiers();
+            if (constructorSelectedTier && visible.includes(constructorSelectedTier)) return;
+            constructorSelectedTier = visible.find(t => constructorState.tiers[t].items.length) || visible[0];
+        }
+
+        function constructorRenderSelection() {
+            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+                let col = document.querySelector(`.reel-col[data-tier="${tier}"]`);
+                if (col) col.classList.toggle('reel-col--selected', tier === constructorSelectedTier);
+            });
+        }
+
+        function constructorMoveSelection(dir) {
+            constructorEnsureSelection();
+            let visible = constructorVisibleTiers();
+            let idx = visible.indexOf(constructorSelectedTier);
+            let next = Math.min(visible.length - 1, Math.max(0, idx + dir));
+            constructorSelectedTier = visible[next];
+            constructorRenderSelection();
+        }
+
+        function constructorStepSelected(dir, animate = true) {
+            constructorEnsureSelection();
+            let reel = constructorReelInstances[constructorSelectedTier];
+            if (reel) reel.step(dir, animate);
+        }
+
+        // Общий «держатель» для W/S: первый шаг сразу по нажатию, затем,
+        // пока клавиша зажата, повторяем со всё уменьшающейся паузой —
+        // это и есть ускорение прокрутки при удержании.
+        // «Передачи» скорости: пока клавиша зажата, ускорение не упирается
+        // в один и тот же потолок, а ступенчато переключается на всё более
+        // быструю передачу — держишь дольше, следующая передача ощутимо
+        // быстрее финальной скорости предыдущей, а не топчется на месте.
+        function constructorHoldInterval(elapsedMs) {
+            if (elapsedMs < 1200) return 220 - (220 - 70) * (elapsedMs / 1200);
+            if (elapsedMs < 3000) return 70 - (70 - 25) * ((elapsedMs - 1200) / 1800);
+            if (elapsedMs < 5000) return 25 - (25 - 10) * ((elapsedMs - 3000) / 2000);
+            return 10;
+        }
+        function constructorStartHold(code, action) {
+            if (constructorHoldTimers[code]) return;
+            action(true);
+            const startedAt = performance.now();
+            const tick = () => {
+                // Повторы при удержании идут чаще, чем успевает доиграть
+                // плавная анимация шага — прыгаем мгновенно (см. Reel.step),
+                // иначе на быстрой передаче прокрутка дёргается и «тормозит».
+                action(false);
+                let interval = constructorHoldInterval(performance.now() - startedAt);
+                constructorHoldTimers[code].id = setTimeout(tick, interval);
+            };
+            constructorHoldTimers[code] = { id: setTimeout(tick, 380) };
+        }
+        function constructorStopHold(code) {
+            let timer = constructorHoldTimers[code];
+            if (timer) { clearTimeout(timer.id); delete constructorHoldTimers[code]; }
+        }
+
+        function updateConstructorPreview() {
+            let el = document.getElementById('constructorPreview');
+            if (!el || !constructorState) return;
+            let parts = [];
+            if (constructorState.start) parts.push(escapeHtml(constructorState.start));
+            constructorVisibleTiers().forEach(tier => {
+                let items = constructorState.tiers[tier].items;
+                let reel = constructorReelInstances[tier];
+                if (!items.length) { parts.push(`<em>${escapeHtml(constructorState.tiers[tier].label)} — пропущено</em>`); return; }
+                let idx = reel ? reel.getIndex() : 0;
+                let shown = reel ? reel.items[idx] : humanizeTierItem(tier, items[idx]);
+                parts.push(`<b>${escapeHtml(shown ?? '')}</b>`);
+            });
+            if (constructorState.end) parts.push(escapeHtml(constructorState.end));
+            el.innerHTML = parts.join(' &nbsp;→&nbsp; ');
+        }
+
+        function constructorIndices() {
+            let indices = {};
+            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+                let reel = constructorReelInstances[tier];
+                if (reel) {
+                    let idx = reel.getIndex();
+                    if (idx >= 0) indices[tier] = idx;
+                }
+            });
+            return indices;
+        }
+
+        // Play/Стоп по Space — так же, как в основном рабочем экране.
+        // Раз в конструкторе нет длинной цепочки фраз, а просто одна
+        // склеенная сумма, состояние держим одним флагом плюс таймер на
+        // длительность (чтобы флаг сам сбросился, когда проигрывание
+        // закончилось само, без нажатия Space второй раз).
+        let constructorIsPlaying = false;
+        let constructorPlayTimeout = null;
+
+        async function constructorPlay() {
+            let res = await pywebview.api.constructor_play(constructorIndices());
+            if (res && res.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            clearTimeout(constructorPlayTimeout);
+            if (res && res.playing) {
+                constructorIsPlaying = true;
+                constructorPlayTimeout = setTimeout(() => { constructorIsPlaying = false; }, (res.duration || 0) * 1000);
+            } else {
+                constructorIsPlaying = false;
+            }
+        }
+
+        async function constructorStop() {
+            clearTimeout(constructorPlayTimeout);
+            constructorIsPlaying = false;
+            await pywebview.api.stop_audio();
+        }
+
+        async function constructorTogglePlay() {
+            if (constructorIsPlaying) await constructorStop();
+            else await constructorPlay();
+        }
+
+        async function constructorSendToAudacity() {
+            let btn = document.querySelector('#stage3-constructor .btn-tile--primary');
+            let origHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
+            let res;
+            try {
+                res = await pywebview.api.constructor_send_to_audacity(constructorIndices());
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+            }
+            if (res && res.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            // Теперь Audacity точно запущен — сажаем его окно в рамку конструктора
+            if (!audacityEmbedded) await attachEmbeddedAudacity(true);
+        }
+
+        async function constructorSaveResult() {
+            let res = await pywebview.api.constructor_save();
+            if (res && res.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
+            } else if (res) {
+                showToast(`Сохранено кусков: ${res.saved}`);
             }
         }
