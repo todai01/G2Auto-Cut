@@ -1,3 +1,41 @@
+// Единая замена смайликов иконками (спрайт <symbol> лежит в index.html):
+// возвращает <svg class="icon"><use .../></svg> по имени иконки.
+function iconHTML(name) {
+    return `<svg class="icon"><use href="#icon-${name}"></use></svg>`;
+}
+
+// Многие тексты алертов/тостов приходят из бэкенда с эмодзи-префиксом
+// (например "✅ Готово"). Вместо правки полусотни строк в Python — одно
+// место, где эмодзи в начале строки распознаётся, убирается из текста,
+// а на его месте показывается иконка + цветовой тон (ошибка/успех/т.д.).
+const EMOJI_ICON_MAP = {
+    '❌': { icon: 'x-circle', tone: 'error' },
+    '⚠️': { icon: 'alert-triangle', tone: 'warning' },
+    '⚠': { icon: 'alert-triangle', tone: 'warning' },
+    '✅': { icon: 'check-circle', tone: 'success' },
+    '🎉': { icon: 'check-circle', tone: 'success' },
+    '🔄': { icon: 'refresh-cw', tone: 'info' },
+    '🔁': { icon: 'refresh-cw', tone: 'info' },
+    '✂️': { icon: 'scissors', tone: 'info' },
+    '✂': { icon: 'scissors', tone: 'info' },
+    '🔗': { icon: 'link-2', tone: 'info' },
+    '💾': { icon: 'save', tone: 'info' },
+    '⚡': { icon: 'zap', tone: 'info' },
+    '📁': { icon: 'folder', tone: 'info' },
+    '📂': { icon: 'folder', tone: 'info' },
+    '🎙️': { icon: 'mic', tone: 'info' },
+    '🎙': { icon: 'mic', tone: 'info' },
+    '🎚️': { icon: 'sliders', tone: 'info' },
+    '🎚': { icon: 'sliders', tone: 'info' },
+    '🎧': { icon: 'headphones', tone: 'info' },
+};
+function extractLeadingIcon(text) {
+    let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}])️?\s*/u.exec(text || '');
+    if (!m) return { icon: 'alert-circle', tone: 'info', text: text || '' };
+    let mapped = EMOJI_ICON_MAP[m[0].trim()] || EMOJI_ICON_MAP[m[1]] || { icon: 'alert-circle', tone: 'info' };
+    return { icon: mapped.icon, tone: mapped.tone, text: (text || '').slice(m[0].length) };
+}
+
 let isProcessing = false;
         let currentState = null;
         let mergeParts = [null, null, null, null, null];
@@ -996,7 +1034,7 @@ let isProcessing = false;
                 let listHtml = '';
                 windows.forEach(w => {
                     listHtml += `<button class="option-card project-option" onclick="selectAudacityProject(${w.hwnd})">
-                                    <span class="option-icon">🎧</span>
+                                    <span class="option-icon">${iconHTML('headphones')}</span>
                                     <span class="project-option__title">${w.title}</span>
                                  </button>`;
                 });
@@ -1123,7 +1161,7 @@ let isProcessing = false;
             // 2. Меняем текст предупреждения в зависимости от галочки
             let alertMsg = isReadyExport
                 ? "📁 <b>Простой экспорт (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут рассортированы переменные."
-                : "📁 <b>Пакетная сборка (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут экспортироваться переменные.<br><br><span style='font-size:12px;color:var(--text-dim)'>⚠️ Убедитесь, что в этой папке уже лежат эталонные файлы <b>start.wav</b> и <b>end.wav</b>!</span>";
+                : `📁 <b>Пакетная сборка (Шаг 1 из 1):</b><br><br>Выберите <b>ПАПКУ</b>, куда будут экспортироваться переменные.<br><br><span style='font-size:12px;color:var(--text-dim)'>${iconHTML('alert-triangle')} Убедитесь, что в этой папке уже лежат эталонные файлы <b>start.wav</b> и <b>end.wav</b>!</span>`;
 
             await showBeautifulAlert(alertMsg);
             let outDir = await pywebview.api.pick_folder();
@@ -1456,9 +1494,9 @@ let isProcessing = false;
         // «Суммы»). Раньше подсветка при проигрывании была одинаковая для
         // всех случаев (жёлтая), и было не понять, что именно звучит.
         function playSourceLabel(src) {
-            if (src === 'saved') return '✅ Готовая версия';
-            if (src === 'chain') return '🔗 Цепочка «Суммы»';
-            return '🎙 Черновик (дубль)';
+            if (src === 'saved') return iconHTML('check-circle') + ' Готовая версия';
+            if (src === 'chain') return iconHTML('link-2') + ' Цепочка «Суммы»';
+            return iconHTML('mic') + ' Черновик (дубль)';
         }
         document.addEventListener('DOMContentLoaded', () => {
             const phraseEl = document.getElementById('phraseText');
@@ -1467,10 +1505,10 @@ let isProcessing = false;
             const sync = () => {
                 if (phraseEl.classList.contains('is-playing') && phraseEl.dataset.playSource) {
                     badge.className = 'play-source-badge is-visible src-' + phraseEl.dataset.playSource;
-                    badge.innerText = playSourceLabel(phraseEl.dataset.playSource);
+                    badge.innerHTML = playSourceLabel(phraseEl.dataset.playSource);
                 } else {
                     badge.className = 'play-source-badge';
-                    badge.innerText = '';
+                    badge.innerHTML = '';
                 }
             };
             new MutationObserver(sync).observe(phraseEl, { attributes: true, attributeFilter: ['class'] });
@@ -1727,9 +1765,9 @@ let isProcessing = false;
         }
 
         function getVarIcon(type) {
-            if(type === 'date') return "📅";
-            if(type === 'name') return "👤";
-            if(type === 'amount') return "💰";
+            if(type === 'date') return iconHTML('calendar');
+            if(type === 'name') return iconHTML('user');
+            if(type === 'amount') return iconHTML('dollar-sign');
             return "";
         }
 
@@ -1740,7 +1778,7 @@ let isProcessing = false;
                 let btnMix = document.getElementById(`btnVar${capitalize(varType)}Mix`);
 
                 // Красим кнопку файла, давая понять, что он заряжен
-                btnLoad.innerText = `${getVarIcon(varType)} ${getVarName(varType)}: ${result.filename}`;
+                btnLoad.innerHTML = `${getVarIcon(varType)} ${escapeHtml(getVarName(varType))}: ${escapeHtml(result.filename)}`;
                 btnLoad.style.color = 'var(--text)';
                 btnLoad.style.borderColor = 'var(--accent-var)';
                 btnLoad.style.background = 'var(--tint-var)';
@@ -1832,7 +1870,7 @@ let isProcessing = false;
             phraseEl.innerText = state.phrase_text;
 
             let customNameEl = document.getElementById('customFileName');
-            customNameEl.innerHTML = state.custom_filename ? `💾 Сохранится как: <b>${state.custom_filename}</b>` : "";
+            customNameEl.innerHTML = state.custom_filename ? `${iconHTML('save')} Сохранится как: <b>${state.custom_filename}</b>` : "";
             customNameEl.dataset.rawname = state.custom_filename || "";
 
             let excelName = state.custom_filename ? state.custom_filename.replace('.wav', '') : "";
@@ -2038,7 +2076,7 @@ let isProcessing = false;
             if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
             if (isProcessing) return; isProcessing = true;
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
-            alert("✅ Склейка сохранена в Проверенные!");
+            alert("Склейка сохранена в Проверенные!");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -2056,7 +2094,7 @@ let isProcessing = false;
             if (isProcessing) return; isProcessing = true;
             // Передаем true в Python, чтобы файл ушел в папку Переменные
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, true);
-            alert("✅ Склейка сохранена в Переменные!");
+            alert("Склейка сохранена в Переменные!");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -2264,8 +2302,14 @@ let isProcessing = false;
             return new Promise((resolve) => {
                 let el = document.getElementById('customAlertText');
                 if (el) {
+                    let { icon, tone, text } = extractLeadingIcon(message);
+                    let iconEl = document.getElementById('customAlertIcon');
+                    if (iconEl) {
+                        iconEl.innerHTML = iconHTML(icon);
+                        iconEl.className = 'custom-alert-icon icon-tone--' + tone;
+                    }
                     // Используем HTML для форматирования текста (жирный шрифт, переносы)
-                    el.innerHTML = `<div class="alert-body">${message}</div>`;
+                    el.innerHTML = `<div class="alert-body">${text}</div>`;
                     document.getElementById('customAlertOverlay').style.display = 'flex';
                     window.customAlertCallback = resolve;
                 } else {
@@ -2290,9 +2334,10 @@ let isProcessing = false;
         }
 
         function showToast(msg) {
+            let { icon, text } = extractLeadingIcon(msg);
             let toast = document.createElement('div');
             toast.className = 'toast';
-            toast.innerText = msg;
+            toast.innerHTML = `${iconHTML(icon)}<span>${escapeHtml(text)}</span>`;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2200);
         }
@@ -2339,7 +2384,7 @@ let isProcessing = false;
                     showBeautifulAlert('⚠️ ' + result.error);
                     return;
                 }
-                let msg = `✅ Готово: ${result.done} из ${result.total}`;
+                let msg = `${iconHTML('check-circle')} Готово: ${result.done} из ${result.total}`;
                 if (result.errors && result.errors.length) {
                     msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
                 }
@@ -2513,7 +2558,7 @@ let isProcessing = false;
 
             // Показываем красивое модальное окно
             document.getElementById('auditOverlay').style.display = 'flex';
-            document.getElementById('auditPath').innerText = "📁 Директория сканирования: " + res.scan_dir;
+            document.getElementById('auditPath').innerHTML = iconHTML('folder') + " Директория сканирования: " + escapeHtml(res.scan_dir);
 
             // Запускаем анимацию счетчиков (на 1200 миллисекунд)
             animateValue(document.getElementById('auditTotalExcel'), 0, res.total_excel, 1200);
@@ -2523,13 +2568,13 @@ let isProcessing = false;
 
             // Генерируем детальные списки и чистый текст для копирования
             let detailsHtml = '';
-            window.lastAuditReportText = `📊 ОТЧЕТ АУДИТА ПРОЕКТА\n📁 Директория: ${res.scan_dir}\n`;
+            window.lastAuditReportText = `ОТЧЁТ АУДИТА ПРОЕКТА\nДиректория: ${res.scan_dir}\n`;
             window.lastAuditReportText += `Excel база: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n\n`;
 
             // Блок отсутствующих файлов
             if (res.missing_count > 0) {
                 detailsHtml += `<h4 class="audit-group-title audit-group-title--lost">Отсутствуют — ${res.missing_count}</h4>`;
-                window.lastAuditReportText += `❌ ОТСУТСТВУЮТ (${res.missing_count}):\n`;
+                window.lastAuditReportText += `ОТСУТСТВУЮТ (${res.missing_count}):\n`;
 
                 res.missing.forEach(m => {
                     detailsHtml += `
@@ -2547,7 +2592,7 @@ let isProcessing = false;
             // Блок дубликатов
             if (res.duplicates_count > 0) {
                 detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Дубликаты — ${res.duplicates_count}</h4>`;
-                window.lastAuditReportText += `⚠️ ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
+                window.lastAuditReportText += `ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
 
                 res.duplicates.forEach(d => {
                     detailsHtml += `

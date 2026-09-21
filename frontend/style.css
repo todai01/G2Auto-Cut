@@ -96,6 +96,16 @@ button:focus-visible, input:focus-visible{ outline: 2px solid var(--accent-prima
 
 a{ color: var(--accent-primary); }
 
+/* Единый набор линейных иконок (см. спрайт <symbol> в index.html) —
+   размер идёт от font-size окружающего блока, цвет — от currentColor,
+   поэтому существующие правила вида ".option-card--good .option-icon"
+   (которые красят через color) продолжают работать без изменений. */
+.icon{
+    width: 1em; height: 1em; display: inline-block; flex: none;
+    fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.15em;
+}
+
 kbd{
     display:inline-block; font-family: var(--font-mono); font-size: 10px; font-weight: 600;
     letter-spacing: 0.02em;
@@ -161,7 +171,7 @@ kbd{
 .option-icon{
     flex: none; font-size: 19px; width: 40px; height:40px; display:flex; align-items:center; justify-content:center;
     background: var(--screen); border-radius: var(--radius-sm); border: 1px solid var(--border-soft);
-    box-shadow: var(--shadow-screen);
+    box-shadow: var(--shadow-screen); color: var(--text-dim);
 }
 .option-title{ display:block; font-size: 14.5px; font-weight: 650; color: var(--text); letter-spacing: -0.01em; }
 .option-desc{ display:block; font-size: 12.5px; color: var(--text-dim); margin-top:3px; }
@@ -511,7 +521,10 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
     transform: scale(0.95); animation: popInAlert 0.2s var(--ease) forwards;
 }
 @keyframes popInAlert { to { transform: scale(1); } }
-.custom-alert-icon { font-size: 32px; margin-bottom: 15px; }
+.custom-alert-icon { font-size: 32px; margin-bottom: 15px; color: var(--accent-info); display: flex; justify-content: center; }
+.custom-alert-icon.icon-tone--error{ color: var(--accent-trash); }
+.custom-alert-icon.icon-tone--warning{ color: var(--accent-var); }
+.custom-alert-icon.icon-tone--success{ color: var(--accent-good); }
 .custom-alert-text { color: var(--text); font-size: 15px; line-height: 1.55; margin-bottom: 26px; white-space: pre-wrap; font-weight: 600;}
 .custom-alert-btn {
     background: linear-gradient(180deg, #64a8f3, var(--accent-primary)); color: #fff; border: none;
@@ -719,7 +732,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .mode-card__icon{
     width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
     font-size: 21px; background: var(--screen); border: 1px solid var(--border-soft);
-    border-radius: var(--radius-md); box-shadow: var(--shadow-screen);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-screen); color: var(--text-dim);
 }
 .mode-card__title{
     font-size: var(--fs-lg); font-weight: 700; color: var(--text);
@@ -759,7 +772,7 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
     border-radius: var(--radius-md); cursor: pointer;
 }
 .util-tile:hover{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.32); }
-.util-tile__icon{ font-size: 18px; }
+.util-tile__icon{ font-size: 18px; color: var(--text-dim); }
 .util-tile__title{ font-size: var(--fs-md); font-weight: 650; color: var(--text); }
 .util-tile__desc{ font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; }
 
@@ -1586,6 +1599,7 @@ input:focus-visible + .opt-chip__box{
     background: linear-gradient(180deg, #45cf8f, var(--accent-good)); color: #06281a;
     border-radius: var(--radius-md); font-size: var(--fs-md); font-weight: 700;
     box-shadow: var(--shadow-pop);
+    display: flex; align-items: center; gap: 8px;
     animation: toastIn .22s var(--ease);
 }
 @keyframes toastIn{ from{ opacity: 0; transform: translate(-50%, 10px); } to{ opacity: 1; transform: translate(-50%, 0); } }
