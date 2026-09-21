@@ -85,7 +85,12 @@ class FilenameMatchMixin:
 
         # Без повторов, но сохраняя порядок — если одно и то же полное имя
         # написано в Excel дважды, это не «два разных совпадения».
-        unique_full = list(dict.fromkeys(full_names))
+        # В Excel название иногда пишут вместе с расширением
+        # («gizat_ru_da_1_1.wav») — убираем его перед поиском, иначе
+        # совпадение с da_1_1 не находится (в конце-то «.wav», а не сам
+        # ярус). Расширение самого сохранённого файла отдельно — оно всегда
+        # от исходного аудио, не от текста в Excel.
+        unique_full = list(dict.fromkeys(re.sub(r'\.wav$', '', n, flags=re.IGNORECASE) for n in full_names))
 
         renamed, unmatched, ambiguous = [], [], []
         claimed = {}  # полное имя -> какой короткий файл уже его занял
