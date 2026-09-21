@@ -616,6 +616,7 @@
                     </button>
 
                     <button class="mode-card mode-card--info rise" style="--d: 5" onclick="startConstructor()">
+                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
                         <span class="mode-card__title">Конструктор переменных</span>
                         <span class="mode-card__desc">Рулетками листаете уже сохранённые суммы, собираете любую комбинацию и правите точечно.</span>
                         <span class="mode-card__go">Открыть &#8594;</span>
@@ -921,7 +922,7 @@
                             <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить со следующим <kbd>M</kbd></button>
                         </div>
                         <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()">Конструктор переменных</button>
+                            <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор переменных</button>
                         </div>
                         <div class="action-note">Крутите дубли клавишами <kbd>A</kbd>/<kbd>D</kbd>, пока не услышите текст с экрана. Папку программа выберет сама по тексту. Если в дубле слиплось несколько цифр — выделите лишнее в Audacity и жмите «Сохранить остаток». А если наоборот число разрезало на два дубля («50» и «5 тыс.» вместо «55 тыс.») — встаньте на первый и жмите «Склеить со следующим», прежде чем закрывать проект.</div>
                     </div>
@@ -981,7 +982,7 @@
                 <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
             </div>
             <div class="constructor-title">
-                <span class="constructor-title__main">Конструктор переменных — Суммы</span>
+                <span class="constructor-title__main"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор переменных — Суммы</span>
                 <span class="constructor-title__sub" id="constructorMeta">Папка не выбрана</span>
             </div>
         </header>
