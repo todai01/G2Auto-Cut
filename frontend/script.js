@@ -2434,6 +2434,72 @@ let isProcessing = false;
             }
         }
 
+        // === «Сопоставить названия по Excel»: короткое имя файла (da_1_1)
+        // ищем как конец полного из Excel (gizat_ru_da_1_1), переименовываем
+        // и раскладываем по языкам ru/kz/Прочее ===
+        function openRenameMatch() {
+            document.getElementById('renameMatchFolderLabel').innerText = 'Папка не выбрана';
+            document.getElementById('renameMatchExcelLabel').innerText = 'Файл не выбран';
+            document.getElementById('renameMatchResult').style.display = 'none';
+            document.getElementById('renameMatchOverlay').style.display = 'flex';
+        }
+
+        function closeRenameMatch() {
+            document.getElementById('renameMatchOverlay').style.display = 'none';
+        }
+
+        async function pickRenameMatchFolder() {
+            let result = await pywebview.api.rename_match_pick_folder();
+            let label = document.getElementById('renameMatchFolderLabel');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Папка не выбрана';
+                return;
+            }
+            label.innerText = `${result.folder} — файлов: ${result.count}`;
+        }
+
+        async function pickRenameMatchExcel() {
+            let result = await pywebview.api.rename_match_pick_excel();
+            let label = document.getElementById('renameMatchExcelLabel');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Файл не выбран';
+                return;
+            }
+            label.innerText = `${result.file} — названий: ${result.count}`;
+        }
+
+        async function runRenameMatch() {
+            let btn = document.getElementById('btnRunRenameMatch');
+            btn.disabled = true;
+            btn.innerText = 'Сопоставляю...';
+            let result;
+            try {
+                result = await pywebview.api.rename_match_run();
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Сопоставить и разложить';
+            }
+
+            if (!result || result.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                return;
+            }
+
+            let parts = [`${iconHTML('check-circle')} Переименовано и разложено: <b>${result.renamed_count}</b>`];
+            if (result.unmatched_count) {
+                parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Не нашлось пары в Excel (${result.unmatched_count}):<br>` +
+                    result.unmatched.map(escapeHtml).join('<br>') + `</div>`);
+            }
+            if (result.ambiguous_count) {
+                parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Неоднозначно, оставлено как есть (${result.ambiguous_count}):<br>` +
+                    result.ambiguous.map(a => `${escapeHtml(a.file)} — ${escapeHtml(a.reason)}`).join('<br>') + `</div>`);
+            }
+
+            let box = document.getElementById('renameMatchResult');
+            box.innerHTML = parts.join('');
+            box.style.display = 'block';
+        }
+
         // --- Ненавязчивая подсказка "что дальше" после конвертации ---
         function closePostConvert() {
             document.getElementById('postConvertOverlay').style.display = 'none';

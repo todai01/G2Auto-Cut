@@ -253,6 +253,38 @@
         </div>
     </div>
 
+    <!-- Сопоставить укороченные имена файлов с полными из Excel и разложить по языкам -->
+    <div id="renameMatchOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Сопоставить названия по Excel</h3>
+                <button class="modal-close" onclick="closeRenameMatch()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Короткое имя файла ищем как конец полного из Excel (da_1_1 → gizat_ru_da_1_1),
+                переименовываем и раскладываем по подпапкам ru/kz/Прочее — судя по метке языка в полном имени.</div>
+
+            <label class="field">
+                <span class="field-label">Папка с файлами (короткие названия)</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickRenameMatchFolder()">Выбрать папку</button>
+                    <span id="renameMatchFolderLabel" class="modal-hint" style="margin:0;">Папка не выбрана</span>
+                </div>
+            </label>
+
+            <label class="field">
+                <span class="field-label">Excel со списком полных названий</span>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="pickRenameMatchExcel()">Выбрать файл</button>
+                    <span id="renameMatchExcelLabel" class="modal-hint" style="margin:0;">Файл не выбран</span>
+                </div>
+            </label>
+
+            <button class="splash-btn" style="width:100%; margin-top: var(--space-4);" id="btnRunRenameMatch" onclick="runRenameMatch()">Сопоставить и разложить</button>
+
+            <div id="renameMatchResult" style="display:none; margin-top: var(--space-4);"></div>
+        </div>
+    </div>
+
     <!-- Ненавязчивая подсказка "что дальше" после конвертации -->
     <div id="postConvertOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -669,6 +701,12 @@
                         <span class="util-tile__icon"><svg class="icon"><use href="#icon-film"></use></svg></span>
                         <span class="util-tile__title">Конвертер MP4</span>
                         <span class="util-tile__desc">Перевести MP4 в MP3 или WAV с нужной герцовкой</span>
+                    </button>
+
+                    <button class="util-tile util-tile--info rise" style="--d: 9" onclick="openRenameMatch()">
+                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-link-2"></use></svg></span>
+                        <span class="util-tile__title">Сопоставить названия по Excel</span>
+                        <span class="util-tile__desc">Найти короткие имена файлов в Excel и разложить по языкам ru/kz</span>
                     </button>
                 </div>
 
