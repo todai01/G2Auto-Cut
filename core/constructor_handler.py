@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import webview
@@ -30,37 +31,93 @@ class ConstructorMixin:
 
         return self._constructor_state()
 
-    def constructor_pick_sum_folder(self):
-        """Шаг 1: папка «Суммы» — та же, что режим «Суммы» создаёт сам,
-        с подпапками-ярусами внутри (по одной на каждый ярус из
-        SUM_TIER_ORDER). Яруса без своей подпапки остаются
-        просто пустыми рулетками, а не ошибкой."""
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return {"error": "cancel"}
+    @staticmethod
+    def _constructor_detect_lang_dir(name):
+        """«Суммы RU» / «Суммы KZ» — отдельные подпапки для двух языков,
+        каждая со своим полным набором ярусов внутри. Слово RU/KZ ищем как
+        отдельное слово в названии (границы «_»/«-»/пробел), не как
+        подстроку — чтобы не зацепить случайное совпадение."""
+        parts = re.split(r'[_\-\s]+', name.lower())
+        if 'ru' in parts:
+            return 'ru'
+        if 'kz' in parts:
+            return 'kz'
+        return None
 
-        root = folder[0]
+    def _constructor_tier_dir_name(self, tier, lang):
+        """В казахской версии «тыс» заменяется на «мың» только у ярусов,
+        где слово вообще участвует в названии подпапки (Тысячи, Сотни
+        тысяч) — у остальных ярусов название подпапки не меняется."""
+        name = SUM_TIER_DEFAULT_DIR[tier]
+        if lang == 'kz':
+            name = name.replace('тыс', 'мың')
+        return name
+
+    def _constructor_scan_tiers(self, base_dir, lang):
         tiers = {}
         for tier in SUM_TIER_ORDER:
-            sub = os.path.join(root, SUM_TIER_DEFAULT_DIR[tier])
+            sub = os.path.join(base_dir, self._constructor_tier_dir_name(tier, lang))
             files = []
             if os.path.isdir(sub):
                 files = [os.path.join(sub, f) for f in os.listdir(sub)
                          if os.path.isfile(os.path.join(sub, f)) and f.lower().endswith(('.wav', '.mp3'))]
                 files.sort(key=_numeric_sort_key)
             tiers[tier] = files
+        return tiers
+
+    def constructor_pick_sum_folder(self):
+        """Шаг 1: папка «Суммы». Поддерживает два формата — либо яруса
+        лежат прямо в выбранной папке (как раньше), либо в ней есть
+        подпапки «Суммы RU» и «Суммы KZ» (по слову RU/KZ в названии), а уже
+        внутри них — яруса каждого языка отдельно. Во втором случае в
+        интерфейсе появляется переключатель RU/KZ (см. constructor_set_lang)."""
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+
+        root = folder[0]
+        try:
+            subdirs = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
+        except Exception as e:
+            return {"error": f"Ошибка чтения папки: {e}"}
+
+        lang_dirs = {}
+        for d in subdirs:
+            lang = self._constructor_detect_lang_dir(d)
+            if lang and lang not in lang_dirs:
+                lang_dirs[lang] = os.path.join(root, d)
+
+        if not lang_dirs:
+            lang_dirs = {'ru': root}
+
+        lang = 'ru' if 'ru' in lang_dirs else next(iter(lang_dirs))
+        tiers = self._constructor_scan_tiers(lang_dirs[lang], lang)
 
         if not any(tiers.values()):
-            return {"error": "В этой папке не нашлось ни одного яруса «Суммы» "
-                              "(1 - 100 млн, 100 - 900, 1 - 99 тыс, 1 - 100 тенге)."}
+            return {"error": "В этой папке не нашлось ни одного яруса «Суммы» — ни впрямую, ни внутри "
+                              "подпапок «Суммы RU» / «Суммы KZ» (1 - 100 млн, 100 - 900, 1 - 99 тыс/мың, "
+                              "1 - 100 тенге, 100 - 900 тыс/мың)."}
 
         self.constructor_root = root
+        self.constructor_lang_dirs = lang_dirs
+        self.constructor_lang = lang
         self.constructor_tier_files = tiers
         if not hasattr(self, 'constructor_start_file'):
             self.constructor_start_file = None
         if not hasattr(self, 'constructor_end_file'):
             self.constructor_end_file = None
 
+        return self._constructor_state()
+
+    def constructor_set_lang(self, lang):
+        """Переключатель RU/KZ — перечитывает те же 5 ярусов, но уже из
+        другой языковой подпапки, найденной при выборе папки."""
+        lang_dirs = getattr(self, 'constructor_lang_dirs', None) or {}
+        if lang not in lang_dirs:
+            return {"error": f"Папка «Суммы {lang.upper()}» не найдена в выбранной папке."}
+
+        self.constructor_lang = lang
+        self.constructor_tier_files = self._constructor_scan_tiers(lang_dirs[lang], lang)
         return self._constructor_state()
 
     def constructor_pick_start(self):
@@ -87,8 +144,11 @@ class ConstructorMixin:
 
     def _constructor_state(self):
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
+        lang_dirs = getattr(self, 'constructor_lang_dirs', None) or {}
         return {
             "root": getattr(self, 'constructor_root', None),
+            "lang": getattr(self, 'constructor_lang', 'ru'),
+            "lang_available": [l for l in ('ru', 'kz') if l in lang_dirs],
             "start": os.path.basename(self.constructor_start_file) if getattr(self, 'constructor_start_file', None) else None,
             "end": os.path.basename(self.constructor_end_file) if getattr(self, 'constructor_end_file', None) else None,
             "tiers": {
@@ -135,7 +195,7 @@ class ConstructorMixin:
             for path in segments:
                 seg = AudioSegment.from_file(path).set_frame_rate(8000)
                 combined = seg if combined is None else combined + seg
-            temp_path = os.path.join(self.constructor_root, "temp_constructor_preview.wav")
+            temp_path = os.path.join(self.constructor_root, f"temp_constructor_preview_{int(time.time() * 1000)}.wav")
             combined.export(temp_path, format="wav")
             duration = FileUtils.get_exact_audio_duration(temp_path)
             self.player.play(temp_path)

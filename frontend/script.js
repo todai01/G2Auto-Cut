@@ -3023,6 +3023,36 @@ let isProcessing = false;
             constructorBigMode = false;
             showStage('stage3-constructor');
             renderConstructorMeta();
+            renderConstructorLangRow();
+            renderConstructorReels();
+        }
+
+        // RU/KZ: папка «Суммы» может содержать сразу обе версии — подпапки
+        // «Суммы RU» и «Суммы KZ», каждая со своими 5 ярусами. Кнопки
+        // видны только когда constructor_pick_sum_folder() реально нашёл
+        // обе (или хотя бы вторую) — если папка старого формата (без
+        // RU/KZ), тумблер просто прячем, он там не нужен.
+        function renderConstructorLangRow() {
+            let row = document.getElementById('constructorLangRow');
+            if (!row) return;
+            let available = (constructorState && constructorState.lang_available) || [];
+            row.style.display = available.length > 1 ? 'flex' : 'none';
+            let ruBtn = document.getElementById('constructorLangRuBtn');
+            let kzBtn = document.getElementById('constructorLangKzBtn');
+            let lang = constructorState ? constructorState.lang : 'ru';
+            if (ruBtn) ruBtn.classList.toggle('btn-tile--solid-mode', lang === 'ru');
+            if (kzBtn) kzBtn.classList.toggle('btn-tile--solid-mode', lang === 'kz');
+        }
+
+        async function setConstructorLang(lang) {
+            if (!constructorState || constructorState.lang === lang) return;
+            let state = await pywebview.api.constructor_set_lang(lang);
+            if (state && state.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            constructorState = state;
+            renderConstructorLangRow();
             renderConstructorReels();
         }
 
