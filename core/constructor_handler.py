@@ -5,7 +5,7 @@ import json
 import webview
 from pydub import AudioSegment
 from utils.file_utils import FileUtils
-from core.variables_handler import SUM_TIER_ORDER, SUM_TIER_LABELS, SUM_TIER_DEFAULT_DIR, _numeric_sort_key
+from core.variables_handler import SUM_TIER_ORDER, SUM_TIER_LABELS, _numeric_sort_key
 
 
 class ConstructorMixin:
@@ -44,21 +44,55 @@ class ConstructorMixin:
             return 'kz'
         return None
 
-    def _constructor_tier_dir_name(self, tier, lang):
-        """В казахской версии «тыс» заменяется на «мың» только у ярусов,
-        где слово вообще участвует в названии подпапки (Тысячи, Сотни
-        тысяч) — у остальных ярусов название подпапки не меняется."""
-        name = SUM_TIER_DEFAULT_DIR[tier]
-        if lang == 'kz':
-            name = name.replace('тыс', 'мың')
-        return name
+    @staticmethod
+    def _constructor_autodetect_tier_dirs(base_dir):
+        """Ищет 5 ярусов внутри папки по словам-маркерам в названии
+        подпапки — так же, как основной режим «Суммы» ищет их в своей
+        папке (см. _build_sum_sequence в variables_handler.py), а не по
+        точному совпадению целой строки. Из-за этого не важно, как именно
+        написан ярус тысяч — «1 - 99 тыс» или «1 - 99 мың» (казахский) —
+        и не ломается, если название на диске чуть отличается от
+        эталонного (лишний пробел, дефис и т.п.)."""
+        try:
+            subdirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+        except OSError:
+            return {}
 
-    def _constructor_scan_tiers(self, base_dir, lang):
+        assigned = {}
+        remaining = list(subdirs)
+
+        def claim(tier, name):
+            assigned[tier] = name
+            remaining.remove(name)
+
+        match = next((d for d in remaining if 'млн' in d.lower() or 'миллион' in d.lower()), None)
+        if match:
+            claim('millions', match)
+
+        match = next((d for d in remaining if any(k in d.lower() for k in ('тенге', 'kzt', '₸'))), None)
+        if match:
+            claim('tenge', match)
+
+        # «тыс» — русское слово тысяч, «мың» — казахское. Число в названии
+        # отличает «Сотни тысяч» (100 и больше) от обычных «Тысяч».
+        for d in [d for d in remaining if any(k in d.lower() for k in ('тыс', 'мың', 'мын'))]:
+            nums = re.findall(r'\d+', d)
+            tier = 'hundred_thousands' if nums and int(nums[0]) >= 100 else 'thousands'
+            if tier not in assigned:
+                claim(tier, d)
+
+        if 'hundreds' not in assigned and len(remaining) == 1:
+            claim('hundreds', remaining[0])
+
+        return {tier: os.path.join(base_dir, name) for tier, name in assigned.items()}
+
+    def _constructor_scan_tiers(self, base_dir, lang=None):
+        dirs = self._constructor_autodetect_tier_dirs(base_dir)
         tiers = {}
         for tier in SUM_TIER_ORDER:
-            sub = os.path.join(base_dir, self._constructor_tier_dir_name(tier, lang))
+            sub = dirs.get(tier)
             files = []
-            if os.path.isdir(sub):
+            if sub and os.path.isdir(sub):
                 files = [os.path.join(sub, f) for f in os.listdir(sub)
                          if os.path.isfile(os.path.join(sub, f)) and f.lower().endswith(('.wav', '.mp3'))]
                 files.sort(key=_numeric_sort_key)
