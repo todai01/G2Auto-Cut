@@ -12,6 +12,7 @@ from core.audacity_montage import MontageMixin
 from core.converter import ConverterMixin
 from core.constructor_handler import ConstructorMixin
 from core.filename_match_handler import FilenameMatchMixin
+from core.table_to_pptx_handler import TableToPptxMixin
 from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
@@ -25,7 +26,7 @@ from utils.ffmpeg_setup import ensure_ffmpeg
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin):
     def __init__(self):
         super().__init__()
 

@@ -2535,6 +2535,66 @@ let isProcessing = false;
             showToast(`Отчёт сохранён: ${result.path}`);
         }
 
+        // === «Таблица → PowerPoint»: построчный экспорт Excel в слайды ===
+        function openTablePptx() {
+            document.getElementById('tablePptxExcelLabel').innerText = 'Файл не выбран';
+            document.getElementById('tablePptxInfo').style.display = 'none';
+            document.getElementById('tablePptxResult').style.display = 'none';
+            document.getElementById('btnRunTablePptx').disabled = true;
+            document.getElementById('tablePptxOverlay').style.display = 'flex';
+        }
+
+        function closeTablePptx() {
+            document.getElementById('tablePptxOverlay').style.display = 'none';
+        }
+
+        async function pickTablePptxExcel() {
+            let result = await pywebview.api.table_pptx_pick_excel();
+            let label = document.getElementById('tablePptxExcelLabel');
+            let info = document.getElementById('tablePptxInfo');
+            let btn = document.getElementById('btnRunTablePptx');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Файл не выбран';
+                info.style.display = 'none';
+                btn.disabled = true;
+                return;
+            }
+            label.innerText = `${result.file} — строк: ${result.rows}`;
+
+            let bits = [`Колонок в таблице: <b>${result.columns.length}</b> (${result.columns.map(escapeHtml).join(', ')})`];
+            bits.push(result.brand_pair
+                ? `${iconHTML('check-circle')} Марка+транскрипция найдены: «${escapeHtml(result.brand_pair[0])}» над «${escapeHtml(result.brand_pair[1])}» — пойдут одним блоком`
+                : `${iconHTML('alert-triangle')} Колонки «марка»/«транскрипция» не найдены — все колонки лягут отдельными блоками`);
+            info.innerHTML = bits.join('<br>');
+            info.style.display = 'block';
+            btn.disabled = false;
+        }
+
+        async function runTablePptxExport() {
+            let btn = document.getElementById('btnRunTablePptx');
+            btn.disabled = true;
+            btn.innerText = 'Собираю...';
+            let result;
+            try {
+                result = await pywebview.api.table_pptx_export();
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Собрать презентацию';
+            }
+
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') {
+                    showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                }
+                return;
+            }
+
+            let box = document.getElementById('tablePptxResult');
+            box.innerHTML = `${iconHTML('check-circle')} Готово — слайдов: <b>${result.slides}</b><br>${escapeHtml(result.path)}`;
+            box.style.display = 'block';
+            showToast(`Презентация сохранена: ${result.path}`);
+        }
+
         // --- Ненавязчивая подсказка "что дальше" после конвертации ---
         function closePostConvert() {
             document.getElementById('postConvertOverlay').style.display = 'none';
