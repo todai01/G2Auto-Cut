@@ -161,7 +161,12 @@ class TableToPptxMixin:
     def _table_pptx_add_segment_box(slide, seg, left, top, width, height):
         box = slide.shapes.add_textbox(left, top, width, height)
         tf = box.text_frame
-        tf.word_wrap = True
+        # word_wrap выключен нарочно: при переносе слов PowerPoint сжимает
+        # шрифт вертикально, чтобы влезло много строк — получаются рваные
+        # переносы («мобиль» → «моб»/«иль») и мелкий текст. Без переноса
+        # автоподбор сжимает шрифт горизонтально, пока строка не влезет
+        # целиком в одну строку — крупнее и читается одним словом.
+        tf.word_wrap = False
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
 
