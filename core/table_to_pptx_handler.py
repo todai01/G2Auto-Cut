@@ -98,6 +98,12 @@ class TableToPptxMixin:
         sum_flags = [i in tier_cols.values() for i in range(len(headers))]
         logic2_cycle = self._table_pptx_collect_hundred_thousands_cycle(data_rows, tier_cols)
         logic2_available = bool(logic2_cycle) and all(t in tier_cols for t in ('millions', 'hundreds', 'tenge'))
+        # «start 2» («со стоимостью») — второй столбец с «служебной» связкой
+        # (в отличие от самого первого «start», который остаётся всегда).
+        # После того как круг «Сотни тысяч» исчерпан, эта колонка тоже
+        # убирается со слайда — остаются только start, марка и год.
+        extra_start_idxs = [i for i, h in enumerate(headers)
+                             if i > 0 and re.fullmatch(r'start\s*\d+', h.lower().strip())]
 
         self.table_pptx_path = path
         self.table_pptx_headers = headers
@@ -106,6 +112,7 @@ class TableToPptxMixin:
         self.table_pptx_transcript_idx = transcript_idx
         self.table_pptx_sum_flags = sum_flags
         self.table_pptx_tier_cols = tier_cols
+        self.table_pptx_extra_start_idxs = extra_start_idxs
 
         return {
             "file": os.path.basename(path),
@@ -195,9 +202,10 @@ class TableToPptxMixin:
     def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols):
         """Собирает уже записанные значения яруса «Сотни тысяч» (обычно
         это всего 9 строк — «100 тыс»...«900 тыс», записанные один раз в
-        начале таблицы) — после переключения они используются по кругу
-        для всех последующих строк, а не читаются из их собственных ячеек
-        (у большинства строк там и так пусто)."""
+        начале таблицы) — после переключения они используются по очереди,
+        один раз каждое, а не читаются из собственных (обычно пустых)
+        ячеек строки. Когда список исчерпан (использовали «900 тыс») —
+        суммы на слайдах пропадают совсем, без зацикливания заново."""
         idx = tier_cols.get('hundred_thousands')
         if idx is None:
             return []
@@ -216,6 +224,7 @@ class TableToPptxMixin:
             "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols),
             "cycle_pos": 0,
             "triggered": False,
+            "exhausted": False,
             "fixed_millions": fixed_millions,
             "fixed_tenge": fixed_tenge,
         }
@@ -244,9 +253,12 @@ class TableToPptxMixin:
         prs.slide_height = SLIDE_H
         blank_layout = prs.slide_layouts[6]
 
+        extra_start_idxs = set(getattr(self, 'table_pptx_extra_start_idxs', []))
+
         try:
             for row in rows:
-                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx)
+                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx,
+                                              tier_cols, logic2_ctx, extra_start_idxs)
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
@@ -258,7 +270,8 @@ class TableToPptxMixin:
         chars = max(len(text or ''), 1)
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
-    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx):
+    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx,
+                                 tier_cols, logic2_ctx, extra_start_idxs):
         tier_indices = set(tier_cols.values())
         first_tier_idx = min(tier_indices) if tier_indices else None
 
@@ -269,23 +282,31 @@ class TableToPptxMixin:
         # этому же сценарию, а не проверяются заново.
         if not logic2_ctx['triggered'] and logic2_ctx['cycle'] and self._table_pptx_row_hits_switch(row, tier_cols):
             logic2_ctx['triggered'] = True
-        use_logic2 = logic2_ctx['triggered']
+        use_logic2 = logic2_ctx['triggered'] and not logic2_ctx['exhausted']
 
         segments = []
         skip = {transcript_idx} if brand_idx is not None else set()
+        # Круг «Сотни тысяч» исчерпан (использовали «900 тыс») — суммы
+        # больше не показываем вообще, и заодно убираем «start 2»
+        # («со стоимостью»): на слайде остаются только start, марка и год.
+        if logic2_ctx['exhausted']:
+            skip |= extra_start_idxs
         for i, val in enumerate(row):
             if i in skip:
                 continue
             if i in tier_indices:
-                if i != first_tier_idx:
+                if i != first_tier_idx or logic2_ctx['exhausted']:
                     continue  # весь блок сумм собирается один раз, в позиции первого яруса
                 if use_logic2:
                     cycle = logic2_ctx['cycle']
-                    ht_value = cycle[logic2_ctx['cycle_pos'] % len(cycle)]
-                    logic2_ctx['cycle_pos'] += 1
-                    for text in (logic2_ctx['fixed_millions'], ht_value, logic2_ctx['fixed_tenge']):
-                        if text:
-                            segments.append({"text": text, "font": FONT_SUM})
+                    if logic2_ctx['cycle_pos'] < len(cycle):
+                        ht_value = cycle[logic2_ctx['cycle_pos']]
+                        logic2_ctx['cycle_pos'] += 1
+                        for text in (logic2_ctx['fixed_millions'], ht_value, logic2_ctx['fixed_tenge']):
+                            if text:
+                                segments.append({"text": text, "font": FONT_SUM})
+                        if logic2_ctx['cycle_pos'] >= len(cycle):
+                            logic2_ctx['exhausted'] = True
                 else:
                     for tier in ('millions', 'hundreds', 'thousands', 'tenge'):
                         idx = tier_cols.get(tier)
