@@ -12,13 +12,11 @@ PAUSE_COLOR = RGBColor(0xC0, 0x00, 0x00)
 TEXT_COLOR = RGBColor(0x00, 0x00, 0x00)
 CAPTION_COLOR = RGBColor(0x60, 0x60, 0x60)
 
-# В этой таблице «Сотни» не доходят до 900 и не остаются там — после
-# девятой строки колонка «Сотни» сама сбрасывается и дальше всегда
-# показывает «100» (как и «Миллионы» после 100). Поэтому условие
-# переключения на «Сотни тысяч» — не «900», а тоже «100»: как только на
-# строке одновременно «100 млн, 100, 99 тыс, 100 тенге» — переходим на
-# отображение «Миллионы + Сотни тысяч + Тенге».
-SUM_TIER_CAP = {'millions': 100, 'hundreds': 100, 'thousands': 99, 'tenge': 100}
+# Условие перехода на «Миллионы + Сотни тысяч + Тенге»: строка, где
+# «Миллионы» и «Сотни» одновременно дошли до 100, а «Тенге» — тоже 100
+# («Тысячи» на этой строке в реальных таблицах обычно уже пустые —
+# в условие их поэтому не включаем).
+SUM_TIER_CAP = {'millions': 100, 'hundreds': 100, 'tenge': 100}
 
 # Фиксированный шаблон размеров — один и тот же на каждом слайде, никакого
 # автоподбора PowerPoint (он ненадёжно пересчитывался у пользователя и либо
@@ -98,7 +96,8 @@ class TableToPptxMixin:
             if tier and tier not in tier_cols:
                 tier_cols[tier] = i
         sum_flags = [i in tier_cols.values() for i in range(len(headers))]
-        logic2_available = all(t in tier_cols for t in ('millions', 'hundreds', 'thousands', 'tenge', 'hundred_thousands'))
+        logic2_cycle = self._table_pptx_collect_hundred_thousands_cycle(data_rows, tier_cols)
+        logic2_available = bool(logic2_cycle) and all(t in tier_cols for t in ('millions', 'hundreds', 'tenge'))
 
         self.table_pptx_path = path
         self.table_pptx_headers = headers
@@ -182,19 +181,44 @@ class TableToPptxMixin:
             return text
         return f"{text} тыс".strip()
 
-    def _table_pptx_row_uses_logic2(self, row, tier_cols):
-        """Строка переходит на «Миллионы + Сотни тысяч + Тенге», когда ВСЕ
-        четыре обычных яруса одновременно на своём потолке (100 млн, 100,
-        99 тыс, 100 тенге) — проверяем именно числа в ячейках, а не точный
+    def _table_pptx_row_hits_switch(self, row, tier_cols):
+        """Строка, на которой пора переключаться на «Миллионы + Сотни
+        тысяч + Тенге» — «Миллионы» и «Сотни» одновременно дошли до 100, а
+        «Тенге» тоже 100. Проверяем именно число в ячейке, а не точный
         текст (там бывают разные окончания: «млн», «млн-а», «млн-ов»)."""
-        required = ('millions', 'hundreds', 'thousands', 'tenge')
-        if 'hundred_thousands' not in tier_cols or not all(t in tier_cols for t in required):
-            return False
-        for t in required:
-            idx = tier_cols[t]
-            if idx >= len(row) or self._table_pptx_first_number(row[idx]) != SUM_TIER_CAP[t]:
+        for t in ('millions', 'hundreds', 'tenge'):
+            idx = tier_cols.get(t)
+            if idx is None or idx >= len(row) or self._table_pptx_first_number(row[idx]) != SUM_TIER_CAP[t]:
                 return False
         return True
+
+    def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols):
+        """Собирает уже записанные значения яруса «Сотни тысяч» (обычно
+        это всего 9 строк — «100 тыс»...«900 тыс», записанные один раз в
+        начале таблицы) — после переключения они используются по кругу
+        для всех последующих строк, а не читаются из их собственных ячеек
+        (у большинства строк там и так пусто)."""
+        idx = tier_cols.get('hundred_thousands')
+        if idx is None:
+            return []
+        cycle = []
+        for row in rows:
+            if idx < len(row) and self._table_pptx_first_number(row[idx]) is not None:
+                cycle.append(self._table_pptx_format_tier_value('hundred_thousands', row[idx]))
+        return cycle
+
+    def _table_pptx_build_logic2_context(self, rows, tier_cols):
+        millions_idx = tier_cols.get('millions')
+        tenge_idx = tier_cols.get('tenge')
+        fixed_millions = rows[0][millions_idx] if rows and millions_idx is not None and millions_idx < len(rows[0]) else None
+        fixed_tenge = rows[0][tenge_idx] if rows and tenge_idx is not None and tenge_idx < len(rows[0]) else None
+        return {
+            "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols),
+            "cycle_pos": 0,
+            "triggered": False,
+            "fixed_millions": fixed_millions,
+            "fixed_tenge": fixed_tenge,
+        }
 
     def table_pptx_export(self):
         headers = getattr(self, 'table_pptx_headers', None)
@@ -213,6 +237,7 @@ class TableToPptxMixin:
         brand_idx = getattr(self, 'table_pptx_brand_idx', None)
         transcript_idx = getattr(self, 'table_pptx_transcript_idx', None)
         tier_cols = getattr(self, 'table_pptx_tier_cols', {})
+        logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols)
 
         prs = Presentation()
         prs.slide_width = SLIDE_W
@@ -221,7 +246,7 @@ class TableToPptxMixin:
 
         try:
             for row in rows:
-                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols)
+                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx)
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
@@ -233,10 +258,18 @@ class TableToPptxMixin:
         chars = max(len(text or ''), 1)
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
-    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols):
+    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx):
         tier_indices = set(tier_cols.values())
         first_tier_idx = min(tier_indices) if tier_indices else None
-        use_logic2 = self._table_pptx_row_uses_logic2(row, tier_cols)
+
+        # Переключение на «Миллионы + Сотни тысяч + Тенге» — одноразовое и
+        # дальше держится до конца таблицы (sticky): как только строка
+        # хоть раз попала под условие, все следующие строки (даже те, где
+        # своих сумм в ячейках уже нет вообще — обычно так и есть) идут по
+        # этому же сценарию, а не проверяются заново.
+        if not logic2_ctx['triggered'] and logic2_ctx['cycle'] and self._table_pptx_row_hits_switch(row, tier_cols):
+            logic2_ctx['triggered'] = True
+        use_logic2 = logic2_ctx['triggered']
 
         segments = []
         skip = {transcript_idx} if brand_idx is not None else set()
@@ -246,13 +279,19 @@ class TableToPptxMixin:
             if i in tier_indices:
                 if i != first_tier_idx:
                     continue  # весь блок сумм собирается один раз, в позиции первого яруса
-                order = ('millions', 'hundred_thousands', 'tenge') if use_logic2 \
-                    else ('millions', 'hundreds', 'thousands', 'tenge')
-                for tier in order:
-                    idx = tier_cols.get(tier)
-                    if idx is not None and idx < len(row):
-                        text = self._table_pptx_format_tier_value(tier, row[idx])
-                        segments.append({"text": text, "font": FONT_SUM})
+                if use_logic2:
+                    cycle = logic2_ctx['cycle']
+                    ht_value = cycle[logic2_ctx['cycle_pos'] % len(cycle)]
+                    logic2_ctx['cycle_pos'] += 1
+                    for text in (logic2_ctx['fixed_millions'], ht_value, logic2_ctx['fixed_tenge']):
+                        if text:
+                            segments.append({"text": text, "font": FONT_SUM})
+                else:
+                    for tier in ('millions', 'hundreds', 'thousands', 'tenge'):
+                        idx = tier_cols.get(tier)
+                        if idx is not None and idx < len(row):
+                            text = self._table_pptx_format_tier_value(tier, row[idx])
+                            segments.append({"text": text, "font": FONT_SUM})
                 continue
             if brand_idx is not None and i == brand_idx:
                 sub = row[transcript_idx] if transcript_idx < len(row) else ''
