@@ -165,6 +165,21 @@ class TableToPptxMixin:
         m = re.search(r'\d+', text or '')
         return int(m.group()) if m else None
 
+    @staticmethod
+    def _table_pptx_format_tier_value(tier, text):
+        """Ячейка «Сотни тысяч» в Excel часто хранит голое число (100), а
+        «тыс» на экране появляется только через формат ячейки (custom
+        number format) — сам текст этого не содержит, openpyxl видит
+        только число. Чтобы на слайде не выпадало голое «100» без
+        объяснения, что это, дописываем «тыс», если в тексте такого слова
+        ещё нет вообще (ни «тыс», ни «мың»/«мын»)."""
+        if tier != 'hundred_thousands':
+            return text
+        low = (text or '').lower().replace('ё', 'е')
+        if any(k in low for k in ('тыс', 'мың', 'мын')):
+            return text
+        return f"{text} тыс".strip()
+
     def _table_pptx_row_uses_logic2(self, row, tier_cols):
         """Строка переходит на «Миллионы + Сотни тысяч + Тенге», когда ВСЕ
         четыре обычных яруса одновременно на своём потолке (100 млн, 900,
@@ -234,7 +249,8 @@ class TableToPptxMixin:
                 for tier in order:
                     idx = tier_cols.get(tier)
                     if idx is not None and idx < len(row):
-                        segments.append({"text": row[idx], "font": FONT_SUM})
+                        text = self._table_pptx_format_tier_value(tier, row[idx])
+                        segments.append({"text": text, "font": FONT_SUM})
                 continue
             if brand_idx is not None and i == brand_idx:
                 sub = row[transcript_idx] if transcript_idx < len(row) else ''
