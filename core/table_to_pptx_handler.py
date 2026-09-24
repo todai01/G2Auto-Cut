@@ -12,6 +12,12 @@ PAUSE_COLOR = RGBColor(0xC0, 0x00, 0x00)
 TEXT_COLOR = RGBColor(0x00, 0x00, 0x00)
 CAPTION_COLOR = RGBColor(0x60, 0x60, 0x60)
 
+# Потолки те же, что в «Режиме сумм» основного экрана (variables_handler.py):
+# как только на строке одновременно «100 млн, 900, 99 тыс, 100 тенге» —
+# переходим на отображение «Миллионы + Сотни тысяч + Тенге», раз дальше
+# двигаться по «Сотням»/«Тысячам» уже некуда.
+SUM_TIER_CAP = {'millions': 100, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
+
 # Фиксированный шаблон размеров — один и тот же на каждом слайде, никакого
 # автоподбора PowerPoint (он ненадёжно пересчитывался у пользователя и либо
 # оставлял текст огромным и наползающим, либо ломал слова переносом).
@@ -84,7 +90,13 @@ class TableToPptxMixin:
             return {"error": "В таблице не нашлось ни одной строки с данными (кроме заголовков)."}
 
         brand_idx, transcript_idx = self._table_pptx_find_brand_pair(headers)
-        sum_flags = [self._table_pptx_is_sum_header(h) for h in headers]
+        tier_cols = {}
+        for i, h in enumerate(headers):
+            tier = self._table_pptx_classify_tier(h)
+            if tier and tier not in tier_cols:
+                tier_cols[tier] = i
+        sum_flags = [i in tier_cols.values() for i in range(len(headers))]
+        logic2_available = all(t in tier_cols for t in ('millions', 'hundreds', 'thousands', 'tenge', 'hundred_thousands'))
 
         self.table_pptx_path = path
         self.table_pptx_headers = headers
@@ -92,13 +104,15 @@ class TableToPptxMixin:
         self.table_pptx_brand_idx = brand_idx
         self.table_pptx_transcript_idx = transcript_idx
         self.table_pptx_sum_flags = sum_flags
+        self.table_pptx_tier_cols = tier_cols
 
         return {
             "file": os.path.basename(path),
             "rows": len(data_rows),
             "columns": headers,
             "brand_pair": [headers[brand_idx], headers[transcript_idx]] if brand_idx is not None else None,
-            "sum_columns": [h for h, is_sum in zip(headers, sum_flags) if is_sum],
+            "sum_columns": [headers[i] for i in tier_cols.values()],
+            "logic2_available": logic2_available,
         }
 
     @staticmethod
@@ -128,14 +142,42 @@ class TableToPptxMixin:
         return None, None
 
     @staticmethod
-    def _table_pptx_is_sum_header(header):
-        """Колонка-«сумма» — миллионы/сотни/тысячи/тенге: узнаём по слову
-        в заголовке, а если слова нет (просто «100 - 900») — по тому, что
-        весь заголовок это числовой диапазон."""
+    def _table_pptx_classify_tier(header):
+        """Определяет ярус колонки-суммы по слову в заголовке — та же
+        логика, что и для обычного «Режима сумм» на основном экране:
+        «млн»/«миллион» → Миллионы, «тенге» → Тенге, «тыс» + число ≥100
+        в заголовке → Сотни тысяч (100-900 тыс.), «тыс» без такого числа →
+        Тысячи, голый числовой диапазон без слов («100 - 900») → Сотни."""
         low = header.lower().replace('ё', 'е')
-        if any(k in low for k in ('млн', 'миллион', 'тыс', 'тенге', 'kzt', '₸')):
-            return True
-        return bool(re.fullmatch(r'\d+\s*-\s*\d+', header.strip()))
+        if 'млн' in low or 'миллион' in low:
+            return 'millions'
+        if any(k in low for k in ('тенге', 'kzt', '₸')):
+            return 'tenge'
+        if 'тыс' in low:
+            nums = re.findall(r'\d+', header)
+            return 'hundred_thousands' if nums and int(nums[0]) >= 100 else 'thousands'
+        if re.fullmatch(r'\d+\s*-\s*\d+', header.strip()):
+            return 'hundreds'
+        return None
+
+    @staticmethod
+    def _table_pptx_first_number(text):
+        m = re.search(r'\d+', text or '')
+        return int(m.group()) if m else None
+
+    def _table_pptx_row_uses_logic2(self, row, tier_cols):
+        """Строка переходит на «Миллионы + Сотни тысяч + Тенге», когда ВСЕ
+        четыре обычных яруса одновременно на своём потолке (100 млн, 900,
+        99 тыс, 100 тенге) — проверяем именно числа в ячейках, а не точный
+        текст (там бывают разные окончания: «млн», «млн-а», «млн-ов»)."""
+        required = ('millions', 'hundreds', 'thousands', 'tenge')
+        if 'hundred_thousands' not in tier_cols or not all(t in tier_cols for t in required):
+            return False
+        for t in required:
+            idx = tier_cols[t]
+            if idx >= len(row) or self._table_pptx_first_number(row[idx]) != SUM_TIER_CAP[t]:
+                return False
+        return True
 
     def table_pptx_export(self):
         headers = getattr(self, 'table_pptx_headers', None)
@@ -153,7 +195,7 @@ class TableToPptxMixin:
 
         brand_idx = getattr(self, 'table_pptx_brand_idx', None)
         transcript_idx = getattr(self, 'table_pptx_transcript_idx', None)
-        sum_flags = getattr(self, 'table_pptx_sum_flags', [False] * len(headers))
+        tier_cols = getattr(self, 'table_pptx_tier_cols', {})
 
         prs = Presentation()
         prs.slide_width = SLIDE_W
@@ -162,7 +204,7 @@ class TableToPptxMixin:
 
         try:
             for row in rows:
-                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, sum_flags)
+                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols)
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
@@ -174,19 +216,38 @@ class TableToPptxMixin:
         chars = max(len(text or ''), 1)
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
-    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, sum_flags):
+    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols):
+        tier_indices = set(tier_cols.values())
+        first_tier_idx = min(tier_indices) if tier_indices else None
+        use_logic2 = self._table_pptx_row_uses_logic2(row, tier_cols)
+
         segments = []
         skip = {transcript_idx} if brand_idx is not None else set()
         for i, val in enumerate(row):
             if i in skip:
                 continue
-            is_sum = bool(sum_flags[i]) if i < len(sum_flags) else False
-            main_font = FONT_SUM if is_sum else FONT_NORMAL
+            if i in tier_indices:
+                if i != first_tier_idx:
+                    continue  # весь блок сумм собирается один раз, в позиции первого яруса
+                order = ('millions', 'hundred_thousands', 'tenge') if use_logic2 \
+                    else ('millions', 'hundreds', 'thousands', 'tenge')
+                for tier in order:
+                    idx = tier_cols.get(tier)
+                    if idx is not None and idx < len(row):
+                        segments.append({"text": row[idx], "font": FONT_SUM})
+                continue
             if brand_idx is not None and i == brand_idx:
                 sub = row[transcript_idx] if transcript_idx < len(row) else ''
-                segments.append({"brand": val, "caption": sub, "font": main_font})
+                segments.append({"brand": val, "caption": sub, "font": FONT_NORMAL})
             else:
-                segments.append({"text": val, "font": main_font})
+                segments.append({"text": val, "font": FONT_NORMAL})
+
+        # Пустая ячейка — без своего блока и без паузы вообще: раньше
+        # пустое место оставалось «слотом» с паузой, а несколько пустых
+        # подряд превращались в кучу наползающих друг на друга подписей
+        # «Пауза» без всякого толку. Свободное место, что осталось после
+        # удаления пустых, уходит на центрирование того, что реально есть.
+        segments = [s for s in segments if self._table_pptx_segment_has_content(s)]
 
         slide = prs.slides.add_slide(layout)
         bg = slide.background
@@ -222,8 +283,9 @@ class TableToPptxMixin:
         else:
             gap = GAP
 
+        total_w_final = sum(widths) + gap * (n - 1)
         top = (prs.slide_height - BOX_H) // 2
-        left = MARGIN
+        left = MARGIN + max(0, (usable_w - total_w_final) // 2)
         for i, (seg, width) in enumerate(zip(segments, widths)):
             self._table_pptx_add_segment_box(slide, seg, left, top, width, BOX_H, scale)
             left += width
@@ -231,6 +293,12 @@ class TableToPptxMixin:
                 pause_x = left + gap // 2
                 self._table_pptx_add_pause_marker(slide, pause_x, top, BOX_H, scale)
                 left += gap
+
+    @staticmethod
+    def _table_pptx_segment_has_content(seg):
+        if 'brand' in seg:
+            return bool((seg.get('brand') or '').strip()) or bool((seg.get('caption') or '').strip())
+        return bool((seg.get('text') or '').strip())
 
     @staticmethod
     def _table_pptx_add_segment_box(slide, seg, left, top, width, height, scale):

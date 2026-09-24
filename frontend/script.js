@@ -2565,6 +2565,12 @@ let isProcessing = false;
             bits.push(result.brand_pair
                 ? `${iconHTML('check-circle')} Марка+транскрипция найдены: «${escapeHtml(result.brand_pair[0])}» над «${escapeHtml(result.brand_pair[1])}» — пойдут одним блоком`
                 : `${iconHTML('alert-triangle')} Колонки «марка»/«транскрипция» не найдены — все колонки лягут отдельными блоками`);
+            if (result.sum_columns && result.sum_columns.length) {
+                bits.push(`${iconHTML('check-circle')} Колонки-суммы: ${result.sum_columns.map(escapeHtml).join(', ')}`);
+            }
+            bits.push(result.logic2_available
+                ? `${iconHTML('check-circle')} На строке с «100 млн, 900, 99 тыс, 100 тенге» переключится на «Миллионы + Сотни тысяч + Тенге»`
+                : `${iconHTML('alert-triangle')} Для переключения на «Сотни тысяч» не хватает колонок (нужны все: млн, 100-900, тыс, тенге, 100-900 тыс)`);
             info.innerHTML = bits.join('<br>');
             info.style.display = 'block';
             btn.disabled = false;
