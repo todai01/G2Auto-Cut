@@ -65,7 +65,7 @@ class TableToPptxMixin:
         except StopIteration:
             return {"error": "Таблица пустая."}
 
-        headers = [str(c).strip() if c is not None else '' for c in header_row]
+        headers = [self._table_pptx_cell_text(c) for c in header_row]
         while headers and not headers[-1]:
             headers.pop()
         if not headers:
@@ -75,7 +75,7 @@ class TableToPptxMixin:
         data_rows = []
         for row in rows_iter:
             cells = list(row[:ncols]) + [None] * max(0, ncols - len(row))
-            values = [str(c).strip() if c is not None else '' for c in cells]
+            values = [self._table_pptx_cell_text(c) for c in cells]
             if not any(values):
                 continue
             data_rows.append(values)
@@ -100,6 +100,20 @@ class TableToPptxMixin:
             "brand_pair": [headers[brand_idx], headers[transcript_idx]] if brand_idx is not None else None,
             "sum_columns": [h for h, is_sum in zip(headers, sum_flags) if is_sum],
         }
+
+    @staticmethod
+    def _table_pptx_cell_text(value):
+        """Ячейка с формулой (как «100-900», которая явно посчитана по
+        соседней колонке с миллионами) приходит из openpyxl числом
+        (100.0), а не текстом — обычный str() тогда даёт «100.0». Целые
+        числа показываем без «.0», дробные — как есть."""
+        if value is None:
+            return ''
+        if isinstance(value, float):
+            if value.is_integer():
+                return str(int(value))
+            return str(value)
+        return str(value).strip()
 
     @staticmethod
     def _table_pptx_find_brand_pair(headers):
