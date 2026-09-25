@@ -108,6 +108,28 @@ class TableToPptxMixin:
         extra_start_idxs = [i for i, h in enumerate(headers)
                              if i > 0 and re.fullmatch(r'start\s*\d+', h.lower().strip())]
 
+        # «Протягиваем вниз» пустые ячейки — в таких таблицах часто пишут
+        # значение только один раз, а дальше оставляют пусто, подразумевая
+        # «то же самое, что выше» (как в Excel при объединении ячеек).
+        # Касается всех обычных колонок (start, год, start 2 и т.п.) —
+        # не колонок-сумм (там пустая ячейка и правда значит «пропустить»,
+        # см. _table_pptx_collect_hundred_thousands_cycle) и не марки с
+        # транскрипцией (те должны быть каждый раз свои).
+        no_fill = set(tier_cols.values())
+        if brand_idx is not None:
+            no_fill.add(brand_idx)
+        if transcript_idx is not None:
+            no_fill.add(transcript_idx)
+        last_seen = {}
+        for row in data_rows:
+            for i in range(len(row)):
+                if i in no_fill:
+                    continue
+                if row[i]:
+                    last_seen[i] = row[i]
+                elif i in last_seen:
+                    row[i] = last_seen[i]
+
         if not hasattr(self, 'table_pptx_data'):
             self.table_pptx_data = {}
         self.table_pptx_data[lang] = {
@@ -224,27 +246,16 @@ class TableToPptxMixin:
                 cycle.append(self._table_pptx_format_tier_value('hundred_thousands', row[idx]))
         return cycle
 
-    def _table_pptx_build_logic2_context(self, rows, tier_cols, extra_start_idxs):
+    def _table_pptx_build_logic2_context(self, rows, tier_cols):
         millions_idx = tier_cols.get('millions')
         tenge_idx = tier_cols.get('tenge')
         fixed_millions = rows[0][millions_idx] if rows and millions_idx is not None and millions_idx < len(rows[0]) else None
         fixed_tenge = rows[0][tenge_idx] if rows and tenge_idx is not None and tenge_idx < len(rows[0]) else None
-        # «start 2» («со стоимостью» / «құрайтын») у большинства строк в
-        # этой фазе пустой в самой таблице (заполнен только у самой первой
-        # строки) — раньше это заставляло блок то появляться, то пропадать
-        # от слайда к слайду. Берём его тоже фиксированно с первой строки,
-        # как «Миллионы»/«Тенге», а не из (обычно пустой) ячейки текущей.
-        fixed_start2 = {}
-        if rows:
-            for idx in extra_start_idxs:
-                if idx < len(rows[0]) and rows[0][idx]:
-                    fixed_start2[idx] = rows[0][idx]
         return {
             "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols),
             "cycle_pos": 0,
             "triggered": False,
             "exhausted": False,
-            "fixed_start2": fixed_start2,
             "fixed_millions": fixed_millions,
             "fixed_tenge": fixed_tenge,
         }
@@ -267,7 +278,7 @@ class TableToPptxMixin:
         transcript_idx = data['transcript_idx']
         tier_cols = data['tier_cols']
         extra_start_idxs = set(data['extra_start_idxs'])
-        logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols, extra_start_idxs)
+        logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols)
 
         prs = Presentation()
         prs.slide_width = SLIDE_W
@@ -336,11 +347,6 @@ class TableToPptxMixin:
             if brand_idx is not None and i == brand_idx:
                 sub = row[transcript_idx] if transcript_idx < len(row) else ''
                 segments.append({"brand": val, "caption": sub, "font": FONT_NORMAL})
-            elif use_logic2 and i in extra_start_idxs:
-                # В активной фазе «Сотни тысяч» «start 2» берём фиксированно
-                # (см. _table_pptx_build_logic2_context) — у собственной
-                # ячейки большинства строк тут и так пусто.
-                segments.append({"text": logic2_ctx['fixed_start2'].get(i, val), "font": FONT_NORMAL})
             else:
                 segments.append({"text": val, "font": FONT_NORMAL})
 
