@@ -26,6 +26,12 @@ FONT_SUM = 28      # колонки-суммы (миллионы/сотни/ты
 FONT_PAUSE = 20    # подпись «Пауза»
 FONT_CAPTION = 14  # транскрипция — мелкая серая подпись НАД маркой
 
+# Когда после «Сотни тысяч» на слайде остаётся только марка — места на
+# слайде намного больше, чем у обычного ряда из 8+ блоков, так что можно
+# взять размер покрупнее, а не тот же 24pt, что и у остальных блоков.
+FONT_NORMAL_SOLO_BRAND = 40
+FONT_CAPTION_SOLO_BRAND = 20
+
 SLIDE_W = Emu(int(13.333 * 914400))
 SLIDE_H = Emu(int(7.5 * 914400))
 BOX_H = Inches(1.15)
@@ -346,7 +352,11 @@ class TableToPptxMixin:
                 continue
             if brand_idx is not None and i == brand_idx:
                 sub = row[transcript_idx] if transcript_idx < len(row) else ''
-                segments.append({"brand": val, "caption": sub, "font": FONT_NORMAL})
+                if logic2_ctx['exhausted']:
+                    segments.append({"brand": val, "caption": sub,
+                                      "font": FONT_NORMAL_SOLO_BRAND, "caption_font": FONT_CAPTION_SOLO_BRAND})
+                else:
+                    segments.append({"brand": val, "caption": sub, "font": FONT_NORMAL})
             else:
                 segments.append({"text": val, "font": FONT_NORMAL})
 
@@ -373,7 +383,7 @@ class TableToPptxMixin:
         for seg in segments:
             if 'brand' in seg:
                 w = max(self._text_width_emu(seg.get('brand'), seg['font']),
-                        self._text_width_emu(seg.get('caption'), FONT_CAPTION))
+                        self._text_width_emu(seg.get('caption'), seg.get('caption_font', FONT_CAPTION)))
             else:
                 w = self._text_width_emu(seg.get('text'), seg['font'])
             widths.append(w + 2 * PAD)
@@ -423,7 +433,7 @@ class TableToPptxMixin:
             p1.alignment = PP_ALIGN.CENTER
             r1 = p1.add_run()
             r1.text = seg.get('caption') or ''
-            r1.font.size = Pt(max(FONT_CAPTION * scale, 6))
+            r1.font.size = Pt(max(seg.get('caption_font', FONT_CAPTION) * scale, 6))
             r1.font.bold = False
             r1.font.color.rgb = CAPTION_COLOR
 
