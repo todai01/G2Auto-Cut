@@ -51,7 +51,10 @@ class TableToPptxMixin:
     ширину слайда, а сдвинуты компактно друг к другу — по фактической
     ширине текста, а не поровну."""
 
-    def table_pptx_pick_excel(self):
+    def table_pptx_pick_excel(self, lang='ru'):
+        """lang — «ru» или «kz»: РУ и КАЗ ведутся как два независимых
+        набора данных (своя таблица, свои колонки — структура и порядок
+        колонок у них разные), переключаются тумблером в интерфейсе."""
         filename = webview.windows[0].create_file_dialog(
             webview.FileDialog.OPEN, file_types=('Excel files (*.xlsx)', 'All files (*.*)'))
         if not filename:
@@ -105,16 +108,21 @@ class TableToPptxMixin:
         extra_start_idxs = [i for i, h in enumerate(headers)
                              if i > 0 and re.fullmatch(r'start\s*\d+', h.lower().strip())]
 
-        self.table_pptx_path = path
-        self.table_pptx_headers = headers
-        self.table_pptx_rows = data_rows
-        self.table_pptx_brand_idx = brand_idx
-        self.table_pptx_transcript_idx = transcript_idx
-        self.table_pptx_sum_flags = sum_flags
-        self.table_pptx_tier_cols = tier_cols
-        self.table_pptx_extra_start_idxs = extra_start_idxs
+        if not hasattr(self, 'table_pptx_data'):
+            self.table_pptx_data = {}
+        self.table_pptx_data[lang] = {
+            "path": path,
+            "headers": headers,
+            "rows": data_rows,
+            "brand_idx": brand_idx,
+            "transcript_idx": transcript_idx,
+            "sum_flags": sum_flags,
+            "tier_cols": tier_cols,
+            "extra_start_idxs": extra_start_idxs,
+        }
 
         return {
+            "lang": lang,
             "file": os.path.basename(path),
             "rows": len(data_rows),
             "columns": headers,
@@ -153,15 +161,16 @@ class TableToPptxMixin:
     def _table_pptx_classify_tier(header):
         """Определяет ярус колонки-суммы по слову в заголовке — та же
         логика, что и для обычного «Режима сумм» на основном экране:
-        «млн»/«миллион» → Миллионы, «тенге» → Тенге, «тыс» + число ≥100
-        в заголовке → Сотни тысяч (100-900 тыс.), «тыс» без такого числа →
-        Тысячи, голый числовой диапазон без слов («100 - 900») → Сотни."""
+        «млн»/«миллион» → Миллионы, «тенге» → Тенге, «тыс»/«мың»/«мын»
+        (казахский вариант того же яруса) + число ≥100 в заголовке →
+        Сотни тысяч (100-900 тыс.), без такого числа → Тысячи, голый
+        числовой диапазон без слов («100 - 900») → Сотни."""
         low = header.lower().replace('ё', 'е')
         if 'млн' in low or 'миллион' in low:
             return 'millions'
         if any(k in low for k in ('тенге', 'kzt', '₸')):
             return 'tenge'
-        if 'тыс' in low:
+        if any(k in low for k in ('тыс', 'мың', 'мын')):
             nums = re.findall(r'\d+', header)
             return 'hundred_thousands' if nums and int(nums[0]) >= 100 else 'thousands'
         if re.fullmatch(r'\d+\s*-\s*\d+', header.strip()):
@@ -229,23 +238,23 @@ class TableToPptxMixin:
             "fixed_tenge": fixed_tenge,
         }
 
-    def table_pptx_export(self):
-        headers = getattr(self, 'table_pptx_headers', None)
-        rows = getattr(self, 'table_pptx_rows', None)
-        if not headers or not rows:
-            return {"error": "Сначала загрузите Excel с таблицей."}
+    def table_pptx_export(self, lang='ru'):
+        data = getattr(self, 'table_pptx_data', {}).get(lang)
+        if not data:
+            return {"error": f"Сначала загрузите Excel для языка «{lang.upper()}»."}
+        rows = data['rows']
 
         picked = webview.windows[0].create_file_dialog(
-            webview.FileDialog.SAVE, save_filename='Слайды.pptx', file_types=('PowerPoint files (*.pptx)',))
+            webview.FileDialog.SAVE, save_filename=f'Слайды {lang.upper()}.pptx', file_types=('PowerPoint files (*.pptx)',))
         if not picked:
             return {"error": "cancel"}
         path = picked if isinstance(picked, str) else picked[0]
         if not path.lower().endswith('.pptx'):
             path += '.pptx'
 
-        brand_idx = getattr(self, 'table_pptx_brand_idx', None)
-        transcript_idx = getattr(self, 'table_pptx_transcript_idx', None)
-        tier_cols = getattr(self, 'table_pptx_tier_cols', {})
+        brand_idx = data['brand_idx']
+        transcript_idx = data['transcript_idx']
+        tier_cols = data['tier_cols']
         logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols)
 
         prs = Presentation()
@@ -253,7 +262,7 @@ class TableToPptxMixin:
         prs.slide_height = SLIDE_H
         blank_layout = prs.slide_layouts[6]
 
-        extra_start_idxs = set(getattr(self, 'table_pptx_extra_start_idxs', []))
+        extra_start_idxs = set(data['extra_start_idxs'])
 
         try:
             for row in rows:

@@ -2536,11 +2536,18 @@ let isProcessing = false;
         }
 
         // === «Таблица → PowerPoint»: построчный экспорт Excel в слайды ===
+        // РУ и КАЗ таблицы загружаются и хранятся отдельно (разный порядок
+        // колонок) — тумблер только переключает, какую из них показывает
+        // и собирает интерфейс, сам выбор файла и результат экспорта
+        // остаются каждый при своём языке.
+        let tablePptxLang = 'ru';
+        let tablePptxState = { ru: null, kz: null };
+
         function openTablePptx() {
-            document.getElementById('tablePptxExcelLabel').innerText = 'Файл не выбран';
-            document.getElementById('tablePptxInfo').style.display = 'none';
+            tablePptxLang = 'ru';
+            tablePptxState = { ru: null, kz: null };
             document.getElementById('tablePptxResult').style.display = 'none';
-            document.getElementById('btnRunTablePptx').disabled = true;
+            renderTablePptxLangUI();
             document.getElementById('tablePptxOverlay').style.display = 'flex';
         }
 
@@ -2548,19 +2555,29 @@ let isProcessing = false;
             document.getElementById('tablePptxOverlay').style.display = 'none';
         }
 
-        async function pickTablePptxExcel() {
-            let result = await pywebview.api.table_pptx_pick_excel();
+        function setTablePptxLang(lang) {
+            tablePptxLang = lang;
+            renderTablePptxLangUI();
+        }
+
+        function renderTablePptxLangUI() {
+            let ruBtn = document.getElementById('tablePptxLangRuBtn');
+            let kzBtn = document.getElementById('tablePptxLangKzBtn');
+            if (ruBtn) ruBtn.classList.toggle('btn-tile--solid-mode', tablePptxLang === 'ru');
+            if (kzBtn) kzBtn.classList.toggle('btn-tile--solid-mode', tablePptxLang === 'kz');
+
             let label = document.getElementById('tablePptxExcelLabel');
             let info = document.getElementById('tablePptxInfo');
             let btn = document.getElementById('btnRunTablePptx');
-            if (!result || result.error) {
-                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Файл не выбран';
+            let result = tablePptxState[tablePptxLang];
+
+            if (!result) {
+                label.innerText = 'Файл не выбран';
                 info.style.display = 'none';
                 btn.disabled = true;
                 return;
             }
             label.innerText = `${result.file} — строк: ${result.rows}`;
-
             let bits = [`Колонок в таблице: <b>${result.columns.length}</b> (${result.columns.map(escapeHtml).join(', ')})`];
             bits.push(result.brand_pair
                 ? `${iconHTML('check-circle')} Марка+транскрипция найдены: «${escapeHtml(result.brand_pair[0])}» над «${escapeHtml(result.brand_pair[1])}» — пойдут одним блоком`
@@ -2576,13 +2593,25 @@ let isProcessing = false;
             btn.disabled = false;
         }
 
+        async function pickTablePptxExcel() {
+            let result = await pywebview.api.table_pptx_pick_excel(tablePptxLang);
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') {
+                    showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                }
+                return;
+            }
+            tablePptxState[tablePptxLang] = result;
+            renderTablePptxLangUI();
+        }
+
         async function runTablePptxExport() {
             let btn = document.getElementById('btnRunTablePptx');
             btn.disabled = true;
             btn.innerText = 'Собираю...';
             let result;
             try {
-                result = await pywebview.api.table_pptx_export();
+                result = await pywebview.api.table_pptx_export(tablePptxLang);
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Собрать презентацию';
