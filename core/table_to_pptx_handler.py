@@ -277,7 +277,6 @@ class TableToPptxMixin:
         brand_idx = data['brand_idx']
         transcript_idx = data['transcript_idx']
         tier_cols = data['tier_cols']
-        extra_start_idxs = set(data['extra_start_idxs'])
         logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols)
 
         prs = Presentation()
@@ -287,8 +286,7 @@ class TableToPptxMixin:
 
         try:
             for row in rows:
-                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx,
-                                              tier_cols, logic2_ctx, extra_start_idxs)
+                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx)
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
@@ -300,8 +298,7 @@ class TableToPptxMixin:
         chars = max(len(text or ''), 1)
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
-    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx,
-                                 tier_cols, logic2_ctx, extra_start_idxs):
+    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx):
         tier_indices = set(tier_cols.values())
         first_tier_idx = min(tier_indices) if tier_indices else None
 
@@ -315,12 +312,15 @@ class TableToPptxMixin:
         use_logic2 = logic2_ctx['triggered'] and not logic2_ctx['exhausted']
 
         segments = []
-        skip = {transcript_idx} if brand_idx is not None else set()
-        # Круг «Сотни тысяч» исчерпан (использовали «900 тыс») — суммы
-        # больше не показываем вообще, и заодно убираем «start 2»
-        # («со стоимостью»): на слайде остаются только start, марка и год.
         if logic2_ctx['exhausted']:
-            skip |= extra_start_idxs
+            # Круг «Сотни тысяч» исчерпан (использовали «900 тыс») — на
+            # слайде больше ничего лишнего, только марка (+ транскрипция
+            # над ней одним блоком).
+            skip = set(range(len(row)))
+            if brand_idx is not None:
+                skip.discard(brand_idx)
+        else:
+            skip = {transcript_idx} if brand_idx is not None else set()
         for i, val in enumerate(row):
             if i in skip:
                 continue
