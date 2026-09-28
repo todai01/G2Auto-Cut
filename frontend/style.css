@@ -785,6 +785,14 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .util-tile--info:hover{ border-color: var(--accent-info); }
 .util-tile--info .util-tile__title{ color: var(--accent-info); }
 
+.util-tile--var{ background: var(--tint-var); border-color: rgba(238,172,62,0.35); }
+.util-tile--var:hover{ border-color: var(--accent-var); }
+.util-tile--var .util-tile__title{ color: var(--accent-var); }
+
+.util-tile--good{ background: var(--tint-good); border-color: rgba(47,191,125,0.35); }
+.util-tile--good:hover{ border-color: var(--accent-good); }
+.util-tile--good .util-tile__title{ color: var(--accent-good); }
+
 /* --- Компактный вид начального меню (экран подготовки проекта) ---
    Отступы и размеры уже переопределены только внутри .stage-loading,
    поэтому те же классы (.option-card, .info-panel и т.д.) в модалках
