@@ -747,7 +747,7 @@ let isProcessing = false;
             }
 
             if (openPremadeAfter) {
-                showPremadeStageChoice();
+                startPremadeSumMode();
             }
         }
 
@@ -1088,7 +1088,7 @@ let isProcessing = false;
                 document.getElementById('premadeExcelChoiceOverlay').style.display = 'flex';
                 return;
             }
-            showPremadeStageChoice();
+            startPremadeSumMode();
         }
 
         function closePremadeExcelChoice() {
@@ -1103,27 +1103,17 @@ let isProcessing = false;
 
         function premadeExcelChoiceNo() {
             closePremadeExcelChoice();
-            showPremadeStageChoice();
+            startPremadeSumMode();
         }
 
-        // «Готовая папка с переменными»: Этап 1 (сортировка на слух по
-        // категориям, без start/end) или Этап 2 (сборка эталона из уже
-        // отсортированного на Этапе 1). Полностью заменяет старую схему,
-        // которая требовала готовую папку с уже разложенными ярусами и
-        // обязательные start.wav/end.wav.
-        function showPremadeStageChoice() {
-            document.getElementById('premadeStageChoiceOverlay').style.display = 'flex';
-        }
-        function closePremadeStageChoice() {
-            document.getElementById('premadeStageChoiceOverlay').style.display = 'none';
-        }
-        async function premadeStageChoice(stage) {
-            closePremadeStageChoice();
+        // «Готовая папка с переменными»: один экран режима «Суммы» —
+        // выбираете папку с дублями (start/end не нужны), дальше сразу и
+        // сортировка на слух по категориям (←/→ + ↑/↓), и сборка эталона
+        // рулетками — вместе, без переключения между отдельными экранами.
+        async function startPremadeSumMode() {
             updateProgress(0, 'Загрузка папки...');
             document.getElementById('progressContainer').style.display = 'block';
-            let state = stage === 2
-                ? await pywebview.api.sum_stage2_load_project()
-                : await pywebview.api.sum_stage1_load_folder();
+            let state = await pywebview.api.sum_load_folder();
             document.getElementById('progressContainer').style.display = 'none';
 
             if (state && state.error) {
@@ -1131,8 +1121,8 @@ let isProcessing = false;
                 return;
             }
 
-            // Бэкенд уже включил Режим «Суммы» и нужный этап сам — синхронизируем
-            // клиентские флаги и раскладку экрана, как будто галочку нажали руками.
+            // Бэкенд уже включил Режим «Суммы» сам — синхронизируем клиентский
+            // флаг и раскладку экрана, как будто галочку нажали руками.
             sumModeActive = true;
             let sumCheck = document.getElementById('sumModeCheck');
             if (sumCheck) sumCheck.checked = true;
@@ -1318,6 +1308,13 @@ let isProcessing = false;
             let mergePanel = document.querySelector('.merge-panel');
             if (mergePanel && sumModeActive) mergePanel.style.display = 'none';
 
+            // Общая статистика проекта и переключатель Проверенные/Переменные/
+            // Основной — не нужны в режиме «Суммы», у него свой счётчик «Готово».
+            let statRow = document.querySelector('.stat-row');
+            if (statRow) statRow.style.display = sumModeActive ? 'none' : 'flex';
+            let modeSwitch = document.querySelector('.mode-switch');
+            if (modeSwitch) modeSwitch.style.display = sumModeActive ? 'none' : 'flex';
+
             let area = document.getElementById('audacityEmbedArea');
             let grid = document.getElementById('workspaceGrid');
             if (area && grid) {
@@ -1344,13 +1341,12 @@ let isProcessing = false;
             if (audacityEmbedded) onEmbedWindowResize();
         }
 
-        // Панель режима «Суммы»: счётчики по ярусам плюс переключение
-        // Этап 1 (сортировка по категориям) / Этап 2 (сборка эталона).
-        // "stage2" в sumState — переключатель ЛОГИКИ (какие ярусы участвуют),
-        // "workflow_stage" — Этап 1/2 нового процесса. Две разные оси,
-        // не путать (см. пояснение в variables_handler.py).
+        // Единый экран режима «Суммы»: колонки-категории (рулетки) встроены
+        // в область текста, действия — все сразу в одной панели. "stage2" в
+        // sumState — переключатель ЛОГИКИ (какой набор ярусов участвует),
+        // не путать с рулетками ниже (то же название исторически осталось
+        // от прежнего разделения на «этапы» — см. variables_handler.py).
         let lastSumState = null;
-        let sumWorkflowStage = 1;
         function renderSumPanel(sumState) {
             if (!sumState) return;
             lastSumState = sumState;
@@ -1359,95 +1355,66 @@ let isProcessing = false;
             if (logic1Btn) logic1Btn.classList.toggle('btn-tile--solid-mode', !sumState.stage2);
             if (logic2Btn) logic2Btn.classList.toggle('btn-tile--solid-mode', !!sumState.stage2);
 
-            sumWorkflowStage = sumState.workflow_stage || 1;
-            let stage1Btn = document.getElementById('sumWorkflowStage1Btn');
-            let stage2Btn = document.getElementById('sumWorkflowStage2Btn');
-            if (stage1Btn) stage1Btn.classList.toggle('btn-tile--solid-var', sumWorkflowStage === 1);
-            if (stage2Btn) stage2Btn.classList.toggle('btn-tile--solid-var', sumWorkflowStage === 2);
+            let doneEl = document.getElementById('sumDoneCounter');
+            if (doneEl) doneEl.innerText = `Готово: ${sumState.done_total || 0} / ${sumState.excel_total || 0}`;
 
-            let counts = document.getElementById('sumCounts');
-            if (counts && sumState.counts) {
-                counts.innerHTML = Object.entries(sumState.counts)
-                    .map(([label, count]) => `<span>${escapeHtml(label)}: <b>${count}</b></span>`)
-                    .join('');
-            }
+            let panel = document.getElementById('sumActionsPanel');
+            if (panel) panel.style.display = sumState.active ? 'flex' : 'none';
 
-            let stage1Panel = document.getElementById('sumStage1Panel');
-            let stage2Panel = document.getElementById('sumStage2Panel');
-            if (stage1Panel) stage1Panel.style.display = sumWorkflowStage === 1 ? 'flex' : 'none';
-            if (stage2Panel) stage2Panel.style.display = sumWorkflowStage === 2 ? 'flex' : 'none';
-
-            if (!sumState.active) {
-                setSumEmbedMode('text');
-            } else if (sumWorkflowStage === 2) {
-                renderSumStage2(sumState.stage2_data);
-                setSumEmbedMode('stage2');
+            if (sumState.active) {
+                renderSumReels(sumState.reels);
+                setSumEmbedMode('sum');
             } else {
-                renderSumStage1Columns(sumState.stage1_data);
-                setSumEmbedMode('stage1');
+                setSumEmbedMode('text');
             }
         }
 
-        // Этап 1 и Этап 2 подменяют собой область с текстом фразы (та же
-        // зона, где в остальных режимах читается строка Excel) — оба в
-        // одном визуальном формате (ряд колонок), переключаем видимость,
-        // а не два разных экрана.
-        function setSumEmbedMode(mode) { // 'text' | 'stage1' | 'stage2'
+        // Режим «Суммы» подменяет собой область с текстом фразы (та же
+        // зона, где в остальных режимах читается строка Excel).
+        function setSumEmbedMode(mode) { // 'text' | 'sum'
             let text = document.getElementById('phraseText');
             let hint = document.getElementById('phraseHint');
-            let stage1 = document.getElementById('sumStage1Embed');
-            let stage2 = document.getElementById('sumStage2Embed');
+            let embed = document.getElementById('sumEmbed');
             if (text) text.style.display = mode === 'text' ? '' : 'none';
             if (hint) hint.style.display = mode === 'text' ? '' : 'none';
-            if (stage1) stage1.style.display = mode === 'stage1' ? 'flex' : 'none';
-            if (stage2) stage2.style.display = mode === 'stage2' ? 'flex' : 'none';
+            if (embed) embed.style.display = mode === 'sum' ? 'flex' : 'none';
         }
 
-        // === Этап 1: колонки-категории в том же формате, что рулетки
-        // Этапа 2 — каждая колонка списком показывает, что уже туда
-        // отправлено. Выбор категории — клик по колонке или клавиатура
-        // (←/→ выбрать, ↑ отправить в неё текущий дубль, ↓ отменить
-        // последнюю отправку), как на зарисовке автора. ===
+        // ←/→ выбирают, в какую категорию уйдёт дубль по ↑ (сама отправка —
+        // sumStage1Send); клик по подписи колонки выбирает её так же, без
+        // отправки, чтобы не путать с прокруткой рулетки на этой же колонке.
         let sumStage1Tiers = []; // [{key, label}], порядок = порядок колонок
         let sumStage1SelectedIdx = 0;
-        function renderSumStage1Columns(data) {
-            let wrap = document.getElementById('sumStage1Columns');
-            if (!data || !wrap) return;
-
-            let tiersOrder = Object.keys(data.tiers);
-            sumStage1Tiers = tiersOrder.map(key => ({ key, label: data.tiers[key].label }));
-            if (sumStage1SelectedIdx >= sumStage1Tiers.length) sumStage1SelectedIdx = 0;
-
-            wrap.innerHTML = tiersOrder.map((tier, i) => {
-                let info = data.tiers[tier];
-                let cls = 'reel-col sum-stage1-col'
-                    + (i === sumStage1SelectedIdx ? ' sum-stage1-col--selected' : '');
-                // Тут ещё «сырые» имена дублей, не готовые числа — humanizeTierItem
-                // не подходит (дописал бы «тыс»/«млн» к случайным цифрам в имени
-                // файла). Просто показываем имя без расширения.
-                let itemsHtml = info.items.slice(-8).reverse()
-                    .map(t => `<div class="sum-stage1-item">${escapeHtml(t.replace(/\.(wav|mp3)$/i, ''))}</div>`).join('');
-                return `
-                <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)'}"
-                     onclick="sumStage1SelectAndSend(${i})">
-                    <div class="reel-col__label">${escapeHtml(info.label)}</div>
-                    <div class="sum-stage1-list">${itemsHtml || '<div class="sum-stage1-item sum-stage1-item--empty">пусто</div>'}</div>
-                    <div class="reel-col__count">${info.count} шт.</div>
-                </div>`;
-            }).join('');
-        }
+        // Смена выбранной категории (цель для ↑) НЕ перерисовывает рулетки
+        // заново — иначе каждое нажатие ←/→ сбрасывало бы уже прокрученные
+        // вручную позиции обратно на значения по умолчанию. Просто
+        // переключаем подсветку и подпись на уже существующих элементах.
         function sumStage1MoveSelection(dir) {
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
-            renderSumStage1Columns(lastSumState ? lastSumState.stage1_data : null);
+            updateSumSelectionHighlight();
+        }
+        function sumStage1SelectColumn(idx) {
+            sumStage1SelectedIdx = idx;
+            updateSumSelectionHighlight();
+        }
+        function updateSumSelectionHighlight() {
+            let wrap = document.getElementById('sumStage2Reels');
+            if (wrap) {
+                Array.from(wrap.children).forEach((col, i) => {
+                    col.classList.toggle('sum-stage1-col--selected', i === sumStage1SelectedIdx);
+                });
+            }
+            let label = document.getElementById('sumActiveLabel');
+            if (label && lastSumState && lastSumState.reels) {
+                let selectedLabel = sumStage1Tiers[sumStage1SelectedIdx] ? sumStage1Tiers[sumStage1SelectedIdx].label : '';
+                label.innerHTML = `Сейчас едет: <b>${escapeHtml(lastSumState.reels.active_tier)}</b>`
+                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &uarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
+            }
         }
         async function sumStage1SendSelected() {
             if (!sumStage1Tiers.length) return;
             await sumStage1Send(sumStage1Tiers[sumStage1SelectedIdx].key);
-        }
-        async function sumStage1SelectAndSend(idx) {
-            sumStage1SelectedIdx = idx;
-            await sumStage1SendSelected();
         }
         async function sumStage1Send(tier) {
             let state = await pywebview.api.sum_stage1_send(tier);
@@ -1466,28 +1433,43 @@ let isProcessing = false;
             updateUI(state);
         }
 
-        // === Этап 2: рулетки, встроенные в область текста ===
+        // === Ряд колонок-категорий: draggable-рулетка на каждую (Reel),
+        // как в Конструкторе. Одновременно две независимые «подсветки» на
+        // одной колонке: reel-col--active — какая категория сейчас растёт
+        // при сборке эталона (сервер решает сам, по кругу); sum-stage1-col
+        // --selected — какая категория выбрана ←/→ как цель для ↑
+        // (отправка дубля на слух, клиентский курсор). ===
         let sumStage2ReelInstances = {};
-        function renderSumStage2(data) {
+        function renderSumReels(data) {
             let wrap = document.getElementById('sumStage2Reels');
-            let label = document.getElementById('sumStage2ActiveLabel');
+            let label = document.getElementById('sumActiveLabel');
             let nextName = document.getElementById('sumStage2NextName');
             if (!data || !wrap) return;
 
-            if (label) label.innerHTML = `Сейчас едет: <b>${escapeHtml(data.active_tier)}</b>`;
+            let tiersOrder = Object.keys(data.tiers);
+            sumStage1Tiers = tiersOrder.map(key => ({ key, label: data.tiers[key].label }));
+            if (sumStage1SelectedIdx >= sumStage1Tiers.length) sumStage1SelectedIdx = 0;
+
+            if (label) {
+                let selectedLabel = sumStage1Tiers[sumStage1SelectedIdx] ? sumStage1Tiers[sumStage1SelectedIdx].label : '';
+                label.innerHTML = `Сейчас едет: <b>${escapeHtml(data.active_tier)}</b>`
+                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &uarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
+            }
             if (nextName) nextName.innerText = data.next_name ? `→ ${data.next_name}` : '';
 
-            let tiersOrder = Object.keys(data.tiers);
-            wrap.innerHTML = tiersOrder.map(tier => {
+            wrap.innerHTML = tiersOrder.map((tier, i) => {
                 let info = data.tiers[tier];
                 let isEmpty = info.items.length === 0;
-                let cls = 'reel-col' + (isEmpty ? ' reel-col--empty' : '') + (info.active ? ' reel-col--active' : '');
+                let cls = 'reel-col sum-stage1-col'
+                    + (isEmpty ? ' reel-col--empty' : '')
+                    + (info.active ? ' reel-col--active' : '')
+                    + (i === sumStage1SelectedIdx ? ' sum-stage1-col--selected' : '');
                 let muted = !!sumStage2MuteState[tier];
                 let capText = info.cap ? ` (${info.saved}/${info.cap})` : '';
                 return `
                 <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)'}">
                     <label class="sum-stage2-mute"><input type="checkbox" ${muted ? '' : 'checked'} onchange="toggleSumStage2Mute('${tier}', !this.checked)"> слушать</label>
-                    <div class="reel-col__label">${escapeHtml(info.label)}${capText}</div>
+                    <div class="reel-col__label" onclick="sumStage1SelectColumn(${i})" title="Выбрать категорией для отправки (&uarr;)">${escapeHtml(info.label)}${capText}</div>
                     <div class="reel" id="sumReel-${tier}">
                         <div class="reel-indicator"></div>
                         <div class="reel-track"></div>
@@ -1569,7 +1551,7 @@ let isProcessing = false;
         }
 
         async function sumStage2SendToAudacity() {
-            let btn = document.querySelector('#sumStage2Panel .btn-tile--primary');
+            let btn = document.querySelector('#sumActionsPanel .btn-tile--primary');
             let origHtml = btn ? btn.innerHTML : null;
             if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
             let res;
@@ -1592,12 +1574,6 @@ let isProcessing = false;
                 return;
             }
             updateUI(state);
-        }
-
-        async function setSumWorkflowStage(stage) {
-            let state = await pywebview.api.sum_set_stage(stage);
-            updateUI(state);
-            if (sumModeActive) await attachEmbeddedAudacity(true);
         }
 
         // Клик по счётчикам «Суммы»: подробная карточка — сколько сохранено
@@ -2562,15 +2538,15 @@ let isProcessing = false;
                 else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
                 else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
                 else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-                else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2Save(); } else saveVarBatch(false); }
+                else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage2Save(); else saveVarBatch(false); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
-                else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2SendToAudacity(); } else sendToAudacity(); }
-                else if (e.code === 'KeyM' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumMergeWithNext(); }
-                else if (e.code === 'ArrowLeft' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(-1); }
-                else if (e.code === 'ArrowRight' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(1); }
-                else if (e.code === 'ArrowUp' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1SendSelected(); }
-                else if (e.code === 'ArrowDown' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1Undo(); }
+                else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
+                else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
+                else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
+                else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
+                else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
+                else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
                 return;
             }
 
@@ -2580,13 +2556,13 @@ let isProcessing = false;
             else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-            else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2Save(); } else processAction('good'); }
-            else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2SendToAudacity(); } else processAction('variable'); }
-            else if (e.code === 'KeyM' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumMergeWithNext(); }
-            else if (e.code === 'ArrowLeft' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(-1); }
-            else if (e.code === 'ArrowRight' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(1); }
-            else if (e.code === 'ArrowUp' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1SendSelected(); }
-            else if (e.code === 'ArrowDown' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1Undo(); }
+            else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage2Save(); else processAction('good'); }
+            else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
+            else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
+            else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
+            else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
+            else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
+            else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

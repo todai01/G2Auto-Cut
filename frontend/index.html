@@ -135,28 +135,6 @@
         </div>
     </div>
 
-    <!-- «Готовая папка с переменными»: Этап 1 (сортировка) или Этап 2 (сборка)? -->
-    <div id="premadeStageChoiceOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--md">
-            <div class="modal-head">
-                <h3 class="modal-title">Какой этап нужен?</h3>
-                <button class="modal-close" onclick="closePremadeStageChoice()" title="Закрыть">&times;</button>
-            </div>
-            <div class="modal-hint">Start/end тут не нужны — они пригодятся только на Этапе 2 внутри самого экрана.</div>
-
-            <div class="mode-choice-grid">
-                <button class="option-card rise" onclick="premadeStageChoice(1)">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
-                    <div><span class="option-title">Этап 1 · Сортировка</span><span class="option-desc">Выбрать папку с дублями и раскидать по категориям</span></div>
-                </button>
-                <button class="option-card option-card--alt rise" onclick="premadeStageChoice(2)">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
-                    <div><span class="option-title">Этап 2 · Сборка эталона</span><span class="option-desc">Выбрать папку проекта, где уже есть «Суммы_сырые»</span></div>
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- Продолжить недавний проект? — всплывает перед экраном подготовки -->
     <div id="resumeProjectOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -745,8 +723,8 @@
                     <button class="mode-card mode-card--good rise" style="--d: 4" onclick="initVarBatchPremade()">
                         <span class="mode-card__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                         <span class="mode-card__title">Готовая папка с переменными</span>
-                        <span class="mode-card__desc">Двухэтапная сортировка сумм: сначала раскидать дубли по категориям, потом собрать эталон.</span>
-                        <span class="mode-card__go">Выбрать этап &#8594;</span>
+                        <span class="mode-card__desc">Режим «Суммы»: раскидать дубли по категориям и сразу собирать эталон, без start/end.</span>
+                        <span class="mode-card__go">Выбрать папку &#8594;</span>
                     </button>
 
                     <button class="mode-card mode-card--info rise" style="--d: 5" onclick="startConstructor()">
@@ -923,19 +901,12 @@
                             <div class="hero-phrase copyable" id="phraseText" onclick="copyRawText(this.innerText)">Загрузите Excel</div>
                             <div class="hint-copy" id="phraseHint">Кликните по тексту, чтобы скопировать</div>
 
-                            <!-- Этап 1 режима «Суммы»: подменяет текст фразы, пока включён —
-                                 тот же формат ряда колонок, что и у Этапа 2 ниже. -->
-                            <div id="sumStage1Embed" class="sum-stage2-embed" style="display:none">
+                            <!-- Режим «Суммы»: подменяет текст фразы, пока включён — ряд
+                                 колонок-категорий, сразу и сортировка (←/→ + ↑/↓), и
+                                 сборка эталона (рулетки крутятся вручную). -->
+                            <div id="sumEmbed" class="sum-stage2-embed" style="display:none">
                                 <div class="sum-stage2-embed__head">
-                                    <span class="sum-stage2-embed__label">Этап 1 · сортировка по категориям</span>
-                                </div>
-                                <div class="sum-stage2-reels" id="sumStage1Columns"></div>
-                            </div>
-
-                            <!-- Этап 2 режима «Суммы»: подменяет текст фразы, пока включён -->
-                            <div id="sumStage2Embed" class="sum-stage2-embed" style="display:none">
-                                <div class="sum-stage2-embed__head">
-                                    <span class="sum-stage2-embed__label">Этап 2 · сборка эталона</span>
+                                    <span class="sum-stage2-embed__label">Режим «Суммы»</span>
                                     <span class="sum-stage2-embed__next" id="sumStage2NextName"></span>
                                 </div>
                                 <div class="sum-stage2-reels" id="sumStage2Reels"></div>
@@ -1076,36 +1047,23 @@
                             </button>
                         </div>
 
-                        <div class="tile-row sum-logic-row">
-                            <button class="btn-tile sum-logic-btn" id="sumWorkflowStage1Btn" onclick="setSumWorkflowStage(1)">
-                                <span class="sum-logic-btn__title">Этап 1</span>
-                                <span class="sum-logic-btn__sub">Сортировка по категориям</span>
-                            </button>
-                            <button class="btn-tile sum-logic-btn" id="sumWorkflowStage2Btn" onclick="setSumWorkflowStage(2)">
-                                <span class="sum-logic-btn__title">Этап 2</span>
-                                <span class="sum-logic-btn__sub">Сборка эталона</span>
-                            </button>
-                        </div>
+                        <div id="sumDoneCounter" class="sum-done-counter sum-done-counter--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам">Готово: 0 / 0</div>
 
-                        <div id="sumCounts" class="sum-counts sum-counts--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам"></div>
+                        <!-- Единый экран: колонки-категории (рулетки) встроены в текст
+                             выше, тут — все действия сразу. Слух-сортировка: клик по
+                             колонке, либо ←/→ выбор категории, ↑ отправить дубль,
+                             ↓ отменить последнюю отправку. Сборка эталона: рулетки
+                             крутятся вручную, «Отправить в Audacity» + «Сохранить». -->
+                        <div id="sumActionsPanel" class="action-col" style="display:none">
+                            <div class="sum-target" id="sumActiveLabel">Загрузка...</div>
 
-                        <!-- Этап 1: на слух раскидать дубли по сырым папкам категорий.
-                             Мышью — клик по категории, либо клавиатурой: ←/→ выбор
-                             категории, ↑ отправить, ↓ отменить последнюю отправку. -->
-                        <div id="sumStage1Panel" class="action-col" style="display:none">
-                            <div class="sum-target">Услышали сумму — выберите категорию в тексте выше (клик, или &larr;/&rarr; + &uarr;)</div>
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>&darr;</kbd></button>
                                 <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>
                                 <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить <kbd>M</kbd></button>
                                 <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>
                             </div>
-                            <div class="action-note">Дубль уходит в папку категории как есть, без правки в Audacity. Не сумма — просто пролистайте <kbd>D</kbd>. Слиплось несколько цифр в одном дубле — жмите «Остаток». Число разрезало на два дубля — жмите «Склеить», стоя на первом.</div>
-                        </div>
 
-                        <!-- Этап 2: из сырых категорий собираем эталон, рулетки — прямо в тексте выше -->
-                        <div id="sumStage2Panel" class="action-col" style="display:none">
-                            <div class="sum-target" id="sumStage2ActiveLabel">Загрузка...</div>
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--mode" onclick="sumStage2TogglePlay()">Играть выбранное на рулетках</button>
                             </div>
@@ -1115,7 +1073,8 @@
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumStage2Save()">Сохранить <kbd>Z</kbd></button>
                             </div>
-                            <div class="action-note">Активная категория (подсвечена в тексте выше) едет по кругу сама — остальные можно крутить рулеткой вручную для проверки или другой комбинации. Галочки под рулетками — что слушать при «Играть».</div>
+
+                            <div class="action-note">Услышали сумму — &larr;/&rarr; (или клик по подписи колонки) выбирает категорию, &uarr; отправляет дубль в неё, &darr; отменяет последнюю отправку. Активная категория едет по кругу сама при сборке — остальные крутите рулеткой вручную. Не сумма — пролистайте <kbd>D</kbd>.</div>
                         </div>
                     </div>
 
