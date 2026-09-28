@@ -1735,6 +1735,9 @@ class VariablesMixin:
         connectors = []
         seen_tags = set()
         extra_tag_col = {}  # tag_key -> номер колонки (для сбора списка значений ниже)
+        sum_tag_col = {}    # то же самое, но для 5 ярусов Суммы — у них в
+                             # таблице тоже есть готовый список значений
+                             # (1-100 млн, 100-900 тыс и т.д.)
 
         for col_idx, cell in enumerate(header):
             text = str(cell).strip() if cell is not None else ''
@@ -1746,6 +1749,7 @@ class VariablesMixin:
                 sum_internal = _match_sum_tag(tag_key)
                 if sum_internal:
                     columns.append({"type": "sum", "key": sum_internal, "tag": tag_key})
+                    sum_tag_col.setdefault(sum_internal, col_idx)
                 else:
                     columns.append({"type": "tag", "key": tag_key})
                     if tag_key not in seen_tags:
@@ -1768,12 +1772,13 @@ class VariablesMixin:
         if not columns:
             return {"error": "Не нашёл ни одной подписанной колонки в первой строке таблицы."}
 
-        # Список значений на каждую доп.категорию — в порядке появления
-        # в таблице, без повторов. Автоматически присваиваем их сырым
-        # дублям по порядку отправки (см. sum_stage1_send), вместо того
-        # чтобы спрашивать у юзера, какое именно значение он услышал.
+        # Список значений на каждую категорию — доп. и ярусы Суммы одинаково
+        # — в порядке появления в таблице, без повторов. Автоматически
+        # присваиваем их сырым дублям по порядку отправки (см.
+        # sum_stage1_send), вместо того чтобы спрашивать у юзера, какое
+        # именно значение он услышал.
         extra_tag_values = {}
-        for tag_key, col_idx in extra_tag_col.items():
+        for tag_key, col_idx in {**extra_tag_col, **sum_tag_col}.items():
             seen_vals = set()
             values = []
             for r in data_rows:
@@ -2340,11 +2345,12 @@ class VariablesMixin:
         if not hasattr(self, 'constructor_tier_files'):
             self.constructor_tier_files = {}
 
-        # Для ярусов Суммы имя дадим позже, при сборке эталона (на слух).
-        # Для доп.категорий словаря (mark/year/...) значений много и они
-        # чёткие — вместо этого сразу присваиваем следующее по порядку
-        # значение из списка, что нашли в таблице, с коротким префиксом
-        # «сырая», не спрашивая юзера, что именно он услышал.
+        # Для ЛЮБОЙ категории из словаря (и ярусов Суммы, и mark/year/...)
+        # в таблице есть готовый список значений — присваиваем следующее
+        # по порядку значение из него сразу при отправке, с коротким
+        # префиксом «сырая», не спрашивая юзера, что именно он услышал.
+        # Без словаря (старый режим «только Суммы») список пуст — тогда
+        # просто не теряем и не перезаписываем соседний сырой кусок.
         ext = os.path.splitext(source_name)[1] or '.wav'
         position = len(self.constructor_tier_files.get(tier, []))
         value = self._var_next_tag_value(tier, position)
@@ -2352,8 +2358,6 @@ class VariablesMixin:
             safe_value = re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
             save_name = f"{int(time.time() * 1000)}_сырая_{safe_value}{ext}"
         else:
-            # Ярус Суммы (или доп.категория без списка значений) — прежнее
-            # поведение: не потерять и не перезаписать соседний кусок.
             save_name = f"{int(time.time() * 1000)}_{source_name}"
         target_path = os.path.join(target_dir, save_name)
         shutil.copy(active_file, target_path)
