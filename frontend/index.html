@@ -113,6 +113,33 @@
         </div>
     </div>
 
+    <!-- «Готовая папка с переменными»: какой тип переменных заполняем?
+         Пока реально работают только «Суммы» — «Имена» и «Даты» стоят
+         неактивными заглушками, чтобы место под них уже было на экране. -->
+    <div id="premadeVarTypeOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Какие переменные?</h3>
+                <button class="modal-close" onclick="closePremadeVarTypeChoice()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="premadeVarTypeSums()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-dollar-sign"></use></svg></span>
+                    <div><span class="option-title">Суммы</span><span class="option-desc">Миллионы / Сотни / Тысячи / Тенге</span></div>
+                </button>
+                <button class="option-card option-card--disabled" disabled title="В разработке, ожидайте">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-user"></use></svg></span>
+                    <div><span class="option-title">Имена</span><span class="option-desc">В разработке, ожидайте</span></div>
+                </button>
+                <button class="option-card option-card--disabled" disabled title="В разработке, ожидайте">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-calendar"></use></svg></span>
+                    <div><span class="option-title">Даты</span><span class="option-desc">В разработке, ожидайте</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- «Готовая папка с переменными»: Excel есть или нет? -->
     <div id="premadeExcelChoiceOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -720,10 +747,10 @@
                         <span class="mode-card__go">Запустить &#8594;</span>
                     </button>
 
-                    <button class="mode-card mode-card--good rise" style="--d: 4" onclick="initVarBatchPremade()">
+                    <button class="mode-card mode-card--good rise" style="--d: 4" onclick="showPremadeVarTypeChoice()">
                         <span class="mode-card__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                         <span class="mode-card__title">Готовая папка с переменными</span>
-                        <span class="mode-card__desc">Режим «Суммы»: раскидать дубли по категориям и сразу собирать эталон, без start/end.</span>
+                        <span class="mode-card__desc">Раскидать дубли по категориям и сразу собирать эталон, без start/end.</span>
                         <span class="mode-card__go">Выбрать папку &#8594;</span>
                     </button>
 
@@ -1024,10 +1051,6 @@
 
                 <section class="action-panel">
                     <label class="silence-toggle"><input type="checkbox" id="addSilence"> Авто-добавление тишины <kbd>S</kbd></label>
-                    <label class="silence-toggle silence-toggle--left">
-                        <input type="checkbox" id="sumModeCheck" onchange="toggleSumMode(this.checked)">
-                        Режим «Суммы» (Миллионы/Сотни/Тысячи/Тенге)
-                    </label>
 
                     <div id="standardActions" class="action-col">
                         <button class="btn-action btn-action--good" onclick="processAction('good')"><span>Проверено</span><kbd>Z</kbd></button>
@@ -1054,7 +1077,6 @@
 
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>&darr;</kbd></button>
-                                <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>
                             </div>
 
                             <div class="tile-row">

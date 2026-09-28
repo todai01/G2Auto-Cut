@@ -167,6 +167,10 @@ kbd{
 .option-card.loaded:hover{ border-color: var(--accent-good); background: rgba(47,191,125,0.16); }
 
 .option-card--alt{ background: var(--panel); }
+.option-card--disabled{
+    opacity: 0.5; cursor: not-allowed; pointer-events: none;
+}
+.option-card--disabled:hover{ transform: none; box-shadow: none; }
 
 .option-icon{
     flex: none; font-size: 19px; width: 40px; height:40px; display:flex; align-items:center; justify-content:center;
@@ -359,6 +363,7 @@ body.sum-mode #projectProgress{ display: none; }
 body.sum-mode #chunkTrack{ display: none; }
 body.sum-mode #btnDeletePhrase{ display: none; }
 body.sum-mode #checkedBadge{ display: none; }
+body.sum-mode .action-panel > .silence-toggle{ display: none; }
 /* .constructor-body — это flex-колонка с align-items: center, поэтому
    без явной ширины рамка под Audacity сжимается по контенту почти до
    нуля (реально видели w=4px). Растягиваем её саму на всю ширину. */

@@ -1082,6 +1082,21 @@ let isProcessing = false;
         // загружали в этом проекте, спрашиваем один раз, как называть
         // сохранённые файлы: по тексту таблицы или как есть, по именам
         // файлов на диске.
+        // «Готовая папка с переменными»: сперва спрашиваем, какой тип
+        // переменных заполняем. Реально работают пока только «Суммы» —
+        // «Имена» и «Даты» неактивные заглушки (option-card--disabled),
+        // чтобы место под них было видно, но нажать было нельзя.
+        function showPremadeVarTypeChoice() {
+            document.getElementById('premadeVarTypeOverlay').style.display = 'flex';
+        }
+        function closePremadeVarTypeChoice() {
+            document.getElementById('premadeVarTypeOverlay').style.display = 'none';
+        }
+        function premadeVarTypeSums() {
+            closePremadeVarTypeChoice();
+            initVarBatchPremade();
+        }
+
         let pendingPremadeAfterExcel = false;
         async function initVarBatchPremade() {
             if (!excelIsLoaded) {
