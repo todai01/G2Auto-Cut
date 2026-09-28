@@ -1082,18 +1082,71 @@ let isProcessing = false;
         // загружали в этом проекте, спрашиваем один раз, как называть
         // сохранённые файлы: по тексту таблицы или как есть, по именам
         // файлов на диске.
-        // «Готовая папка с переменными»: сперва спрашиваем, какой тип
-        // переменных заполняем. Реально работают пока только «Суммы» —
-        // «Имена» и «Даты» неактивные заглушки (option-card--disabled),
-        // чтобы место под них было видно, но нажать было нельзя.
+        // «Готовая папка с переменными»: категории переменных программа
+        // определяет сама по загруженной таблице-словарю (см.
+        // load_var_template в variables_handler.py) — юзеру выбирать
+        // «какие переменные» не нужно, только загрузить таблицу.
         function showPremadeVarTypeChoice() {
             document.getElementById('premadeVarTypeOverlay').style.display = 'flex';
         }
         function closePremadeVarTypeChoice() {
             document.getElementById('premadeVarTypeOverlay').style.display = 'none';
         }
+        // Без словаря — старое поведение, только 5 ярусов Суммы.
         function premadeVarTypeSums() {
             closePremadeVarTypeChoice();
+            initVarBatchPremade();
+        }
+
+        async function pickVarTemplate() {
+            let res = await pywebview.api.load_var_template();
+            if (res && res.error) {
+                if (res.error !== 'cancel') showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            closePremadeVarTypeChoice();
+            renderVarDictConnectors(res);
+            document.getElementById('varDictConnectorsOverlay').style.display = 'flex';
+        }
+
+        let lastVarDictSumsPresent = false;
+        function renderVarDictConnectors(res) {
+            let extraTags = (res.extra_tags || []).map(t => t.label);
+            if (res.columns) lastVarDictSumsPresent = res.columns.some(c => c.type === 'sum');
+            let sumsPresent = lastVarDictSumsPresent;
+            let summary = `Найдено: ${extraTags.length ? extraTags.join(', ') : '—'}`
+                + (sumsPresent ? ' + Суммы (Миллионы/Сотни/Тысячи/Тенге)' : '')
+                + `. Связок нужно озвучить: ${(res.connectors || []).length}.`;
+            document.getElementById('varDictSummary').innerHTML = summary;
+
+            let list = document.getElementById('varDictConnectorsList');
+            list.innerHTML = (res.connectors || []).map(c => `
+                <div class="var-dict-connector ${c.path ? 'is-set' : ''}" id="varDictConn_${c.key}">
+                    <div>
+                        <div class="var-dict-connector__label">«${escapeHtml(c.label)}»</div>
+                        <div class="var-dict-connector__file">${c.path ? escapeHtml(c.path.split(/[\\/]/).pop()) : 'Аудио не выбрано'}</div>
+                    </div>
+                    <button class="btn-tile btn-tile--sub" onclick="pickVarConnectorAudio('${c.key}')">Загрузить</button>
+                </div>
+            `).join('') || '<div class="modal-hint">В таблице нет отдельных связок.</div>';
+        }
+
+        async function pickVarConnectorAudio(key) {
+            let res = await pywebview.api.set_var_connector_audio(key);
+            if (res && res.error) {
+                if (res.error !== 'cancel') showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            let state = await pywebview.api.get_var_template_state();
+            renderVarDictConnectors({ extra_tags: state.extra_tags, connectors: state.connectors });
+        }
+
+        function closeVarDictConnectors() {
+            document.getElementById('varDictConnectorsOverlay').style.display = 'none';
+        }
+
+        function continueAfterVarDict() {
+            closeVarDictConnectors();
             initVarBatchPremade();
         }
 

@@ -100,6 +100,48 @@ def _numeric_sort_key(filepath):
     return (0, int(nums[0]), basename) if nums else (1, 0, basename)
 
 
+# --- «Словарь переменных»: загружаемая таблица вроде RU.xlsx, где первая
+#     строка — заголовки колонок. <tag> в заголовке — это категория
+#     переменной (сортируем сырьё в неё, потом собираем эталон рулеткой),
+#     обычное слово без скобок (start, start_2, start_3...) — связка,
+#     фиксированная фраза-«клей» между переменными, ей нужен один
+#     озвученный аудиофайл на весь проект. Порядок колонок слева направо —
+#     это и есть порядок склейки финального файла.
+#
+# Пять «сумменных» тегов узнаём по имени и заворачиваем в уже отлаженную
+# каскадную систему (SUM_TIER_ORDER/Логика 1-2) без изменений — там
+# принципиально другая механика (потолки, чередование, сборка на слух).
+# Любой другой <tag> (например <mark>, <year>, <day>, <month>) — новая
+# самостоятельная категория: копится всё, что в неё отправили, без
+# потолка и без выбора логики, участвует в тех же рулетках.
+_SUM_TAG_PATTERNS = [
+    ('hundred_thousand', 'hundred_thousands'),
+    ('thousand', 'thousands'),
+    ('hundred', 'hundreds'),
+    ('million', 'millions'),
+    ('tenge', 'tenge'),
+]
+
+# Человеческие подписи для уже известных доп.категорий — остальные
+# показываем просто по ключу из таблицы (<company> -> "company").
+_VAR_EXTRA_LABELS = {
+    'mark': 'Марка',
+    'year': 'Год',
+    'day': 'День',
+    'month': 'Месяц',
+}
+
+_VAR_TAG_RE = re.compile(r'^<(.+)>$')
+
+
+def _match_sum_tag(tag_key):
+    low = tag_key.lower()
+    for pattern, internal in _SUM_TAG_PATTERNS:
+        if pattern in low:
+            return internal
+    return None
+
+
 class VariablesMixin:
 
     def send_to_audacity(self):
@@ -1656,6 +1698,103 @@ class VariablesMixin:
     def load_variables_mode(self):
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Переменные'),
                                           'Переменные') if self.work_dir else self.get_ui_state()
+
+    # ==================================================================
+    #  «СЛОВАРЬ ПЕРЕМЕННЫХ»: разбор загруженной таблицы (см. константы
+    #  _SUM_TAG_PATTERNS/_VAR_EXTRA_LABELS выше) на категории и связки.
+    # ==================================================================
+
+    def load_var_template(self):
+        """Загружает таблицу-словарь переменных (первая строка — заголовки:
+        <tag> = категория, обычное слово = связка). Пять сумменных тегов
+        уходят в существующую систему SUM_TIER_ORDER как есть, остальные
+        становятся новыми категориями (self.var_extra_tags), связки —
+        слотами под один аудиофайл каждая (self.var_connectors)."""
+        file_types = ('Excel files (*.xlsx)', 'All files (*.*)')
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
+        if not picked:
+            return {"error": "cancel"}
+
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(picked[0], data_only=True)
+        except Exception as e:
+            return {"error": f"Не удалось открыть таблицу.\n\n{os.path.basename(picked[0])}\n\n"
+                             f"Поддерживается только формат .xlsx.\n\nПодробности: {e}"}
+
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return {"error": "Таблица пустая."}
+
+        header = rows[0]
+        data_rows = rows[1:]
+
+        columns = []
+        extra_tags = []
+        connectors = []
+        seen_tags = set()
+
+        for col_idx, cell in enumerate(header):
+            text = str(cell).strip() if cell is not None else ''
+            if not text:
+                continue
+            m = _VAR_TAG_RE.match(text)
+            if m:
+                tag_key = m.group(1).strip()
+                sum_internal = _match_sum_tag(tag_key)
+                if sum_internal:
+                    columns.append({"type": "sum", "key": sum_internal, "tag": tag_key})
+                else:
+                    columns.append({"type": "tag", "key": tag_key})
+                    if tag_key not in seen_tags:
+                        seen_tags.add(tag_key)
+                        extra_tags.append({"key": tag_key, "label": _VAR_EXTRA_LABELS.get(tag_key, tag_key)})
+            else:
+                # Связка (start/start_2/...) — подпись берём из первой
+                # непустой ячейки данных под этой колонкой (сама колонка
+                # в шапке называется просто "start"/"start_2", это не то,
+                # что нужно озвучивать).
+                label = text
+                for r in data_rows:
+                    if col_idx < len(r) and r[col_idx] not in (None, ''):
+                        label = str(r[col_idx]).strip()
+                        break
+                columns.append({"type": "connector", "key": text})
+                connectors.append({"key": text, "label": label, "path": None})
+
+        if not columns:
+            return {"error": "Не нашёл ни одной подписанной колонки в первой строке таблицы."}
+
+        self.var_template_columns = columns
+        self.var_extra_tags = extra_tags
+        self.var_connectors = connectors
+
+        return {
+            "file_name": os.path.basename(picked[0]),
+            "columns": [{"type": c["type"], "key": c.get("tag", c["key"])} for c in columns],
+            "extra_tags": extra_tags,
+            "connectors": connectors,
+        }
+
+    def set_var_connector_audio(self, key):
+        """Выбор озвученного файла для одной связки (например «на автомобиль»)."""
+        file_types = ('Audio files (*.wav;*.mp3)', 'All files (*.*)')
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
+        if not picked:
+            return {"error": "cancel"}
+        for c in getattr(self, 'var_connectors', []):
+            if c['key'] == key:
+                c['path'] = picked[0]
+                break
+        return {"connectors": getattr(self, 'var_connectors', [])}
+
+    def get_var_template_state(self):
+        return {
+            "extra_tags": getattr(self, 'var_extra_tags', []),
+            "connectors": getattr(self, 'var_connectors', []),
+        }
+
     # ==================================================================
     #  «РЕЖИМ СУММЫ» (ручной): работает поверх обычной нарезки Chunks —
     #  никакой готовой папки «Суммы» заранее не нужно, программа сама
@@ -1666,7 +1805,9 @@ class VariablesMixin:
         return os.path.join(self.work_dir, 'Проверенные', 'Суммы')
 
     def _sum_manual_tier_dir(self, tier):
-        return SUM_TIER_DEFAULT_DIR[tier]
+        # Доп.категории из словаря переменных (mark/year/...) не входят в
+        # SUM_TIER_DEFAULT_DIR — для них папку называем просто по ключу.
+        return SUM_TIER_DEFAULT_DIR.get(tier, tier)
 
     def _sum_tier_capped(self, tier, counts=None):
         """Ярус дошёл до потолка (см. SUM_TIER_CAP) и больше не растёт —
@@ -1706,6 +1847,33 @@ class VariablesMixin:
 
     def _sum_active_logic_tiers(self):
         return SUM_LOGIC_2_TIERS if getattr(self, 'sum_manual_stage2', False) else SUM_LOGIC_1_TIERS
+
+    def _var_extra_tag_keys(self):
+        return [t['key'] for t in getattr(self, 'var_extra_tags', [])]
+
+    def _var_extra_tag_label(self, key):
+        for t in getattr(self, 'var_extra_tags', []):
+            if t['key'] == key:
+                return t['label']
+        return key
+
+    def _all_category_keys(self):
+        """Все категории, для которых вообще может существовать сырая
+        папка — 5 ярусов Суммы (независимо от выбранной логики, чтобы
+        переключение Логика 1/2 не теряло уже отсортированное) плюс
+        доп.категории из загруженного словаря переменных."""
+        return SUM_TIER_ORDER + self._var_extra_tag_keys()
+
+    def _active_category_keys(self):
+        """Категории, которые сейчас показываем и предлагаем как цель для
+        ↑ на экране сортировки: ярусы АКТИВНОЙ логики Суммы + все
+        доп.категории (у них нет понятия «логика» — участвуют всегда)."""
+        return self._sum_active_logic_tiers() + self._var_extra_tag_keys()
+
+    def _category_label(self, key):
+        if key in SUM_TIER_LABELS:
+            return SUM_TIER_LABELS[key]
+        return self._var_extra_tag_label(key)
 
     def _sum_tier_excluded(self, tier, counts=None):
         """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
@@ -1866,7 +2034,10 @@ class VariablesMixin:
         last_file = getattr(self, 'sum_manual_last_file', {})
         phrase = self._current_sum_phrase()
         tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
-        active_tiers = self._sum_active_logic_tiers()
+        # Ярусы АКТИВНОЙ логики Суммы + доп.категории из словаря переменных
+        # (mark/year/...), если он загружен — у них нет понятия «логика»,
+        # участвуют всегда, наравне с ярусами.
+        active_tiers = self._active_category_keys()
 
         # Для карточки статистики (клик по счётчикам): по каждому ярусу
         # ВЫБРАННОЙ логики — сколько сохранено, сколько осталось до потолка
@@ -1880,8 +2051,8 @@ class VariablesMixin:
             last_path = last_file.get(t)
             last_label = self._sum_display_label(t, last_path) if last_path else None
             stats.append({
-                "tier": SUM_TIER_LABELS[t],
-                "dir": SUM_TIER_DEFAULT_DIR[t],
+                "tier": self._category_label(t),
+                "dir": SUM_TIER_DEFAULT_DIR.get(t, t),
                 "done": done,
                 "cap": cap,
                 "remaining": max(0, cap - done) if cap else None,
@@ -1899,8 +2070,8 @@ class VariablesMixin:
             "stage2": getattr(self, 'sum_manual_stage2', False),
             "done_total": done_total,
             "excel_total": excel_total,
-            "active_tiers": [{"key": t, "label": SUM_TIER_LABELS[t]} for t in active_tiers],
-            "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in active_tiers},
+            "active_tiers": [{"key": t, "label": self._category_label(t)} for t in active_tiers],
+            "counts": {self._category_label(t): counts.get(t, 0) for t in active_tiers},
             "detected_tier": SUM_TIER_LABELS.get(tier),
             "detected_dir": SUM_TIER_DEFAULT_DIR.get(tier),
             "detected_from": (phrase or {}).get('text', ''),
@@ -1927,7 +2098,7 @@ class VariablesMixin:
                 self.sum_manual_last_file = {}
             root = self._sum_manual_tier_root()
             os.makedirs(root, exist_ok=True)  # создаём «Суммы» сразу, не дожидаясь первого сохранения
-            for tier in SUM_TIER_ORDER:
+            for tier in self._all_category_keys():
                 d = os.path.join(root, self._sum_manual_tier_dir(tier))
                 os.makedirs(d, exist_ok=True)
                 files = [os.path.join(d, f) for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
@@ -1966,7 +2137,7 @@ class VariablesMixin:
         и соседние поля) — вызывается при включении режима и заново не
         нужна после каждой отправки/отмены, те сами точечно правят список."""
         tiers = {}
-        for tier in SUM_TIER_ORDER:
+        for tier in self._all_category_keys():
             d = self._sum_stage1_raw_dir(tier)
             files = []
             if os.path.isdir(d):
@@ -2027,7 +2198,7 @@ class VariablesMixin:
         нарезала его автосрезкой по паузам, дополнительная правка тут не
         нужна. Имя файлу дадим позже, при сборке эталона. Сразу же
         добавляется в рулетку этой категории, без общего пересканирования."""
-        if tier not in SUM_TIER_ORDER:
+        if tier not in self._all_category_keys():
             return {"error": f"Неизвестная категория: {tier}"}
         active_file, source_name, err = self._sum_current_source()
         if err:
@@ -2050,7 +2221,7 @@ class VariablesMixin:
         self.sum_stage1_last_send = {"tier": tier, "raw_path": target_path}
 
         self._sum_advance_pointer()
-        webview.windows[0].evaluate_js(f"showToast('➜ Отправлено в «{SUM_TIER_LABELS[tier]}»');")
+        webview.windows[0].evaluate_js(f"showToast('➜ Отправлено в «{self._category_label(tier)}»');")
         return self.get_ui_state()
 
     def sum_stage1_undo(self):
@@ -2082,7 +2253,7 @@ class VariablesMixin:
 
         tier = last['tier']
         self.sum_stage1_last_send = None
-        webview.windows[0].evaluate_js(f"showToast('↩️ Отменено: убрано из «{SUM_TIER_LABELS[tier]}»');")
+        webview.windows[0].evaluate_js(f"showToast('↩️ Отменено: убрано из «{self._category_label(tier)}»');")
         return self.get_ui_state()
 
     def _sum_stage2_active_tier(self):
@@ -2108,7 +2279,10 @@ class VariablesMixin:
         active_tier = self._sum_stage2_active_tier()
         frozen_idx = getattr(self, 'sum_stage2_frozen_idx', {}) or {}
         counts = getattr(self, 'sum_stage2_counts', {}) or {}
-        active_logic = self._sum_active_logic_tiers()
+        # Ярусы активной логики Суммы + доп.категории словаря переменных —
+        # рулетки показывают их все вместе, доп.категории просто никогда
+        # не становятся «активными» (не растут сами, крутятся вручную).
+        active_logic = self._active_category_keys()
 
         # Подсказка рулеткам, что показать по умолчанию: активная категория
         # всегда начинает со следующего ещё не использованного сырого
@@ -2134,7 +2308,7 @@ class VariablesMixin:
             "end": os.path.basename(self.constructor_end_file) if self.constructor_end_file else None,
             "tiers": {
                 t: {
-                    "label": SUM_TIER_LABELS[t],
+                    "label": self._category_label(t),
                     "items": [display_name(p) for p in tiers.get(t, [])],
                     "saved": counts.get(t, 0),
                     "cap": SUM_TIER_CAP.get(t),

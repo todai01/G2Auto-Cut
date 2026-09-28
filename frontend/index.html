@@ -113,30 +113,46 @@
         </div>
     </div>
 
-    <!-- «Готовая папка с переменными»: какой тип переменных заполняем?
-         Пока реально работают только «Суммы» — «Имена» и «Даты» стоят
-         неактивными заглушками, чтобы место под них уже было на экране. -->
+    <!-- «Готовая папка с переменными»: категории переменных больше не
+         выбираются руками — программа сама читает первую строку
+         загруженной таблицы-словаря: <tag> = категория переменной,
+         обычное слово (start/start_2/...) = связка, для которой нужен
+         один озвученный файл. Порядок колонок слева направо = порядок
+         склейки финального файла. -->
     <div id="premadeVarTypeOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
             <div class="modal-head">
-                <h3 class="modal-title">Какие переменные?</h3>
+                <h3 class="modal-title">Готовая папка с переменными</h3>
                 <button class="modal-close" onclick="closePremadeVarTypeChoice()" title="Закрыть">&times;</button>
             </div>
+            <div class="modal-hint">Загрузите таблицу-словарь: первая строка — заголовки, «&lt;тег&gt;» в скобках — категория переменной (например «&lt;mark&gt;», «&lt;year&gt;», «&lt;million_ru&gt;»), слово без скобок — связка между переменными («на автомобиль», «со стоимостью»...).</div>
 
             <div class="mode-choice-grid">
-                <button class="option-card rise" onclick="premadeVarTypeSums()">
+                <button class="option-card rise" onclick="pickVarTemplate()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
+                    <div><span class="option-title">Загрузить таблицу-словарь</span><span class="option-desc">Категории и связки определятся сами</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="premadeVarTypeSums()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-dollar-sign"></use></svg></span>
-                    <div><span class="option-title">Суммы</span><span class="option-desc">Миллионы / Сотни / Тысячи / Тенге</span></div>
-                </button>
-                <button class="option-card option-card--disabled" disabled title="В разработке, ожидайте">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-user"></use></svg></span>
-                    <div><span class="option-title">Имена</span><span class="option-desc">В разработке, ожидайте</span></div>
-                </button>
-                <button class="option-card option-card--disabled" disabled title="В разработке, ожидайте">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-calendar"></use></svg></span>
-                    <div><span class="option-title">Даты</span><span class="option-desc">В разработке, ожидайте</span></div>
+                    <div><span class="option-title">Без словаря — только Суммы</span><span class="option-desc">Как раньше: Миллионы/Сотни/Тысячи/Тенге</span></div>
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- Шаг 2: словарь загружен — показываем, что нашли, и просим
+         озвученный файл на каждую связку (start/start_2/...). -->
+    <div id="varDictConnectorsOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Словарь загружен</h3>
+                <button class="modal-close" onclick="closeVarDictConnectors()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint" id="varDictSummary"></div>
+
+            <div id="varDictConnectorsList" class="var-dict-connectors"></div>
+
+            <button class="btn-step btn-step--confirm var-export" onclick="continueAfterVarDict()">Продолжить &#8594;</button>
         </div>
     </div>
 

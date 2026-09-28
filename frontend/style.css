@@ -1460,6 +1460,24 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .mode-choice-grid .option-card{ width: 100%; }
 
+/* Список связок (start/start_2/...) в шаге «Словарь загружен» — подпись
+   связки + кнопка загрузки аудио + отметка, что файл уже выбран. */
+.var-dict-connectors{ display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-4) 0; }
+.var-dict-connector{
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    background: var(--screen); border: 1px solid var(--border-soft); border-radius: 10px;
+    padding: 10px 14px;
+}
+.var-dict-connector__label{ font-size: var(--fs-md); font-weight: 600; }
+.var-dict-connector__file{ font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.var-dict-connector.is-set{ border-color: rgba(47,191,125,0.45); background: var(--tint-good); }
+.var-dict-connector.is-set .var-dict-connector__file{ color: var(--accent-good); }
+.var-dict-tags{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.var-dict-tag{
+    font-size: 12px; font-weight: 650; padding: 4px 10px; border-radius: 999px;
+    background: var(--tint-mode); color: var(--accent-mode); border: 1px solid rgba(146,112,234,0.35);
+}
+
 /* --- Счётчик «Проверено» в шапке --- */
 .stat-checked{ color: var(--accent-primary); display: flex; align-items: center; gap: 6px; }
 .stat-checked::before{
