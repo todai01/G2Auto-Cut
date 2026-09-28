@@ -2267,6 +2267,18 @@ class VariablesMixin:
         self.project_name = os.path.basename(self.work_dir)
         project_state.apply(self, project_state.load(self.work_dir))
 
+        # Через словарь переменных имена/текст файлов берём из него (и из
+        # будущего списка реальных записей — см. var_connectors/var_extra_tags),
+        # не из общего phrases_data. Если project_state восстановил его
+        # из старого прогона (или прошлого теста в этой же папке) —
+        # «Сохранится как»/«Ожидает выгрузки» показывали бы устаревший
+        # текст (например, текст связки «на автомобиль» вместо реального
+        # имени дубля). Раз словарь загружен — эта старая привязка к
+        # Excel явно не должна работать.
+        if getattr(self, 'var_connectors', None) or getattr(self, 'var_extra_tags', None):
+            self.phrases_data = []
+            self.phrase_index = 0
+
         files = [f for f in os.listdir(selected_path)
                  if os.path.isfile(os.path.join(selected_path, f)) and f.lower().endswith(('.wav', '.mp3'))]
         if not files:
