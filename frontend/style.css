@@ -1479,18 +1479,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .var-dict-connector__actions{ display: flex; gap: 6px; flex: none; }
 
-/* Поиск связки среди сырых дублей: прокручиваемый список с проигрыванием. */
-.var-dict-search-list{ display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 6px; }
-.var-dict-search-item{
-    display: flex; align-items: center; gap: 8px;
-    background: var(--screen); border: 1px solid var(--border-soft); border-radius: 8px;
-    padding: 8px 10px;
-}
-.var-dict-search-item__name{
-    flex: 1; min-width: 0; font-size: 13px; font-family: var(--font-mono);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
 /* --- Счётчик «Проверено» в шапке --- */
 .stat-checked{ color: var(--accent-primary); display: flex; align-items: center; gap: 6px; }
 .stat-checked::before{

@@ -150,31 +150,16 @@
             </div>
             <div class="modal-hint" id="varDictSummary"></div>
 
+            <button class="btn-step" onclick="createVarConnectorsFromRecording()">Найти метками в записи (как start/end)</button>
+            <div class="modal-hint" id="varDictLabelsHint" style="display:none">
+                Откройте нужный кусок в Audacity, выделите его, нажмите <b>Ctrl+B</b> и впишите точное имя связки
+                (<span id="varDictLabelsNeeded"></span>) — по одной метке на каждую. Когда все готовы, нажмите «Готово».
+            </div>
+            <button class="btn-step btn-step--var" id="varDictLabelsDoneBtn" style="display:none" onclick="finishVarConnectorsFromRecording()">Готово, экспортировать</button>
+
             <div id="varDictConnectorsList" class="var-dict-connectors"></div>
 
             <button class="btn-step btn-step--confirm var-export" onclick="continueAfterVarDict()">Продолжить &#8594;</button>
-        </div>
-    </div>
-
-    <!-- Поиск связки среди уже нарезанных сырых дублей — на случай, когда
-         фраза уже где-то начитана, а не записывать её заново. -->
-    <div id="varDictSearchOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--md">
-            <div class="modal-head">
-                <h3 class="modal-title">Найти «<span id="varDictSearchLabel"></span>» в дублях</h3>
-                <button class="modal-close" onclick="closeVarDictSearch()" title="Закрыть">&times;</button>
-            </div>
-
-            <div id="varDictSearchPickFolder">
-                <div class="modal-hint">Выберите папку с уже нарезанными дублями (например «Chunks»).</div>
-                <button class="btn-step btn-step--confirm" onclick="pickVarConnectorSourceFolder()">Выбрать папку</button>
-            </div>
-
-            <div id="varDictSearchResults" style="display:none">
-                <input type="text" id="varDictSearchInput" class="modal-hint" style="width:100%; box-sizing:border-box; padding:10px 12px; margin-bottom:10px;"
-                       placeholder="Фильтр по имени файла..." oninput="filterVarDictSearch()">
-                <div id="varDictSearchList" class="var-dict-search-list"></div>
-            </div>
         </div>
     </div>
 

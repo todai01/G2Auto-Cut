@@ -1789,35 +1789,95 @@ class VariablesMixin:
                 break
         return {"connectors": getattr(self, 'var_connectors', [])}
 
-    def pick_var_connector_source_folder(self):
-        """Связку можно не записывать отдельным файлом, а найти уже среди
-        сырых дублей (её тоже могли начитать в той же сессии) — выбираем
-        папку с дублями один раз, дальше ищем/слушаем по списку."""
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return {"error": "cancel"}
-        files = [f for f in os.listdir(folder[0])
-                 if os.path.isfile(os.path.join(folder[0], f)) and f.lower().endswith(('.wav', '.mp3'))]
-        if not files:
-            return {"error": "В выбранной папке нет аудиофайлов."}
-        files.sort(key=_numeric_sort_key)
-        self.var_connector_search_dir = folder[0]
-        return {"folder": folder[0], "files": files}
+    def create_var_connectors_from_recording(self):
+        """Тот же способ, что уже работает для start/end (см.
+        create_start_end_from_recording): открываем полную исходную запись
+        в Audacity, пользователь сам расставляет метки (Ctrl+B) — по одной
+        на каждую связку, имя метки должно точно совпадать с её ключом
+        (start/start_2/start_3 — как в шапке таблицы). Один заход в
+        Audacity сразу на все связки, а не по одной."""
+        needed = [c['key'] for c in getattr(self, 'var_connectors', [])]
+        if not needed:
+            return {"error": "В таблице нет связок для озвучки."}
 
-    def set_var_connector_from_raw(self, key, filename):
-        """Назначает связке уже существующий сырой дубль (не копируем — тот
-        же путь, что и в исходной папке; дубли там никуда не денутся)."""
-        folder = getattr(self, 'var_connector_search_dir', None)
-        if not folder:
-            return {"error": "Сначала выберите папку с сырыми дублями."}
-        src = os.path.join(folder, filename)
-        if not os.path.exists(src):
-            return {"error": "Файл не найден — возможно, папку переместили."}
-        for c in getattr(self, 'var_connectors', []):
-            if c['key'] == key:
-                c['path'] = src
-                break
-        return {"connectors": getattr(self, 'var_connectors', [])}
+        raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                                                          file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+        if not raw_file:
+            return {"error": "cancel"}
+
+        if self._block_if_audacity_ambiguous():
+            return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
+        if not self._ensure_audacity_ready():
+            return {"error": "Не удалось запустить Audacity. Откройте его вручную и нажмите кнопку ещё раз."}
+
+        try:
+            self.audacity.send_command('New:')
+            for _ in range(15):
+                resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
+                if resp and '[' in resp:
+                    break
+                time.sleep(0.5)
+            else:
+                return {"error": "Audacity запустился, но не отвечает на команды. Проверьте, что он "
+                                  "действительно открылся, и попробуйте ещё раз."}
+
+            import_resp = self.audacity.send_command(
+                f'Import2: Filename="{os.path.abspath(raw_file[0]).replace(chr(92), "/")}"')
+            if not import_resp:
+                return {"error": "Не удалось загрузить запись в Audacity. Проверьте, что он открылся, "
+                                  "и попробуйте ещё раз."}
+        except Exception as e:
+            return {"error": f"Не удалось открыть запись в Audacity: {e}"}
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        self._pending_var_conn_out_dir = os.path.join(os.path.dirname(raw_file[0]), 'Переменные_связки')
+        return {"status": "waiting_labels", "needed": needed}
+
+    def finish_var_connectors_from_recording(self):
+        """Пользователь расставил метки — читаем их и экспортируем каждую
+        в отдельный файл (Переменные_связки/<ключ>.wav рядом с исходной
+        записью), назначая путь связке."""
+        needed = [c['key'] for c in getattr(self, 'var_connectors', [])]
+        out_dir = getattr(self, '_pending_var_conn_out_dir', None)
+        if not out_dir:
+            return {"error": "Сессия истекла — нажмите «Найти метками» заново."}
+
+        resp = self.audacity.send_command('GetInfo: Type=Labels Format=JSON')
+        labels = {}
+        try:
+            s, e = resp.find('['), resp.rfind(']')
+            data = json.loads(resp[s:e + 1])
+            for track in data:
+                for label in track[1]:
+                    text = str(label[2]).strip()
+                    labels[text] = (float(label[0]), float(label[1]))
+        except Exception:
+            return {"error": "Не удалось прочитать метки из Audacity.", "status": "waiting_labels", "needed": needed}
+
+        still_missing = [name for name in needed if name not in labels]
+        if still_missing:
+            return {
+                "error": f"Не найдены метки: {', '.join(still_missing)}. Выделите нужный участок, "
+                         f"нажмите Ctrl+B, впишите точное имя связки — «{still_missing[0]}» — и нажмите ОК "
+                         f"в Audacity, затем снова нажмите эту кнопку.",
+                "status": "waiting_labels", "needed": needed
+            }
+
+        os.makedirs(out_dir, exist_ok=True)
+        for name in needed:
+            t0, t1 = labels[name]
+            target_path = os.path.abspath(os.path.join(out_dir, f'{name}.wav')).replace('\\', '/')
+            self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+            self.audacity.send_command(f'SelectTime: Start={t0} End={t1} RelativeTo=ProjectStart')
+            self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+            for c in self.var_connectors:
+                if c['key'] == name:
+                    c['path'] = target_path.replace('/', os.sep)
+
+        return {"connectors": self.var_connectors}
 
     def get_var_template_state(self):
         return {
