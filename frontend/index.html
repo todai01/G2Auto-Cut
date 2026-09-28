@@ -156,6 +156,28 @@
         </div>
     </div>
 
+    <!-- Поиск связки среди уже нарезанных сырых дублей — на случай, когда
+         фраза уже где-то начитана, а не записывать её заново. -->
+    <div id="varDictSearchOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Найти «<span id="varDictSearchLabel"></span>» в дублях</h3>
+                <button class="modal-close" onclick="closeVarDictSearch()" title="Закрыть">&times;</button>
+            </div>
+
+            <div id="varDictSearchPickFolder">
+                <div class="modal-hint">Выберите папку с уже нарезанными дублями (например «Chunks»).</div>
+                <button class="btn-step btn-step--confirm" onclick="pickVarConnectorSourceFolder()">Выбрать папку</button>
+            </div>
+
+            <div id="varDictSearchResults" style="display:none">
+                <input type="text" id="varDictSearchInput" class="modal-hint" style="width:100%; box-sizing:border-box; padding:10px 12px; margin-bottom:10px;"
+                       placeholder="Фильтр по имени файла..." oninput="filterVarDictSearch()">
+                <div id="varDictSearchList" class="var-dict-search-list"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- «Готовая папка с переменными»: Excel есть или нет? -->
     <div id="premadeExcelChoiceOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">

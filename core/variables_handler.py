@@ -1789,6 +1789,36 @@ class VariablesMixin:
                 break
         return {"connectors": getattr(self, 'var_connectors', [])}
 
+    def pick_var_connector_source_folder(self):
+        """Связку можно не записывать отдельным файлом, а найти уже среди
+        сырых дублей (её тоже могли начитать в той же сессии) — выбираем
+        папку с дублями один раз, дальше ищем/слушаем по списку."""
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+        files = [f for f in os.listdir(folder[0])
+                 if os.path.isfile(os.path.join(folder[0], f)) and f.lower().endswith(('.wav', '.mp3'))]
+        if not files:
+            return {"error": "В выбранной папке нет аудиофайлов."}
+        files.sort(key=_numeric_sort_key)
+        self.var_connector_search_dir = folder[0]
+        return {"folder": folder[0], "files": files}
+
+    def set_var_connector_from_raw(self, key, filename):
+        """Назначает связке уже существующий сырой дубль (не копируем — тот
+        же путь, что и в исходной папке; дубли там никуда не денутся)."""
+        folder = getattr(self, 'var_connector_search_dir', None)
+        if not folder:
+            return {"error": "Сначала выберите папку с сырыми дублями."}
+        src = os.path.join(folder, filename)
+        if not os.path.exists(src):
+            return {"error": "Файл не найден — возможно, папку переместили."}
+        for c in getattr(self, 'var_connectors', []):
+            if c['key'] == key:
+                c['path'] = src
+                break
+        return {"connectors": getattr(self, 'var_connectors', [])}
+
     def get_var_template_state(self):
         return {
             "extra_tags": getattr(self, 'var_extra_tags', []),

@@ -1126,7 +1126,10 @@ let isProcessing = false;
                         <div class="var-dict-connector__label">«${escapeHtml(c.label)}»</div>
                         <div class="var-dict-connector__file">${c.path ? escapeHtml(c.path.split(/[\\/]/).pop()) : 'Аудио не выбрано'}</div>
                     </div>
-                    <button class="btn-tile btn-tile--sub" onclick="pickVarConnectorAudio('${c.key}')">Загрузить</button>
+                    <div class="var-dict-connector__actions">
+                        <button class="btn-tile btn-tile--sub" onclick="pickVarConnectorAudio('${c.key}')">Загрузить</button>
+                        <button class="btn-tile btn-tile--sub" onclick="openVarDictSearch('${c.key}', '${escapeHtml(c.label).replace(/'/g, "\\'")}')">Найти в записи</button>
+                    </div>
                 </div>
             `).join('') || '<div class="modal-hint">В таблице нет отдельных связок.</div>';
         }
@@ -1148,6 +1151,75 @@ let isProcessing = false;
         function continueAfterVarDict() {
             closeVarDictConnectors();
             initVarBatchPremade();
+        }
+
+        // === Поиск связки среди уже нарезанных сырых дублей ===
+        let varDictSearchKey = null;
+        let varDictSearchFolder = null;
+        let varDictSearchFiles = [];
+
+        function openVarDictSearch(key, label) {
+            varDictSearchKey = key;
+            document.getElementById('varDictSearchLabel').innerText = label;
+            let havefolder = !!varDictSearchFolder;
+            document.getElementById('varDictSearchPickFolder').style.display = havefolder ? 'none' : 'block';
+            document.getElementById('varDictSearchResults').style.display = havefolder ? 'block' : 'none';
+            if (havefolder) renderVarDictSearchList(varDictSearchFiles);
+            document.getElementById('varDictSearchOverlay').style.display = 'flex';
+        }
+
+        function closeVarDictSearch() {
+            document.getElementById('varDictSearchOverlay').style.display = 'none';
+        }
+
+        async function pickVarConnectorSourceFolder() {
+            let res = await pywebview.api.pick_var_connector_source_folder();
+            if (res && res.error) {
+                if (res.error !== 'cancel') showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            varDictSearchFolder = res.folder;
+            varDictSearchFiles = res.files || [];
+            document.getElementById('varDictSearchPickFolder').style.display = 'none';
+            document.getElementById('varDictSearchResults').style.display = 'block';
+            document.getElementById('varDictSearchInput').value = '';
+            renderVarDictSearchList(varDictSearchFiles);
+        }
+
+        function renderVarDictSearchList(files) {
+            let list = document.getElementById('varDictSearchList');
+            if (!files.length) {
+                list.innerHTML = '<div class="modal-hint">Ничего не найдено.</div>';
+                return;
+            }
+            list.innerHTML = files.map(f => `
+                <div class="var-dict-search-item">
+                    <span class="var-dict-search-item__name">${escapeHtml(f)}</span>
+                    <button class="btn-tile btn-tile--sub" onclick="playVarDictSearchItem('${escapeHtml(f).replace(/'/g, "\\'")}')" title="Прослушать"><svg class="icon"><use href="#icon-play"></use></svg></button>
+                    <button class="btn-tile btn-tile--primary" onclick="chooseVarDictSearchItem('${escapeHtml(f).replace(/'/g, "\\'")}')">Выбрать</button>
+                </div>
+            `).join('');
+        }
+
+        function filterVarDictSearch() {
+            let q = document.getElementById('varDictSearchInput').value.trim().toLowerCase();
+            let filtered = q ? varDictSearchFiles.filter(f => f.toLowerCase().includes(q)) : varDictSearchFiles;
+            renderVarDictSearchList(filtered);
+        }
+
+        async function playVarDictSearchItem(filename) {
+            let sep = varDictSearchFolder.includes('\\') ? '\\' : '/';
+            await pywebview.api.play_specific_file(varDictSearchFolder + sep + filename);
+        }
+
+        async function chooseVarDictSearchItem(filename) {
+            let res = await pywebview.api.set_var_connector_from_raw(varDictSearchKey, filename);
+            if (res && res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            closeVarDictSearch();
+            renderVarDictConnectors({ extra_tags: (await pywebview.api.get_var_template_state()).extra_tags, connectors: res.connectors });
         }
 
         let pendingPremadeAfterExcel = false;
