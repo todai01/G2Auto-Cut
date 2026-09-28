@@ -251,6 +251,12 @@ let isProcessing = false;
         // можно вернуться к работе одной кнопкой, ничего не загружая заново.
         let workspaceReady = false;
 
+        // Вопрос «Хотите продолжить проект?» — спрашиваем только один раз за
+        // текущий запуск программы. Если пользователь уже ответил (неважно,
+        // «Продолжить» или «Начать заново»), повторные нажатия «Начать
+        // работу» на заставке сразу ведут в меню, без повторного вопроса.
+        let resumePromptAnswered = false;
+
         function showSplash() {
             showStage('stage0-splash');
             loadRecentProjects();
@@ -321,6 +327,11 @@ let isProcessing = false;
         // сперва спрашиваем, продолжать ли его, а не сразу открываем
         // подготовку нового.
         async function enterApp() {
+            if (resumePromptAnswered) {
+                showMenu();
+                return;
+            }
+
             let items = [];
             try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
             recentProjectsCache = items || [];
@@ -334,11 +345,13 @@ let isProcessing = false;
         }
 
         async function confirmResumeProject() {
+            resumePromptAnswered = true;
             document.getElementById('resumeProjectOverlay').style.display = 'none';
             await openRecentProject(0);
         }
 
         function declineResumeProject() {
+            resumePromptAnswered = true;
             document.getElementById('resumeProjectOverlay').style.display = 'none';
             showMenu();
         }
