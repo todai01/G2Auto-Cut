@@ -1734,6 +1734,7 @@ class VariablesMixin:
         extra_tags = []
         connectors = []
         seen_tags = set()
+        extra_tag_col = {}  # tag_key -> номер колонки (для сбора списка значений ниже)
 
         for col_idx, cell in enumerate(header):
             text = str(cell).strip() if cell is not None else ''
@@ -1750,6 +1751,7 @@ class VariablesMixin:
                     if tag_key not in seen_tags:
                         seen_tags.add(tag_key)
                         extra_tags.append({"key": tag_key, "label": _VAR_EXTRA_LABELS.get(tag_key, tag_key)})
+                        extra_tag_col[tag_key] = col_idx
             else:
                 # Связка (start/start_2/...) — подпись берём из первой
                 # непустой ячейки данных под этой колонкой (сама колонка
@@ -1766,8 +1768,25 @@ class VariablesMixin:
         if not columns:
             return {"error": "Не нашёл ни одной подписанной колонки в первой строке таблицы."}
 
+        # Список значений на каждую доп.категорию — в порядке появления
+        # в таблице, без повторов. Автоматически присваиваем их сырым
+        # дублям по порядку отправки (см. sum_stage1_send), вместо того
+        # чтобы спрашивать у юзера, какое именно значение он услышал.
+        extra_tag_values = {}
+        for tag_key, col_idx in extra_tag_col.items():
+            seen_vals = set()
+            values = []
+            for r in data_rows:
+                if col_idx < len(r) and r[col_idx] not in (None, ''):
+                    v = str(r[col_idx]).strip()
+                    if v not in seen_vals:
+                        seen_vals.add(v)
+                        values.append(v)
+            extra_tag_values[tag_key] = values
+
         self.var_template_columns = columns
         self.var_extra_tags = extra_tags
+        self.var_extra_tag_values = extra_tag_values
         self.var_connectors = connectors
 
         return {
@@ -1964,6 +1983,16 @@ class VariablesMixin:
         if key in SUM_TIER_LABELS:
             return SUM_TIER_LABELS[key]
         return self._var_extra_tag_label(key)
+
+    def _var_next_tag_value(self, tag_key, position):
+        """N-е (по счёту отправки) значение из списка возможных для этой
+        доп.категории — присваиваем по порядку, не спрашивая юзера, какое
+        именно значение он услышал (см. sum_stage1_send). Список кончился —
+        крутим по кругу, чем ничего не терять."""
+        values = getattr(self, 'var_extra_tag_values', {}).get(tag_key) or []
+        if not values:
+            return None
+        return values[position % len(values)]
 
     def _sum_tier_excluded(self, tier, counts=None):
         """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
@@ -2308,14 +2337,27 @@ class VariablesMixin:
 
         target_dir = self._sum_stage1_raw_dir(tier)
         os.makedirs(target_dir, exist_ok=True)
-        # Реальное имя дадим при сборке эталона — здесь только не потерять
-        # и не перезаписать соседний сырой кусок с тем же именем дубля.
-        save_name = f"{int(time.time() * 1000)}_{source_name}"
+        if not hasattr(self, 'constructor_tier_files'):
+            self.constructor_tier_files = {}
+
+        # Для ярусов Суммы имя дадим позже, при сборке эталона (на слух).
+        # Для доп.категорий словаря (mark/year/...) значений много и они
+        # чёткие — вместо этого сразу присваиваем следующее по порядку
+        # значение из списка, что нашли в таблице, с коротким префиксом
+        # «сырая», не спрашивая юзера, что именно он услышал.
+        ext = os.path.splitext(source_name)[1] or '.wav'
+        position = len(self.constructor_tier_files.get(tier, []))
+        value = self._var_next_tag_value(tier, position)
+        if value is not None:
+            safe_value = re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
+            save_name = f"{int(time.time() * 1000)}_сырая_{safe_value}{ext}"
+        else:
+            # Ярус Суммы (или доп.категория без списка значений) — прежнее
+            # поведение: не потерять и не перезаписать соседний кусок.
+            save_name = f"{int(time.time() * 1000)}_{source_name}"
         target_path = os.path.join(target_dir, save_name)
         shutil.copy(active_file, target_path)
 
-        if not hasattr(self, 'constructor_tier_files'):
-            self.constructor_tier_files = {}
         self.constructor_tier_files.setdefault(tier, []).append(target_path)
 
         # Запоминаем только ПОСЛЕДНЮЮ отправку — «Отменить» откатывает один
@@ -2323,7 +2365,9 @@ class VariablesMixin:
         self.sum_stage1_last_send = {"tier": tier, "raw_path": target_path}
 
         self._sum_advance_pointer()
-        webview.windows[0].evaluate_js(f"showToast('➜ Отправлено в «{self._category_label(tier)}»');")
+        label = self._category_label(tier)
+        toast = f'➜ Отправлено в «{label}»: {value}' if value is not None else f'➜ Отправлено в «{label}»'
+        webview.windows[0].evaluate_js(f"showToast('{toast}');")
         return self.get_ui_state()
 
     def sum_stage1_undo(self):
