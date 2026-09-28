@@ -1377,53 +1377,69 @@ let isProcessing = false;
             if (stage1Panel) stage1Panel.style.display = sumWorkflowStage === 1 ? 'flex' : 'none';
             if (stage2Panel) stage2Panel.style.display = sumWorkflowStage === 2 ? 'flex' : 'none';
 
-            let showStage2Embed = !!sumState.active && sumWorkflowStage === 2;
-            if (showStage2Embed) {
+            if (!sumState.active) {
+                setSumEmbedMode('text');
+            } else if (sumWorkflowStage === 2) {
                 renderSumStage2(sumState.stage2_data);
+                setSumEmbedMode('stage2');
             } else {
-                renderSumCategoryGrid(sumState.active_tiers || [], sumState.counts);
+                renderSumStage1Columns(sumState.stage1_data);
+                setSumEmbedMode('stage1');
             }
-            showSumStage2Embed(showStage2Embed);
         }
 
-        // Этап 2 подменяет собой область с текстом фразы (та же зона, где
-        // в остальных режимах читается строка Excel) — переключаем видимость,
+        // Этап 1 и Этап 2 подменяют собой область с текстом фразы (та же
+        // зона, где в остальных режимах читается строка Excel) — оба в
+        // одном визуальном формате (ряд колонок), переключаем видимость,
         // а не два разных экрана.
-        function showSumStage2Embed(on) {
-            let embed = document.getElementById('sumStage2Embed');
+        function setSumEmbedMode(mode) { // 'text' | 'stage1' | 'stage2'
             let text = document.getElementById('phraseText');
             let hint = document.getElementById('phraseHint');
-            if (embed) embed.style.display = on ? 'flex' : 'none';
-            if (text) text.style.display = on ? 'none' : '';
-            if (hint) hint.style.display = on ? 'none' : '';
+            let stage1 = document.getElementById('sumStage1Embed');
+            let stage2 = document.getElementById('sumStage2Embed');
+            if (text) text.style.display = mode === 'text' ? '' : 'none';
+            if (hint) hint.style.display = mode === 'text' ? '' : 'none';
+            if (stage1) stage1.style.display = mode === 'stage1' ? 'flex' : 'none';
+            if (stage2) stage2.style.display = mode === 'stage2' ? 'flex' : 'none';
         }
 
-        // === Этап 1: конвейер-категории — мышью (клик) или клавиатурой
-        // (←/→ выбрать категорию, ↑ отправить в неё, ↓ отменить последнюю
-        // отправку), как на зарисовке автора. ===
-        const SUM_CATEGORY_VARIANT = {
-            millions: 'btn-tile--var', hundred_thousands: 'btn-tile--mode',
-            hundreds: 'btn-tile--primary', thousands: 'btn-tile--good', tenge: 'btn-tile--info'
-        };
-        let sumStage1Tiers = [];
+        // === Этап 1: колонки-категории в том же формате, что рулетки
+        // Этапа 2 — каждая колонка списком показывает, что уже туда
+        // отправлено. Выбор категории — клик по колонке или клавиатура
+        // (←/→ выбрать, ↑ отправить в неё текущий дубль, ↓ отменить
+        // последнюю отправку), как на зарисовке автора. ===
+        let sumStage1Tiers = []; // [{key, label}], порядок = порядок колонок
         let sumStage1SelectedIdx = 0;
-        function renderSumCategoryGrid(activeTiers, counts) {
-            sumStage1Tiers = activeTiers || [];
+        function renderSumStage1Columns(data) {
+            let wrap = document.getElementById('sumStage1Columns');
+            if (!data || !wrap) return;
+
+            let tiersOrder = Object.keys(data.tiers);
+            sumStage1Tiers = tiersOrder.map(key => ({ key, label: data.tiers[key].label }));
             if (sumStage1SelectedIdx >= sumStage1Tiers.length) sumStage1SelectedIdx = 0;
-            let grid = document.getElementById('sumCategoryGrid');
-            if (!grid) return;
-            grid.innerHTML = sumStage1Tiers.map((t, i) => `
-                <button class="btn-tile sum-category-btn ${SUM_CATEGORY_VARIANT[t.key] || ''} ${i === sumStage1SelectedIdx ? 'sum-category-btn--selected' : ''}"
-                        onclick="sumStage1SelectAndSend(${i})">
-                    <span>${escapeHtml(t.label)}</span>
-                    <span class="sum-category-btn__count">${(counts && counts[t.label]) || 0}</span>
-                </button>
-            `).join('');
+
+            wrap.innerHTML = tiersOrder.map((tier, i) => {
+                let info = data.tiers[tier];
+                let cls = 'reel-col sum-stage1-col'
+                    + (i === sumStage1SelectedIdx ? ' sum-stage1-col--selected' : '');
+                // Тут ещё «сырые» имена дублей, не готовые числа — humanizeTierItem
+                // не подходит (дописал бы «тыс»/«млн» к случайным цифрам в имени
+                // файла). Просто показываем имя без расширения.
+                let itemsHtml = info.items.slice(-8).reverse()
+                    .map(t => `<div class="sum-stage1-item">${escapeHtml(t.replace(/\.(wav|mp3)$/i, ''))}</div>`).join('');
+                return `
+                <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)'}"
+                     onclick="sumStage1SelectAndSend(${i})">
+                    <div class="reel-col__label">${escapeHtml(info.label)}</div>
+                    <div class="sum-stage1-list">${itemsHtml || '<div class="sum-stage1-item sum-stage1-item--empty">пусто</div>'}</div>
+                    <div class="reel-col__count">${info.count} шт.</div>
+                </div>`;
+            }).join('');
         }
         function sumStage1MoveSelection(dir) {
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
-            renderSumCategoryGrid(sumStage1Tiers, lastSumState ? lastSumState.counts : null);
+            renderSumStage1Columns(lastSumState ? lastSumState.stage1_data : null);
         }
         async function sumStage1SendSelected() {
             if (!sumStage1Tiers.length) return;

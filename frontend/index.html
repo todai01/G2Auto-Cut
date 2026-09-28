@@ -923,6 +923,15 @@
                             <div class="hero-phrase copyable" id="phraseText" onclick="copyRawText(this.innerText)">Загрузите Excel</div>
                             <div class="hint-copy" id="phraseHint">Кликните по тексту, чтобы скопировать</div>
 
+                            <!-- Этап 1 режима «Суммы»: подменяет текст фразы, пока включён —
+                                 тот же формат ряда колонок, что и у Этапа 2 ниже. -->
+                            <div id="sumStage1Embed" class="sum-stage2-embed" style="display:none">
+                                <div class="sum-stage2-embed__head">
+                                    <span class="sum-stage2-embed__label">Этап 1 · сортировка по категориям</span>
+                                </div>
+                                <div class="sum-stage2-reels" id="sumStage1Columns"></div>
+                            </div>
+
                             <!-- Этап 2 режима «Суммы»: подменяет текст фразы, пока включён -->
                             <div id="sumStage2Embed" class="sum-stage2-embed" style="display:none">
                                 <div class="sum-stage2-embed__head">
@@ -1084,8 +1093,7 @@
                              Мышью — клик по категории, либо клавиатурой: ←/→ выбор
                              категории, ↑ отправить, ↓ отменить последнюю отправку. -->
                         <div id="sumStage1Panel" class="action-col" style="display:none">
-                            <div class="sum-target">Услышали сумму — выберите категорию (клик, или &larr;/&rarr; + &uarr;)</div>
-                            <div class="tile-row sum-category-grid" id="sumCategoryGrid"></div>
+                            <div class="sum-target">Услышали сумму — выберите категорию в тексте выше (клик, или &larr;/&rarr; + &uarr;)</div>
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>&darr;</kbd></button>
                                 <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>

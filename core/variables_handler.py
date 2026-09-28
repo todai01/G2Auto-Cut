@@ -1903,7 +1903,29 @@ class VariablesMixin:
         }
         if result["workflow_stage"] == 2:
             result["stage2_data"] = self._sum_stage2_state()
+        else:
+            result["stage1_data"] = self._sum_stage1_state()
         return result
+
+    def _sum_stage1_state(self):
+        """Этап 1 показывается в том же формате, что и Этап 2 — рядом
+        колонок-категорий, только тут они просто перечисляют уже
+        отправленные на слух сырые файлы (без рулеток — крутить в них
+        нечего). Какая колонка сейчас выбрана — решает сам экран (чисто
+        визуальный курсор, ←/→), сервер это не хранит."""
+        active_tiers = self._sum_active_logic_tiers()
+        tiers = {}
+        for t in active_tiers:
+            d = self._sum_stage1_raw_dir(t)
+            files = []
+            if os.path.isdir(d):
+                files = sorted(os.listdir(d), key=lambda f: os.path.getmtime(os.path.join(d, f)))
+            # Имя файла — "<таймстамп>_<исходное имя дубля>": для показа
+            # хватает исходного имени, метка времени пользователю не нужна.
+            items = [f.split('_', 1)[1] if '_' in f else f for f in files]
+            tiers[t] = {"label": SUM_TIER_LABELS[t], "items": items, "count": len(items)}
+
+        return {"workflow_stage": 1, "tiers": tiers}
 
     def toggle_sum_stage2(self, active):
         """Кнопка «Логика 2»: Миллионы + Сотни тысяч + Тенге, без «Сотни» и
