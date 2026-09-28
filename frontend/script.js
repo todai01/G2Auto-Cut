@@ -1246,8 +1246,11 @@ let isProcessing = false;
             if (sumCheck) sumCheck.checked = true;
 
             updateUI(state);
-            applySumModeLayout();
+            // showWorkspace() сбрасывает embedBtnId на общий 'btnEmbedAudacity' —
+            // applySumModeLayout() должен идти ПОСЛЕ неё, иначе кнопка
+            // «Прикрепить Audacity» режима «Суммы» останется ненайденной.
             showWorkspace();
+            applySumModeLayout();
             await attachEmbeddedAudacity(true);
         }
 
@@ -1422,6 +1425,14 @@ let isProcessing = false;
             show('standardActions', !sumModeActive);
             show('sumManualActions', sumModeActive);
             if (sumModeActive) show('varBatchActions', false);
+
+            // Кнопка «Прикрепить Audacity» — своя для режима «Суммы»: если
+            // забыли открыть Audacity заранее (см. sendToAudacity/C) и
+            // открыли уже после, автовживление больше не срабатывает само
+            // по себе, нужна ручная кнопка, а у обычного экрана она —
+            // #btnEmbedAudacity, спрятанный в другой, скрытой сейчас
+            // панели действий.
+            embedBtnId = sumModeActive ? 'sumEmbedAudacityBtn' : 'btnEmbedAudacity';
 
             let mergePanel = document.querySelector('.merge-panel');
             if (mergePanel && sumModeActive) mergePanel.style.display = 'none';
