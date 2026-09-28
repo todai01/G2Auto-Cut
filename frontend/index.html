@@ -135,6 +135,28 @@
         </div>
     </div>
 
+    <!-- «Готовая папка с переменными»: Этап 1 (сортировка) или Этап 2 (сборка)? -->
+    <div id="premadeStageChoiceOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Какой этап нужен?</h3>
+                <button class="modal-close" onclick="closePremadeStageChoice()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Start/end тут не нужны — они пригодятся только на Этапе 2 внутри самого экрана.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="premadeStageChoice(1)">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
+                    <div><span class="option-title">Этап 1 · Сортировка</span><span class="option-desc">Выбрать папку с дублями и раскидать по категориям</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="premadeStageChoice(2)">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
+                    <div><span class="option-title">Этап 2 · Сборка эталона</span><span class="option-desc">Выбрать папку проекта, где уже есть «Суммы_сырые»</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Продолжить недавний проект? — всплывает перед экраном подготовки -->
     <div id="resumeProjectOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -723,8 +745,8 @@
                     <button class="mode-card mode-card--good rise" style="--d: 4" onclick="initVarBatchPremade()">
                         <span class="mode-card__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                         <span class="mode-card__title">Готовая папка с переменными</span>
-                        <span class="mode-card__desc">Загрузить уже рассортированные суммы с диска вместе с файлами start.wav и end.wav.</span>
-                        <span class="mode-card__go">Выбрать папку &#8594;</span>
+                        <span class="mode-card__desc">Двухэтапная сортировка сумм: сначала раскидать дубли по категориям, потом собрать эталон.</span>
+                        <span class="mode-card__go">Выбрать этап &#8594;</span>
                     </button>
 
                     <button class="mode-card mode-card--info rise" style="--d: 5" onclick="startConstructor()">
@@ -1058,11 +1080,14 @@
 
                         <div id="sumCounts" class="sum-counts sum-counts--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам"></div>
 
-                        <!-- Этап 1: на слух раскидать дубли по сырым папкам категорий -->
+                        <!-- Этап 1: на слух раскидать дубли по сырым папкам категорий.
+                             Мышью — клик по категории, либо клавиатурой: ←/→ выбор
+                             категории, ↑ отправить, ↓ отменить последнюю отправку. -->
                         <div id="sumStage1Panel" class="action-col" style="display:none">
-                            <div class="sum-target">Услышали сумму — жмите категорию</div>
+                            <div class="sum-target">Услышали сумму — выберите категорию (клик, или &larr;/&rarr; + &uarr;)</div>
                             <div class="tile-row sum-category-grid" id="sumCategoryGrid"></div>
                             <div class="tile-row">
+                                <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>&darr;</kbd></button>
                                 <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>
                                 <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить <kbd>M</kbd></button>
                                 <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>

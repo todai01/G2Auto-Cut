@@ -747,7 +747,7 @@ let isProcessing = false;
             }
 
             if (openPremadeAfter) {
-                continueInitVarBatchPremade(null);
+                showPremadeStageChoice();
             }
         }
 
@@ -1088,9 +1088,7 @@ let isProcessing = false;
                 document.getElementById('premadeExcelChoiceOverlay').style.display = 'flex';
                 return;
             }
-            // Пропускаем выбор окна проекта, так как данные берутся с диска
-            // и Python сам создаст новый проект для конвейера.
-            continueInitVarBatchPremade(null);
+            showPremadeStageChoice();
         }
 
         function closePremadeExcelChoice() {
@@ -1105,7 +1103,44 @@ let isProcessing = false;
 
         function premadeExcelChoiceNo() {
             closePremadeExcelChoice();
-            continueInitVarBatchPremade(null);
+            showPremadeStageChoice();
+        }
+
+        // «Готовая папка с переменными»: Этап 1 (сортировка на слух по
+        // категориям, без start/end) или Этап 2 (сборка эталона из уже
+        // отсортированного на Этапе 1). Полностью заменяет старую схему,
+        // которая требовала готовую папку с уже разложенными ярусами и
+        // обязательные start.wav/end.wav.
+        function showPremadeStageChoice() {
+            document.getElementById('premadeStageChoiceOverlay').style.display = 'flex';
+        }
+        function closePremadeStageChoice() {
+            document.getElementById('premadeStageChoiceOverlay').style.display = 'none';
+        }
+        async function premadeStageChoice(stage) {
+            closePremadeStageChoice();
+            updateProgress(0, 'Загрузка папки...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = stage === 2
+                ? await pywebview.api.sum_stage2_load_project()
+                : await pywebview.api.sum_stage1_load_folder();
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (state && state.error) {
+                if (state.error !== 'cancel') showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            // Бэкенд уже включил Режим «Суммы» и нужный этап сам — синхронизируем
+            // клиентские флаги и раскладку экрана, как будто галочку нажали руками.
+            sumModeActive = true;
+            let sumCheck = document.getElementById('sumModeCheck');
+            if (sumCheck) sumCheck.checked = true;
+
+            updateUI(state);
+            applySumModeLayout();
+            showWorkspace();
+            await attachEmbeddedAudacity(true);
         }
 
         // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ОТКРЫТЬ ГОТОВЫЕ ЧАНКИ" ---
@@ -1346,7 +1381,7 @@ let isProcessing = false;
             if (showStage2Embed) {
                 renderSumStage2(sumState.stage2_data);
             } else {
-                renderSumCategoryGrid(sumState.active_tiers || []);
+                renderSumCategoryGrid(sumState.active_tiers || [], sumState.counts);
             }
             showSumStage2Embed(showStage2Embed);
         }
@@ -1363,20 +1398,51 @@ let isProcessing = false;
             if (hint) hint.style.display = on ? 'none' : '';
         }
 
-        // === Этап 1: кнопки-категории ===
+        // === Этап 1: конвейер-категории — мышью (клик) или клавиатурой
+        // (←/→ выбрать категорию, ↑ отправить в неё, ↓ отменить последнюю
+        // отправку), как на зарисовке автора. ===
         const SUM_CATEGORY_VARIANT = {
             millions: 'btn-tile--var', hundred_thousands: 'btn-tile--mode',
             hundreds: 'btn-tile--primary', thousands: 'btn-tile--good', tenge: 'btn-tile--info'
         };
-        function renderSumCategoryGrid(activeTiers) {
+        let sumStage1Tiers = [];
+        let sumStage1SelectedIdx = 0;
+        function renderSumCategoryGrid(activeTiers, counts) {
+            sumStage1Tiers = activeTiers || [];
+            if (sumStage1SelectedIdx >= sumStage1Tiers.length) sumStage1SelectedIdx = 0;
             let grid = document.getElementById('sumCategoryGrid');
             if (!grid) return;
-            grid.innerHTML = activeTiers.map(t => `
-                <button class="btn-tile ${SUM_CATEGORY_VARIANT[t.key] || ''}" onclick="sumStage1Send('${t.key}')">${escapeHtml(t.label)}</button>
+            grid.innerHTML = sumStage1Tiers.map((t, i) => `
+                <button class="btn-tile sum-category-btn ${SUM_CATEGORY_VARIANT[t.key] || ''} ${i === sumStage1SelectedIdx ? 'sum-category-btn--selected' : ''}"
+                        onclick="sumStage1SelectAndSend(${i})">
+                    <span>${escapeHtml(t.label)}</span>
+                    <span class="sum-category-btn__count">${(counts && counts[t.label]) || 0}</span>
+                </button>
             `).join('');
+        }
+        function sumStage1MoveSelection(dir) {
+            if (!sumStage1Tiers.length) return;
+            sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
+            renderSumCategoryGrid(sumStage1Tiers, lastSumState ? lastSumState.counts : null);
+        }
+        async function sumStage1SendSelected() {
+            if (!sumStage1Tiers.length) return;
+            await sumStage1Send(sumStage1Tiers[sumStage1SelectedIdx].key);
+        }
+        async function sumStage1SelectAndSend(idx) {
+            sumStage1SelectedIdx = idx;
+            await sumStage1SendSelected();
         }
         async function sumStage1Send(tier) {
             let state = await pywebview.api.sum_stage1_send(tier);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
+        async function sumStage1Undo() {
+            let state = await pywebview.api.sum_stage1_undo();
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
@@ -2485,6 +2551,10 @@ let isProcessing = false;
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2SendToAudacity(); } else sendToAudacity(); }
                 else if (e.code === 'KeyM' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumMergeWithNext(); }
+                else if (e.code === 'ArrowLeft' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(-1); }
+                else if (e.code === 'ArrowRight' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(1); }
+                else if (e.code === 'ArrowUp' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1SendSelected(); }
+                else if (e.code === 'ArrowDown' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1Undo(); }
                 return;
             }
 
@@ -2497,6 +2567,10 @@ let isProcessing = false;
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2Save(); } else processAction('good'); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) { if (sumWorkflowStage === 2) sumStage2SendToAudacity(); } else processAction('variable'); }
             else if (e.code === 'KeyM' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumMergeWithNext(); }
+            else if (e.code === 'ArrowLeft' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(-1); }
+            else if (e.code === 'ArrowRight' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1MoveSelection(1); }
+            else if (e.code === 'ArrowUp' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1SendSelected(); }
+            else if (e.code === 'ArrowDown' && sumModeActive && sumWorkflowStage === 1) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

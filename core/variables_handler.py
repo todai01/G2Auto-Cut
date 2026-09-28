@@ -7,6 +7,12 @@ import ctypes
 import webview
 from utils.file_utils import FileUtils
 from pydub import AudioSegment, silence
+from core import project_state
+
+# Папки-«служебные» имена: если пользователь выбрал одну из них саму,
+# рабочей папкой проекта берём её родителя, а не её саму — иначе
+# «Суммы_сырые»/«Проверенные» создавались бы вложенными друг в друга.
+_STAGE1_SCAN_EXCLUDE = {'chunks', 'переменные', 'проверенные', 'суммы_сырые'}
 
 # --- «Суммы»: особая логика каскада (Миллионы → Сотни тысяч → Сотни →
 #     Тысячи → Тенге) ---
@@ -1966,6 +1972,66 @@ class VariablesMixin:
             self.sum_stage2_enter()
         return self.get_ui_state()
 
+    def sum_stage1_load_folder(self):
+        """Вход в Этап 1 прямо с главного меню: выбираем папку с уже
+        нарезанными дублями (например «Chunks» после автосрезки, или
+        просто папка с WAV-файлами) — никакой связи с Audacity тут не
+        нужно (на Этапе 1 в Audacity вообще не заходим) и, в отличие от
+        старой «Готовой папки с переменными», start/end не спрашиваем."""
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+
+        selected_path = folder[0]
+        self.work_dir = (os.path.dirname(selected_path)
+                          if os.path.basename(selected_path).lower() in _STAGE1_SCAN_EXCLUDE
+                          else selected_path)
+        self.project_name = os.path.basename(self.work_dir)
+        project_state.apply(self, project_state.load(self.work_dir))
+
+        files = [f for f in os.listdir(selected_path)
+                 if os.path.isfile(os.path.join(selected_path, f)) and f.lower().endswith(('.wav', '.mp3'))]
+        if not files:
+            return {"error": "В выбранной папке нет аудиофайлов."}
+        files.sort(key=_numeric_sort_key)
+
+        self.chunks_data = [{"filepath": os.path.join(selected_path, f), "filename": f} for f in files]
+        self.chunk_index = 0
+        self.current_mode = 'Chunks'
+        self.raw_audio_full = None
+
+        self.toggle_sum_mode(True)
+        self.sum_workflow_stage = 1
+
+        return self.get_ui_state()
+
+    def sum_stage2_load_project(self):
+        """Вход в Этап 2 прямо с главного меню: выбираем папку проекта —
+        ту же, что указывали на Этапе 1 — в ней уже должна лежать
+        «Суммы_сырые» с рассортированными дублями, из которых теперь
+        собираем эталон."""
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+
+        selected_path = folder[0]
+        self.work_dir = (os.path.dirname(selected_path)
+                          if os.path.basename(selected_path).lower() in _STAGE1_SCAN_EXCLUDE
+                          else selected_path)
+        self.project_name = os.path.basename(self.work_dir)
+        project_state.apply(self, project_state.load(self.work_dir))
+
+        if not os.path.isdir(self._sum_stage1_raw_root()):
+            return {"error": f"В папке «{self.work_dir}» нет «Суммы_сырые» — сначала пройдите Этап 1 "
+                              f"и отсортируйте хотя бы несколько сумм по категориям."}
+
+        self.current_mode = 'Chunks'
+        self.toggle_sum_mode(True)
+        self.sum_workflow_stage = 2
+        self.sum_stage2_enter()
+
+        return self.get_ui_state()
+
     def sum_stage1_send(self, tier):
         """Этап 1: текущий дубль уходит КАК ЕСТЬ (без Audacity, без имени
         из Excel) в сырую папку выбранной категории — программа уже
@@ -1982,10 +2048,43 @@ class VariablesMixin:
         # Реальное имя дадим на Этапе 2 — здесь только не потерять и не
         # перезаписать соседний сырой кусок с тем же именем дубля.
         save_name = f"{int(time.time() * 1000)}_{source_name}"
-        shutil.copy(active_file, os.path.join(target_dir, save_name))
+        target_path = os.path.join(target_dir, save_name)
+        shutil.copy(active_file, target_path)
+
+        # Запоминаем только ПОСЛЕДНЮЮ отправку — «Отменить» откатывает один
+        # шаг назад, не целую историю.
+        self.sum_stage1_last_send = {"tier": tier, "raw_path": target_path}
 
         self._sum_advance_pointer()
         webview.windows[0].evaluate_js(f"showToast('➜ Отправлено в «{SUM_TIER_LABELS[tier]}»');")
+        return self.get_ui_state()
+
+    def sum_stage1_undo(self):
+        """«Отменить» (Этап 1): убирает файл, отправленный последним
+        нажатием категории, из сырой папки и возвращает очередь дублей на
+        шаг назад — сам дубль никуда не делся (Этап 1 копирует, а не
+        перемещает), поэтому достаточно просто сдвинуть указатель обратно."""
+        last = getattr(self, 'sum_stage1_last_send', None)
+        if not last:
+            return {"error": "Отменять нечего."}
+
+        try:
+            if os.path.exists(last['raw_path']):
+                os.remove(last['raw_path'])
+        except OSError as e:
+            return {"error": f"Не удалось убрать файл из категории: {e}"}
+
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            self.cascade_ptrs[cat] = max(0, self.cascade_ptrs.get(cat, 0) - 1)
+        else:
+            self.chunk_index = max(0, self.chunk_index - 1)
+        if getattr(self, 'phrases_data', None) and self.phrase_index > 0:
+            self.phrase_index -= 1
+
+        tier = last['tier']
+        self.sum_stage1_last_send = None
+        webview.windows[0].evaluate_js(f"showToast('↩️ Отменено: убрано из «{SUM_TIER_LABELS[tier]}»');")
         return self.get_ui_state()
 
     def _sum_stage2_active_tier(self):

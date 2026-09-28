@@ -1504,7 +1504,12 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 
 /* --- Этап 1 режима «Суммы»: кнопки-категории --- */
 .sum-category-grid{ flex-wrap: wrap; }
-.sum-category-grid .btn-tile{ min-width: 96px; flex: 1 1 30%; }
+.sum-category-btn{ min-width: 96px; flex: 1 1 30%; flex-direction: column; gap: 2px; height: auto; min-height: var(--control-h); padding: 8px 6px; }
+.sum-category-btn__count{ font-family: var(--font-mono); font-size: 11px; opacity: 0.75; }
+.sum-category-btn--selected{
+    outline: 2px solid currentColor; outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(255,255,255,0.06);
+}
 
 /* --- Этап 2 режима «Суммы»: рулетки встроены прямо в область текста --- */
 .sum-stage2-embed{ display: flex; flex-direction: column; gap: 12px; align-items: center; margin-top: var(--space-3); width: 100%; }
