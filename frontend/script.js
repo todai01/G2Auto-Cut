@@ -1111,43 +1111,6 @@ let isProcessing = false;
             isProcessing = false;
         }
 
-        async function startBatchNormalization() {
-            if (isProcessing) return; isProcessing = true;
-
-            updateProgress(0, 'Выбор папки и загрузка в Audacity...');
-            document.getElementById('progressContainer').style.display = 'block';
-
-            let res = await pywebview.api.prepare_batch_normalization();
-            document.getElementById('progressContainer').style.display = 'none';
-            isProcessing = false;
-
-            if (res && res.error === "cancel") return;
-            if (!res || res.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res?.error || 'Неизвестная ошибка'}`);
-                return;
-            }
-
-            // Ждем, пока пользователь настроит звук и нажмет ОК в нашем красивом алерте
-            let confirmed = await showBeautifulAlert(`🎚️ <b>Эталон загружен в Audacity</b><br><br>Файл: <b style="color: var(--blue);">${res.filename}</b><br><br>1. Настройте идеальную громкость этого файла в Audacity (Эффекты -> Нормализация или Усиление).<br>2. Вернитесь сюда и нажмите ОК, чтобы применить эту громкость ко всем <b>${res.total}</b> файлам в папке.`);
-            if (!confirmed) return;
-
-            // Пользователь нажал ОК, запускаем процесс!
-            isProcessing = true;
-            updateProgress(0, 'Чтение эталона и обработка файлов...');
-            document.getElementById('progressContainer').style.display = 'block';
-
-            let applyRes = await pywebview.api.apply_batch_normalization();
-            document.getElementById('progressContainer').style.display = 'none';
-            isProcessing = false;
-
-            if (applyRes && applyRes.error) {
-                showBeautifulAlert(`❌ <b>Ошибка нормализации</b><br><br>${applyRes.error}`);
-            } else {
-                showBeautifulAlert('✅ <b>Успешно!</b><br><br>Все файлы в папке выровнены по громкости эталона.');
-            }
-        }
-
-
         async function selectAudacityProject(hwnd) {
             document.getElementById('projectSelectorOverlay').style.display = 'none';
 

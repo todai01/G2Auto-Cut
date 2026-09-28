@@ -62,6 +62,18 @@ SUM_TIER_CAP = {'millions': 100, 'hundred_thousands': 900, 'hundreds': 900, 'tho
 SUM_LOGIC_1_TIERS = ['millions', 'hundreds', 'thousands', 'tenge']
 SUM_LOGIC_2_TIERS = ['millions', 'hundred_thousands', 'tenge']
 
+# Слово яруса, которое дописываем обратно к «голому» числу на экране
+# (сам файл на диске остаётся без слов — см. _sum_bare_digits_name).
+# «Сотни» — без слова: в тексте Excel эта сумма и раньше была голым
+# числом, дописывать нечего.
+SUM_TIER_WORD = {
+    'millions': 'млн',
+    'hundred_thousands': 'тыс',
+    'hundreds': '',
+    'thousands': 'тыс',
+    'tenge': 'тенге',
+}
+
 
 def _thousands_subtier(text):
     """«Тысячи» разбиты на два яруса с одним и тем же словом в названии —
@@ -1630,104 +1642,6 @@ class VariablesMixin:
     def load_variables_mode(self):
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Переменные'),
                                           'Переменные') if self.work_dir else self.get_ui_state()
-    def prepare_batch_normalization(self):
-        """ШАГ 1: Запрашивает папку, находит файлы и закидывает первый в Audacity как эталон"""
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return {"error": "cancel"}
-
-        target_dir = folder[0]
-        files = []
-        for root, _, filenames in os.walk(target_dir):
-            for f in filenames:
-                if f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac')):
-                    files.append(os.path.join(root, f))
-
-        if not files:
-            return {"error": "В выбранной папке нет аудиофайлов!"}
-
-        if self._block_if_audacity_ambiguous():
-            return {"error": "cancel"}
-
-        first_file = files[0]
-        self.batch_norm_files = files
-        self.batch_norm_first_file = first_file
-
-        self.audacity.send_command('SelectAll:')
-        self.audacity.send_command('RemoveTracks:')
-        self.audacity.send_command('NewMonoTrack:')
-        self.audacity.send_command(f'Import2: Filename="{os.path.abspath(first_file).replace(chr(92), "/")}"')
-        time.sleep(0.5)
-        self.audacity.send_command('SelectAll:')
-        self.audacity.send_command('ZoomSel:')
-
-        # Перехватываем фокус на Audacity
-        windows = self.get_audacity_windows()
-        if windows:
-            self._force_foreground(windows[0]['hwnd'])
-
-        return {"status": "ready", "total": len(files), "filename": os.path.basename(first_file)}
-
-    def apply_batch_normalization(self):
-        """ШАГ 2: Экспортирует эталон из Audacity, замеряет громкость и подгоняет под нее всю папку"""
-        if not hasattr(self, 'batch_norm_files') or not self.batch_norm_files:
-            return {"error": "Нет файлов для обработки"}
-
-        temp_path = os.path.join(os.path.dirname(self.batch_norm_first_file), "temp_ref_norm.wav")
-        safe_temp_path = os.path.abspath(temp_path).replace('\\', '/')
-
-        self.audacity.send_command('SelectAll:')
-        self.audacity.send_command(f'Export2: Filename="{safe_temp_path}" NumChannels=1')
-        time.sleep(0.6)
-
-        if not os.path.exists(temp_path):
-            return {"error": "Не удалось экспортировать эталон из Audacity."}
-
-        try:
-            ref_audio = AudioSegment.from_file(temp_path)
-            target_dbfs = ref_audio.dBFS
-
-            # Перезаписываем первый (эталонный) файл его же улучшенной копией из Audacity
-            ref_audio.export(self.batch_norm_first_file, format="wav")
-
-            total = len(self.batch_norm_files)
-            for i, filepath in enumerate(self.batch_norm_files):
-                if filepath == self.batch_norm_first_file:
-                    continue  # Его мы уже перезаписали выше
-
-                if not os.path.exists(filepath):
-                    continue
-
-                chunk_audio = AudioSegment.from_file(filepath)
-                # Игнорируем абсолютную тишину, чтобы не выкрутить фоновый шум на максимум
-                if chunk_audio.dBFS > -80.0:
-                    change_in_dbfs = target_dbfs - chunk_audio.dBFS
-                    normalized_audio = chunk_audio.apply_gain(change_in_dbfs)
-                    normalized_audio.export(filepath, format="wav")
-
-                if i % 5 == 0:
-                    pct = int((i / total) * 100)
-                    try:
-                        webview.windows[0].evaluate_js(
-                            f"updateProgress({pct}, 'Нормализация громкости: {i}/{total}...');")
-                    except:
-                        pass
-
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
-
-            if not self._block_if_audacity_ambiguous():
-                self.audacity.send_command('SelectAll:')
-                self.audacity.send_command('RemoveTracks:')
-
-            self.batch_norm_files = []
-            return {"status": "success"}
-        except Exception as e:
-            return {"error": f"Ошибка нормализации: {str(e)}"}
-
     # ==================================================================
     #  «РЕЖИМ СУММЫ» (ручной): работает поверх обычной нарезки Chunks —
     #  никакой готовой папки «Суммы» заранее не нужно, программа сама
@@ -1880,6 +1794,28 @@ class VariablesMixin:
             save_name = custom if custom.lower().endswith('.wav') else f"{custom}.wav"
         return re.sub(r'[<>:"/\\|?*]', '', save_name)
 
+    @staticmethod
+    def _sum_bare_digits_name(name):
+        """Имя файла для папки яруса «Суммы»: только цифры + расширение —
+        то же самое, что делает утилита «Очистить названия файлов», но
+        сразу при сохранении, а не отдельным шагом после."""
+        stem, ext = os.path.splitext(name)
+        digits = re.sub(r'\D', '', stem)
+        return f"{digits}{ext}" if digits else name
+
+    def _sum_display_label(self, tier, filepath):
+        """Текст для экрана по уже сохранённому файлу яруса. Файл на диске
+        хранится «голым» числом (см. _sum_bare_digits_name) — здесь слово
+        яруса («млн», «тыс», «тенге») дописывается обратно по тому, в какой
+        папке лежит файл, а не по самому числу. Старые файлы, сохранённые
+        ещё до этого изменения (имя не только из цифр), показываем как
+        есть — трогать их не нужно."""
+        stem = os.path.splitext(os.path.basename(filepath))[0]
+        if stem.isdigit():
+            word = SUM_TIER_WORD.get(tier, '')
+            return f"{stem} {word}".strip() if word else stem
+        return stem
+
     def _sum_full_preview_segments(self):
         """Для проигрывания в режиме «Суммы»: не только то, что открыто на
         экране, а вся цепочка целиком — start + уже сохранённые ярусы (в
@@ -1903,7 +1839,7 @@ class VariablesMixin:
             elif not self._sum_tier_excluded(t):
                 ref = self._sum_last_saved_file(t)
                 if ref and os.path.exists(ref):
-                    label = os.path.splitext(os.path.basename(ref))[0]
+                    label = self._sum_display_label(t, ref)
                     segments.append({'label': label, 'path': ref})
 
         if getattr(self, 'var_end_phrase', None) and os.path.exists(self.var_end_phrase):
@@ -1928,7 +1864,7 @@ class VariablesMixin:
             done = counts.get(t, 0)
             cap = SUM_TIER_CAP.get(t)
             last_path = last_file.get(t)
-            last_label = os.path.splitext(os.path.basename(last_path))[0] if last_path else None
+            last_label = self._sum_display_label(t, last_path) if last_path else None
             stats.append({
                 "tier": SUM_TIER_LABELS[t],
                 "dir": SUM_TIER_DEFAULT_DIR[t],
@@ -2070,7 +2006,7 @@ class VariablesMixin:
         target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
         os.makedirs(target_dir, exist_ok=True)
 
-        save_name = self._current_sum_save_name(source_name)
+        save_name = self._sum_bare_digits_name(self._current_sum_save_name(source_name))
         safe_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
         if os.path.exists(safe_path):
             try: os.remove(safe_path)
