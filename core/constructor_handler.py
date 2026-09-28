@@ -170,12 +170,6 @@ class ConstructorMixin:
         self.constructor_end_file = f[0]
         return self._constructor_state()
 
-    def constructor_skip_end(self):
-        """Записи может не быть окончания — тот же случай «только start»,
-        что и в остальном софте."""
-        self.constructor_end_file = None
-        return self._constructor_state()
-
     def _constructor_state(self):
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
         lang_dirs = getattr(self, 'constructor_lang_dirs', None) or {}

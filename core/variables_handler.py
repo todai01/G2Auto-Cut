@@ -339,11 +339,6 @@ class VariablesMixin:
 
         return self._get_var_batch_ui_state()
 
-    def pick_file(self):
-        """Вызов окна выбора файла из JS"""
-        f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN)
-        return f[0] if f else None
-
     def _find_reference_file(self, folder, name_prefix):
         """Ищет файл start.* или end.* в корневой папке (игнорируя пробелы)"""
         try:

@@ -10,7 +10,12 @@
   - `phrase_handler.py` — работа с фразами из Excel;
   - `project_handler.py` — загрузка аудио, нарезка на чанки, режимы папок;
   - `audacity_montage.py` — монтаж и сохранение через Audacity;
-  - `variables_handler.py` — режим переменных (VarBatch) и пакетная обработка.
+  - `variables_handler.py` — режим переменных (VarBatch), пакетная обработка и режим «Суммы»;
+  - `constructor_handler.py` — «Конструктор переменных» (сборка озвучки из готовых кусков);
+  - `converter.py` — конвертер MP4 в MP3/WAV;
+  - `filename_match_handler.py` — сопоставление коротких имён файлов с Excel и раскладка по RU/KZ;
+  - `table_to_pptx_handler.py` — Excel-таблица → слайды PowerPoint с разметкой пауз;
+  - `recent_projects.py`, `project_state.py` — список недавних проектов и автосохранение прогресса.
 - `utils/` — вспомогательное:
   - `audacity_client.py` — связь с Audacity через именованные каналы Windows
     (`ToSrvPipe` / `FromSrvPipe`);
@@ -21,7 +26,7 @@
 
 ## Рабочие папки проекта
 
-`Chunks` → `Good` / `Переменные` → `Проверенные`.
+`Chunks` / `Переменные` → `Проверенные` (одна конечная папка, без промежуточного отбора).
 При воспроизведении всегда выбирается самый «готовый» вариант файла.
 
 ## Зависимости
