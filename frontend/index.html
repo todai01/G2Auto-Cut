@@ -113,6 +113,28 @@
         </div>
     </div>
 
+    <!-- «Готовая папка с переменными»: Excel есть или нет? -->
+    <div id="premadeExcelChoiceOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Есть Excel-таблица с именами файлов?</h3>
+                <button class="modal-close" onclick="closePremadeExcelChoice()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Excel не обязателен — без него файлы при сохранении будут называться так же, как в папке на диске.</div>
+
+            <div class="mode-choice-grid">
+                <button class="option-card rise" onclick="premadeExcelChoiceYes()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
+                    <div><span class="option-title">Да, есть Excel</span><span class="option-desc">Сначала загрузить таблицу</span></div>
+                </button>
+                <button class="option-card option-card--alt rise" onclick="premadeExcelChoiceNo()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-slash"></use></svg></span>
+                    <div><span class="option-title">Нет, без Excel</span><span class="option-desc">По именам файлов на диске</span></div>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Продолжить недавний проект? — всплывает перед экраном подготовки -->
     <div id="resumeProjectOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">

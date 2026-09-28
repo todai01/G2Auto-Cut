@@ -368,13 +368,12 @@ class VariablesMixin:
         return d[0] if d else None
 
     def load_premade_variables_folder(self, target_hwnd, in_dir):
-        """Альтернативный режим: загрузка уже готовой папки с переменными (поддержка Имен и Excel)"""
+        """Альтернативный режим: загрузка уже готовой папки с переменными.
 
-        # 1. ТРЕБОВАНИЕ EXCEL: Блокируем запуск, если нет таблицы
-        if not getattr(self, 'phrases_data', None):
-            return {
-                "error": "Сначала загрузите Excel-файл с текстами (Шаг 1), чтобы программа понимала, какое имя сейчас обрабатывается!"}
-
+        Excel не обязателен: если его нет, имена файлов при сохранении
+        берутся из самих файлов на диске (см. _get_var_batch_ui_state и
+        остальной код каскада — везде phrases_data проверяется через
+        getattr и просто пропускается, если Excel не загружен)."""
         if target_hwnd:
             self.set_active_window(target_hwnd)
 

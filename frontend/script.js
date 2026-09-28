@@ -578,8 +578,8 @@ let isProcessing = false;
                 picked = await pywebview.api.pick_excel();
             } catch (e) { excelError(e); return; }
 
-            if (!picked || picked.error === 'cancel') return;
-            if (picked.error) { excelError(picked.error); return; }
+            if (!picked || picked.error === 'cancel') { pendingPremadeAfterExcel = false; return; }
+            if (picked.error) { pendingPremadeAfterExcel = false; excelError(picked.error); return; }
 
             await analyzeExcel(true);
         }
@@ -715,6 +715,9 @@ let isProcessing = false;
 
         function closeExcelPicker() {
             document.getElementById('excelOverlay').style.display = 'none';
+            // Отменили выбор колонок — значит и «Готовую папку», которую
+            // собирались открыть сразу после загрузки Excel, тоже не открываем.
+            pendingPremadeAfterExcel = false;
         }
 
         async function confirmExcelSelection() {
@@ -730,6 +733,9 @@ let isProcessing = false;
 
             if (!state || state.error) { excelError(state && state.error || 'Пустой ответ'); return; }
 
+            // closeExcelPicker() сбрасывает pendingPremadeAfterExcel (на случай
+            // отмены) — запоминаем значение до вызова, а не после.
+            let openPremadeAfter = pendingPremadeAfterExcel;
             closeExcelPicker();
             updateUI(state);
 
@@ -738,6 +744,10 @@ let isProcessing = false;
                 showToast(rep.skipped
                     ? `Загружено ${rep.loaded} фраз, повторов пропущено: ${rep.skipped}`
                     : `Загружено ${rep.loaded} фраз`);
+            }
+
+            if (openPremadeAfter) {
+                continueInitVarBatchPremade(null);
             }
         }
 
@@ -1068,9 +1078,33 @@ let isProcessing = false;
         }
 
         // НОВОЕ: Функция инициализации загрузки готовой папки
+        // Excel не обязателен для этого режима — но если его ещё не
+        // загружали в этом проекте, спрашиваем один раз, как называть
+        // сохранённые файлы: по тексту таблицы или как есть, по именам
+        // файлов на диске.
+        let pendingPremadeAfterExcel = false;
         async function initVarBatchPremade() {
+            if (!excelIsLoaded) {
+                document.getElementById('premadeExcelChoiceOverlay').style.display = 'flex';
+                return;
+            }
             // Пропускаем выбор окна проекта, так как данные берутся с диска
             // и Python сам создаст новый проект для конвейера.
+            continueInitVarBatchPremade(null);
+        }
+
+        function closePremadeExcelChoice() {
+            document.getElementById('premadeExcelChoiceOverlay').style.display = 'none';
+        }
+
+        function premadeExcelChoiceYes() {
+            closePremadeExcelChoice();
+            pendingPremadeAfterExcel = true;
+            loadExcel();
+        }
+
+        function premadeExcelChoiceNo() {
+            closePremadeExcelChoice();
             continueInitVarBatchPremade(null);
         }
 
