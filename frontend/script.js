@@ -2286,7 +2286,7 @@ let isProcessing = false;
                 let mergePanel = document.querySelector('.merge-panel');
                 if(mergePanel) mergePanel.style.display = sumModeActive ? 'none' : 'block';
                 let addSil = document.getElementById('addSilence');
-                if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'flex';
+                if(addSil && addSil.parentElement) addSil.parentElement.style.display = sumModeActive ? 'none' : 'flex';
             }
         }
 
