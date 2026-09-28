@@ -785,6 +785,45 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 .util-tile--info:hover{ border-color: var(--accent-info); }
 .util-tile--info .util-tile__title{ color: var(--accent-info); }
 
+/* --- Компактный вид начального меню (экран подготовки проекта) ---
+   Отступы и размеры уже переопределены только внутри .stage-loading,
+   поэтому те же классы (.option-card, .info-panel и т.д.) в модалках
+   и на других экранах остаются прежними. */
+.stage-loading .setup-header{ padding-bottom: var(--space-3); margin-bottom: var(--space-4); }
+.stage-loading .setup-grid{ gap: var(--space-4); }
+@media (min-width: 1000px){
+    .stage-loading .setup-grid{ gap: var(--space-5); }
+}
+.stage-loading .setup-col{ gap: var(--space-2); }
+.stage-loading .section-label{ margin-bottom: 2px; }
+.stage-loading .section-label--spaced{ margin-top: var(--space-3); }
+
+.stage-loading .option-card{ padding: 11px 14px; gap: 12px; }
+.stage-loading .option-icon{ width: 34px; height: 34px; font-size: 16px; }
+.stage-loading .option-title{ font-size: 13.5px; }
+.stage-loading .option-desc{ font-size: 11.5px; margin-top: 2px; }
+
+.stage-loading .settings-panel{ padding: var(--space-2) var(--space-3) var(--space-3); }
+.stage-loading .settings-head{ margin-bottom: var(--space-2); }
+.stage-loading .slider-field{ margin-bottom: var(--space-2); }
+.stage-loading .slider-head{ margin-bottom: 4px; }
+
+.stage-loading .mode-grid{ gap: var(--space-2); }
+.stage-loading .mode-card{ padding: var(--space-3); gap: 6px; min-height: 150px; }
+.stage-loading .mode-card__icon{ width: 36px; height: 36px; font-size: 17px; }
+.stage-loading .mode-card__title{ font-size: 13.5px; }
+.stage-loading .mode-card__desc{ font-size: 12px; line-height: 1.4; }
+.stage-loading .mode-card__go{ margin-top: 4px; }
+
+.stage-loading .util-grid{ gap: var(--space-2); }
+.stage-loading .util-tile{ padding: var(--space-3); gap: 4px; }
+.stage-loading .util-tile__title{ font-size: 12.5px; }
+.stage-loading .util-tile__desc{ font-size: 11px; line-height: 1.35; }
+
+.stage-loading .info-panel{ padding: var(--space-3) var(--space-4); }
+.stage-loading .info-panel__title{ margin-bottom: var(--space-2); }
+.stage-loading .folder-map{ gap: var(--space-2); }
+
 /* --- Шпаргалка по горячим клавишам внизу экрана подготовки --- */
 .setup-footer{
     display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
