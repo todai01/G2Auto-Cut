@@ -1172,10 +1172,25 @@ let isProcessing = false;
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
                 return;
             }
-            document.getElementById('varDictLabelsHint').style.display = 'none';
-            document.getElementById('varDictLabelsDoneBtn').style.display = 'none';
             let state = await pywebview.api.get_var_template_state();
             renderVarDictConnectors({ extra_tags: state.extra_tags, connectors: res.connectors });
+
+            if (res.missing && res.missing.length) {
+                // Часть меток не нашлась — не закрываем шаг, предлагаем выбор:
+                // продолжить без них (потом добить кнопкой «Загрузить файл»
+                // у нужной связки) или вернуться в Audacity и попробовать
+                // ещё раз, не открывая запись заново.
+                document.getElementById('varDictLabelsMissingNames').innerText = res.missing.join(', ');
+                document.getElementById('varDictLabelsMissing').style.display = 'block';
+            } else {
+                dismissVarDictLabelsMissing();
+            }
+        }
+
+        function dismissVarDictLabelsMissing() {
+            document.getElementById('varDictLabelsMissing').style.display = 'none';
+            document.getElementById('varDictLabelsHint').style.display = 'none';
+            document.getElementById('varDictLabelsDoneBtn').style.display = 'none';
         }
 
         let pendingPremadeAfterExcel = false;

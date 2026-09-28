@@ -1857,17 +1857,17 @@ class VariablesMixin:
         except Exception:
             return {"error": "Не удалось прочитать метки из Audacity.", "status": "waiting_labels", "needed": needed}
 
+        # Раньше нехватка хоть одной метки блокировала всё целиком — теперь
+        # экспортируем всё, что нашлось, а по недостающим даём выбор:
+        # либо продолжить без них (загрузить потом отдельным файлом через
+        # обычную кнопку «Загрузить»), либо вернуться в Audacity и
+        # доставить метку, нажав эту же кнопку ещё раз.
+        found = [name for name in needed if name in labels]
         still_missing = [name for name in needed if name not in labels]
-        if still_missing:
-            return {
-                "error": f"Не найдены метки: {', '.join(still_missing)}. Выделите нужный участок, "
-                         f"нажмите Ctrl+B, впишите точное имя связки — «{still_missing[0]}» — и нажмите ОК "
-                         f"в Audacity, затем снова нажмите эту кнопку.",
-                "status": "waiting_labels", "needed": needed
-            }
 
-        os.makedirs(out_dir, exist_ok=True)
-        for name in needed:
+        if found:
+            os.makedirs(out_dir, exist_ok=True)
+        for name in found:
             t0, t1 = labels[name]
             target_path = os.path.abspath(os.path.join(out_dir, f'{name}.wav')).replace('\\', '/')
             self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
@@ -1877,7 +1877,7 @@ class VariablesMixin:
                 if c['key'] == name:
                     c['path'] = target_path.replace('/', os.sep)
 
-        return {"connectors": self.var_connectors}
+        return {"connectors": self.var_connectors, "missing": still_missing}
 
     def get_var_template_state(self):
         return {

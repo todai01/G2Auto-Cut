@@ -1479,6 +1479,14 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .var-dict-connector__actions{ display: flex; gap: 6px; flex: none; }
 
+/* Часть меток не нашлась при экспорте — предупреждение + выбор, а не
+   жёсткая блокировка (см. finish_var_connectors_from_recording). */
+.var-dict-missing{
+    background: var(--tint-var); border: 1px solid rgba(238,172,62,0.45); border-radius: 10px;
+    padding: 12px 14px; margin: var(--space-3) 0;
+}
+.var-dict-missing .modal-hint{ margin: 0 0 var(--space-2); }
+
 /* --- Счётчик «Проверено» в шапке --- */
 .stat-checked{ color: var(--accent-primary); display: flex; align-items: center; gap: 6px; }
 .stat-checked::before{
