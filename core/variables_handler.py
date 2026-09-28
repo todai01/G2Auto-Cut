@@ -446,11 +446,20 @@ class VariablesMixin:
         wanted = ('start',) if only_start else ('start', 'end')
         needed = [name for name in wanted if not getattr(self, f'_pending_{name}_file', None)]
 
+        # Раньше тут был свой отдельный запуск Audacity с одной попыткой
+        # 'New:' и фиксированным таймаутом — на медленном компьютере
+        # холодный старт (особенно первый запуск после перезагрузки) не
+        # укладывался в него, и команда уходила в пустоту без импорта.
+        # _ensure_audacity_ready() — тот же проверенный запуск с долгим
+        # опросом (до ~30 секунд), что используют остальные кнопки
+        # «Отправить в Audacity» по всей программе.
+        if self._block_if_audacity_ambiguous():
+            return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
+        if not self._ensure_audacity_ready():
+            return {"error": "Не удалось запустить Audacity. Откройте его вручную и нажмите кнопку ещё раз."}
+
         try:
-            resp = self.audacity.send_command('New:', auto_start=True)
-            if not resp:
-                return {"error": "Audacity не ответил при запуске. Возможно, ему нужно больше времени, "
-                                  "чтобы открыться на медленном компьютере — попробуйте ещё раз."}
+            self.audacity.send_command('New:')
 
             for _ in range(15):
                 resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
