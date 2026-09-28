@@ -357,7 +357,7 @@ let isProcessing = false;
         }
 
         function showMenu() {
-            detachEmbeddedAudacity();
+            detachEmbeddedAudacity(true);
             embedAreaId = 'audacityEmbedArea';
             embedBtnId = 'btnEmbedAudacity';
             showStage('stage1-loading');
@@ -1808,8 +1808,14 @@ let isProcessing = false;
             new MutationObserver(sync).observe(phraseEl, { attributes: true, attributeFilter: ['class'] });
         });
 
-        async function detachEmbeddedAudacity() {
-            if (!audacityEmbedded) return;
+        async function detachEmbeddedAudacity(minimize) {
+            if (!audacityEmbedded) {
+                // Даже если окно не было вживлено (или его уже отсоединили) —
+                // при уходе в главное меню всё равно сворачиваем, если оно
+                // просто открыто отдельно на рабочем столе.
+                if (minimize) { try { await pywebview.api.minimize_audacity(); } catch (e) {} }
+                return;
+            }
             window.removeEventListener('resize', onEmbedWindowResize);
             stopEmbedWatchdog();
             audacityEmbedded = false;
@@ -1821,7 +1827,11 @@ let isProcessing = false;
             if (area) area.style.display = sumModeActive ? 'block' : 'none';
             if (btn) btn.innerText = 'Встроить окно Audacity сюда';
             try {
-                await pywebview.api.unembed_audacity();
+                // При возврате в главное меню окно не просто отсоединяем
+                // (это возвращает его на передний план поверх всего) —
+                // сворачиваем, чтобы оно не мешало на рабочем столе.
+                if (minimize) await pywebview.api.minimize_audacity();
+                else await pywebview.api.unembed_audacity();
             } catch (e) {}
         }
 

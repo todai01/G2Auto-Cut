@@ -166,6 +166,9 @@ class MontageMixin:
     SWP_NOZORDER = 0x0004
     SWP_FRAMECHANGED = 0x0020
     SWP_SHOWWINDOW = 0x0040
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SW_MINIMIZE = 6
 
     def _get_own_hwnd(self):
         try:
@@ -271,6 +274,38 @@ class MontageMixin:
         self._embedded_hwnd = None
         self._embed_orig_style = None
         return True
+
+    def minimize_audacity(self):
+        """При возврате в главное меню сворачивает Audacity, а не просто
+        отсоединяет — unembed_audacity() возвращал окно в обычный вид и
+        выводил его на передний план (нужно, когда пользователь сам жмёт
+        «Отсоединить»), а тут наоборот: не мешать на рабочем столе."""
+        user32 = ctypes.windll.user32
+        hwnd = getattr(self, '_embedded_hwnd', None)
+        if hwnd and user32.IsWindow(hwnd):
+            try:
+                user32.SetParent(hwnd, 0)
+                orig_style = getattr(self, '_embed_orig_style', None)
+                if orig_style is not None:
+                    user32.SetWindowLongW(hwnd, self.GWL_STYLE, orig_style)
+                    user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                                         self.SWP_NOZORDER | self.SWP_FRAMECHANGED |
+                                         self.SWP_NOMOVE | self.SWP_NOSIZE)
+            except Exception:
+                pass
+            self._embedded_hwnd = None
+            self._embed_orig_style = None
+            user32.ShowWindow(hwnd, self.SW_MINIMIZE)
+            return {"status": "ok"}
+
+        # Не было вживлено — просто ищем любое открытое окно Audacity и
+        # сворачиваем его тоже, если оно есть.
+        for w in self.get_audacity_windows():
+            try:
+                user32.ShowWindow(w['hwnd'], self.SW_MINIMIZE)
+            except Exception:
+                pass
+        return {"status": "ok"}
 
     def _get_montage_track_idx(self):
         resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
