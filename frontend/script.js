@@ -1552,6 +1552,9 @@ let isProcessing = false;
                 return;
             }
             updateUI(state);
+            // Отправили дубль в категорию — очередь сдвинулась на следующий,
+            // сразу же его и проигрываем, без повторного нажатия Space.
+            playAudio(false);
         }
         async function sumStage1Undo() {
             let state = await pywebview.api.sum_stage1_undo();
@@ -1560,6 +1563,7 @@ let isProcessing = false;
                 return;
             }
             updateUI(state);
+            playAudio(false);
         }
 
         // === Ряд колонок-категорий: draggable-рулетка на каждую (Reel),
