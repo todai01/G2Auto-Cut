@@ -1499,6 +1499,31 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .btn-tile--mode{ background: var(--tint-mode); border-color: rgba(146,112,234,0.45); color: var(--accent-mode); }
 .btn-tile--mode:hover{ background: rgba(146,112,234,0.18); border-color: var(--accent-mode); }
 
+.btn-tile--info{ background: var(--tint-info); border-color: rgba(43,192,207,0.45); color: var(--accent-info); }
+.btn-tile--info:hover{ background: rgba(43,192,207,0.18); border-color: var(--accent-info); }
+
+/* --- Этап 1 режима «Суммы»: кнопки-категории --- */
+.sum-category-grid{ flex-wrap: wrap; }
+.sum-category-grid .btn-tile{ min-width: 96px; flex: 1 1 30%; }
+
+/* --- Этап 2 режима «Суммы»: рулетки встроены прямо в область текста --- */
+.sum-stage2-embed{ display: flex; flex-direction: column; gap: 12px; align-items: center; margin-top: var(--space-3); width: 100%; }
+.sum-stage2-embed__head{ display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.sum-stage2-embed__label{
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
+}
+.sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
+.sum-stage2-reels{ display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.sum-stage2-reels .reel-col{ width: 132px; gap: 6px; }
+.sum-stage2-reels .reel-col__label{ font-size: 11px; }
+.sum-stage2-mute{
+    display: flex; align-items: center; gap: 4px; font-size: 10px;
+    color: var(--text-dim); cursor: pointer;
+}
+.sum-stage2-mute input{ accent-color: var(--accent-primary); }
+.sum-stage2-reels .reel-col--active .reel-col__label::before{ content: "● "; color: var(--tier-accent, var(--accent-var)); }
+
 /* Сплошные кнопки — главные действия пакетного режима */
 .btn-tile--solid-mode{
     background: linear-gradient(180deg, #a284f0, var(--accent-mode)); color: #fff; border-color: transparent;

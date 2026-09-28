@@ -874,10 +874,19 @@
                             &times;
                         </button>
 
-                        <div class="phrase-block">
+                        <div class="phrase-block" id="phraseBlock">
                             <div id="playSourceBadge" class="play-source-badge"></div>
                             <div class="hero-phrase copyable" id="phraseText" onclick="copyRawText(this.innerText)">Загрузите Excel</div>
-                            <div class="hint-copy">Кликните по тексту, чтобы скопировать</div>
+                            <div class="hint-copy" id="phraseHint">Кликните по тексту, чтобы скопировать</div>
+
+                            <!-- Этап 2 режима «Суммы»: подменяет текст фразы, пока включён -->
+                            <div id="sumStage2Embed" class="sum-stage2-embed" style="display:none">
+                                <div class="sum-stage2-embed__head">
+                                    <span class="sum-stage2-embed__label">Этап 2 · сборка эталона</span>
+                                    <span class="sum-stage2-embed__next" id="sumStage2NextName"></span>
+                                </div>
+                                <div class="sum-stage2-reels" id="sumStage2Reels"></div>
+                            </div>
                         </div>
 
                         <div id="customFileName" class="save-name copyable" onclick="copyRawText(this.dataset.rawname)"></div>
@@ -1013,20 +1022,46 @@
                                 <span class="sum-logic-btn__sub">Млн + Сотни тысяч + Тенге</span>
                             </button>
                         </div>
+
+                        <div class="tile-row sum-logic-row">
+                            <button class="btn-tile sum-logic-btn" id="sumWorkflowStage1Btn" onclick="setSumWorkflowStage(1)">
+                                <span class="sum-logic-btn__title">Этап 1</span>
+                                <span class="sum-logic-btn__sub">Сортировка по категориям</span>
+                            </button>
+                            <button class="btn-tile sum-logic-btn" id="sumWorkflowStage2Btn" onclick="setSumWorkflowStage(2)">
+                                <span class="sum-logic-btn__title">Этап 2</span>
+                                <span class="sum-logic-btn__sub">Сборка эталона</span>
+                            </button>
+                        </div>
+
                         <div id="sumCounts" class="sum-counts sum-counts--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам"></div>
-                        <div id="sumTarget" class="sum-target">Загрузите Excel</div>
-                        <div class="tile-row">
-                            <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sumSendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
+
+                        <!-- Этап 1: на слух раскидать дубли по сырым папкам категорий -->
+                        <div id="sumStage1Panel" class="action-col" style="display:none">
+                            <div class="sum-target">Услышали сумму — жмите категорию</div>
+                            <div class="tile-row sum-category-grid" id="sumCategoryGrid"></div>
+                            <div class="tile-row">
+                                <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>
+                                <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить <kbd>M</kbd></button>
+                                <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>
+                            </div>
+                            <div class="action-note">Дубль уходит в папку категории как есть, без правки в Audacity. Не сумма — просто пролистайте <kbd>D</kbd>. Слиплось несколько цифр в одном дубле — жмите «Остаток». Число разрезало на два дубля — жмите «Склеить», стоя на первом.</div>
                         </div>
-                        <div class="tile-row">
-                            <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumManualSave()">Сохранить <kbd>Z</kbd></button>
+
+                        <!-- Этап 2: из сырых категорий собираем эталон, рулетки — прямо в тексте выше -->
+                        <div id="sumStage2Panel" class="action-col" style="display:none">
+                            <div class="sum-target" id="sumStage2ActiveLabel">Загрузка...</div>
+                            <div class="tile-row">
+                                <button class="btn-tile btn-tile--mode" onclick="sumStage2TogglePlay()">Играть выбранное на рулетках</button>
+                            </div>
+                            <div class="tile-row">
+                                <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sumStage2SendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
+                            </div>
+                            <div class="tile-row">
+                                <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumStage2Save()">Сохранить <kbd>Z</kbd></button>
+                            </div>
+                            <div class="action-note">Активная категория (подсвечена в тексте выше) едет по кругу сама — остальные можно крутить рулеткой вручную для проверки или другой комбинации. Галочки под рулетками — что слушать при «Играть».</div>
                         </div>
-                        <div class="tile-row">
-                            <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>
-                            <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить <kbd>M</kbd></button>
-                            <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>
-                        </div>
-                        <div class="action-note">Крутите дубли клавишами <kbd>A</kbd>/<kbd>D</kbd>, пока не услышите текст с экрана. Папку программа выберет сама по тексту. Слиплось несколько цифр в одном дубле — жмите «Остаток». Число разрезало на два дубля — жмите «Склеить», стоя на первом.</div>
                     </div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">

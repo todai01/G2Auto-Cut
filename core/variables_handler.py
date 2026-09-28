@@ -1874,20 +1874,31 @@ class VariablesMixin:
                 "last": last_label,
             })
 
-        return {
+        result = {
             "active": getattr(self, 'sum_manual_active', False),
             "stage2": getattr(self, 'sum_manual_stage2', False),
+            # "workflow_stage" — Этап 1/2 нового процесса (см. sum_set_stage),
+            # НЕ путать с "stage2" выше (это переключатель Логики).
+            "workflow_stage": getattr(self, 'sum_workflow_stage', 1),
+            "active_tiers": [{"key": t, "label": SUM_TIER_LABELS[t]} for t in active_tiers],
             "counts": {SUM_TIER_LABELS[t]: counts.get(t, 0) for t in active_tiers},
             "detected_tier": SUM_TIER_LABELS.get(tier),
             "detected_dir": SUM_TIER_DEFAULT_DIR.get(tier),
             "detected_from": (phrase or {}).get('text', ''),
             "stats": stats,
         }
+        if result["workflow_stage"] == 2:
+            result["stage2_data"] = self._sum_stage2_state()
+        return result
 
     def toggle_sum_stage2(self, active):
-        """Кнопка «Этап 2»: Миллионы + Сотни тысяч + Тенге, без «Сотни» и
+        """Кнопка «Логика 2»: Миллионы + Сотни тысяч + Тенге, без «Сотни» и
         «Тысячи» — включается вручную, а не по достижению потолка (900/99),
-        потому что до конца доходить не обязательно."""
+        потому что до конца доходить не обязательно.
+
+        ВАЖНО: это переключатель ЛОГИКИ (какие ярусы вообще участвуют), а
+        не «Этап 1/2» нового рабочего процесса ниже (см. sum_set_stage) —
+        имя sum_manual_stage2 осталось историческим, не путать."""
         self.sum_manual_stage2 = bool(active)
         return self.get_sum_manual_state()
 
@@ -1911,7 +1922,239 @@ class VariablesMixin:
                     files.sort(key=os.path.getmtime)
                     self.sum_manual_last_file[tier] = files[-1]
             self.sum_manual_current_tier = None
+            if not hasattr(self, 'sum_workflow_stage'):
+                self.sum_workflow_stage = 1
         return self.get_sum_manual_state()
+
+    # ==================================================================
+    #  НОВЫЙ РАБОЧИЙ ПРОЦЕСС «СУММЫ» — два этапа фильтрации:
+    #  Этап 1: прослушать все дубли подряд и раскидать найденные суммы по
+    #          сырым папкам категорий, без правки и без имени — на слух,
+    #          Excel тут не участвует (см. sum_stage1_send).
+    #  Этап 2: из сырых папок собирается эталон (start + по одному значению
+    #          с каждого яруса + end); меняется только ОДНА, «активная»
+    #          категория — она едет 1→потолок, потом эстафета переходит
+    #          следующей категории активной логики (см. sum_stage2_*).
+    #          Реюзает готовую механику Конструктора (constructor_play/
+    #          constructor_send_to_audacity/рулетки) — только источник
+    #          файлов свой (сырые папки Этапа 1) и своё сохранение
+    #          (sum_stage2_save: имя из Excel, в финальную папку яруса).
+    #  Название «Этап 1/2» — НЕ то же самое, что «Логика 1/2» (набор
+    #  участвующих ярусов, sum_manual_stage2) — это две независимые оси.
+    # ==================================================================
+
+    def _sum_stage1_raw_root(self):
+        return os.path.join(self.work_dir, 'Суммы_сырые')
+
+    def _sum_stage1_raw_dir(self, tier):
+        return os.path.join(self._sum_stage1_raw_root(), self._sum_manual_tier_dir(tier))
+
+    def sum_set_stage(self, stage):
+        """Переключатель «Этап 1» / «Этап 2» нового рабочего процесса.
+        Возвращает полное состояние экрана (как остальные действия рабочего
+        стола) — фронтенд обновляет всё через один общий updateUI()."""
+        self.sum_workflow_stage = 2 if int(stage) == 2 else 1
+        if self.sum_workflow_stage == 2:
+            self.sum_stage2_enter()
+        return self.get_ui_state()
+
+    def sum_stage1_send(self, tier):
+        """Этап 1: текущий дубль уходит КАК ЕСТЬ (без Audacity, без имени
+        из Excel) в сырую папку выбранной категории — программа уже
+        нарезала его автосрезкой по паузам, дополнительная правка тут не
+        нужна. Имя файлу дадим позже, на Этапе 2."""
+        if tier not in SUM_TIER_ORDER:
+            return {"error": f"Неизвестная категория: {tier}"}
+        active_file, source_name, err = self._sum_current_source()
+        if err:
+            return {"error": err}
+
+        target_dir = self._sum_stage1_raw_dir(tier)
+        os.makedirs(target_dir, exist_ok=True)
+        # Реальное имя дадим на Этапе 2 — здесь только не потерять и не
+        # перезаписать соседний сырой кусок с тем же именем дубля.
+        save_name = f"{int(time.time() * 1000)}_{source_name}"
+        shutil.copy(active_file, os.path.join(target_dir, save_name))
+
+        self._sum_advance_pointer()
+        webview.windows[0].evaluate_js(f"showToast('➜ Отправлено в «{SUM_TIER_LABELS[tier]}»');")
+        return self.get_ui_state()
+
+    def _sum_stage2_active_tier(self):
+        """Категория, которая сейчас «едет» — растёт на каждое сохранение,
+        пока не упрётся в потолок (SUM_TIER_CAP), затем эстафета уходит
+        следующей категории активной логики."""
+        active = self._sum_active_logic_tiers()
+        idx = getattr(self, 'sum_stage2_active_idx', 0) % len(active)
+        return active[idx]
+
+    def _sum_stage2_advance(self):
+        counts = getattr(self, 'sum_stage2_counts', None) or {}
+        active_tier = self._sum_stage2_active_tier()
+        counts[active_tier] = counts.get(active_tier, 0) + 1
+        self.sum_stage2_counts = counts
+        cap = SUM_TIER_CAP.get(active_tier)
+        if cap and counts[active_tier] >= cap:
+            active = self._sum_active_logic_tiers()
+            self.sum_stage2_active_idx = (active.index(active_tier) + 1) % len(active)
+
+    def sum_stage2_enter(self):
+        """Заходим в Этап 2: сканируем сырые папки Этапа 1 и переиспользуем
+        механику Конструктора (те же поля constructor_tier_files/
+        constructor_start_file/constructor_end_file, тот же
+        constructor_play/constructor_send_to_audacity) — сверху достраиваем
+        только автоцикл и своё сохранение (sum_stage2_save)."""
+        tiers = {}
+        for tier in SUM_TIER_ORDER:
+            d = self._sum_stage1_raw_dir(tier)
+            files = []
+            if os.path.isdir(d):
+                files = [os.path.join(d, f) for f in os.listdir(d)
+                         if os.path.isfile(os.path.join(d, f)) and f.lower().endswith(('.wav', '.mp3'))]
+                # По времени отправки на Этапе 1 — раньше отправленное играет первым.
+                files.sort(key=os.path.getmtime)
+            tiers[tier] = files
+
+        self.constructor_root = self._sum_stage1_raw_root()
+        self.constructor_tier_files = tiers
+        self.constructor_start_file = getattr(self, 'var_start_phrase', None)
+        self.constructor_end_file = getattr(self, 'var_end_phrase', None)
+
+        if not hasattr(self, 'sum_stage2_active_idx'):
+            self.sum_stage2_active_idx = 0
+        if not hasattr(self, 'sum_stage2_counts'):
+            self.sum_stage2_counts = {}
+        if not hasattr(self, 'sum_stage2_frozen_idx'):
+            self.sum_stage2_frozen_idx = {}
+        if not hasattr(self, 'sum_stage2_mute'):
+            self.sum_stage2_mute = {}
+
+        return self._sum_stage2_state()
+
+    def _sum_stage2_state(self):
+        tiers = getattr(self, 'constructor_tier_files', {}) or {}
+        active_tier = self._sum_stage2_active_tier()
+        frozen_idx = getattr(self, 'sum_stage2_frozen_idx', {}) or {}
+        counts = getattr(self, 'sum_stage2_counts', {}) or {}
+        active_logic = self._sum_active_logic_tiers()
+
+        # Подсказка рулеткам, что показать по умолчанию: активная категория
+        # всегда начинает со следующего ещё не использованного сырого
+        # файла (индекс 0 — использованные удаляются из списка при
+        # сохранении), «замороженные» — с последнего, что уже звучал.
+        default_indices = {}
+        for t in active_logic:
+            default_indices[t] = 0 if t == active_tier else frozen_idx.get(t, 0)
+
+        phrase = self._current_sum_phrase()
+
+        return {
+            "workflow_stage": 2,
+            "active_tier": SUM_TIER_LABELS[active_tier],
+            "active_tier_key": active_tier,
+            "default_indices": default_indices,
+            "next_name": (phrase or {}).get('text', ''),
+            "start": os.path.basename(self.constructor_start_file) if self.constructor_start_file else None,
+            "end": os.path.basename(self.constructor_end_file) if self.constructor_end_file else None,
+            "tiers": {
+                t: {
+                    "label": SUM_TIER_LABELS[t],
+                    "items": [os.path.splitext(os.path.basename(p))[0] for p in tiers.get(t, [])],
+                    "saved": counts.get(t, 0),
+                    "cap": SUM_TIER_CAP.get(t),
+                    "active": t == active_tier,
+                }
+                for t in active_logic
+            },
+        }
+
+    def sum_stage2_save(self):
+        """Сохраняет ТОЛЬКО активную (сейчас растущую) категорию — start,
+        end и соседние ярусы в этой сборке были лишь эталоном для слуха,
+        их сырые файлы не трогаем. Имя итогового файла — как и раньше, из
+        текущей строки Excel; сырой источник после сохранения удаляется
+        (использован), остальные категории запоминают, на каком файле
+        остановились, чтобы дефолт рулетки не сбрасывался."""
+        layout = getattr(self, '_constructor_clip_layout', None)
+        active_paths = getattr(self, '_constructor_active_paths', None)
+        if not layout or not active_paths:
+            return {"error": "Сначала нажмите «Отправить в Audacity»."}
+
+        active_tier = self._sum_stage2_active_tier()
+        if active_tier not in active_paths:
+            return {"error": f"В сборке нет яруса «{SUM_TIER_LABELS[active_tier]}» — выберите его на рулетке "
+                              f"и отправьте в Audacity заново."}
+
+        resp_clips = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
+        try:
+            c_data = json.loads(resp_clips[resp_clips.find('['):resp_clips.rfind(']') + 1])
+            track_0_clips = []
+            for t in c_data:
+                if t.get('track', -1) == 0:
+                    track_0_clips.extend(t.get('clips', [t]))
+            track_0_clips.sort(key=lambda x: x.get('start', 0))
+        except Exception:
+            return {"error": "Не удалось прочитать дорожку из Audacity."}
+
+        if len(track_0_clips) != len(layout):
+            return {"error": "Число кусков на дорожке не совпадает с тем, что отправляли — "
+                              "не разрезали и не склеивали ли лишнего?"}
+
+        tier_clip = next((clip for tag, clip in zip(layout, track_0_clips) if tag == active_tier), None)
+        if tier_clip is None:
+            return {"error": f"Ярус «{SUM_TIER_LABELS[active_tier]}» не найден в сборке на дорожке."}
+
+        phrase = self._current_sum_phrase()
+        if not phrase:
+            return {"error": "Сначала загрузите Excel — из его текста берётся имя итогового файла."}
+
+        raw_path = active_paths[active_tier]
+        target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(active_tier))
+        os.makedirs(target_dir, exist_ok=True)
+        save_name = self._sum_bare_digits_name(self._current_sum_save_name(os.path.basename(raw_path)))
+        target_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
+        if os.path.exists(target_path):
+            try: os.remove(target_path)
+            except OSError: pass
+
+        c_start, c_end = tier_clip.get('start', 0.0), tier_clip.get('end', 0.0)
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start={c_start} End={c_end} RelativeTo=ProjectStart')
+        self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+        time.sleep(0.1)
+
+        # Сырой источник активного яруса — использован, больше не нужен.
+        try:
+            os.remove(raw_path)
+        except OSError:
+            pass
+        if raw_path in self.constructor_tier_files.get(active_tier, []):
+            self.constructor_tier_files[active_tier].remove(raw_path)
+
+        # Соседние (неактивные) яруса, что звучали в этой сборке — запоминаем
+        # позицию, чтобы дефолт рулетки не съезжал на первый файл заново.
+        if not hasattr(self, 'sum_stage2_frozen_idx'):
+            self.sum_stage2_frozen_idx = {}
+        for tier, path in active_paths.items():
+            if tier == active_tier:
+                continue
+            files = self.constructor_tier_files.get(tier, [])
+            if path in files:
+                self.sum_stage2_frozen_idx[tier] = files.index(path)
+
+        self.phrase_index += 1
+        self._sum_stage2_advance()
+
+        self._constructor_clip_layout = None
+        self._constructor_active_paths = None
+
+        if not self._block_if_audacity_ambiguous():
+            self.audacity.send_command('SelectAll:')
+            self.audacity.send_command('RemoveTracks:')
+        self.is_in_audacity = False
+
+        webview.windows[0].evaluate_js(f"showToast('💾 Сохранено: «{SUM_TIER_LABELS[active_tier]}» → {save_name}');")
+        return self.get_ui_state()
 
     def sum_send_to_audacity(self):
         """Кнопка C в режиме «Суммы». Ярус определяется сам — по тексту
