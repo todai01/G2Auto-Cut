@@ -1538,7 +1538,7 @@ let isProcessing = false;
             if (label && lastSumState && lastSumState.reels) {
                 let selectedLabel = sumStage1Tiers[sumStage1SelectedIdx] ? sumStage1Tiers[sumStage1SelectedIdx].label : '';
                 label.innerHTML = `Сейчас едет: <b>${escapeHtml(lastSumState.reels.active_tier)}</b>`
-                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &uarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
+                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &rarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
             }
         }
         async function sumStage1SendSelected() {
@@ -1586,7 +1586,7 @@ let isProcessing = false;
             if (label) {
                 let selectedLabel = sumStage1Tiers[sumStage1SelectedIdx] ? sumStage1Tiers[sumStage1SelectedIdx].label : '';
                 label.innerHTML = `Сейчас едет: <b>${escapeHtml(data.active_tier)}</b>`
-                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &uarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
+                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &rarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
             }
             if (nextName) nextName.innerText = data.next_name ? `→ ${data.next_name}` : '';
 
@@ -1601,13 +1601,15 @@ let isProcessing = false;
                 let capText = info.cap ? ` (${info.saved}/${info.cap})` : '';
                 return `
                 <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)'}">
-                    <label class="sum-stage2-mute"><input type="checkbox" ${muted ? '' : 'checked'} onchange="toggleSumStage2Mute('${tier}', !this.checked)"> слушать</label>
-                    <div class="reel-col__label" onclick="sumStage1SelectColumn(${i})" title="Выбрать категорией для отправки (&uarr;)">${escapeHtml(info.label)}${capText}</div>
+                    <div class="reel-col__header">
+                        <label class="sum-stage2-mute"><input type="checkbox" ${muted ? '' : 'checked'} onchange="toggleSumStage2Mute('${tier}', !this.checked)"> слушать</label>
+                        <div class="reel-col__label" onclick="sumStage1SelectColumn(${i})" title="Выбрать категорией для отправки (&rarr;)">${escapeHtml(info.label)}${capText}</div>
+                        <div class="reel-col__count">${isEmpty ? 'нет сырых файлов' : info.items.length + ' шт.'}</div>
+                    </div>
                     <div class="reel" id="sumReel-${tier}">
                         <div class="reel-indicator"></div>
                         <div class="reel-track"></div>
                     </div>
-                    <div class="reel-col__count">${isEmpty ? 'нет сырых файлов' : info.items.length + ' шт.'}</div>
                 </div>`;
             }).join('');
 
@@ -2686,10 +2688,10 @@ let isProcessing = false;
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
                 else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
-                else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
-                else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
-                else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
-                else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
+                else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
+                else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
+                else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
+                else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
                 return;
             }
 
@@ -2702,10 +2704,10 @@ let isProcessing = false;
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage2Save(); else processAction('good'); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
-            else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
-            else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
-            else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
-            else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
+            else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
+            else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
+            else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
+            else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }

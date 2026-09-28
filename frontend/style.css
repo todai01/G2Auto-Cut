@@ -325,14 +325,9 @@ body.sum-mode{ height: 100vh; overflow: hidden; }
     max-width: none; gap: var(--space-3);
 }
 .workspace-grid--sum .panel-column{ grid-column: 1; align-self: start; gap: var(--space-2); }
-/* Рулетки (220px) — самый высокий блок слева и главная причина, по
-   которой страница вылезала за высоту окна и приходилось прокручивать
-   вниз. Ужимаем их и центр «зажим»-индикатора под новую высоту
-   (top = (высота − высота строки 44px) / 2), сам скролл значений на
-   это не влияет — Reel двигает их через transform, а не через высоту
-   рамки. */
-.workspace-grid--sum .reel{ height: 150px; }
-.workspace-grid--sum .reel-track, .workspace-grid--sum .reel-indicator{ top: 53px; }
+/* Высота рулеток теперь задаётся однострочным дизайном списка категорий
+   (.sum-stage2-reels .reel ниже, height: 44px) — там же и центровка
+   индикатора под неё, отдельного правила тут больше не нужно. */
 /* По умолчанию рамка заполняет всю оставшуюся ширину/высоту (align-self/
    justify-self: stretch) — свободного места справа/снизу не остаётся.
    При этом resize: both добавляет ручку в правом нижнем углу: потянув
@@ -1595,9 +1590,20 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
 }
 .sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
-.sum-stage2-reels{ display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-.sum-stage2-reels .reel-col{ width: 132px; gap: 6px; }
-.sum-stage2-reels .reel-col__label{ font-size: 11px; }
+/* Раньше колонки шли рядами узкими блоками (132px) — длинные значения
+   («сырая_AUDI ALLROAD QUATTRO») обрезались многоточием и было не
+   прочитать целиком. Теперь одна категория — одна строка на всю
+   ширину: подпись/чекбокс сверху компактно, а сама рулетка — во всю
+   ширину, текст в ней помещается без обрезки. */
+.sum-stage2-reels{ display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.sum-stage2-reels .reel-col{ width: 100%; flex-direction: row; align-items: center; gap: 12px; }
+.sum-stage2-reels .reel-col__header{ display: flex; flex-direction: column; gap: 4px; flex: 0 0 140px; min-width: 0; }
+.sum-stage2-reels .reel-col__label{ font-size: 12px; white-space: normal; }
+.sum-stage2-reels .reel{ flex: 1; min-width: 0; height: 44px; }
+.sum-stage2-reels .reel-track, .sum-stage2-reels .reel-indicator{ top: 0; }
+.sum-stage2-reels .reel-item{ font-size: 16px; padding: 0 14px; }
+.sum-stage2-reels .reel::before, .sum-stage2-reels .reel::after{ display: none; }
+.sum-stage2-reels .reel-col__count{ flex: 0 0 auto; }
 .sum-stage2-mute{
     display: flex; align-items: center; gap: 4px; font-size: 10px;
     color: var(--text-dim); cursor: pointer;
