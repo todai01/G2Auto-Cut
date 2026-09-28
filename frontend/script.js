@@ -2269,7 +2269,7 @@ let isProcessing = false;
                 if (sumModeActive && state.sum_mode) renderSumPanel(state.sum_mode);
 
                 let mergePanel = document.querySelector('.merge-panel');
-                if(mergePanel) mergePanel.style.display = 'block';
+                if(mergePanel) mergePanel.style.display = sumModeActive ? 'none' : 'block';
                 let addSil = document.getElementById('addSilence');
                 if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'flex';
             }

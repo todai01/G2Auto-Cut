@@ -304,20 +304,19 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
 /* Раньше режим «Суммы» наследовал общую двухколоночную сетку страницы —
    слева рулетки, справа кнопки, а между ними и по бокам от всей сетки
    зияли пустые поля (левая колонка была уже контента, правая короче
-   левой). Второй набросок пользователя показывает один узкий цельный
-   блок без всего этого воздуха — поэтому здесь сетка принудительно
-   схлопывается в одну колонку (рулетки и кнопки идут друг под другом
-   в общем потоке) и ограничивается по ширине, чтобы не растягиваться
-   на весь монитор. */
+   левой). По наброску пользователя нужна узкая колонка «Суммы» слева
+   (рулетки и кнопки — вместе, друг под другом) и Audacity справа, во
+   всю оставшуюся ширину — а не единый сплошной столбец на всю панель
+   с Audacity, уезжающим вниз. */
 .workspace-grid--sum{
-    grid-template-columns: 1fr !important; grid-template-rows: auto 1fr;
-    max-width: 620px; margin: 0 auto; width: 100%; gap: var(--space-3);
+    grid-template-columns: minmax(340px, 460px) 1fr; grid-template-rows: auto 1fr;
+    max-width: none; gap: var(--space-3);
 }
+.workspace-grid--sum .panel-column{ grid-column: 1; align-self: start; }
 .workspace-grid--sum > .audacity-embed-area{
-    grid-column: 1 / -1; align-self: stretch; min-height: 600px;
+    grid-column: 2; grid-row: 1 / -1; align-self: stretch; min-height: 600px;
 }
 .workspace-grid--sum .screen{ min-height: 120px; flex: 0 0 auto; }
-.workspace-grid--sum .panel-column{ align-self: start; }
 /* Верх ужимаем, чтобы окно Audacity помещалось на экране без прокрутки:
    прокрутка — главный источник «съезжания» встроенного окна. */
 .workspace-grid--sum .hero-phrase{ font-size: 2em; }
