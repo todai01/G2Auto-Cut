@@ -283,12 +283,6 @@ button[disabled]:active{ transform: none; }
 .sum-stats-nums{ color: var(--text-dim); }
 .sum-stats-last{ color: var(--accent-var, #c9a227); }
 
-.sum-target{
-    font-size: 13px; color: var(--text-dim); background: var(--screen);
-    border: 1px solid var(--border-soft); border-radius: 10px; padding: 8px 12px;
-}
-.sum-target b{ color: var(--accent-var, #c9a227); }
-
 .audacity-embed-area{
     flex: 1; min-height: 820px; border-radius: 14px; border: 2px dashed var(--border-soft);
     background: #0b0d10; position: relative; overflow: hidden;
@@ -348,8 +342,7 @@ body.sum-mode{ height: 100vh; overflow: hidden; }
 .workspace-grid--sum .hint-copy{ display: none; }
 .workspace-grid--sum .btn-tile--tall{ height: 40px; font-size: var(--fs-md); }
 .workspace-grid--sum .action-note{ font-size: 11px; line-height: 1.4; }
-.workspace-grid--sum .sum-done-counter,
-.workspace-grid--sum .sum-target{ padding: 6px 10px; }
+.workspace-grid--sum .sum-done-counter{ padding: 6px 10px; }
 
 /* Лишние элементы общего экрана дублей, которые к режиму «Суммы» не
    относятся и раньше просто занимали место сверху/снизу узкого блока. */
@@ -1571,17 +1564,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .btn-tile--info{ background: var(--tint-info); border-color: rgba(43,192,207,0.45); color: var(--accent-info); }
 .btn-tile--info:hover{ background: rgba(43,192,207,0.18); border-color: var(--accent-info); }
 
-/* --- Колонки-категории режима «Суммы»: выбранная (←/→, цель для ↑)
-   подсвечивается отдельно от активной (сервер сам ведёт по кругу при
-   сборке — см. .reel-col--active выше). Подпись колонки кликабельна
-   (выбор без отправки), сама рулетка ниже — за перетаскивание. --- */
-.sum-stage2-reels .reel-col__label{ cursor: pointer; }
-.sum-stage1-col--selected .reel-col__label{ text-shadow: 0 0 12px var(--tier-accent, transparent); }
-.sum-stage1-col--selected .reel{
-    border-color: var(--tier-accent, var(--accent-primary));
-    box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary));
-}
-
 /* --- Режим «Суммы»: рулетки встроены прямо в область текста --- */
 .sum-stage2-embed{ display: flex; flex-direction: column; gap: 12px; align-items: center; margin-top: var(--space-3); width: 100%; }
 .sum-stage2-embed__head{ display: flex; align-items: center; justify-content: space-between; width: 100%; }
@@ -1590,26 +1572,31 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
 }
 .sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
-/* Раньше колонки шли рядами узкими блоками (132px) — длинные значения
-   («сырая_AUDI ALLROAD QUATTRO») обрезались многоточием и было не
-   прочитать целиком. Теперь одна категория — одна строка на всю
-   ширину: подпись/чекбокс сверху компактно, а сама рулетка — во всю
-   ширину, текст в ней помещается без обрезки. */
-.sum-stage2-reels{ display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
-.sum-stage2-reels .reel-col{ width: 100%; flex-direction: row; align-items: center; gap: 12px; }
-.sum-stage2-reels .reel-col__header{ display: flex; flex-direction: column; gap: 4px; flex: 0 0 140px; min-width: 0; }
-.sum-stage2-reels .reel-col__label{ font-size: 12px; white-space: normal; }
-.sum-stage2-reels .reel{ flex: 1; min-width: 0; height: 44px; }
-.sum-stage2-reels .reel-track, .sum-stage2-reels .reel-indicator{ top: 0; }
-.sum-stage2-reels .reel-item{ font-size: 16px; padding: 0 14px; }
-.sum-stage2-reels .reel::before, .sum-stage2-reels .reel::after{ display: none; }
-.sum-stage2-reels .reel-col__count{ flex: 0 0 auto; }
-.sum-stage2-mute{
-    display: flex; align-items: center; gap: 4px; font-size: 10px;
-    color: var(--text-dim); cursor: pointer;
+
+/* Одна строка на экран (была решётка узких 132px-колонок — длинные
+   значения вроде «сырая_AUDI ALLROAD QUATTRO» обрезались многоточием).
+   Слева — название категории (листается ↑/↓), справа — текущее
+   значение из неё (листается ←/→), ширины хватает на полный текст. */
+.sum-single-row{
+    display: flex; align-items: center; gap: var(--space-3); width: 100%;
+    background: var(--screen); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 14px 18px; box-shadow: var(--shadow-screen);
+    transition: border-color .15s;
 }
-.sum-stage2-mute input{ accent-color: var(--accent-primary); }
-.sum-stage2-reels .reel-col--active .reel-col__label::before{ content: "● "; color: var(--tier-accent, var(--accent-var)); }
+.sum-single-row--active{
+    border-color: var(--tier-accent, var(--accent-primary));
+    box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary));
+}
+.sum-single-row--empty .sum-single-row__text{ color: var(--accent-trash); }
+.sum-single-row__name{
+    flex: 0 0 160px; min-width: 0; font-weight: 700; font-size: 15px;
+    color: var(--tier-accent, var(--text)); white-space: normal;
+}
+.sum-single-row__text{
+    flex: 1; min-width: 0; font-size: 19px; font-weight: 650; text-align: center;
+    font-family: var(--font-mono); overflow-wrap: break-word;
+}
+.sum-single-row__count{ flex: 0 0 auto; font-size: 12px; color: var(--text-faint); font-family: var(--font-mono); }
 
 /* Сплошные кнопки — главные действия пакетного режима */
 .btn-tile--solid-mode{

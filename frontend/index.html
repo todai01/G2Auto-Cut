@@ -960,15 +960,20 @@
                             <div class="hero-phrase copyable" id="phraseText" onclick="copyRawText(this.innerText)">Загрузите Excel</div>
                             <div class="hint-copy" id="phraseHint">Кликните по тексту, чтобы скопировать</div>
 
-                            <!-- Режим «Суммы»: подменяет текст фразы, пока включён — ряд
-                                 колонок-категорий, сразу и сортировка (←/→ + ↑/↓), и
-                                 сборка эталона (рулетки крутятся вручную). -->
+                            <!-- Режим «Суммы»: подменяет текст фразы, пока включён — одна
+                                 строка «категория / значение». ↑/↓ листает категории,
+                                 ←/→ листает значения внутри неё, Z сохраняет дубль в
+                                 категорию, X отменяет последнее сохранение. -->
                             <div id="sumEmbed" class="sum-stage2-embed" style="display:none">
                                 <div class="sum-stage2-embed__head">
                                     <span class="sum-stage2-embed__label">Режим «Суммы»</span>
                                     <span class="sum-stage2-embed__next" id="sumStage2NextName"></span>
                                 </div>
-                                <div class="sum-stage2-reels" id="sumStage2Reels"></div>
+                                <div class="sum-single-row" id="sumSingleRow">
+                                    <div class="sum-single-row__name" id="sumSingleName">—</div>
+                                    <div class="sum-single-row__text" id="sumSingleText"></div>
+                                    <div class="sum-single-row__count" id="sumSingleCount"></div>
+                                </div>
                             </div>
                         </div>
 
@@ -1105,17 +1110,16 @@
                              ↓ отменить последнюю отправку. Сборка эталона: рулетки
                              крутятся вручную, «Отправить в Audacity» + «Сохранить». -->
                         <div id="sumActionsPanel" class="action-col" style="display:none">
-                            <div class="sum-target" id="sumActiveLabel">Загрузка...</div>
-
                             <div class="tile-row">
-                                <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>&larr;</kbd></button>
+                                <button class="btn-tile btn-tile--var" onclick="sumStage1SendSelected()" title="Сохранить текущий дубль в выбранную категорию">В категорию <kbd>Z</kbd></button>
+                                <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>X</kbd></button>
                             </div>
 
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)">Остаток</button>
                                 <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим">Склеить <kbd>M</kbd></button>
                                 <button class="btn-tile btn-tile--primary" onclick="sumStage2SendToAudacity()">В Audacity <kbd>C</kbd></button>
-                                <button class="btn-tile btn-tile--var" onclick="sumStage2Save()">Сохранить <kbd>Z</kbd></button>
+                                <button class="btn-tile btn-tile--var" onclick="sumStage2Save()" title="Сохранить собранный эталон (сборка на рулетках)">Сохранить эталон</button>
                             </div>
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--mode" onclick="sumStage2TogglePlay()">Играть выбранное на рулетках</button>
@@ -1124,7 +1128,7 @@
                                 <button class="btn-tile btn-tile--sub" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Если открыли/переключили Audacity уже после входа в режим — привяжите окно заново этой кнопкой">Прикрепить окно Audacity</button>
                             </div>
 
-                            <div class="action-note">&uarr;/&darr; выбирает категорию, &rarr; отправляет дубль в неё, &larr; отменяет последнюю отправку. Не сумма — пролистайте <kbd>D</kbd>.</div>
+                            <div class="action-note">&uarr;/&darr; выбирает категорию, &larr;/&rarr; листает значения внутри неё, <kbd>Z</kbd> сохраняет дубль в категорию, <kbd>X</kbd> отменяет последнее сохранение. Не сумма — пролистайте <kbd>D</kbd>.</div>
                         </div>
                     </div>
 

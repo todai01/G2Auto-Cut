@@ -1509,37 +1509,63 @@ let isProcessing = false;
             if (embed) embed.style.display = mode === 'sum' ? 'flex' : 'none';
         }
 
-        // ←/→ выбирают, в какую категорию уйдёт дубль по ↑ (сама отправка —
-        // sumStage1Send); клик по подписи колонки выбирает её так же, без
-        // отправки, чтобы не путать с прокруткой рулетки на этой же колонке.
-        let sumStage1Tiers = []; // [{key, label}], порядок = порядок колонок
+        // Одна строка на экран: слева название категории, справа — значение
+        // из неё. ↑/↓ листают категории (sumStage1MoveSelection), ←/→
+        // листают значения внутри текущей категории (sumStage1BrowseMove) —
+        // раньше это была рулетка мышкой, теперь то же самое клавиатурой.
+        // Z сохраняет текущий дубль в выбранную категорию (sumStage1Send),
+        // X отменяет последнее сохранение (sumStage1Undo).
+        let sumStage1Tiers = []; // [{key, label}], порядок категорий
         let sumStage1SelectedIdx = 0;
-        // Смена выбранной категории (цель для ↑) НЕ перерисовывает рулетки
-        // заново — иначе каждое нажатие ←/→ сбрасывало бы уже прокрученные
-        // вручную позиции обратно на значения по умолчанию. Просто
-        // переключаем подсветку и подпись на уже существующих элементах.
+        let sumStage1BrowseIdx = {}; // tier -> какое по счёту значение сейчас показано
+
         function sumStage1MoveSelection(dir) {
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
-            updateSumSelectionHighlight();
+            renderSumSingleRow();
         }
-        function sumStage1SelectColumn(idx) {
-            sumStage1SelectedIdx = idx;
-            updateSumSelectionHighlight();
+        function sumStage1BrowseMove(dir) {
+            if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let items = (lastSumState.reels.tiers[tier] || {}).items || [];
+            if (!items.length) return;
+            let idx = sumStage1BrowseIdx[tier] || 0;
+            sumStage1BrowseIdx[tier] = (idx + dir + items.length) % items.length;
+            renderSumSingleRow();
         }
-        function updateSumSelectionHighlight() {
-            let wrap = document.getElementById('sumStage2Reels');
-            if (wrap) {
-                Array.from(wrap.children).forEach((col, i) => {
-                    col.classList.toggle('sum-stage1-col--selected', i === sumStage1SelectedIdx);
-                });
+        // Текст и подпись категории на экране — без перестройки DOM, просто
+        // обновляем содержимое уже существующих элементов.
+        function renderSumSingleRow() {
+            let nameEl = document.getElementById('sumSingleName');
+            let textEl = document.getElementById('sumSingleText');
+            let countEl = document.getElementById('sumSingleCount');
+            let row = document.getElementById('sumSingleRow');
+            if (!nameEl || !textEl || !lastSumState || !lastSumState.reels) return;
+
+            let data = lastSumState.reels;
+            let tierInfo = sumStage1Tiers[sumStage1SelectedIdx];
+            if (!tierInfo) {
+                nameEl.innerText = '—';
+                textEl.innerText = '';
+                if (countEl) countEl.innerText = '';
+                return;
             }
-            let label = document.getElementById('sumActiveLabel');
-            if (label && lastSumState && lastSumState.reels) {
-                let selectedLabel = sumStage1Tiers[sumStage1SelectedIdx] ? sumStage1Tiers[sumStage1SelectedIdx].label : '';
-                label.innerHTML = `Сейчас едет: <b>${escapeHtml(lastSumState.reels.active_tier)}</b>`
-                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &rarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
+            let tier = tierInfo.key;
+            let info = data.tiers[tier] || { items: [] };
+            let items = info.items || [];
+            let isEmpty = items.length === 0;
+            let idx = sumStage1BrowseIdx[tier] || 0;
+            if (idx >= items.length) idx = Math.max(0, items.length - 1);
+            sumStage1BrowseIdx[tier] = idx;
+
+            nameEl.innerText = info.label || tierInfo.label;
+            if (row) {
+                row.style.setProperty('--tier-accent', CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)');
+                row.classList.toggle('sum-single-row--empty', isEmpty);
+                row.classList.toggle('sum-single-row--active', !!info.active);
             }
+            textEl.innerText = isEmpty ? 'нет сырых файлов' : humanizeTierItem(tier, items[idx]);
+            if (countEl) countEl.innerText = isEmpty ? '' : `${idx + 1} / ${items.length}`;
         }
         async function sumStage1SendSelected() {
             if (!sumStage1Tiers.length) return;
@@ -1566,93 +1592,43 @@ let isProcessing = false;
             playAudio(false);
         }
 
-        // === Ряд колонок-категорий: draggable-рулетка на каждую (Reel),
-        // как в Конструкторе. Одновременно две независимые «подсветки» на
-        // одной колонке: reel-col--active — какая категория сейчас растёт
-        // при сборке эталона (сервер решает сам, по кругу); sum-stage1-col
-        // --selected — какая категория выбрана ←/→ как цель для ↑
-        // (отправка дубля на слух, клиентский курсор). ===
-        let sumStage2ReelInstances = {};
         function renderSumReels(data) {
-            let wrap = document.getElementById('sumStage2Reels');
-            let label = document.getElementById('sumActiveLabel');
-            let nextName = document.getElementById('sumStage2NextName');
-            if (!data || !wrap) return;
-
+            if (!data) return;
             let tiersOrder = Object.keys(data.tiers);
             sumStage1Tiers = tiersOrder.map(key => ({ key, label: data.tiers[key].label }));
             if (sumStage1SelectedIdx >= sumStage1Tiers.length) sumStage1SelectedIdx = 0;
 
-            if (label) {
-                let selectedLabel = sumStage1Tiers[sumStage1SelectedIdx] ? sumStage1Tiers[sumStage1SelectedIdx].label : '';
-                label.innerHTML = `Сейчас едет: <b>${escapeHtml(data.active_tier)}</b>`
-                    + (selectedLabel ? ` &nbsp;·&nbsp; Цель для &rarr;: <b>${escapeHtml(selectedLabel)}</b>` : '');
-            }
+            let nextName = document.getElementById('sumStage2NextName');
             if (nextName) nextName.innerText = data.next_name ? `→ ${data.next_name}` : '';
 
-            wrap.innerHTML = tiersOrder.map((tier, i) => {
-                let info = data.tiers[tier];
-                let isEmpty = info.items.length === 0;
-                let cls = 'reel-col sum-stage1-col'
-                    + (isEmpty ? ' reel-col--empty' : '')
-                    + (info.active ? ' reel-col--active' : '')
-                    + (i === sumStage1SelectedIdx ? ' sum-stage1-col--selected' : '');
-                let muted = !!sumStage2MuteState[tier];
-                let capText = info.cap ? ` (${info.saved}/${info.cap})` : '';
-                return `
-                <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)'}">
-                    <div class="reel-col__header">
-                        <label class="sum-stage2-mute"><input type="checkbox" ${muted ? '' : 'checked'} onchange="toggleSumStage2Mute('${tier}', !this.checked)"> слушать</label>
-                        <div class="reel-col__label" onclick="sumStage1SelectColumn(${i})" title="Выбрать категорией для отправки (&rarr;)">${escapeHtml(info.label)}${capText}</div>
-                        <div class="reel-col__count">${isEmpty ? 'нет сырых файлов' : info.items.length + ' шт.'}</div>
-                    </div>
-                    <div class="reel" id="sumReel-${tier}">
-                        <div class="reel-indicator"></div>
-                        <div class="reel-track"></div>
-                    </div>
-                </div>`;
-            }).join('');
-
-            sumStage2ReelInstances = {};
+            // Курсор внутри категории по умолчанию — на следующем ещё не
+            // использованном значении для активной (растущей) категории,
+            // там, где юзер его в прошлый раз оставил — для остальных.
             let defaults = data.default_indices || {};
             tiersOrder.forEach(tier => {
-                let items = data.tiers[tier].items.map(t => humanizeTierItem(tier, t));
-                let container = document.getElementById(`sumReel-${tier}`);
-                if (!container || !items.length) return;
-                let reel = new Reel(container, items, 44, () => {});
-                let idx = defaults[tier];
-                // Рулетка стартует на индексе 0 — step(idx, false) мгновенно,
-                // без анимации, докручивает её до нужной позиции по умолчанию
-                // (активная категория — на следующем неиспользованном файле,
-                // остальные — там, где их в прошлый раз оставили).
-                if (typeof idx === 'number' && idx > 0 && idx < items.length) {
-                    reel.step(idx, false);
+                if (!(tier in sumStage1BrowseIdx) && typeof defaults[tier] === 'number') {
+                    sumStage1BrowseIdx[tier] = defaults[tier];
                 }
-                sumStage2ReelInstances[tier] = reel;
             });
+
+            renderSumSingleRow();
         }
 
         function sumStage2Indices() {
             let indices = {};
-            Object.keys(sumStage2ReelInstances).forEach(tier => {
-                let reel = sumStage2ReelInstances[tier];
-                if (reel) {
-                    let idx = reel.getIndex();
-                    if (idx >= 0) indices[tier] = idx;
-                }
+            sumStage1Tiers.forEach(({ key: tier }) => {
+                let items = (lastSumState && lastSumState.reels && lastSumState.reels.tiers[tier]) ?
+                    lastSumState.reels.tiers[tier].items : [];
+                if (items.length) indices[tier] = sumStage1BrowseIdx[tier] || 0;
             });
             return indices;
         }
 
-        // «Слушать»/«не слушать» — чисто на стороне интерфейса, без похода
-        // в бэкенд: включает/выключает категорию только в предпросмотре
-        // («Играть выбранное»), сама сборка эталона в Audacity не меняется.
-        // Из-за этого переключение не перерисовывает рулетки — прошлая
-        // прокрутка на других категориях не сбрасывается.
+        // Раньше у каждой категории была своя галочка «слушать» — убрали
+        // из интерфейса, но объект оставляем пустым (=ничего не заглушено)
+        // для sumStage2Play/sumStage2SendToAudacity ниже, которые всё ещё
+        // фильтруют по нему.
         let sumStage2MuteState = {};
-        function toggleSumStage2Mute(tier, muted) {
-            sumStage2MuteState[tier] = muted;
-        }
 
         let sumStage2IsPlaying = false;
         let sumStage2PlayTimeout = null;
@@ -2683,15 +2659,16 @@ let isProcessing = false;
                 else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
                 else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
                 else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-                else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage2Save(); else saveVarBatch(false); }
+                else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else saveVarBatch(false); }
+                else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
                 else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
                 else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
                 else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
-                else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
-                else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
+                else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(-1); }
+                else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(1); }
                 return;
             }
 
@@ -2701,13 +2678,14 @@ let isProcessing = false;
             else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-            else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage2Save(); else processAction('good'); }
+            else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else processAction('good'); }
+            else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
             else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
             else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
-            else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
-            else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
+            else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(-1); }
+            else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(1); }
             else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
             else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
