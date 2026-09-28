@@ -1036,18 +1036,13 @@
                     </div>
 
                     <div id="sumManualActions" class="action-col" style="display: none;">
-                        <div class="tile-row sum-logic-row">
-                            <button class="btn-tile sum-logic-btn" id="sumLogic1Btn" onclick="setSumLogic(false)">
-                                <span class="sum-logic-btn__title">Логика 1</span>
-                                <span class="sum-logic-btn__sub">Млн + Сотни + Тысячи + Тенге</span>
-                            </button>
-                            <button class="btn-tile sum-logic-btn" id="sumLogic2Btn" onclick="setSumLogic(true)">
-                                <span class="sum-logic-btn__title">Логика 2</span>
-                                <span class="sum-logic-btn__sub">Млн + Сотни тысяч + Тенге</span>
-                            </button>
+                        <div class="sum-header-row">
+                            <div id="sumDoneCounter" class="sum-done-counter sum-done-counter--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам">Готово: 0 / 0</div>
+                            <div class="tile-row sum-logic-row">
+                                <button class="btn-tile sum-logic-chip" id="sumLogic1Btn" onclick="setSumLogic(false)" title="Логика 1: Млн + Сотни + Тысячи + Тенге">Л1</button>
+                                <button class="btn-tile sum-logic-chip" id="sumLogic2Btn" onclick="setSumLogic(true)" title="Логика 2: Млн + Сотни тысяч + Тенге">Л2</button>
+                            </div>
                         </div>
-
-                        <div id="sumDoneCounter" class="sum-done-counter sum-done-counter--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам">Готово: 0 / 0</div>
 
                         <!-- Единый экран: колонки-категории (рулетки) встроены в текст
                              выше, тут — все действия сразу. Слух-сортировка: клик по
@@ -1059,22 +1054,20 @@
 
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>&darr;</kbd></button>
-                                <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)"><svg class="icon"><use href="#icon-save"></use></svg> Остаток</button>
-                                <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим"><svg class="icon"><use href="#icon-link-2"></use></svg> Склеить <kbd>M</kbd></button>
                                 <button class="btn-tile btn-tile--sub" onclick="openConstructorFromSumMode()" title="Конструктор переменных"><svg class="icon"><use href="#icon-sliders"></use></svg> Конструктор</button>
                             </div>
 
                             <div class="tile-row">
+                                <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)">Остаток</button>
+                                <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим">Склеить <kbd>M</kbd></button>
+                                <button class="btn-tile btn-tile--primary" onclick="sumStage2SendToAudacity()">В Audacity <kbd>C</kbd></button>
+                                <button class="btn-tile btn-tile--var" onclick="sumStage2Save()">Сохранить <kbd>Z</kbd></button>
+                            </div>
+                            <div class="tile-row">
                                 <button class="btn-tile btn-tile--mode" onclick="sumStage2TogglePlay()">Играть выбранное на рулетках</button>
                             </div>
-                            <div class="tile-row">
-                                <button class="btn-tile btn-tile--primary btn-tile--tall" onclick="sumStage2SendToAudacity()">Отправить в Audacity <kbd>C</kbd></button>
-                            </div>
-                            <div class="tile-row">
-                                <button class="btn-tile btn-tile--var btn-tile--tall" onclick="sumStage2Save()">Сохранить <kbd>Z</kbd></button>
-                            </div>
 
-                            <div class="action-note">Услышали сумму — &larr;/&rarr; (или клик по подписи колонки) выбирает категорию, &uarr; отправляет дубль в неё, &darr; отменяет последнюю отправку. Активная категория едет по кругу сама при сборке — остальные крутите рулеткой вручную. Не сумма — пролистайте <kbd>D</kbd>.</div>
+                            <div class="action-note">&larr;/&rarr; выбирает категорию, &uarr; отправляет дубль в неё, &darr; отменяет последнюю отправку. Не сумма — пролистайте <kbd>D</kbd>.</div>
                         </div>
                     </div>
 
