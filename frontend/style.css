@@ -313,8 +313,16 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
     max-width: none; gap: var(--space-3);
 }
 .workspace-grid--sum .panel-column{ grid-column: 1; align-self: start; }
+/* Раньше рамка растягивалась (align-self: stretch) на всю оставшуюся
+   ширину/высоту экрана — на широком мониторе это давало гигантское
+   окно Audacity. Теперь у неё есть стартовый размер и её можно тянуть
+   за правый нижний угол мышкой (resize: both) — сторож в JS
+   (startEmbedWatchdog, опрос раз в 500мс) сам подхватывает новый
+   размер рамки и подгоняет под него настоящее окно Audacity. */
 .workspace-grid--sum > .audacity-embed-area{
-    grid-column: 2; grid-row: 1 / -1; align-self: stretch; min-height: 600px;
+    grid-column: 2; grid-row: 1 / -1; align-self: start; justify-self: start;
+    width: 900px; height: 620px; max-width: 100%; max-height: 85vh;
+    min-width: 400px; min-height: 300px; resize: both; overflow: hidden;
 }
 .workspace-grid--sum .screen{ min-height: 120px; flex: 0 0 auto; }
 /* Верх ужимаем, чтобы окно Audacity помещалось на экране без прокрутки:

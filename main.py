@@ -63,39 +63,14 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
         file_to_play = None
 
-        # 0. РЕЖИМ «СУММЫ»: проигрываем всю накопленную цепочку целиком —
-        # уже сохранённые ярусы + тот, над которым сейчас работаем — без
-        # пауз между ними, а не только то, что видно на экране сейчас.
-        # Работает и поверх обычной нарезки, и внутри конвейера «Готовые
-        # переменные», поэтому проверяем это раньше остальных режимов.
-        if getattr(self, 'sum_manual_active', False):
-            segments = self._sum_full_preview_segments()
-            if not segments:
-                return {"playing": False, "duration": 0}
-            try:
-                self.player.stop()
-                combined = None
-                markers = []
-                cursor = 0.0
-                for seg in segments:
-                    clip = AudioSegment.from_file(seg['path']).set_frame_rate(8000)
-                    dur = len(clip) / 1000.0
-                    if seg['label']:
-                        markers.append({"label": seg['label'], "start": cursor, "end": cursor + dur})
-                    combined = clip if combined is None else combined + clip
-                    cursor += dur
-                # Имя временного файла — с меткой времени, а не одно и то же
-                # каждый раз: если предыдущее воспроизведение (Windows,
-                # winsound) не успело до конца отпустить файл, перезапись
-                # того же имени обрывала звук на середине первого яруса.
-                temp_path = os.path.join(self.work_dir, f"temp_sum_preview_{int(time.time() * 1000)}.wav")
-                combined.export(temp_path, format="wav")
-                duration = FileUtils.get_exact_audio_duration(temp_path)
-                self.player.play(temp_path)
-                return {"playing": True, "duration": duration, "segments": markers, "source": "chain"}
-            except Exception as e:
-                print(f"Ошибка склейки превью (Суммы): {e}")
-                return {"playing": False, "duration": 0}
+        # Раньше здесь был отдельный блок для режима «Суммы»: Space/A/D
+        # проигрывали не текущий дубль, а склеенную цепочку из уже
+        # сохранённых ярусов — и пока не сохранён ни один ярус (самое
+        # начало разбора), играть было нечего, поэтому клавиши листали
+        # дубли молча. Прослушать собранную цепочку по-прежнему можно —
+        # кнопкой «Играть выбранное на рулетках» (constructor_play), у неё
+        # свой путь. Здесь же дубль должен звучать как в любом другом
+        # режиме — именно тот, что сейчас на экране.
 
         # 1. ЛОГИКА ДЛЯ РЕЖИМА ПЕРЕМЕННЫХ (VarBatch)
         if self.current_mode == 'VarBatch':
