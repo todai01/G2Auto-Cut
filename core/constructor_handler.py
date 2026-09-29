@@ -194,30 +194,22 @@ class ConstructorMixin:
         есть: связки (start, start_2...) на своих местах между
         категориями.
 
-        Автоматика (без ручного выбора на рулетках, indices тут не
-        используются, если словарь загружен):
-        - АКТИВНАЯ категория (та, что сейчас «едет» — _sum_stage2_active_tier)
-          — всегда СЛЕДУЮЩИЙ по очереди ещё не сохранённый сырой файл.
-        - Любая другая категория, для которой уже есть сохранённое
-          финальное значение (_sum_last_saved_file — прошлая «эталонная»
-          итерация) — берём именно его как контекст на слух, а не сырой
-          файл. Так марка/год, уже пройденные (или ещё не дошедшие)
-          ярусы, звучат тем же значением, что уже легло в Проверенные,
-          пока каскад не доберётся до них снова.
-        - Категория, у которой ЕЩЁ НЕТ сохранённого значения (первая
-          сборка вообще, до неё каскад ещё не дошёл) — тоже берёт первый
-          сырой файл: это разовое «первое эталонное» значение для неё,
-          которое sum_stage2_save зафиксирует наравне с активной
-          категорией, а на следующих сборках подхватится уже как
-          сохранённое (saveable=False там больше не понадобится).
+        Со словарём собираем ОДНУ КОНКРЕТНУЮ СТРОКУ таблицы целиком
+        (_sum_stage2_current_row) — марка, год, суммы берутся ИЗ ОДНОЙ И
+        ТОЙ ЖЕ строки, а не независимо друг от друга: для каждой
+        категории ищем аудио под её значение в этой строке — либо уже
+        готовое (переиспользуем как есть), либо сырое, ещё не
+        сохранённое (_sum_stage2_resolve_value). indices тут не
+        используются — какая строка сейчас активна, решает
+        sum_stage2_jump_to_value/_sum_stage2_advance_row.
 
         Без словаря (старый чистый «Конструктор» по папке «Суммы» без
         Excel, ручной выбор на рулетках) — прежнее поведение по indices.
 
         Возвращает список (key, filepath, saveable) — saveable=True у
-        всего, что нужно экспортировать при «Сохранить эталон» (активная
-        категория + любая ещё не зафиксированная), False — у связок и у
-        категорий, что уже звучат сохранённым значением."""
+        всего, что нужно экспортировать при «Сохранить эталон» (сырое,
+        ещё не сохранённое для этого значения), False — у связок и у
+        уже готовых значений."""
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
         columns = getattr(self, 'var_template_columns', None)
 
@@ -235,8 +227,9 @@ class ConstructorMixin:
             return segments
 
         connectors_by_key = {c['key']: c.get('path') for c in getattr(self, 'var_connectors', [])}
-        active_tier = self._sum_stage2_active_tier()
+        row = self._sum_stage2_current_row()
         segments = []
+        missing = []
         for col in columns:
             if col['type'] == 'connector':
                 path = connectors_by_key.get(col['key'])
@@ -245,19 +238,13 @@ class ConstructorMixin:
                 continue
 
             key = col['key']
-            if key == active_tier:
-                files = tiers.get(key, [])
-                if files:
-                    segments.append((key, files[0], True))
-                continue
-
-            saved = self._sum_last_saved_file(key)
-            if saved and os.path.exists(saved):
-                segments.append((key, saved, False))
-            else:
-                files = tiers.get(key, [])
-                if files:
-                    segments.append((key, files[0], True))
+            value = row.get(key)
+            path, saveable = self._sum_stage2_resolve_value(key, value)
+            if path:
+                segments.append((key, path, saveable))
+            elif value:
+                missing.append(f"{self._category_label(key)}: {value}")
+        self.sum_stage2_missing = missing
         return segments
 
     def constructor_play(self, indices):
@@ -285,7 +272,11 @@ class ConstructorMixin:
         стол Audacity отдельными клипами для ручной правки, а не для
         прослушивания."""
         segments = self._constructor_ordered_segments(indices)
-        if not any(saveable for _key, _path, saveable in segments):
+        if not segments:
+            missing = getattr(self, 'sum_stage2_missing', None)
+            if missing:
+                return {"error": "Нет аудио для этой строки таблицы: " + ', '.join(missing) +
+                                  ". Досортируйте сырьё для этих значений или переключитесь на другую строку."}
             return {"error": "Нет ни одного значения для сборки — проверьте, что сырая сортировка что-то накопила."}
 
         if self._block_if_audacity_ambiguous():

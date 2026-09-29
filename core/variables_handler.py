@@ -1748,10 +1748,10 @@ class VariablesMixin:
                 tag_key = m.group(1).strip()
                 sum_internal = _match_sum_tag(tag_key)
                 if sum_internal:
-                    columns.append({"type": "sum", "key": sum_internal, "tag": tag_key})
+                    columns.append({"type": "sum", "key": sum_internal, "tag": tag_key, "col_idx": col_idx})
                     sum_tag_col.setdefault(sum_internal, col_idx)
                 else:
-                    columns.append({"type": "tag", "key": tag_key})
+                    columns.append({"type": "tag", "key": tag_key, "col_idx": col_idx})
                     if tag_key not in seen_tags:
                         seen_tags.add(tag_key)
                         extra_tags.append({"key": tag_key, "label": _VAR_EXTRA_LABELS.get(tag_key, tag_key)})
@@ -1766,7 +1766,7 @@ class VariablesMixin:
                     if col_idx < len(r) and r[col_idx] not in (None, ''):
                         label = str(r[col_idx]).strip()
                         break
-                columns.append({"type": "connector", "key": text})
+                columns.append({"type": "connector", "key": text, "col_idx": col_idx})
                 connectors.append({"key": text, "label": label, "path": None})
 
         if not columns:
@@ -1789,10 +1789,30 @@ class VariablesMixin:
                         values.append(v)
             extra_tag_values[tag_key] = values
 
+        # Сами строки таблицы, категория -> значение — для восстановления
+        # КОНКРЕТНОЙ строки целиком (марка+год+суммы вместе, как реально
+        # написано в этой одной строке), а не только списка уникальных
+        # значений по каждой колонке отдельно (тот не хранит, какое
+        # значение с каким было в паре). Строка без значений вообще
+        # (пустая разделительная строка в Excel) пропускается.
+        template_rows = []
+        for r in data_rows:
+            row_map = {}
+            for col in columns:
+                if col['type'] == 'connector':
+                    continue
+                idx = col['col_idx']
+                if idx < len(r) and r[idx] not in (None, ''):
+                    row_map[col['key']] = str(r[idx]).strip()
+            if row_map:
+                template_rows.append(row_map)
+
         self.var_template_columns = columns
         self.var_extra_tags = extra_tags
         self.var_extra_tag_values = extra_tag_values
         self.var_connectors = connectors
+        self.var_template_rows = template_rows
+        self.sum_stage2_row_idx = 0
 
         return {
             "file_name": os.path.basename(picked[0]),
@@ -2568,13 +2588,11 @@ class VariablesMixin:
         return self.get_ui_state()
 
     def _sum_stage2_active_tier(self):
-        """Категория, которая сейчас «едет» — растёт на каждое сохранение,
-        пока в её сырой папке не кончатся файлы (_sum_stage2_advance),
-        затем эстафета уходит следующей по порядку колонок таблицы
-        (_active_category_keys) — марка целиком, потом год целиком,
-        потом суммы, а не потолок SUM_TIER_CAP: у доп.категорий
-        (mark/year/...) потолка вообще нет, раньше это держало каскад
-        только на 5 ярусах Суммы."""
+        """Только для «чистого» режима Суммы БЕЗ загруженной таблицы —
+        там нет строк, категория просто растёт до потолка/пустой сырой
+        папки, потом эстафета уходит следующей по порядку. Со словарём
+        сборка идёт по строкам целиком (_sum_stage2_current_row), этот
+        метод там не используется."""
         active = self._active_category_keys()
         if not active:
             return SUM_TIER_ORDER[0]
@@ -2582,10 +2600,8 @@ class VariablesMixin:
         return active[idx]
 
     def _sum_stage2_advance(self):
-        """Сдвигает актив на следующую категорию, когда у текущей
-        закончились сырые файлы — единообразно для сумм и доп.категорий,
-        а не по потолку (тот остаётся только справочной цифрой на
-        экране, см. _sum_stage2_state)."""
+        """Только для «чистого» режима Суммы без таблицы — см.
+        _sum_stage2_active_tier."""
         active_tier = self._sum_stage2_active_tier()
         remaining = len(self.constructor_tier_files.get(active_tier, []))
         if remaining == 0:
@@ -2593,77 +2609,175 @@ class VariablesMixin:
             if active_tier in active:
                 self.sum_stage2_active_idx = (active.index(active_tier) + 1) % len(active)
 
-    def sum_stage2_set_name_override(self, value):
-        """Юзер сам выбрал, какое имя присвоить файлу АКТИВНОЙ категории
-        при следующем «Сохранить эталон» — из ПОЛНОГО списка значений
-        этой колонки таблицы (var_extra_tag_values), а не только того,
-        что уже разложено по сырым дублям. Само аудио на столе Audacity
-        не меняется — только имя, под которым результат ляжет в
-        Проверенные. Пустая строка/None — сброс, снова берём имя из
-        самого сырого файла (как оно и присвоилось при сырой сортировке)."""
+    def _sum_stage2_current_row(self):
+        """Строка таблицы-словаря, которую сейчас собираем целиком —
+        {категория: значение}. Без загруженной таблицы — пустая (тогда
+        работает старый каскад по категориям, см. _sum_stage2_active_tier)."""
+        rows = getattr(self, 'var_template_rows', None) or []
+        if not rows:
+            return {}
+        idx = getattr(self, 'sum_stage2_row_idx', 0)
+        idx = max(0, min(idx, len(rows) - 1))
+        return rows[idx]
+
+    def _sum_stage2_resolve_value(self, tier, value):
+        """Ищет аудио под конкретное значение категории (взятое из строки
+        таблицы): сперва уже готовое в Проверенные (тогда просто
+        переиспользуем — этот звук уже кому-то присвоен, резать заново не
+        нужно), иначе сырое, ещё не сохранённое. Возвращает (путь,
+        saveable) — saveable=True только у сырого, только его нужно
+        экспортировать при «Сохранить эталон»; (None, False), если для
+        этого значения вообще нет ни готовой, ни сырой записи."""
+        if not value:
+            return None, False
+        target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
+        clean_value = re.sub(r'[<>:"/\\|?*]', '', value).strip()
+        name_base = re.sub(r'\D', '', clean_value) if tier in SUM_TIER_ORDER else clean_value
+        name_base = name_base or clean_value
+        for ext in ('.wav', '.mp3'):
+            p = os.path.join(target_dir, f"{name_base}{ext}")
+            if os.path.exists(p):
+                return p, False
+        for p in self.constructor_tier_files.get(tier, []):
+            if self._sum_raw_value_from_path(p) == value:
+                return p, True
+        return None, False
+
+    def _sum_stage2_advance_row(self):
+        """После сохранения — следующая строка таблицы, пропуская те, что
+        уже полностью готовы (все их категории — уже сохранённые файлы,
+        нечего там делать), чтобы не листать вручную то, что и так готово."""
+        rows = getattr(self, 'var_template_rows', None) or []
+        if not rows:
+            return
+        columns = getattr(self, 'var_template_columns', None) or []
+        total = len(rows)
+        idx = (getattr(self, 'sum_stage2_row_idx', 0) + 1) % total
+        for _ in range(total):
+            row = rows[idx]
+            done = True
+            for col in columns:
+                if col['type'] == 'connector':
+                    continue
+                value = row.get(col['key'])
+                if not value:
+                    continue
+                path, saveable = self._sum_stage2_resolve_value(col['key'], value)
+                if saveable or not path:
+                    done = False
+                    break
+            if not done:
+                break
+            idx = (idx + 1) % total
+        self.sum_stage2_row_idx = idx
+
+    def sum_stage2_jump_to_value(self, tier, value):
+        """Юзер выбрал значение категории из ПОЛНОГО списка таблицы (не
+        только то, что уже разложено по сырым дублям) — ищем первую
+        строку с этим значением в этой колонке (начиная с текущей, по
+        кругу) и переключаемся на неё ЦЕЛИКОМ: марка, год, суммы —
+        дальше всё берётся из ЭТОЙ ЖЕ строки, а не независимо друг от
+        друга."""
+        rows = getattr(self, 'var_template_rows', None) or []
+        if not rows:
+            return {"error": "Таблица-словарь не загружена."}
         value = (value or '').strip()
-        self.sum_stage2_active_name_override = value or None
-        return self.get_ui_state()
+        if not value:
+            return self.get_ui_state()
+
+        total = len(rows)
+        start = getattr(self, 'sum_stage2_row_idx', 0)
+        for offset in range(total):
+            idx = (start + offset) % total
+            if rows[idx].get(tier) == value:
+                self.sum_stage2_row_idx = idx
+                return self.get_ui_state()
+        return {"error": f"В таблице нет строки со значением «{value}» в этой категории."}
 
     def _sum_stage2_state(self):
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
-        active_tier = self._sum_stage2_active_tier()
-        frozen_idx = getattr(self, 'sum_stage2_frozen_idx', {}) or {}
+        columns = getattr(self, 'var_template_columns', None)
         counts = getattr(self, 'sum_stage2_counts', {}) or {}
-        # Ярусы активной логики Суммы + доп.категории словаря переменных,
-        # в порядке колонок таблицы — рулетки показывают их все вместе,
-        # каскад (_sum_stage2_active_tier/_advance) идёт по ним по очереди
-        # в этом же порядке (марка целиком → год целиком → суммы).
-        active_logic = self._active_category_keys()
-
-        # Подсказка рулеткам, что показать по умолчанию: активная категория
-        # всегда начинает со следующего ещё не использованного сырого
-        # файла (индекс 0 — использованные удаляются из списка при
-        # сохранении), «замороженные» — с последнего, что уже звучал.
-        default_indices = {}
-        for t in active_logic:
-            default_indices[t] = 0 if t == active_tier else frozen_idx.get(t, 0)
-
-        phrase = self._current_sum_phrase()
 
         def display_name(path):
             # "<таймстамп>_<исходное имя дубля>.wav" -> "исходное имя дубля"
             stem = os.path.splitext(os.path.basename(path))[0]
             return stem.split('_', 1)[1] if '_' in stem else stem
 
-        # Полный список значений этой колонки из САМОЙ таблицы (не только
-        # то, что уже разложено по сырым дублям) — юзер выбирает из него,
-        # каким именем назвать файл активной категории при сохранении
-        # (sum_stage2_set_name_override), независимо от того, какой
-        # именно сырой звук сейчас лежит на столе Audacity.
-        active_files = tiers.get(active_tier, [])
-        active_auto_name = self._sum_raw_value_from_path(active_files[0]) if active_files else None
-        active_name_choices = list(getattr(self, 'var_extra_tag_values', {}).get(active_tier, []))
+        if not columns:
+            # «Чистый» режим Суммы без таблицы — старый каскад по
+            # категориям, без понятия строки.
+            active_tier = self._sum_stage2_active_tier()
+            active_logic = self._active_category_keys()
+            frozen_idx = getattr(self, 'sum_stage2_frozen_idx', {}) or {}
+            default_indices = {t: (0 if t == active_tier else frozen_idx.get(t, 0)) for t in active_logic}
+            return {
+                "active_tier": self._category_label(active_tier),
+                "active_tier_key": active_tier,
+                "default_indices": default_indices,
+                "row_idx": None,
+                "rows_total": 0,
+                "row_values": {},
+                "start": os.path.basename(self.constructor_start_file) if self.constructor_start_file else None,
+                "end": os.path.basename(self.constructor_end_file) if self.constructor_end_file else None,
+                "tiers": {
+                    t: {
+                        "label": self._category_label(t),
+                        "items": [display_name(p) for p in tiers.get(t, [])],
+                        "paths": list(tiers.get(t, [])),
+                        "name_choices": [],
+                        "saved": counts.get(t, 0),
+                        "cap": SUM_TIER_CAP.get(t),
+                        "active": t == active_tier,
+                    }
+                    for t in active_logic
+                },
+            }
+
+        # РЕЖИМ СО СЛОВАРЁМ: собираем ОДНУ КОНКРЕТНУЮ СТРОКУ таблицы
+        # целиком (марка+год+суммы вместе, как они реально стоят в этой
+        # строке) — см. _sum_stage2_current_row/sum_stage2_jump_to_value.
+        row = self._sum_stage2_current_row()
+        rows_total = len(getattr(self, 'var_template_rows', None) or [])
+        active_logic = self._active_category_keys()
+        all_choices = getattr(self, 'var_extra_tag_values', {}) or {}
+
+        tiers_out = {}
+        for t in active_logic:
+            value = row.get(t)
+            path, saveable = self._sum_stage2_resolve_value(t, value)
+            tiers_out[t] = {
+                "label": self._category_label(t),
+                "items": [display_name(p) for p in tiers.get(t, [])],
+                # Пути рядом с именами — чтобы фронтенд мог проиграть
+                # конкретное сырое значение при листании ←/→, а не
+                # только показать его название (play_specific_file).
+                "paths": list(tiers.get(t, [])),
+                # Полный список значений ЭТОЙ колонки из самой таблицы —
+                # не только то, что уже разложено по сырым дублям — юзер
+                # выбирает из него, на какую строку переключиться целиком
+                # (sum_stage2_jump_to_value).
+                "name_choices": list(all_choices.get(t, [])),
+                "saved": counts.get(t, 0),
+                "cap": SUM_TIER_CAP.get(t),
+                # «active» тут значит «для этой строки ещё нет готового
+                # файла — требует сохранения», не «сейчас едет» (такого
+                # понятия в режиме строк больше нет).
+                "active": bool(saveable),
+                "row_value": value,
+                "row_ready": path is not None,
+            }
 
         return {
-            "active_tier": self._category_label(active_tier),
-            "active_tier_key": active_tier,
-            "default_indices": default_indices,
-            "active_name_choices": active_name_choices,
-            "active_auto_name": active_auto_name,
-            "active_name_override": getattr(self, 'sum_stage2_active_name_override', None),
-            "next_name": (phrase or {}).get('text', ''),
+            "active_tier": None,
+            "active_tier_key": None,
+            "default_indices": {},
+            "row_idx": getattr(self, 'sum_stage2_row_idx', 0),
+            "rows_total": rows_total,
+            "row_values": dict(row),
             "start": os.path.basename(self.constructor_start_file) if self.constructor_start_file else None,
             "end": os.path.basename(self.constructor_end_file) if self.constructor_end_file else None,
-            "tiers": {
-                t: {
-                    "label": self._category_label(t),
-                    "items": [display_name(p) for p in tiers.get(t, [])],
-                    # Пути рядом с именами — чтобы фронтенд мог проиграть
-                    # конкретное сырое значение при листании ←/→, а не
-                    # только показать его название (play_specific_file).
-                    "paths": list(tiers.get(t, [])),
-                    "saved": counts.get(t, 0),
-                    "cap": SUM_TIER_CAP.get(t),
-                    "active": t == active_tier,
-                }
-                for t in active_logic
-            },
+            "tiers": tiers_out,
         }
 
     @staticmethod
@@ -2682,13 +2796,11 @@ class VariablesMixin:
     def _sum_stage2_save_one(self, tier, raw_path, clip, name_override=None):
         """Экспортирует один кусок (по его клипу на дорожке) в Проверенные
         нужной категории, убирает исходник из сырой очереди и обновляет
-        кэш «последнего сохранённого» — общая часть для активной
-        категории и для разовой «бутстрап»-фиксации ещё не тронутых
-        категорий (см. _constructor_ordered_segments). name_override —
-        имя, выбранное юзером из полного списка значений колонки
-        (sum_stage2_set_name_override) вместо того, что само присвоилось
-        сырому файлу при сортировке; звук при этом не меняется, меняется
-        только под каким именем он ляжет в Проверенные."""
+        кэш «последнего сохранённого». Имя файла обычно берём из самого
+        сырого файла (то, что ему присвоила сырая сортировка — оно и
+        совпадает со значением строки таблицы, раз мы его для этого
+        значения и искали, см. _sum_stage2_resolve_value); name_override
+        остаётся как ручной способ переопределить имя при прямом вызове."""
         target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
         os.makedirs(target_dir, exist_ok=True)
 
@@ -2726,22 +2838,22 @@ class VariablesMixin:
         return save_name
 
     def sum_stage2_save(self):
-        """Фиксирует эталон целиком: экспортирует АКТИВНУЮ (сейчас
-        растущую) категорию — и заодно любую другую категорию на
-        дорожке, у которой ЕЩЁ НЕТ ни одного сохранённого значения (её
-        «бутстрап»: первая сборка вообще, каскад до неё ещё не дошёл, а
-        показать что-то на слух в этой сборке уже нужно). Категории, у
-        которых сохранённое значение уже было, — не трогаем, они и так
-        звучали именно этим сохранённым файлом (см. _constructor_ordered_segments),
-        трогать нечего. Имя итогового файла — само значение категории
-        («AUDI 80.wav», «95.wav», «4.wav»), Excel не нужен."""
+        """Фиксирует эталон, собранный на столе Audacity. Со словарём —
+        это одна строка таблицы целиком: экспортирует все категории этой
+        строки, у которых ещё не было готового файла (те, что уже были
+        готовы, просто переиспользовались как контекст — их не трогаем),
+        и переходит на следующую строку (_sum_stage2_advance_row). Без
+        словаря — прежнее поведение: только активная категория каскада.
+        Имя итогового файла — само значение категории («AUDI 80.wav»,
+        «95.wav», «4.wav»), Excel не нужен."""
         layout = getattr(self, '_constructor_clip_layout', None)
         active_paths = getattr(self, '_constructor_active_paths', None)
-        if not layout or not active_paths:
+        if not layout:
             return {"error": "Сначала нажмите «Отправить в Audacity»."}
 
-        active_tier = self._sum_stage2_active_tier()
-        if active_tier not in active_paths:
+        columns = getattr(self, 'var_template_columns', None)
+        active_tier = None if columns else self._sum_stage2_active_tier()
+        if active_tier is not None and active_tier not in (active_paths or {}):
             return {"error": f"В сборке нет категории «{self._category_label(active_tier)}» — отправьте в "
                               f"Audacity заново."}
 
@@ -2764,17 +2876,14 @@ class VariablesMixin:
         for tag, clip in zip(layout, track_0_clips):
             clip_by_tag.setdefault(tag, clip)
 
-        name_override = getattr(self, 'sum_stage2_active_name_override', None)
         saved_names = {}
-        for tier, raw_path in active_paths.items():
+        for tier, raw_path in (active_paths or {}).items():
             clip = clip_by_tag.get(tier)
             if clip is None:
                 continue
-            override = name_override if tier == active_tier else None
-            saved_names[tier] = self._sum_stage2_save_one(tier, raw_path, clip, name_override=override)
-        self.sum_stage2_active_name_override = None
+            saved_names[tier] = self._sum_stage2_save_one(tier, raw_path, clip)
 
-        if active_tier not in saved_names:
+        if active_tier is not None and active_tier not in saved_names and active_tier in (active_paths or {}):
             return {"error": f"Категория «{self._category_label(active_tier)}» не найдена в сборке на дорожке."}
 
         counts = getattr(self, 'sum_stage2_counts', None) or {}
@@ -2782,7 +2891,10 @@ class VariablesMixin:
             counts[tier] = counts.get(tier, 0) + 1
         self.sum_stage2_counts = counts
 
-        self._sum_stage2_advance()
+        if columns:
+            self._sum_stage2_advance_row()
+        else:
+            self._sum_stage2_advance()
 
         self._constructor_clip_layout = None
         self._constructor_active_paths = None
@@ -2792,8 +2904,11 @@ class VariablesMixin:
             self.audacity.send_command('RemoveTracks:')
         self.is_in_audacity = False
 
-        summary = ', '.join(f'{self._category_label(t)} → {n}' for t, n in saved_names.items())
-        webview.windows[0].evaluate_js(f"showToast('💾 Сохранено: {summary}');")
+        if saved_names:
+            summary = ', '.join(f'{self._category_label(t)} → {n}' for t, n in saved_names.items())
+            webview.windows[0].evaluate_js(f"showToast('💾 Сохранено: {summary}');")
+        else:
+            webview.windows[0].evaluate_js("showToast('Эта строка уже была полностью готова — перешли к следующей.');")
         return self.get_ui_state()
 
     def sum_send_to_audacity(self):

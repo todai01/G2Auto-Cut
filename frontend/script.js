@@ -1539,6 +1539,7 @@ let isProcessing = false;
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
             renderSumSingleRow();
+            renderSumNextValuePicker(lastSumState && lastSumState.reels);
             triggerSumAnim(document.getElementById('sumSingleRow'), dir < 0 ? 'sum-anim-up' : 'sum-anim-down');
         }
         function sumStage1BrowseMove(dir) {
@@ -1697,7 +1698,11 @@ let isProcessing = false;
             if (sumStage1SelectedIdx >= sumStage1Tiers.length) sumStage1SelectedIdx = 0;
 
             let nextName = document.getElementById('sumStage2NextName');
-            if (nextName) nextName.innerText = data.next_name ? `→ ${data.next_name}` : '';
+            if (nextName) {
+                nextName.innerText = (data.rows_total)
+                    ? `Строка ${(data.row_idx || 0) + 1} / ${data.rows_total}`
+                    : (data.next_name ? `→ ${data.next_name}` : '');
+            }
 
             // Курсор внутри категории по умолчанию — на следующем ещё не
             // использованном значении для активной (растущей) категории,
@@ -1713,19 +1718,21 @@ let isProcessing = false;
             renderSumNextValuePicker(data);
         }
 
-        // Какое имя присвоить файлу активной категории — список ВСЕХ
-        // значений этой колонки из самой таблицы (не только то, что уже
-        // разложено по сырым дублям), выбор просто помечает, каким именем
-        // сохранить результат (sum_stage2_set_name_override) — звук на
-        // столе Audacity не меняется, меняется только имя файла.
+        // Список ВСЕХ значений категории, выбранной сейчас ↑/↓ (той же,
+        // что и на однострочном экране сортировки) — из самой таблицы,
+        // не только то, что уже разложено по сырым дублям. Выбор
+        // переключает всю сборку на ПЕРВУЮ строку таблицы с этим
+        // значением (sum_stage2_jump_to_value) — марка, год, суммы дальше
+        // берутся из этой же строки целиком, не порознь.
         function renderSumNextValuePicker(data) {
             let select = document.getElementById('sumNextValuePick');
             let label = document.getElementById('sumNextValueTier');
-            if (!select || !data || !data.active_tier_key) return;
+            if (!select || !data || !sumStage1Tiers.length) return;
 
-            let tierInfo = data.tiers[data.active_tier_key];
-            let choices = data.active_name_choices || [];
-            if (label) label.innerText = (tierInfo && tierInfo.label) || data.active_tier_key;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let tierInfo = data.tiers[tier];
+            let choices = (tierInfo && tierInfo.name_choices) || [];
+            if (label) label.innerText = (tierInfo && tierInfo.label) || tier;
 
             select.innerHTML = '';
             if (!choices.length) {
@@ -1743,11 +1750,14 @@ let isProcessing = false;
                 opt.textContent = name;
                 select.appendChild(opt);
             });
-            select.value = data.active_name_override || data.active_auto_name || choices[0];
+            let current = tierInfo && tierInfo.row_value;
+            select.value = (current && choices.includes(current)) ? current : choices[0];
         }
 
-        async function sumStage2SetNameOverride(value) {
-            let state = await pywebview.api.sum_stage2_set_name_override(value);
+        async function sumStage2JumpToValue(value) {
+            if (!sumStage1Tiers.length) return;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let state = await pywebview.api.sum_stage2_jump_to_value(tier, value);
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
