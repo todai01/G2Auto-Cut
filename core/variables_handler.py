@@ -2593,19 +2593,16 @@ class VariablesMixin:
             if active_tier in active:
                 self.sum_stage2_active_idx = (active.index(active_tier) + 1) % len(active)
 
-    def sum_stage2_pick_value(self, index):
-        """Юзер сам выбрал значение из списка АКТИВНОЙ (сейчас «едущей»)
-        категории вместо слепого «следующее по очереди» — очередь просто
-        прокручивается так, чтобы выбранное встало первым (его и возьмёт
-        следующий «В Audacity»). Всё, что было перед ним в очереди, не
-        теряется — уезжает в конец, к нему каскад вернётся позже, когда
-        дойдёт до конца списка."""
-        active_tier = self._sum_stage2_active_tier()
-        files = self.constructor_tier_files.get(active_tier, [])
-        if not isinstance(index, int) or not (0 <= index < len(files)):
-            return {"error": "Такого значения нет в списке — обновите список и попробуйте снова."}
-
-        files[:] = files[index:] + files[:index]
+    def sum_stage2_set_name_override(self, value):
+        """Юзер сам выбрал, какое имя присвоить файлу АКТИВНОЙ категории
+        при следующем «Сохранить эталон» — из ПОЛНОГО списка значений
+        этой колонки таблицы (var_extra_tag_values), а не только того,
+        что уже разложено по сырым дублям. Само аудио на столе Audacity
+        не меняется — только имя, под которым результат ляжет в
+        Проверенные. Пустая строка/None — сброс, снова берём имя из
+        самого сырого файла (как оно и присвоилось при сырой сортировке)."""
+        value = (value or '').strip()
+        self.sum_stage2_active_name_override = value or None
         return self.get_ui_state()
 
     def _sum_stage2_state(self):
@@ -2634,10 +2631,22 @@ class VariablesMixin:
             stem = os.path.splitext(os.path.basename(path))[0]
             return stem.split('_', 1)[1] if '_' in stem else stem
 
+        # Полный список значений этой колонки из САМОЙ таблицы (не только
+        # то, что уже разложено по сырым дублям) — юзер выбирает из него,
+        # каким именем назвать файл активной категории при сохранении
+        # (sum_stage2_set_name_override), независимо от того, какой
+        # именно сырой звук сейчас лежит на столе Audacity.
+        active_files = tiers.get(active_tier, [])
+        active_auto_name = self._sum_raw_value_from_path(active_files[0]) if active_files else None
+        active_name_choices = list(getattr(self, 'var_extra_tag_values', {}).get(active_tier, []))
+
         return {
             "active_tier": self._category_label(active_tier),
             "active_tier_key": active_tier,
             "default_indices": default_indices,
+            "active_name_choices": active_name_choices,
+            "active_auto_name": active_auto_name,
+            "active_name_override": getattr(self, 'sum_stage2_active_name_override', None),
             "next_name": (phrase or {}).get('text', ''),
             "start": os.path.basename(self.constructor_start_file) if self.constructor_start_file else None,
             "end": os.path.basename(self.constructor_end_file) if self.constructor_end_file else None,
@@ -2670,17 +2679,22 @@ class VariablesMixin:
             stem = stem[len('сырая_'):]
         return stem
 
-    def _sum_stage2_save_one(self, tier, raw_path, clip):
+    def _sum_stage2_save_one(self, tier, raw_path, clip, name_override=None):
         """Экспортирует один кусок (по его клипу на дорожке) в Проверенные
         нужной категории, убирает исходник из сырой очереди и обновляет
         кэш «последнего сохранённого» — общая часть для активной
         категории и для разовой «бутстрап»-фиксации ещё не тронутых
-        категорий (см. _constructor_ordered_segments)."""
+        категорий (см. _constructor_ordered_segments). name_override —
+        имя, выбранное юзером из полного списка значений колонки
+        (sum_stage2_set_name_override) вместо того, что само присвоилось
+        сырому файлу при сортировке; звук при этом не меняется, меняется
+        только под каким именем он ляжет в Проверенные."""
         target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
         os.makedirs(target_dir, exist_ok=True)
 
         ext = os.path.splitext(raw_path)[1] or '.wav'
-        clean_value = re.sub(r'[<>:"/\\|?*]', '', self._sum_raw_value_from_path(raw_path)).strip()
+        raw_value = name_override if name_override else self._sum_raw_value_from_path(raw_path)
+        clean_value = re.sub(r'[<>:"/\\|?*]', '', raw_value).strip()
         if tier in SUM_TIER_ORDER:
             digits = re.sub(r'\D', '', clean_value)
             save_name = f"{digits}{ext}" if digits else f"{clean_value}{ext}"
@@ -2750,12 +2764,15 @@ class VariablesMixin:
         for tag, clip in zip(layout, track_0_clips):
             clip_by_tag.setdefault(tag, clip)
 
+        name_override = getattr(self, 'sum_stage2_active_name_override', None)
         saved_names = {}
         for tier, raw_path in active_paths.items():
             clip = clip_by_tag.get(tier)
             if clip is None:
                 continue
-            saved_names[tier] = self._sum_stage2_save_one(tier, raw_path, clip)
+            override = name_override if tier == active_tier else None
+            saved_names[tier] = self._sum_stage2_save_one(tier, raw_path, clip, name_override=override)
+        self.sum_stage2_active_name_override = None
 
         if active_tier not in saved_names:
             return {"error": f"Категория «{self._category_label(active_tier)}» не найдена в сборке на дорожке."}

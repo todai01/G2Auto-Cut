@@ -1713,42 +1713,41 @@ let isProcessing = false;
             renderSumNextValuePicker(data);
         }
 
-        // Список очереди активной категории для финальной сборки — видно
-        // заранее, какое имя присвоится куску, вместо слепого «следующее
-        // по очереди». Выбор другого значения просто прокручивает очередь
-        // (sum_stage2_pick_value) — пропущенные значения не теряются,
-        // остаются в конце списка.
+        // Какое имя присвоить файлу активной категории — список ВСЕХ
+        // значений этой колонки из самой таблицы (не только то, что уже
+        // разложено по сырым дублям), выбор просто помечает, каким именем
+        // сохранить результат (sum_stage2_set_name_override) — звук на
+        // столе Audacity не меняется, меняется только имя файла.
         function renderSumNextValuePicker(data) {
             let select = document.getElementById('sumNextValuePick');
             let label = document.getElementById('sumNextValueTier');
             if (!select || !data || !data.active_tier_key) return;
 
             let tierInfo = data.tiers[data.active_tier_key];
-            let items = (tierInfo && tierInfo.items) || [];
+            let choices = data.active_name_choices || [];
             if (label) label.innerText = (tierInfo && tierInfo.label) || data.active_tier_key;
 
             select.innerHTML = '';
-            if (!items.length) {
+            if (!choices.length) {
                 let opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'нет сырых файлов';
+                opt.textContent = 'в таблице нет значений для этой категории';
                 select.appendChild(opt);
                 select.disabled = true;
                 return;
             }
             select.disabled = false;
-            items.forEach((name, idx) => {
+            choices.forEach(name => {
                 let opt = document.createElement('option');
-                opt.value = String(idx);
-                opt.textContent = (idx === 0 ? '→ ' : '') + name;
+                opt.value = name;
+                opt.textContent = name;
                 select.appendChild(opt);
             });
-            select.value = '0';
+            select.value = data.active_name_override || data.active_auto_name || choices[0];
         }
 
-        async function sumStage2PickValue(value) {
-            if (value === '' || value === null) return;
-            let state = await pywebview.api.sum_stage2_pick_value(parseInt(value, 10));
+        async function sumStage2SetNameOverride(value) {
+            let state = await pywebview.api.sum_stage2_set_name_override(value);
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
