@@ -288,9 +288,13 @@ class MontageMixin:
                 orig_style = getattr(self, '_embed_orig_style', None)
                 if orig_style is not None:
                     user32.SetWindowLongW(hwnd, self.GWL_STYLE, orig_style)
-                    user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-                                         self.SWP_NOZORDER | self.SWP_FRAMECHANGED |
-                                         self.SWP_NOMOVE | self.SWP_NOSIZE)
+                # Тот же набор флагов, что и в unembed_audacity() (там это
+                # проверенно работает) — важен SWP_SHOWWINDOW: без него
+                # окно иногда оставалось перерисованным «как встроенное»
+                # и ShowWindow(..., SW_MINIMIZE) сразу за этим не срабатывал.
+                user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                                     self.SWP_NOZORDER | self.SWP_FRAMECHANGED |
+                                     self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_SHOWWINDOW)
             except Exception:
                 pass
             self._embedded_hwnd = None
