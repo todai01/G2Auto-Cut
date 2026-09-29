@@ -192,17 +192,16 @@ class ConstructorMixin:
         """Порядок сборки для прослушки/правки — строго как колонки в
         загруженной таблице-словаре (var_template_columns), если она
         есть: связки (start, start_2...) на своих местах между
-        категориями, доп.категории (mark/year/...) звучат для
-        естественного контекста вокруг суммы, но НЕ сохраняются через
-        constructor_save/sum_stage2_save — они уже готовы как есть после
-        сырой сортировки, обрезка по таймингу им не нужна (в отличие от
-        многозначных сумм). Без словаря (старый чистый «Конструктор» по
+        категориями. И суммы, и доп.категории (mark/year/...) —
+        сохраняемые: финальный каскад (sum_stage2_save) проходит по ним
+        всем по очереди (марка целиком → год целиком → суммы), не только
+        по 5 ярусам Суммы. Без словаря (старый чистый «Конструктор» по
         папке «Суммы» без Excel) — прежний порядок: start, 5 ярусов
         Суммы, end.
 
-        Возвращает список (key, filepath, saveable) — saveable=True
-        только у тех сегментов, что действительно можно сохранить
-        обратно (ярусы Суммы)."""
+        Возвращает список (key, filepath, saveable) — saveable=False
+        только у связок (start/end/start_2/...), их файл один на весь
+        проект и сохранять поверх него нечего."""
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
         columns = getattr(self, 'var_template_columns', None)
 
@@ -231,7 +230,7 @@ class ConstructorMixin:
                 files = tiers.get(key, [])
                 idx = (indices or {}).get(key)
                 if files and isinstance(idx, int) and 0 <= idx < len(files):
-                    segments.append((key, files[idx], col['type'] == 'sum'))
+                    segments.append((key, files[idx], True))
         return segments
 
     def constructor_play(self, indices):
@@ -260,9 +259,7 @@ class ConstructorMixin:
         прослушивания."""
         segments = self._constructor_ordered_segments(indices)
         if not any(saveable for _key, _path, saveable in segments):
-            return {"error": "Выберите хотя бы одно значение яруса Суммы на рулетке — остальные категории "
-                              "только звучат вокруг него для контекста, сохраняется через эту сборку "
-                              "только сумма."}
+            return {"error": "Выберите хотя бы одно значение на рулетках."}
 
         if self._block_if_audacity_ambiguous():
             return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
