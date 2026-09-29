@@ -1678,6 +1678,31 @@ let isProcessing = false;
             if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
         }
 
+        async function sumSendDubToAudacity() {
+            let state;
+            try {
+                state = await pywebview.api.sum_send_current_dub_to_audacity();
+            } catch (e) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${e}`);
+                return;
+            }
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
+        }
+
+        async function sumCollectDubLabels() {
+            let state = await pywebview.api.sum_collect_dub_labels();
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
+
         async function sumStage2Save() {
             let state = await pywebview.api.sum_stage2_save();
             if (state && state.error) {
@@ -2665,6 +2690,8 @@ let isProcessing = false;
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
                 else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
+                else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
+                else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
                 else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
                 else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
                 else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(-1); }
@@ -2682,6 +2709,8 @@ let isProcessing = false;
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
+            else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
+            else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
             else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
             else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
             else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(-1); }

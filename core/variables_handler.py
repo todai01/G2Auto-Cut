@@ -2406,6 +2406,147 @@ class VariablesMixin:
         webview.windows[0].evaluate_js(f"showToast('↩️ Отменено: убрано из «{self._category_label(tier)}»');")
         return self.get_ui_state()
 
+    # ==================================================================
+    #  РАЗДЕЛЕНИЕ СЛИПШЕГОСЯ ДУБЛЯ: иногда автосрезка не разрезала фразу,
+    #  в которой диктор произнёс сразу две переменные подряд без паузы
+    #  между ними (например «4 тысячи» и «4 тенге» слитно). Обычная
+    #  отправка (sum_stage1_send) тут не подходит — дубль целиком ушёл бы
+    #  только в одну категорию. Вместо этого: текущий дубль целиком, БЕЗ
+    #  правки, открывается в Audacity — юзер сам расставляет метки
+    #  (Ctrl+B) на каждом куске с именем вида «4_тыс» (значение и слово
+    #  категории через «_»), затем одной кнопкой все размеченные участки
+    #  разъезжаются по своим сырым папкам, как будто были отправлены
+    #  sum_stage1_send по отдельности.
+    # ==================================================================
+
+    def _resolve_label_category(self, word):
+        """Слово из метки («тыс», «тенге», «марка»...) -> внутренний ключ
+        категории. Для ярусов Суммы используем то же различение тысяч по
+        числу, что и _detect_sum_tier/_thousands_subtier (число уже есть
+        в самой метке, например «150_тыс» -> Сотни тысяч, «4_тыс» ->
+        Тысячи), «сотни» без числа-подсказки распознаём по отдельному
+        слову, раз в обычном тексте Excel у этого яруса вообще нет слова.
+        Доп.категории словаря (mark/year/...) ищем и по ключу колонки, и
+        по её человеческой подписи — что юзеру удобнее написать в метке."""
+        low = (word or '').lower().replace('ё', 'е')
+        if 'млн' in low or 'миллион' in low:
+            return 'millions'
+        if 'тыс' in low:
+            return _thousands_subtier(low)
+        if 'тенге' in low or re.search(r'тг(?![а-яa-z])', low):
+            return 'tenge'
+        if 'сотн' in low or 'сотен' in low:
+            return 'hundreds'
+        for key in self._var_extra_tag_keys():
+            if key.lower() in low or self._var_extra_tag_label(key).lower() in low:
+                return key
+        return None
+
+    def sum_send_current_dub_to_audacity(self):
+        """Клавиша V: текущий дубль из Chunks — целиком, без объединения
+        со start/end/референсами — на стол Audacity, чтобы вручную
+        разметить метками участки, слипшиеся в один кусок."""
+        active_file, source_name, err = self._sum_current_source()
+        if err:
+            return {"error": err}
+
+        if self._block_if_audacity_ambiguous():
+            return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
+        if not self._ensure_audacity_ready():
+            return {"error": "Не удалось запустить Audacity. Откройте его вручную и нажмите кнопку ещё раз."}
+
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('RemoveTracks:')
+        self.audacity.send_command('NewMonoTrack:')
+        duration = self._import_clip_to_track0(active_file, 0.0)
+
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start=0 End={duration + 2.0} RelativeTo=ProjectStart')
+        self.audacity.send_command('ZoomSel:')
+        self.audacity.send_command('SetProject: Rate=8000')
+
+        self.is_in_audacity = True
+        self._sum_split_pending = {"source": active_file, "name": source_name}
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        webview.windows[0].evaluate_js(
+            "showToast('✂️ Дубль в Audacity — расставьте метки вида «4_тыс», «4_тенге» и нажмите «Забрать метки»');")
+        return self.get_ui_state()
+
+    def sum_collect_dub_labels(self):
+        """Клавиша B: читает метки, расставленные на дубле, отправленном
+        sum_send_current_dub_to_audacity, экспортирует каждый размеченный
+        участок в сырую папку соответствующей категории — ровно так же,
+        как если бы каждый кусок был отправлен по отдельности клавишей Z,
+        включая короткое имя «сырая_<значение>». Требуем, чтобы КАЖДАЯ
+        метка распозналась, прежде чем экспортировать хоть одну — иначе
+        нераспознанный кусок потерялся бы молча."""
+        pending = getattr(self, '_sum_split_pending', None)
+        if not pending:
+            return {"error": "Сначала отправьте дубль кнопкой «Дубль в Audacity»."}
+
+        resp = self.audacity.send_command('GetInfo: Type=Labels Format=JSON')
+        labels = []
+        try:
+            s, e = resp.find('['), resp.rfind(']')
+            data = json.loads(resp[s:e + 1])
+            for track in data:
+                for label in track[1]:
+                    labels.append((float(label[0]), float(label[1]), str(label[2]).strip()))
+        except Exception:
+            return {"error": "Не удалось прочитать метки из Audacity."}
+
+        if not labels:
+            return {"error": "На дорожке нет меток. Выделите участок, нажмите Ctrl+B, впишите имя вида "
+                              "«4_тыс» и снова нажмите эту кнопку."}
+
+        resolved, unresolved = [], []
+        for t0, t1, text in labels:
+            if '_' not in text:
+                unresolved.append(text)
+                continue
+            value, word = text.split('_', 1)
+            value = value.strip()
+            tier = self._resolve_label_category(word)
+            if not value or not tier:
+                unresolved.append(text)
+                continue
+            resolved.append((t0, t1, tier, value))
+
+        if unresolved:
+            return {"error": "Не распознал категорию в метке(-ах): " + ', '.join(unresolved) +
+                              ". Формат — «значение_категория», например «4_тыс» или «4_тенге». "
+                              "Переименуйте метку(-и) в Audacity (Ctrl+B на ней) и нажмите ещё раз."}
+
+        if not hasattr(self, 'constructor_tier_files'):
+            self.constructor_tier_files = {}
+        ext = os.path.splitext(pending['name'])[1] or '.wav'
+        exported = []
+        for t0, t1, tier, value in resolved:
+            target_dir = self._sum_stage1_raw_dir(tier)
+            os.makedirs(target_dir, exist_ok=True)
+            safe_value = re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
+            save_name = f"{int(time.time() * 1000)}_сырая_{safe_value}{ext}"
+            target_path = os.path.join(target_dir, save_name)
+
+            self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+            self.audacity.send_command(f'SelectTime: Start={t0} End={t1} RelativeTo=ProjectStart')
+            self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+
+            self.constructor_tier_files.setdefault(tier, []).append(target_path)
+            exported.append(f'{self._category_label(tier)}: {value}')
+
+        self._sum_split_pending = None
+        self.sum_stage1_last_send = None  # разделённый дубль не откатывается обычной «Отменить»
+        self._sum_advance_pointer()
+
+        summary = ', '.join(exported)
+        webview.windows[0].evaluate_js(f"showToast('✂️ Разделено и сохранено: {summary}');")
+        return self.get_ui_state()
+
     def _sum_stage2_active_tier(self):
         """Категория, которая сейчас «едет» — растёт на каждое сохранение,
         пока не упрётся в потолок (SUM_TIER_CAP), затем эстафета уходит

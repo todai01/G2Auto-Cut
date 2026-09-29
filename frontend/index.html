@@ -1125,10 +1125,14 @@
                                 <button class="btn-tile btn-tile--mode" onclick="sumStage2TogglePlay()">Играть выбранное на рулетках</button>
                             </div>
                             <div class="tile-row">
+                                <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить ТЕКУЩИЙ дубль из Chunks целиком в Audacity — для случая, когда в нём слиплись две переменные подряд">Дубль в Audacity <kbd>V</kbd></button>
+                                <button class="btn-tile btn-tile--var" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
+                            </div>
+                            <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Если открыли/переключили Audacity уже после входа в режим — привяжите окно заново этой кнопкой">Прикрепить окно Audacity</button>
                             </div>
 
-                            <div class="action-note">&uarr;/&darr; выбирает категорию, &larr;/&rarr; листает значения внутри неё, <kbd>Z</kbd> сохраняет дубль в категорию, <kbd>X</kbd> отменяет последнее сохранение. Не сумма — пролистайте <kbd>D</kbd>.</div>
+                            <div class="action-note">&uarr;/&darr; выбирает категорию, &larr;/&rarr; листает значения внутри неё, <kbd>Z</kbd> сохраняет дубль в категорию, <kbd>X</kbd> отменяет последнее сохранение. Слипшиеся переменные — <kbd>V</kbd> отправляет дубль в Audacity, разметьте метками «значение_категория» и заберите кнопкой <kbd>B</kbd>. Не сумма — пролистайте <kbd>D</kbd>.</div>
                         </div>
                     </div>
 
