@@ -1606,8 +1606,10 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 /* Подсветка: сейчас звучит именно то значение, что на экране — тот же
    приём с классом is-playing/.playTimeout, что и у обычной фразы. */
 .sum-single-row--playing{
-    border-color: var(--accent-var);
-    box-shadow: var(--shadow-screen), 0 0 0 2px var(--accent-var), 0 0 16px rgba(var(--accent-var-rgb, 146,112,234), .35);
+    /* Тот же --tier-accent, что и цвет бейджа с названием категории —
+       renderSumSingleRow() уже выставляет его на строке при каждом рендере. */
+    border-color: var(--tier-accent, var(--accent-primary));
+    box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary)), 0 0 16px var(--tier-accent, var(--accent-primary));
 }
 
 /* Соседи по категории (↑/↓) — над и под строкой, тусклым текстом, чтобы
