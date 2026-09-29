@@ -2586,11 +2586,7 @@ class VariablesMixin:
         закончились сырые файлы — единообразно для сумм и доп.категорий,
         а не по потолку (тот остаётся только справочной цифрой на
         экране, см. _sum_stage2_state)."""
-        counts = getattr(self, 'sum_stage2_counts', None) or {}
         active_tier = self._sum_stage2_active_tier()
-        counts[active_tier] = counts.get(active_tier, 0) + 1
-        self.sum_stage2_counts = counts
-
         remaining = len(self.constructor_tier_files.get(active_tier, []))
         if remaining == 0:
             active = self._active_category_keys()
@@ -2659,19 +2655,57 @@ class VariablesMixin:
             stem = stem[len('сырая_'):]
         return stem
 
+    def _sum_stage2_save_one(self, tier, raw_path, clip):
+        """Экспортирует один кусок (по его клипу на дорожке) в Проверенные
+        нужной категории, убирает исходник из сырой очереди и обновляет
+        кэш «последнего сохранённого» — общая часть для активной
+        категории и для разовой «бутстрап»-фиксации ещё не тронутых
+        категорий (см. _constructor_ordered_segments)."""
+        target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
+        os.makedirs(target_dir, exist_ok=True)
+
+        ext = os.path.splitext(raw_path)[1] or '.wav'
+        clean_value = re.sub(r'[<>:"/\\|?*]', '', self._sum_raw_value_from_path(raw_path)).strip()
+        if tier in SUM_TIER_ORDER:
+            digits = re.sub(r'\D', '', clean_value)
+            save_name = f"{digits}{ext}" if digits else f"{clean_value}{ext}"
+        else:
+            save_name = f"{clean_value}{ext}" if clean_value else os.path.basename(raw_path)
+        target_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
+        if os.path.exists(target_path):
+            try: os.remove(target_path)
+            except OSError: pass
+
+        c_start, c_end = clip.get('start', 0.0), clip.get('end', 0.0)
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start={c_start} End={c_end} RelativeTo=ProjectStart')
+        self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+        time.sleep(0.1)
+
+        # Сырой источник — использован, больше не нужен.
+        try:
+            os.remove(raw_path)
+        except OSError:
+            pass
+        if raw_path in self.constructor_tier_files.get(tier, []):
+            self.constructor_tier_files[tier].remove(raw_path)
+
+        if not hasattr(self, 'sum_manual_last_file'):
+            self.sum_manual_last_file = {}
+        self.sum_manual_last_file[tier] = target_path
+
+        return save_name
+
     def sum_stage2_save(self):
-        """Сохраняет ТОЛЬКО активную (сейчас растущую) категорию — связки
-        и соседние категории в этой сборке были лишь контекстом для
-        слуха, их сырые файлы не трогаем. Имя итогового файла — само
-        значение категории (как у уже готовых сумм: «AUDI 80.wav»,
-        «95.wav», «4.wav»), Excel для имени больше не нужен — раньше
-        без него функция сразу отказывала, хотя словарь переменных
-        вообще не предполагает отдельную таблицу фраз. Суммы по-прежнему
-        сохраняются голыми цифрами, доп.категории (mark/year/...) —
-        текстом значения как есть, никакой цифровой обрезки. Сырой
-        источник после сохранения удаляется (использован), остальные
-        категории запоминают, на каком файле остановились, чтобы дефолт
-        рулетки не сбрасывался."""
+        """Фиксирует эталон целиком: экспортирует АКТИВНУЮ (сейчас
+        растущую) категорию — и заодно любую другую категорию на
+        дорожке, у которой ЕЩЁ НЕТ ни одного сохранённого значения (её
+        «бутстрап»: первая сборка вообще, каскад до неё ещё не дошёл, а
+        показать что-то на слух в этой сборке уже нужно). Категории, у
+        которых сохранённое значение уже было, — не трогаем, они и так
+        звучали именно этим сохранённым файлом (см. _constructor_ordered_segments),
+        трогать нечего. Имя итогового файла — само значение категории
+        («AUDI 80.wav», «95.wav», «4.wav»), Excel не нужен."""
         layout = getattr(self, '_constructor_clip_layout', None)
         active_paths = getattr(self, '_constructor_active_paths', None)
         if not layout or not active_paths:
@@ -2679,8 +2713,8 @@ class VariablesMixin:
 
         active_tier = self._sum_stage2_active_tier()
         if active_tier not in active_paths:
-            return {"error": f"В сборке нет категории «{self._category_label(active_tier)}» — выберите её "
-                              f"на рулетке и отправьте в Audacity заново."}
+            return {"error": f"В сборке нет категории «{self._category_label(active_tier)}» — отправьте в "
+                              f"Audacity заново."}
 
         resp_clips = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
         try:
@@ -2697,52 +2731,25 @@ class VariablesMixin:
             return {"error": "Число кусков на дорожке не совпадает с тем, что отправляли — "
                               "не разрезали и не склеивали ли лишнего?"}
 
-        tier_clip = next((clip for tag, clip in zip(layout, track_0_clips) if tag == active_tier), None)
-        if tier_clip is None:
+        clip_by_tag = {}
+        for tag, clip in zip(layout, track_0_clips):
+            clip_by_tag.setdefault(tag, clip)
+
+        saved_names = {}
+        for tier, raw_path in active_paths.items():
+            clip = clip_by_tag.get(tier)
+            if clip is None:
+                continue
+            saved_names[tier] = self._sum_stage2_save_one(tier, raw_path, clip)
+
+        if active_tier not in saved_names:
             return {"error": f"Категория «{self._category_label(active_tier)}» не найдена в сборке на дорожке."}
 
-        raw_path = active_paths[active_tier]
-        target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(active_tier))
-        os.makedirs(target_dir, exist_ok=True)
+        counts = getattr(self, 'sum_stage2_counts', None) or {}
+        for tier in saved_names:
+            counts[tier] = counts.get(tier, 0) + 1
+        self.sum_stage2_counts = counts
 
-        ext = os.path.splitext(raw_path)[1] or '.wav'
-        clean_value = re.sub(r'[<>:"/\\|?*]', '', self._sum_raw_value_from_path(raw_path)).strip()
-        if active_tier in SUM_TIER_ORDER:
-            digits = re.sub(r'\D', '', clean_value)
-            save_name = f"{digits}{ext}" if digits else f"{clean_value}{ext}"
-        else:
-            save_name = f"{clean_value}{ext}" if clean_value else os.path.basename(raw_path)
-        target_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
-        if os.path.exists(target_path):
-            try: os.remove(target_path)
-            except OSError: pass
-
-        c_start, c_end = tier_clip.get('start', 0.0), tier_clip.get('end', 0.0)
-        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
-        self.audacity.send_command(f'SelectTime: Start={c_start} End={c_end} RelativeTo=ProjectStart')
-        self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
-        time.sleep(0.1)
-
-        # Сырой источник активного яруса — использован, больше не нужен.
-        try:
-            os.remove(raw_path)
-        except OSError:
-            pass
-        if raw_path in self.constructor_tier_files.get(active_tier, []):
-            self.constructor_tier_files[active_tier].remove(raw_path)
-
-        # Соседние (неактивные) яруса, что звучали в этой сборке — запоминаем
-        # позицию, чтобы дефолт рулетки не съезжал на первый файл заново.
-        if not hasattr(self, 'sum_stage2_frozen_idx'):
-            self.sum_stage2_frozen_idx = {}
-        for tier, path in active_paths.items():
-            if tier == active_tier:
-                continue
-            files = self.constructor_tier_files.get(tier, [])
-            if path in files:
-                self.sum_stage2_frozen_idx[tier] = files.index(path)
-
-        self.phrase_index += 1
         self._sum_stage2_advance()
 
         self._constructor_clip_layout = None
@@ -2753,8 +2760,8 @@ class VariablesMixin:
             self.audacity.send_command('RemoveTracks:')
         self.is_in_audacity = False
 
-        label = self._category_label(active_tier)
-        webview.windows[0].evaluate_js(f"showToast('💾 Сохранено: «{label}» → {save_name}');")
+        summary = ', '.join(f'{self._category_label(t)} → {n}' for t, n in saved_names.items())
+        webview.windows[0].evaluate_js(f"showToast('💾 Сохранено: {summary}');")
         return self.get_ui_state()
 
     def sum_send_to_audacity(self):

@@ -192,16 +192,32 @@ class ConstructorMixin:
         """Порядок сборки для прослушки/правки — строго как колонки в
         загруженной таблице-словаре (var_template_columns), если она
         есть: связки (start, start_2...) на своих местах между
-        категориями. И суммы, и доп.категории (mark/year/...) —
-        сохраняемые: финальный каскад (sum_stage2_save) проходит по ним
-        всем по очереди (марка целиком → год целиком → суммы), не только
-        по 5 ярусам Суммы. Без словаря (старый чистый «Конструктор» по
-        папке «Суммы» без Excel) — прежний порядок: start, 5 ярусов
-        Суммы, end.
+        категориями.
 
-        Возвращает список (key, filepath, saveable) — saveable=False
-        только у связок (start/end/start_2/...), их файл один на весь
-        проект и сохранять поверх него нечего."""
+        Автоматика (без ручного выбора на рулетках, indices тут не
+        используются, если словарь загружен):
+        - АКТИВНАЯ категория (та, что сейчас «едет» — _sum_stage2_active_tier)
+          — всегда СЛЕДУЮЩИЙ по очереди ещё не сохранённый сырой файл.
+        - Любая другая категория, для которой уже есть сохранённое
+          финальное значение (_sum_last_saved_file — прошлая «эталонная»
+          итерация) — берём именно его как контекст на слух, а не сырой
+          файл. Так марка/год, уже пройденные (или ещё не дошедшие)
+          ярусы, звучат тем же значением, что уже легло в Проверенные,
+          пока каскад не доберётся до них снова.
+        - Категория, у которой ЕЩЁ НЕТ сохранённого значения (первая
+          сборка вообще, до неё каскад ещё не дошёл) — тоже берёт первый
+          сырой файл: это разовое «первое эталонное» значение для неё,
+          которое sum_stage2_save зафиксирует наравне с активной
+          категорией, а на следующих сборках подхватится уже как
+          сохранённое (saveable=False там больше не понадобится).
+
+        Без словаря (старый чистый «Конструктор» по папке «Суммы» без
+        Excel, ручной выбор на рулетках) — прежнее поведение по indices.
+
+        Возвращает список (key, filepath, saveable) — saveable=True у
+        всего, что нужно экспортировать при «Сохранить эталон» (активная
+        категория + любая ещё не зафиксированная), False — у связок и у
+        категорий, что уже звучат сохранённым значением."""
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
         columns = getattr(self, 'var_template_columns', None)
 
@@ -219,18 +235,29 @@ class ConstructorMixin:
             return segments
 
         connectors_by_key = {c['key']: c.get('path') for c in getattr(self, 'var_connectors', [])}
+        active_tier = self._sum_stage2_active_tier()
         segments = []
         for col in columns:
             if col['type'] == 'connector':
                 path = connectors_by_key.get(col['key'])
                 if path and os.path.exists(path):
                     segments.append((col['key'], path, False))
-            else:
-                key = col['key']
+                continue
+
+            key = col['key']
+            if key == active_tier:
                 files = tiers.get(key, [])
-                idx = (indices or {}).get(key)
-                if files and isinstance(idx, int) and 0 <= idx < len(files):
-                    segments.append((key, files[idx], True))
+                if files:
+                    segments.append((key, files[0], True))
+                continue
+
+            saved = self._sum_last_saved_file(key)
+            if saved and os.path.exists(saved):
+                segments.append((key, saved, False))
+            else:
+                files = tiers.get(key, [])
+                if files:
+                    segments.append((key, files[0], True))
         return segments
 
     def constructor_play(self, indices):
@@ -259,7 +286,7 @@ class ConstructorMixin:
         прослушивания."""
         segments = self._constructor_ordered_segments(indices)
         if not any(saveable for _key, _path, saveable in segments):
-            return {"error": "Выберите хотя бы одно значение на рулетках."}
+            return {"error": "Нет ни одного значения для сборки — проверьте, что сырая сортировка что-то накопила."}
 
         if self._block_if_audacity_ambiguous():
             return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
