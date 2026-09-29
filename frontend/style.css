@@ -1573,14 +1573,15 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
 
-/* Одна строка на экран (была решётка узких 132px-колонок — длинные
-   значения вроде «сырая_AUDI ALLROAD QUATTRO» обрезались многоточием).
-   Слева — название категории (листается ↑/↓), справа — текущее
-   значение из неё (листается ←/→), ширины хватает на полный текст. */
+/* Одна строка на экран. Название категории и счётчик — бейджи по углам
+   (листается ↑/↓, соседние категории видны сверху/снизу — см.
+   .sum-cat-neighbor), центр целиком отдан под значение и его соседей
+   слева/справа (листается ←/→, см. .sum-value-track) — раньше название
+   стояло в самой строке и сдвигало значение от истинного центра. */
 .sum-single-row{
-    display: flex; align-items: center; gap: var(--space-3); width: 100%;
+    position: relative; display: flex; flex-direction: column; width: 100%;
     background: var(--screen); border: 1px solid var(--border-soft); border-radius: 12px;
-    padding: 14px 18px; box-shadow: var(--shadow-screen);
+    padding: 32px 18px 16px; box-shadow: var(--shadow-screen);
     transition: border-color .15s;
 }
 .sum-single-row--active{
@@ -1589,14 +1590,21 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .sum-single-row--empty .sum-single-row__text{ color: var(--accent-trash); }
 .sum-single-row__name{
-    flex: 0 0 160px; min-width: 0; font-weight: 700; font-size: 15px;
-    color: var(--tier-accent, var(--text)); white-space: normal;
+    position: absolute; top: 10px; left: 14px; max-width: 45%;
+    font-weight: 700; font-size: 12px; line-height: 1.2;
+    color: var(--tier-accent, var(--text)); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    border: 1px solid var(--tier-accent, var(--border-soft)); border-radius: 999px;
+    padding: 3px 10px;
 }
 .sum-single-row__text{
-    flex: 1; min-width: 0; font-size: 19px; font-weight: 650; text-align: center;
+    min-width: 0; font-size: 19px; font-weight: 650; text-align: center;
     font-family: var(--font-mono); overflow-wrap: break-word;
 }
-.sum-single-row__count{ flex: 0 0 auto; font-size: 12px; color: var(--text-faint); font-family: var(--font-mono); }
+.sum-single-row__count{
+    position: absolute; top: 10px; right: 14px;
+    font-size: 11px; color: var(--text-faint); font-family: var(--font-mono);
+}
 
 /* Подсветка: сейчас звучит именно то значение, что на экране — тот же
    приём с классом is-playing/.playTimeout, что и у обычной фразы. */
@@ -1617,9 +1625,12 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-cat-neighbor:empty::before{ content: none; }
 
 /* Соседи по значению (←/→) — слева и справа от текущего значения внутри
-   строки, тем же моноширинным шрифтом, но мельче и тусклее. */
+   строки, тем же моноширинным шрифтом, но мельче и тусклее. Сетка из
+   трёх РАВНЫХ крайних колонок держит текущее значение по центру строки,
+   даже если соседние слова разной длины (flex так не умеет). */
 .sum-value-track{
-    flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2);
+    width: 100%; display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center; gap: var(--space-3);
 }
 .sum-val-neighbor{
     flex: 0 1 auto; min-width: 0; font-size: 13px; color: var(--text-faint);
