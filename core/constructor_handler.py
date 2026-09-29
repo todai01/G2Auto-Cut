@@ -188,39 +188,62 @@ class ConstructorMixin:
             },
         }
 
-    def _constructor_selected_paths(self, indices):
-        """indices: {tier: int} -> {tier: filepath}, только для реально
-        существующих позиций (рулетка могла отдать индекс мимо списка)."""
+    def _constructor_ordered_segments(self, indices):
+        """Порядок сборки для прослушки/правки — строго как колонки в
+        загруженной таблице-словаре (var_template_columns), если она
+        есть: связки (start, start_2...) на своих местах между
+        категориями, доп.категории (mark/year/...) звучат для
+        естественного контекста вокруг суммы, но НЕ сохраняются через
+        constructor_save/sum_stage2_save — они уже готовы как есть после
+        сырой сортировки, обрезка по таймингу им не нужна (в отличие от
+        многозначных сумм). Без словаря (старый чистый «Конструктор» по
+        папке «Суммы» без Excel) — прежний порядок: start, 5 ярусов
+        Суммы, end.
+
+        Возвращает список (key, filepath, saveable) — saveable=True
+        только у тех сегментов, что действительно можно сохранить
+        обратно (ярусы Суммы)."""
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
-        result = {}
-        for tier in SUM_TIER_ORDER:
-            files = tiers.get(tier, [])
-            idx = (indices or {}).get(tier)
-            if files and isinstance(idx, int) and 0 <= idx < len(files):
-                result[tier] = files[idx]
-        return result
+        columns = getattr(self, 'var_template_columns', None)
+
+        if not columns:
+            segments = []
+            if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
+                segments.append(('start', self.constructor_start_file, False))
+            for tier in SUM_TIER_ORDER:
+                files = tiers.get(tier, [])
+                idx = (indices or {}).get(tier)
+                if files and isinstance(idx, int) and 0 <= idx < len(files):
+                    segments.append((tier, files[idx], True))
+            if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
+                segments.append(('end', self.constructor_end_file, False))
+            return segments
+
+        connectors_by_key = {c['key']: c.get('path') for c in getattr(self, 'var_connectors', [])}
+        segments = []
+        for col in columns:
+            if col['type'] == 'connector':
+                path = connectors_by_key.get(col['key'])
+                if path and os.path.exists(path):
+                    segments.append((col['key'], path, False))
+            else:
+                key = col['key']
+                files = tiers.get(key, [])
+                idx = (indices or {}).get(key)
+                if files and isinstance(idx, int) and 0 <= idx < len(files):
+                    segments.append((key, files[idx], col['type'] == 'sum'))
+        return segments
 
     def constructor_play(self, indices):
-        """«Играть»: start + выбранные на рулетках значения по всем ярусам
-        (Миллионы→Сотни→Тысячи→Тенге) + end — одной сплошной склейкой."""
-        selected = self._constructor_selected_paths(indices)
-        segments = []
-        if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
-            segments.append(self.constructor_start_file)
-        for tier in SUM_TIER_ORDER:
-            path = selected.get(tier)
-            if path and os.path.exists(path):
-                segments.append(path)
-        if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
-            segments.append(self.constructor_end_file)
-
+        """«Играть»: вся сборка по порядку таблицы одной сплошной склейкой."""
+        segments = self._constructor_ordered_segments(indices)
         if not segments:
             return {"playing": False, "duration": 0, "error": "Нечего проигрывать — выберите значения на рулетках."}
 
         try:
             self.player.stop()
             combined = None
-            for path in segments:
+            for _key, path, _saveable in segments:
                 seg = AudioSegment.from_file(path).set_frame_rate(8000)
                 combined = seg if combined is None else combined + seg
             temp_path = os.path.join(self.constructor_root, f"temp_constructor_preview_{int(time.time() * 1000)}.wav")
@@ -235,9 +258,11 @@ class ConstructorMixin:
         """«Обновить сумму»: та же сборка, что и «Играть», но кладётся на
         стол Audacity отдельными клипами для ручной правки, а не для
         прослушивания."""
-        selected = self._constructor_selected_paths(indices)
-        if not selected:
-            return {"error": "Выберите хотя бы одно значение на рулетках."}
+        segments = self._constructor_ordered_segments(indices)
+        if not any(saveable for _key, _path, saveable in segments):
+            return {"error": "Выберите хотя бы одно значение яруса Суммы на рулетке — остальные категории "
+                              "только звучат вокруг него для контекста, сохраняется через эту сборку "
+                              "только сумма."}
 
         if self._block_if_audacity_ambiguous():
             return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
@@ -249,23 +274,13 @@ class ConstructorMixin:
         self.audacity.send_command('NewMonoTrack:')
 
         layout = []
-        cursor = 0.0
-        if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
-            cursor += self._import_clip_to_track0(self.constructor_start_file, cursor)
-            layout.append('start')
-
         active_paths = {}
-        for tier in SUM_TIER_ORDER:
-            path = selected.get(tier)
-            if path and os.path.exists(path):
-                cursor += self._import_clip_to_track0(path, cursor)
-                layout.append(tier)
-                active_paths[tier] = path
-
-        if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
-            self._import_clip_to_track0(self.constructor_end_file, cursor)
-            cursor += FileUtils.get_exact_audio_duration(self.constructor_end_file)
-            layout.append('end')
+        cursor = 0.0
+        for key, path, saveable in segments:
+            cursor += self._import_clip_to_track0(path, cursor)
+            layout.append(key)
+            if saveable:
+                active_paths[key] = path
 
         self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
         self.audacity.send_command(f'SelectTime: Start=0 End={cursor + 5.0} RelativeTo=ProjectStart')
