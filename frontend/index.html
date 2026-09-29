@@ -1121,6 +1121,12 @@
                                 <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>X</kbd></button>
                             </div>
 
+                            <div class="tile-row sum-next-value-row">
+                                <label for="sumNextValuePick" class="sum-next-value-label">Следующее значение (<span id="sumNextValueTier">—</span>):</label>
+                                <select id="sumNextValuePick" class="sum-next-value-select" onchange="sumStage2PickValue(this.value)">
+                                    <option value="">—</option>
+                                </select>
+                            </div>
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="saveSumLeftover()" title="Сохранить остаток (то, что выделено в Audacity)">Остаток</button>
                                 <button class="btn-tile btn-tile--sub" onclick="sumMergeWithNext()" title="Склеить со следующим">Склеить <kbd>M</kbd></button>

@@ -2593,6 +2593,21 @@ class VariablesMixin:
             if active_tier in active:
                 self.sum_stage2_active_idx = (active.index(active_tier) + 1) % len(active)
 
+    def sum_stage2_pick_value(self, index):
+        """Юзер сам выбрал значение из списка АКТИВНОЙ (сейчас «едущей»)
+        категории вместо слепого «следующее по очереди» — очередь просто
+        прокручивается так, чтобы выбранное встало первым (его и возьмёт
+        следующий «В Audacity»). Всё, что было перед ним в очереди, не
+        теряется — уезжает в конец, к нему каскад вернётся позже, когда
+        дойдёт до конца списка."""
+        active_tier = self._sum_stage2_active_tier()
+        files = self.constructor_tier_files.get(active_tier, [])
+        if not isinstance(index, int) or not (0 <= index < len(files)):
+            return {"error": "Такого значения нет в списке — обновите список и попробуйте снова."}
+
+        files[:] = files[index:] + files[:index]
+        return self.get_ui_state()
+
     def _sum_stage2_state(self):
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
         active_tier = self._sum_stage2_active_tier()

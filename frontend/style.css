@@ -1639,6 +1639,18 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-val-neighbor--prev{ text-align: right; }
 .sum-val-neighbor--next{ text-align: left; }
 
+/* Выбор следующего значения активной категории для финальной сборки —
+   видно заранее, какое имя присвоится куску, вместо слепого «следующее
+   по очереди». Выбор просто прокручивает очередь (sum_stage2_pick_value),
+   пропущенные значения не теряются. */
+.sum-next-value-row{ align-items: center; gap: var(--space-2); }
+.sum-next-value-label{ font-size: 13px; color: var(--text-faint); white-space: nowrap; }
+.sum-next-value-select{
+    flex: 1; min-width: 0; font-size: 13px; font-family: var(--font-mono);
+    background: var(--screen); color: var(--text); border: 1px solid var(--border-soft);
+    border-radius: 8px; padding: 6px 8px;
+}
+
 /* Быстрая анимация направления при листании — значение/категория как бы
    «въезжает» с той стороны, куда листали (Вверх/Вниз/Влево/Вправо),
    чтобы само движение экрана подсказывало направление, а не только

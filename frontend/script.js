@@ -1710,6 +1710,50 @@ let isProcessing = false;
             });
 
             renderSumSingleRow();
+            renderSumNextValuePicker(data);
+        }
+
+        // Список очереди активной категории для финальной сборки — видно
+        // заранее, какое имя присвоится куску, вместо слепого «следующее
+        // по очереди». Выбор другого значения просто прокручивает очередь
+        // (sum_stage2_pick_value) — пропущенные значения не теряются,
+        // остаются в конце списка.
+        function renderSumNextValuePicker(data) {
+            let select = document.getElementById('sumNextValuePick');
+            let label = document.getElementById('sumNextValueTier');
+            if (!select || !data || !data.active_tier_key) return;
+
+            let tierInfo = data.tiers[data.active_tier_key];
+            let items = (tierInfo && tierInfo.items) || [];
+            if (label) label.innerText = (tierInfo && tierInfo.label) || data.active_tier_key;
+
+            select.innerHTML = '';
+            if (!items.length) {
+                let opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'нет сырых файлов';
+                select.appendChild(opt);
+                select.disabled = true;
+                return;
+            }
+            select.disabled = false;
+            items.forEach((name, idx) => {
+                let opt = document.createElement('option');
+                opt.value = String(idx);
+                opt.textContent = (idx === 0 ? '→ ' : '') + name;
+                select.appendChild(opt);
+            });
+            select.value = '0';
+        }
+
+        async function sumStage2PickValue(value) {
+            if (value === '' || value === null) return;
+            let state = await pywebview.api.sum_stage2_pick_value(parseInt(value, 10));
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
         }
 
         function sumStage2Indices() {
