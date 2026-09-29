@@ -1598,6 +1598,37 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .sum-single-row__count{ flex: 0 0 auto; font-size: 12px; color: var(--text-faint); font-family: var(--font-mono); }
 
+/* Подсветка: сейчас звучит именно то значение, что на экране — тот же
+   приём с классом is-playing/.playTimeout, что и у обычной фразы. */
+.sum-single-row--playing{
+    border-color: var(--accent-var);
+    box-shadow: var(--shadow-screen), 0 0 0 2px var(--accent-var), 0 0 16px rgba(var(--accent-var-rgb, 146,112,234), .35);
+}
+
+/* Соседи по категории (↑/↓) — над и под строкой, тусклым текстом, чтобы
+   было видно, что последует при листании, не листая вслепую. */
+.sum-cat-neighbor{
+    width: 100%; text-align: center; font-size: 12px; font-weight: 600;
+    color: var(--text-faint); min-height: 16px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; opacity: .7;
+}
+.sum-cat-neighbor--prev::before{ content: '▲ '; }
+.sum-cat-neighbor--next::before{ content: '▼ '; }
+.sum-cat-neighbor:empty::before{ content: none; }
+
+/* Соседи по значению (←/→) — слева и справа от текущего значения внутри
+   строки, тем же моноширинным шрифтом, но мельче и тусклее. */
+.sum-value-track{
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2);
+}
+.sum-val-neighbor{
+    flex: 0 1 auto; min-width: 0; font-size: 13px; color: var(--text-faint);
+    font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; opacity: .6;
+}
+.sum-val-neighbor--prev{ text-align: right; }
+.sum-val-neighbor--next{ text-align: left; }
+
 /* Сплошные кнопки — главные действия пакетного режима */
 .btn-tile--solid-mode{
     background: linear-gradient(180deg, #a284f0, var(--accent-mode)); color: #fff; border-color: transparent;

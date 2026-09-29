@@ -1523,6 +1523,7 @@ let isProcessing = false;
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
             renderSumSingleRow();
+            playCurrentSumValue();
         }
         function sumStage1BrowseMove(dir) {
             if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
@@ -1532,6 +1533,41 @@ let isProcessing = false;
             let idx = sumStage1BrowseIdx[tier] || 0;
             sumStage1BrowseIdx[tier] = (idx + dir + items.length) % items.length;
             renderSumSingleRow();
+            playCurrentSumValue();
+        }
+
+        // Проигрывает то самое значение, что сейчас показано в строке —
+        // вызывается сразу после листания ↑/↓/←/→, так текст и звук всегда
+        // меняются вместе, без отдельного нажатия Space. Подсветка (рамка
+        // строки) горит, пока играет именно это значение — тот же приём
+        // с таймаутом на длительность файла, что и у обычной фразы.
+        let sumTierPlayTimeout = null;
+        function stopSumTierHighlight() {
+            clearTimeout(sumTierPlayTimeout);
+            let row = document.getElementById('sumSingleRow');
+            if (row) row.classList.remove('sum-single-row--playing');
+        }
+        async function playCurrentSumValue() {
+            if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) { stopSumTierHighlight(); return; }
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let info = lastSumState.reels.tiers[tier];
+            if (!info || !(info.items || []).length) { stopSumTierHighlight(); return; }
+            let idx = sumStage1BrowseIdx[tier] || 0;
+            let path = (info.paths || [])[idx];
+            if (!path) { stopSumTierHighlight(); return; }
+
+            let res;
+            try {
+                res = await pywebview.api.play_specific_file(path);
+            } catch (e) {
+                return;
+            }
+            stopSumTierHighlight();
+            if (res && res.playing) {
+                let row = document.getElementById('sumSingleRow');
+                if (row) row.classList.add('sum-single-row--playing');
+                sumTierPlayTimeout = setTimeout(stopSumTierHighlight, res.duration * 1000);
+            }
         }
         // Текст и подпись категории на экране — без перестройки DOM, просто
         // обновляем содержимое уже существующих элементов.
@@ -1540,6 +1576,10 @@ let isProcessing = false;
             let textEl = document.getElementById('sumSingleText');
             let countEl = document.getElementById('sumSingleCount');
             let row = document.getElementById('sumSingleRow');
+            let catPrevEl = document.getElementById('sumCatPrev');
+            let catNextEl = document.getElementById('sumCatNext');
+            let valPrevEl = document.getElementById('sumValPrev');
+            let valNextEl = document.getElementById('sumValNext');
             if (!nameEl || !textEl || !lastSumState || !lastSumState.reels) return;
 
             let data = lastSumState.reels;
@@ -1548,6 +1588,10 @@ let isProcessing = false;
                 nameEl.innerText = '—';
                 textEl.innerText = '';
                 if (countEl) countEl.innerText = '';
+                if (catPrevEl) catPrevEl.innerText = '';
+                if (catNextEl) catNextEl.innerText = '';
+                if (valPrevEl) valPrevEl.innerText = '';
+                if (valNextEl) valNextEl.innerText = '';
                 return;
             }
             let tier = tierInfo.key;
@@ -1566,6 +1610,29 @@ let isProcessing = false;
             }
             textEl.innerText = isEmpty ? 'нет сырых файлов' : humanizeTierItem(tier, items[idx]);
             if (countEl) countEl.innerText = isEmpty ? '' : `${idx + 1} / ${items.length}`;
+
+            // Соседи по категории (↑/↓) — что покажется, если полистать
+            // дальше в ту же сторону; при одной категории соседей нет.
+            let catCount = sumStage1Tiers.length;
+            if (catPrevEl) {
+                let prevTier = catCount > 1 ? sumStage1Tiers[(sumStage1SelectedIdx - 1 + catCount) % catCount] : null;
+                catPrevEl.innerText = prevTier ? (data.tiers[prevTier.key] || {}).label || prevTier.label : '';
+            }
+            if (catNextEl) {
+                let nextTier = catCount > 1 ? sumStage1Tiers[(sumStage1SelectedIdx + 1) % catCount] : null;
+                catNextEl.innerText = nextTier ? (data.tiers[nextTier.key] || {}).label || nextTier.label : '';
+            }
+
+            // Соседи по значению (←/→) внутри текущей категории — то же
+            // самое, но по значениям, а не по категориям.
+            if (valPrevEl) {
+                valPrevEl.innerText = (!isEmpty && items.length > 1)
+                    ? humanizeTierItem(tier, items[(idx - 1 + items.length) % items.length]) : '';
+            }
+            if (valNextEl) {
+                valNextEl.innerText = (!isEmpty && items.length > 1)
+                    ? humanizeTierItem(tier, items[(idx + 1) % items.length]) : '';
+            }
         }
         async function sumStage1SendSelected() {
             if (!sumStage1Tiers.length) return;

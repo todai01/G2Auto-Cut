@@ -2601,6 +2601,10 @@ class VariablesMixin:
                 t: {
                     "label": self._category_label(t),
                     "items": [display_name(p) for p in tiers.get(t, [])],
+                    # Пути рядом с именами — чтобы фронтенд мог проиграть
+                    # конкретное сырое значение при листании ←/→, а не
+                    # только показать его название (play_specific_file).
+                    "paths": list(tiers.get(t, [])),
                     "saved": counts.get(t, 0),
                     "cap": SUM_TIER_CAP.get(t),
                     "active": t == active_tier,
