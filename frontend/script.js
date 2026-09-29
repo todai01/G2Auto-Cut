@@ -1520,10 +1520,15 @@ let isProcessing = false;
         let sumStage1BrowseIdx = {}; // tier -> какое по счёту значение сейчас показано
 
         function sumStage1MoveSelection(dir) {
+            // ВНИМАНИЕ: тут нарочно НЕ вызываем playCurrentSumValue() — эта
+            // категория обычно уже что-то сохранённое, и её старое значение,
+            // проигранное поверх нового дубля, который сейчас разбираете,
+            // только сбивает с толку. Звук значения играет только при
+            // листании ←/→ внутри категории (sumStage1BrowseMove) — там это
+            // явно то, что хотели послушать.
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
             renderSumSingleRow();
-            playCurrentSumValue();
         }
         function sumStage1BrowseMove(dir) {
             if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
@@ -1645,8 +1650,15 @@ let isProcessing = false;
                 return;
             }
             updateUI(state);
-            // Отправили дубль в категорию — очередь сдвинулась на следующий,
-            // сразу же его и проигрываем, без повторного нажатия Space.
+            // Сохранили дубль в категорию — сразу переключаемся на следующую
+            // по списку, чтобы не листать вниз вручную на каждый дубль (и не
+            // слышать при этом чужое старое значение — см. sumStage1MoveSelection).
+            if (sumStage1Tiers.length) {
+                sumStage1SelectedIdx = (sumStage1SelectedIdx + 1) % sumStage1Tiers.length;
+                renderSumSingleRow();
+            }
+            // Очередь сдвинулась на следующий дубль — сразу его и проигрываем,
+            // без повторного нажатия Space.
             playAudio(false);
         }
         async function sumStage1Undo() {
@@ -1656,6 +1668,11 @@ let isProcessing = false;
                 return;
             }
             updateUI(state);
+            // Симметрично sumStage1Send — откатываем и автопереход категории.
+            if (sumStage1Tiers.length) {
+                sumStage1SelectedIdx = (sumStage1SelectedIdx - 1 + sumStage1Tiers.length) % sumStage1Tiers.length;
+                renderSumSingleRow();
+            }
             playAudio(false);
         }
 
