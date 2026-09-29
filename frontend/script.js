@@ -1519,6 +1519,16 @@ let isProcessing = false;
         let sumStage1SelectedIdx = 0;
         let sumStage1BrowseIdx = {}; // tier -> какое по счёту значение сейчас показано
 
+        // Быстрая анимация «въезда» с той стороны, куда листали — снимает
+        // класс, форсирует reflow (иначе повторное добавление того же
+        // класса подряд не перезапустит @keyframes) и навешивает заново.
+        function triggerSumAnim(el, cls) {
+            if (!el) return;
+            el.classList.remove('sum-anim-up', 'sum-anim-down', 'sum-anim-left', 'sum-anim-right');
+            void el.offsetWidth;
+            el.classList.add(cls);
+        }
+
         function sumStage1MoveSelection(dir) {
             // ВНИМАНИЕ: тут нарочно НЕ вызываем playCurrentSumValue() — эта
             // категория обычно уже что-то сохранённое, и её старое значение,
@@ -1529,6 +1539,7 @@ let isProcessing = false;
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
             renderSumSingleRow();
+            triggerSumAnim(document.getElementById('sumSingleRow'), dir < 0 ? 'sum-anim-up' : 'sum-anim-down');
         }
         function sumStage1BrowseMove(dir) {
             if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
@@ -1538,6 +1549,7 @@ let isProcessing = false;
             let idx = sumStage1BrowseIdx[tier] || 0;
             sumStage1BrowseIdx[tier] = (idx + dir + items.length) % items.length;
             renderSumSingleRow();
+            triggerSumAnim(document.getElementById('sumSingleText'), dir < 0 ? 'sum-anim-left' : 'sum-anim-right');
             playCurrentSumValue();
         }
 
@@ -1656,6 +1668,7 @@ let isProcessing = false;
             if (sumStage1Tiers.length) {
                 sumStage1SelectedIdx = (sumStage1SelectedIdx + 1) % sumStage1Tiers.length;
                 renderSumSingleRow();
+                triggerSumAnim(document.getElementById('sumSingleRow'), 'sum-anim-down');
             }
             // Очередь сдвинулась на следующий дубль — сразу его и проигрываем,
             // без повторного нажатия Space.
@@ -1672,6 +1685,7 @@ let isProcessing = false;
             if (sumStage1Tiers.length) {
                 sumStage1SelectedIdx = (sumStage1SelectedIdx - 1 + sumStage1Tiers.length) % sumStage1Tiers.length;
                 renderSumSingleRow();
+                triggerSumAnim(document.getElementById('sumSingleRow'), 'sum-anim-up');
             }
             playAudio(false);
         }

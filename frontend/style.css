@@ -1572,6 +1572,7 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
 }
 .sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
+.sum-stage2-embed__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
 
 /* Одна строка на экран. Название категории и счётчик — бейджи по углам
    (листается ↑/↓, соседние категории видны сверху/снизу — см.
@@ -1600,10 +1601,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-single-row__text{
     min-width: 0; font-size: 19px; font-weight: 650; text-align: center;
     font-family: var(--font-mono); overflow-wrap: break-word;
-}
-.sum-single-row__count{
-    position: absolute; top: 10px; right: 14px;
-    font-size: 11px; color: var(--text-faint); font-family: var(--font-mono);
 }
 
 /* Подсветка: сейчас звучит именно то значение, что на экране — тот же
@@ -1639,6 +1636,22 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 }
 .sum-val-neighbor--prev{ text-align: right; }
 .sum-val-neighbor--next{ text-align: left; }
+
+/* Быстрая анимация направления при листании — значение/категория как бы
+   «въезжает» с той стороны, куда листали (Вверх/Вниз/Влево/Вправо),
+   чтобы само движение экрана подсказывало направление, а не только
+   смена текста. Класс навешивается и снимается через JS (triggerSumAnim). */
+@keyframes sumSlideFromUp{ from{ transform: translateY(-10px); opacity: .35; } to{ transform: translateY(0); opacity: 1; } }
+@keyframes sumSlideFromDown{ from{ transform: translateY(10px); opacity: .35; } to{ transform: translateY(0); opacity: 1; } }
+@keyframes sumSlideFromLeft{ from{ transform: translateX(-14px); opacity: .35; } to{ transform: translateX(0); opacity: 1; } }
+@keyframes sumSlideFromRight{ from{ transform: translateX(14px); opacity: .35; } to{ transform: translateX(0); opacity: 1; } }
+.sum-anim-up{ animation: sumSlideFromUp .15s ease-out; }
+.sum-anim-down{ animation: sumSlideFromDown .15s ease-out; }
+.sum-anim-left{ animation: sumSlideFromLeft .15s ease-out; }
+.sum-anim-right{ animation: sumSlideFromRight .15s ease-out; }
+@media (prefers-reduced-motion: reduce){
+    .sum-anim-up, .sum-anim-down, .sum-anim-left, .sum-anim-right{ animation: none; }
+}
 
 /* Сплошные кнопки — главные действия пакетного режима */
 .btn-tile--solid-mode{
