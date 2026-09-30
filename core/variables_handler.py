@@ -2513,7 +2513,8 @@ class VariablesMixin:
             self._force_foreground(windows[0]['hwnd'])
 
         webview.windows[0].evaluate_js(
-            "showToast('✂️ Дубль в Audacity — расставьте метки вида «4_тыс», «4_тенге» и нажмите «Забрать метки»');")
+            "showToast('✂️ Дубль в Audacity — выделите нужный кусок и нажмите «В категорию» (N), "
+            "или расставьте метки вида «4_тыс» и нажмите «Забрать метки» (B)');")
         return self.get_ui_state()
 
     def sum_collect_dub_labels(self):
@@ -2585,6 +2586,47 @@ class VariablesMixin:
 
         summary = ', '.join(exported)
         webview.windows[0].evaluate_js(f"showToast('✂️ Разделено и сохранено: {summary}');")
+        return self.get_ui_state()
+
+    def sum_send_selection_to_category(self, tier):
+        """Клавиша N: после V (дубль целиком на столе Audacity) — вырезали
+        лишнее (например «на автомобиль » перед самой маркой) и оставили
+        выделенным только нужный кусок. Не нужно ни ставить метку, ни
+        писать её текст руками — берём ТЕКУЩЕЕ ВЫДЕЛЕНИЕ как есть и
+        сохраняем его в сырую папку выбранной ↑/↓ категории, присвоив то
+        же значение, что показано юзеру как «Ожидаю дальше» (то, которое
+        обычная Z присвоила бы следующему по очереди дублю — см.
+        _var_next_tag_value/expected_next в _sum_stage2_state). Дубль в
+        Audacity остаётся открытым — можно вырезать из него ещё один
+        кусок под другую категорию, не открывая заново."""
+        pending = getattr(self, '_sum_split_pending', None)
+        if not pending or not getattr(self, 'is_in_audacity', False):
+            return {"error": "Сначала отправьте дубль в Audacity кнопкой «Дубль в Audacity» (V)."}
+        if tier not in self._all_category_keys():
+            return {"error": f"Неизвестная категория: {tier}"}
+
+        if not hasattr(self, 'constructor_tier_files'):
+            self.constructor_tier_files = {}
+        position = len(self.constructor_tier_files.get(tier, []))
+        value = self._var_next_tag_value(tier, position)
+        if value is None:
+            return {"error": "Для этой категории нет списка значений в загруженной таблице."}
+
+        target_dir = self._sum_stage1_raw_dir(tier)
+        os.makedirs(target_dir, exist_ok=True)
+        ext = os.path.splitext(pending['name'])[1] or '.wav'
+        safe_value = re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
+        save_name = f"{int(time.time() * 1000)}_сырая_{safe_value}{ext}"
+        target_path = os.path.join(target_dir, save_name)
+
+        resp = self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
+        if not resp or not os.path.exists(target_path):
+            return {"error": "Не удалось сохранить — убедитесь, что в Audacity выделен нужный участок, и повторите."}
+
+        self.constructor_tier_files.setdefault(tier, []).append(target_path)
+
+        webview.windows[0].evaluate_js(
+            f"showToast('➜ Сохранено в «{self._category_label(tier)}»: {value}');")
         return self.get_ui_state()
 
     def _sum_stage2_active_tier(self):

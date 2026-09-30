@@ -1871,6 +1871,21 @@ let isProcessing = false;
             updateUI(state);
         }
 
+        // После V — дубль на столе Audacity, выделили мышкой нужный кусок
+        // (обрезав лишние слова вроде «на автомобиль»). Без метки и без
+        // ручного ввода имени: сохраняет выделение прямо в текущую ↑/↓
+        // категорию под тем значением, что программа и так ожидает
+        // следующим по таблице (см. sumSingleRow__expected).
+        async function sumSendSelectionToCategory() {
+            if (!sumStage1Tiers.length) return;
+            let state = await pywebview.api.sum_send_selection_to_category(sumStage1Tiers[sumStage1SelectedIdx].key);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
+
         async function sumStage2Save() {
             let state = await pywebview.api.sum_stage2_save();
             if (state && state.error) {
@@ -2850,6 +2865,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
                 else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
                 else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
+                else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumSendSelectionToCategory(); }
                 else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
                 else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
                 else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
@@ -2869,6 +2885,7 @@ let isProcessing = false;
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
             else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
+            else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumSendSelectionToCategory(); }
             else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
             else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
             else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
