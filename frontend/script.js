@@ -2956,13 +2956,13 @@ let isProcessing = false;
             showToast("Скопировано: " + text);
         }
 
-        function showToast(msg) {
+        function showToast(msg, duration) {
             let { icon, text } = extractLeadingIcon(msg);
             let toast = document.createElement('div');
             toast.className = 'toast';
             toast.innerHTML = `${iconHTML(icon)}<span>${escapeHtml(text)}</span>`;
             document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 2200);
+            setTimeout(() => toast.remove(), duration || 2200);
         }
 
         // === Конвертер MP4 -> MP3/WAV ===

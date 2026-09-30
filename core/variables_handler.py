@@ -2626,8 +2626,16 @@ class VariablesMixin:
 
         self.constructor_tier_files.setdefault(tier, []).append(target_path)
 
-        webview.windows[0].evaluate_js(
-            f"showToast('➜ Сохранено в «{self._category_label(tier)}»: {value}');")
+        # Следующее ожидаемое значение ЭТОЙ ЖЕ категории — сразу после
+        # сохранения, чтобы юзер видел на мини-алерте, что искать дальше,
+        # не дожидаясь перерисовки всего экрана.
+        next_expected = self._var_next_tag_value(tier, position + 1)
+        label = self._category_label(tier)
+        msg = f"✅ Сохранено в «{label}»: {value}"
+        if next_expected:
+            msg += f" · Дальше жду: {next_expected}"
+        msg_js = msg.replace('\\', '\\\\').replace("'", "\\'")
+        webview.windows[0].evaluate_js(f"showToast('{msg_js}', 3200);")
         return self.get_ui_state()
 
     def _sum_stage2_active_tier(self):
