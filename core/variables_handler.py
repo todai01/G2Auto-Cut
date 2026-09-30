@@ -2513,7 +2513,7 @@ class VariablesMixin:
             self._force_foreground(windows[0]['hwnd'])
 
         webview.windows[0].evaluate_js(
-            "showToast('✂️ Дубль в Audacity — выделите нужный кусок и нажмите «В категорию» (N), "
+            "showToast('✂️ Дубль в Audacity — выделите нужный кусок и нажмите «В категорию» (M), "
             "или расставьте метки вида «4_тыс» и нажмите «Забрать метки» (B)');")
         return self.get_ui_state()
 
@@ -2589,7 +2589,7 @@ class VariablesMixin:
         return self.get_ui_state()
 
     def sum_send_selection_to_category(self, tier):
-        """Клавиша N: после V (дубль целиком на столе Audacity) — вырезали
+        """Клавиша M: после V (дубль целиком на столе Audacity) — вырезали
         лишнее (например «на автомобиль » перед самой маркой) и оставили
         выделенным только нужный кусок. Не нужно ни ставить метку, ни
         писать её текст руками — берём ТЕКУЩЕЕ ВЫДЕЛЕНИЕ как есть и
