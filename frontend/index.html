@@ -1129,7 +1129,7 @@
                                 </select>
                             </div>
                             <div class="tile-row">
-                                <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity — сохранит выделенный остаток. Не открыт — склеит со следующим дублем">Поправить нарезку <kbd>N</kbd></button>
+                                <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity (после V) — сохранит выделенный кусок под ожидаемым именем в текущую категорию. Не открыт — склеит текущий дубль со следующим">Поправить нарезку <kbd>N</kbd></button>
                                 <button class="btn-tile btn-tile--primary" onclick="sumStage2SendToAudacity()">В Audacity <kbd>C</kbd></button>
                                 <button class="btn-tile btn-tile--var" onclick="sumStage2Save()" title="Сохранить собранный эталон (сборка на рулетках)">Сохранить эталон</button>
                             </div>
@@ -1138,7 +1138,6 @@
                             </div>
                             <div class="tile-row">
                                 <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить ТЕКУЩИЙ дубль из Chunks целиком в Audacity — для случая, когда в нём слиплись две переменные подряд">Дубль в Audacity <kbd>V</kbd></button>
-                                <button class="btn-tile btn-tile--var" onclick="sumSendSelectionToCategory()" title="Дубль уже в Audacity — выделите нужный кусок (без лишних слов) и сохраните в текущую ↑/↓ категорию под ожидаемым значением из таблицы, без ручной метки">В категорию (выделение) <kbd>M</kbd></button>
                                 <button class="btn-tile btn-tile--var" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
                             </div>
                             <div class="tile-row">

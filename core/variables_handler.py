@@ -2513,7 +2513,7 @@ class VariablesMixin:
             self._force_foreground(windows[0]['hwnd'])
 
         webview.windows[0].evaluate_js(
-            "showToast('✂️ Дубль в Audacity — выделите нужный кусок и нажмите «В категорию» (M), "
+            "showToast('✂️ Дубль в Audacity — выделите нужный кусок и нажмите «Поправить нарезку» (N), "
             "или расставьте метки вида «4_тыс» и нажмите «Забрать метки» (B)');")
         return self.get_ui_state()
 
@@ -2589,7 +2589,8 @@ class VariablesMixin:
         return self.get_ui_state()
 
     def sum_send_selection_to_category(self, tier):
-        """Клавиша M: после V (дубль целиком на столе Audacity) — вырезали
+        """Вызывается из sum_fix_split, когда дубль уже открыт в Audacity
+        (после V) — вырезали
         лишнее (например «на автомобиль » перед самой маркой) и оставили
         выделенным только нужный кусок. Не нужно ни ставить метку, ни
         писать её текст руками — берём ТЕКУЩЕЕ ВЫДЕЛЕНИЕ как есть и
@@ -3243,14 +3244,16 @@ class VariablesMixin:
         webview.windows[0].evaluate_js("showToast('🔗 Дубли склеены в один кусок');")
         return self.get_ui_state()
 
-    def sum_fix_split(self):
+    def sum_fix_split(self, tier):
         """Одна кнопка вместо «Остаток»/«Склеить» — обе чинят одну и ту же
         проблему (автосрезка неправильно разбила цифры), только с разных
         сторон, и какую из них нужно применять, однозначно видно по
-        состоянию: дубль уже открыт в Audacity (is_in_audacity) — значит
-        сейчас правят выделение на столе (старое «Остаток»); дубль ещё не
-        отправляли — значит правят на уровне очереди дублей (старое
-        «Склеить со следующим»)."""
+        состоянию: дубль уже открыт в Audacity (is_in_audacity, отправлен
+        клавишей V) — значит сейчас выделяют нужный кусок на столе и его
+        нужно сохранить под ожидаемым именем в выбранную ↑/↓ категорию
+        (см. sum_send_selection_to_category); дубль ещё не отправляли —
+        значит правят на уровне очереди дублей, склеивая текущий со
+        следующим (sum_merge_with_next), чтобы услышать их одной фразой."""
         if getattr(self, 'is_in_audacity', False):
-            return self.save_sum_leftover()
+            return self.sum_send_selection_to_category(tier)
         return self.sum_merge_with_next()
