@@ -1915,20 +1915,11 @@ let isProcessing = false;
             updateUI(state);
         }
 
-        async function saveSumLeftover() {
-            let state = await pywebview.api.save_sum_leftover();
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-        }
-
-        // Обратный случай «Сохранить остаток»: автонарезка иногда режет
-        // одно число на два куска (например «55 тыс.» → «50» + «5 тыс.»).
-        // Склеивает текущий дубль со следующим по списку в один файл.
-        async function sumMergeWithNext() {
-            let state = await pywebview.api.sum_merge_with_next();
+        // Одна кнопка вместо «Остаток»/«Склеить» — бэкенд сам решает, какую
+        // из двух логик применить, по тому, открыт ли сейчас дубль в
+        // Audacity (см. sum_fix_split в variables_handler.py).
+        async function sumFixSplit() {
+            let state = await pywebview.api.sum_fix_split();
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
@@ -2840,7 +2831,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
-                else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
+                else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
                 else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
                 else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
                 else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }
@@ -2859,7 +2850,7 @@ let isProcessing = false;
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else processAction('good'); }
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
-            else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumMergeWithNext(); }
+            else if (e.code === 'KeyM' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
             else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
             else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
             else if (e.code === 'ArrowUp' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(-1); }

@@ -3187,3 +3187,15 @@ class VariablesMixin:
 
         webview.windows[0].evaluate_js("showToast('🔗 Дубли склеены в один кусок');")
         return self.get_ui_state()
+
+    def sum_fix_split(self):
+        """Одна кнопка вместо «Остаток»/«Склеить» — обе чинят одну и ту же
+        проблему (автосрезка неправильно разбила цифры), только с разных
+        сторон, и какую из них нужно применять, однозначно видно по
+        состоянию: дубль уже открыт в Audacity (is_in_audacity) — значит
+        сейчас правят выделение на столе (старое «Остаток»); дубль ещё не
+        отправляли — значит правят на уровне очереди дублей (старое
+        «Склеить со следующим»)."""
+        if getattr(self, 'is_in_audacity', False):
+            return self.save_sum_leftover()
+        return self.sum_merge_with_next()
