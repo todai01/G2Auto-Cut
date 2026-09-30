@@ -47,6 +47,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
         self.audacity = AudacityClient()
         self.player = AudioPlayer()
+        self.toast_window = None  # выставляется ниже, после webview.create_window
 
     def sync_and_play(self):
         """Синхронизирует зум в Audacity и запускает воспроизведение"""
@@ -409,7 +410,33 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def _startup(window):
+TOAST_WINDOW_TITLE = 'G2Studio-toast'
+
+
+def _position_toast_window():
+    """Ставит окно-тост поверх ВСЕХ окон (включая Audacity) постоянно, но
+    маленьким и внизу по центру экрана — обычный showToast() рисуется в
+    самом окне G2Studio, а оно во время работы в Audacity (после V/N)
+    закрыто им сверху и просто не виден. Отдельное всегда-topmost окошко
+    решает это, не забирая фокус клавиатуры у Audacity (см.
+    show_floating_toast в audacity_montage.py — она его лишь show()/hide(),
+    сюда, в позиционирование, второй раз не лезет)."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, TOAST_WINDOW_TITLE)
+    if not hwnd:
+        return
+    width, height = 460, 64
+    screen_w = user32.GetSystemMetrics(0)
+    screen_h = user32.GetSystemMetrics(1)
+    x = (screen_w - width) // 2
+    y = screen_h - 170
+    HWND_TOPMOST = -1
+    SWP_NOACTIVATE = 0x0010
+    user32.SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE)
+
+
+def _startup(window, toast_window):
     """Выполняется уже после того, как окно поднялось — можно показывать
     прогресс через тот же progressContainer, что и вырезка/конвертация.
 
@@ -418,6 +445,9 @@ def _startup(window):
     получают рабочий софт из коробки. Автоскачивание нужно только когда
     запускают main.py напрямую (не из собранного .exe) и файлов рядом ещё
     нет — например, на компьютере разработчика при первой настройке."""
+    _position_toast_window()
+    toast_window.hide()
+
     if getattr(sys, 'frozen', False):
         AudioSegment.converter = resource_path("ffmpeg.exe")
         AudioSegment.ffprobe = resource_path("ffprobe.exe")
@@ -462,4 +492,22 @@ if __name__ == '__main__':
     # Если Audacity был вживлён в окно софта, при закрытии его нужно вернуть
     # обратно отдельным окном — иначе он останется «сиротой» без родителя.
     window.events.closing += lambda: api.unembed_audacity()
-    webview.start(_startup, window)
+
+    # Крошечное отдельное окно-уведомление, всегда поверх ВСЕХ окон
+    # (включая Audacity) — обычный showToast() рисуется внутри главного
+    # окна и не виден, когда сверху развёрнут Audacity (см.
+    # show_floating_toast в audacity_montage.py). Прячем сразу же после
+    # позиционирования в _startup — до этого момента оно на секунду
+    # мелькает по умолчанию в углу экрана.
+    toast_html = """<!doctype html><html><head><meta charset="utf-8"><style>
+        html,body{margin:0;padding:0;overflow:hidden;background:#111820;font-family:Arial,sans-serif}
+        #box{height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;
+             background:linear-gradient(180deg,#45cf8f,#1f9e63);color:#06281a;font-weight:700;
+             font-size:15px;padding:8px 20px;text-align:center;line-height:1.3}
+        </style></head><body><div id="box"><span id="msg"></span></div></body></html>"""
+    api.toast_window = webview.create_window(
+        TOAST_WINDOW_TITLE, html=toast_html, width=460, height=64,
+        frameless=True, on_top=True, resizable=False, hidden=True,
+    )
+
+    webview.start(_startup, (window, api.toast_window))
