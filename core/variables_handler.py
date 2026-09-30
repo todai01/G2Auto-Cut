@@ -2746,6 +2746,12 @@ class VariablesMixin:
         for t in active_logic:
             value = row.get(t)
             path, saveable = self._sum_stage2_resolve_value(t, value)
+            # То самое значение, что sum_stage1_send присвоит СЛЕДУЮЩЕМУ
+            # отправленному в эту категорию дублю (см. _var_next_tag_value) —
+            # показываем его юзеру ДО отправки, чтобы на слух можно было
+            # сверить, что диктор не пропустил марку/год/сумму в записи.
+            position = len(tiers.get(t, []))
+            expected_next = self._var_next_tag_value(t, position)
             tiers_out[t] = {
                 "label": self._category_label(t),
                 "items": [display_name(p) for p in tiers.get(t, [])],
@@ -2766,6 +2772,7 @@ class VariablesMixin:
                 "active": bool(saveable),
                 "row_value": value,
                 "row_ready": path is not None,
+                "expected_next": expected_next,
             }
 
         # Курсор внутри категории по умолчанию — на ПОСЛЕДНЕМ (самом

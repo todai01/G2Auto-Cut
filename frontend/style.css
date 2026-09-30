@@ -1582,7 +1582,7 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-single-row{
     position: relative; display: flex; flex-direction: column; width: 100%;
     background: var(--screen); border: 1px solid var(--border-soft); border-radius: 12px;
-    padding: 32px 18px 16px; box-shadow: var(--shadow-screen);
+    padding: 32px 18px 34px; box-shadow: var(--shadow-screen);
     transition: border-color .15s;
 }
 .sum-single-row--active{
@@ -1601,6 +1601,12 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-single-row__text{
     min-width: 0; font-size: 19px; font-weight: 650; text-align: center;
     font-family: var(--font-mono); overflow-wrap: break-word;
+}
+.sum-single-row__expected{
+    position: absolute; bottom: 8px; left: 0; right: 0;
+    text-align: center; font-size: 12px; font-weight: 600;
+    color: var(--tier-accent, var(--text-dim)); opacity: 0.85;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* Подсветка: сейчас звучит именно то значение, что на экране — тот же

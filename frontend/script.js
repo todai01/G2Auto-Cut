@@ -1599,6 +1599,7 @@ let isProcessing = false;
             let catNextEl = document.getElementById('sumCatNext');
             let valPrevEl = document.getElementById('sumValPrev');
             let valNextEl = document.getElementById('sumValNext');
+            let expectedEl = document.getElementById('sumSingleExpected');
             if (!nameEl || !textEl || !lastSumState || !lastSumState.reels) return;
 
             let data = lastSumState.reels;
@@ -1611,6 +1612,7 @@ let isProcessing = false;
                 if (catNextEl) catNextEl.innerText = '';
                 if (valPrevEl) valPrevEl.innerText = '';
                 if (valNextEl) valNextEl.innerText = '';
+                if (expectedEl) expectedEl.innerText = '';
                 return;
             }
             let tier = tierInfo.key;
@@ -1651,6 +1653,13 @@ let isProcessing = false;
             if (valNextEl) {
                 valNextEl.innerText = (!isEmpty && items.length > 1)
                     ? humanizeTierItem(tier, items[(idx + 1) % items.length]) : '';
+            }
+
+            // Значение из таблицы, которое присвоится следующему дублю,
+            // отправленному Z в эту категорию — сверяем со слухом, не
+            // пропустил ли диктор что-то в записи (см. expected_next).
+            if (expectedEl) {
+                expectedEl.innerText = info.expected_next ? `Ожидаю дальше: ${info.expected_next}` : '';
             }
         }
         async function sumStage1SendSelected() {
