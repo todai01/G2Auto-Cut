@@ -445,8 +445,12 @@ def _startup(window, toast_window):
     получают рабочий софт из коробки. Автоскачивание нужно только когда
     запускают main.py напрямую (не из собранного .exe) и файлов рядом ещё
     нет — например, на компьютере разработчика при первой настройке."""
+    # toast_window уже создано с hidden=True — здесь только позиционируем
+    # его через ctypes (окно НЕ активируется), лишний .hide() убран: он
+    # трогает WebView2-контроллер не с UI-потока и сыпал шумом в консоль
+    # (CoreWebView2Controller members can only be accessed from the UI
+    # thread) — не фатально, но без надобности.
     _position_toast_window()
-    toast_window.hide()
 
     if getattr(sys, 'frozen', False):
         AudioSegment.converter = resource_path("ffmpeg.exe")
