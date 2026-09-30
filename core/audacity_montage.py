@@ -3,7 +3,6 @@ import json
 import time
 import shutil
 import ctypes
-import threading
 import webview
 from pydub import AudioSegment
 from utils.file_utils import FileUtils
@@ -127,32 +126,6 @@ class MontageMixin:
         time.sleep(0.5)
         return True
 
-    def show_floating_toast(self, msg, duration=3.2):
-        """Тост, видимый ДАЖЕ когда сверху развёрнут Audacity — обычный
-        showToast() рисуется в окне G2Studio, которое в этот момент
-        закрыто окном Audacity сверху и просто не виден. self.toast_window
-        (main.py) — отдельное маленькое окно, всегда topmost и всегда
-        позиционировано снизу по центру экрана (_position_toast_window в
-        main.py), тут только меняем текст и на время показываем/прячем —
-        не активирует окно, не крадёт фокус клавиатуры у Audacity."""
-        win = getattr(self, 'toast_window', None)
-        if not win:
-            return
-        safe = msg.replace('\\', '\\\\').replace("'", "\\'")
-        try:
-            win.evaluate_js(f"document.getElementById('msg').innerText = '{safe}';")
-            win.show()
-        except Exception:
-            return
-
-        def _hide_later():
-            time.sleep(duration)
-            try:
-                win.hide()
-            except Exception:
-                pass
-
-        threading.Thread(target=_hide_later, daemon=True).start()
 
     def _ensure_audacity_ready(self):
         """Если Audacity закрыт — запускает его и ждёт, пока он начнёт

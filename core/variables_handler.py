@@ -2635,12 +2635,8 @@ class VariablesMixin:
         if next_expected:
             msg += f" · Дальше жду: {next_expected}"
 
-        # Обычный showToast() рисуется в окне G2Studio, которое сейчас
-        # закрыто сверху окном Audacity (юзер там выделяет следующий
-        # кусок) — просто не виден. show_floating_toast использует
-        # отдельное всегда-topmost окошко, которое видно поверх Audacity
-        # и не крадёт у него фокус клавиатуры.
-        self.show_floating_toast(msg, 3.2)
+        msg_js = msg.replace('\\', '\\\\').replace("'", "\\'")
+        webview.windows[0].evaluate_js(f"showToast('{msg_js}', 3200);")
         return self.get_ui_state()
 
     def _sum_stage2_active_tier(self):
