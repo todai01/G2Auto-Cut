@@ -1518,6 +1518,7 @@ let isProcessing = false;
         let sumStage1Tiers = []; // [{key, label}], порядок категорий
         let sumStage1SelectedIdx = 0;
         let sumStage1BrowseIdx = {}; // tier -> какое по счёту значение сейчас показано
+        let sumStage1BrowseCount = {}; // tier -> сколько значений было при прошлом рендере
 
         // Быстрая анимация «въезда» с той стороны, куда листали — снимает
         // класс, форсирует reflow (иначе повторное добавление того же
@@ -1706,12 +1707,19 @@ let isProcessing = false;
 
             // Курсор внутри категории по умолчанию — на следующем ещё не
             // использованном значении для активной (растущей) категории,
-            // там, где юзер его в прошлый раз оставил — для остальных.
+            // там, где юзер его в прошлый раз оставил — для остальных. Но
+            // если с прошлого рендера в категорию добавился новый сырой
+            // файл (например, отправили его, пока смотрели другую
+            // категорию), курсор всегда перескакивает на этот новый
+            // последний — а не остаётся на старом месте.
             let defaults = data.default_indices || {};
             tiersOrder.forEach(tier => {
-                if (!(tier in sumStage1BrowseIdx) && typeof defaults[tier] === 'number') {
+                let count = ((data.tiers[tier] || {}).items || []).length;
+                let grew = (sumStage1BrowseCount[tier] || 0) < count;
+                if ((!(tier in sumStage1BrowseIdx) || grew) && typeof defaults[tier] === 'number') {
                     sumStage1BrowseIdx[tier] = defaults[tier];
                 }
+                sumStage1BrowseCount[tier] = count;
             });
 
             renderSumSingleRow();

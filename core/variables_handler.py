@@ -2768,10 +2768,16 @@ class VariablesMixin:
                 "row_ready": path is not None,
             }
 
+        # Курсор внутри категории по умолчанию — на ПОСЛЕДНЕМ (самом
+        # свежем, раз items отсортирован по mtime — см. _sum_reels_refresh)
+        # сыром значении, а не на первом: обычно интересует именно то, что
+        # только что добавили, а не самое старое в очереди.
+        default_indices = {t: max(0, len(tiers.get(t, [])) - 1) for t in active_logic}
+
         return {
             "active_tier": None,
             "active_tier_key": None,
-            "default_indices": {},
+            "default_indices": default_indices,
             "row_idx": getattr(self, 'sum_stage2_row_idx', 0),
             "rows_total": rows_total,
             "row_values": dict(row),
