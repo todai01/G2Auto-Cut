@@ -143,7 +143,10 @@ class TableToPptxMixin:
         tier_lang = self._table_pptx_detect_tier_lang(headers, tier_cols)
         sum_flags = [i in tier_cols.values() for i in range(len(headers))]
         logic2_cycle = self._table_pptx_collect_hundred_thousands_cycle(data_rows, tier_cols, tier_lang)
-        logic2_available = bool(logic2_cycle) and all(t in tier_cols for t in ('millions', 'tenge'))
+        # Переключение срабатывает ровно там, где найдена строка с «нулём»
+        # в «Тенге»/tl (см. _table_pptx_find_trigger_idx) — никаких других
+        # условий (какие именно колонки есть в таблице и т.п.) не требуется.
+        logic2_available = bool(logic2_cycle) and self._table_pptx_find_trigger_idx(data_rows, tier_cols) is not None
         # «start 2» («со стоимостью») — второй столбец с «служебной» связкой
         # (в отличие от самого первого «start», который остаётся всегда).
         # После того как круг «Сотни тысяч» исчерпан, эта колонка тоже

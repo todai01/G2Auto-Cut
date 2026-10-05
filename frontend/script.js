@@ -3165,7 +3165,7 @@ let isProcessing = false;
             }
             bits.push(result.logic2_available
                 ? `${iconHTML('check-circle')} На строке, где «Тенге» помечено как «ноль» («ноль тенге» / «sıfır tl»), переключится на «Миллионы (на первом значении) + Сотни тысяч (по кругу) + Тенге (на первом значении)» — и так до конца таблицы`
-                : `${iconHTML('alert-triangle')} Для переключения на «Сотни тысяч» нужны колонки млн/тенге и хотя бы одна заполненная ячейка «Сотни тысяч»`);
+                : `${iconHTML('alert-triangle')} Переключения не будет — в таблице не нашлась строка, где «Тенге» помечено как «ноль» («ноль тенге» / «sıfır tl»), либо колонка «Сотни тысяч» вообще пустая`);
             if (result.ignored_columns && result.ignored_columns.length) {
                 bits.push(`${iconHTML('alert-triangle')} Без заголовка — не показываются на слайдах: ${result.ignored_columns.map(escapeHtml).join(', ')}`);
             }
