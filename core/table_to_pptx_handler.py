@@ -314,21 +314,29 @@ class TableToPptxMixin:
         return f"{text} тыс".strip()
 
     @staticmethod
-    def _table_pptx_find_trigger_idx(rows, tier_cols):
+    def _table_pptx_is_zero_tenge(text):
+        """«Ноль» на любом из языков таблицы — «ноль тенге», «sıfır tl»,
+        «sıfır lira» и т.п. Проверяем по слову «ноль/нуль/sıfır», не по
+        привязке к конкретному слову валюты, чтобы работать с любым языком."""
+        low = (text or '').lower().replace('ё', 'е')
+        return any(w in low for w in ('sıfır', 'sifir', 'ноль', 'нуль', 'zero'))
+
+    def _table_pptx_find_trigger_idx(self, rows, tier_cols):
         """Индекс строки, с которой начинается переключение на «Миллионы +
-        Сотни тысяч (по кругу) + Тенге» — это последняя строка, где у яруса
-        «Тенге»/tl ещё есть своё значение (дальше эта колонка в таблице
-        заканчивается). Именно эта строка становится первым «комбинированным»
-        слайдом — дальше «Миллионы» и «Тенге» держатся на значении из самой
-        первой строки таблицы, а крутится только «Сотни тысяч»."""
+        Сотни тысяч (по кругу) + Тенге» — это строка, где ярус «Тенге»/tl
+        явно помечен как «ноль» («ноль тенге», «sıfır tl»/«sıfır lira»).
+        Именно эта строка становится первым «комбинированным» слайдом —
+        дальше «Миллионы» и «Тенге» держатся на значении из самой первой
+        строки таблицы (не на «нуле» — ноль это только сигнал переключения,
+        а не то, что нужно показать на слайде), а крутится только «Сотни
+        тысяч»."""
         idx = tier_cols.get('tenge')
         if idx is None:
             return None
-        last = None
         for i, row in enumerate(rows):
-            if idx < len(row) and row[idx]:
-                last = i
-        return last
+            if idx < len(row) and self._table_pptx_is_zero_tenge(row[idx]):
+                return i
+        return None
 
     def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols, tier_lang=None):
         """Собирает уже записанные значения яруса «Сотни тысяч» (обычно
