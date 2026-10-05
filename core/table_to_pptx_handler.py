@@ -12,6 +12,15 @@ PAUSE_COLOR = RGBColor(0xC0, 0x00, 0x00)
 TEXT_COLOR = RGBColor(0x00, 0x00, 0x00)
 CAPTION_COLOR = RGBColor(0x60, 0x60, 0x60)
 
+# Подпись метки паузы — по языковому слоту интерфейса (RU/KZ/TR), в котором
+# собирается презентация. Для любого другого/незнакомого слота остаёмся на
+# русском варианте по умолчанию.
+PAUSE_LABELS = {
+    'ru': 'Пауза',
+    'kz': 'Үзіліс',
+    'tr': 'Duraklama',
+}
+
 # Заголовки в новом формате "<ключ_язык>" (например <million_tr>,
 # <yüz_bin_tr>, <tl_tr> — так ведутся турецкие и подобные таблицы «Суммы»,
 # где в заголовке используется голый смысловой ключ на латинице, а не
@@ -398,10 +407,12 @@ class TableToPptxMixin:
         prs.slide_height = SLIDE_H
         blank_layout = prs.slide_layouts[6]
 
+        pause_label = PAUSE_LABELS.get(lang, PAUSE_LABELS['ru'])
+
         try:
             for row_idx, row in enumerate(rows):
                 self._table_pptx_build_slide(prs, blank_layout, row, row_idx, brand_idx, transcript_idx, tier_cols,
-                                              logic2_ctx, tier_lang, blank_idxs)
+                                              logic2_ctx, tier_lang, blank_idxs, pause_label)
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
@@ -414,8 +425,9 @@ class TableToPptxMixin:
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
     def _table_pptx_build_slide(self, prs, layout, row, row_idx, brand_idx, transcript_idx, tier_cols, logic2_ctx,
-                                 tier_lang=None, blank_idxs=None):
+                                 tier_lang=None, blank_idxs=None, pause_label=None):
         blank_idxs = blank_idxs or set()
+        pause_label = pause_label or PAUSE_LABELS['ru']
         tier_indices = set(tier_cols.values())
         first_tier_idx = min(tier_indices) if tier_indices else None
 
@@ -521,7 +533,7 @@ class TableToPptxMixin:
             left += width
             if i < n - 1:
                 pause_x = left + gap // 2
-                self._table_pptx_add_pause_marker(slide, pause_x, top, BOX_H, scale)
+                self._table_pptx_add_pause_marker(slide, pause_x, top, BOX_H, scale, pause_label)
                 left += gap
 
     @staticmethod
@@ -565,10 +577,18 @@ class TableToPptxMixin:
             r.font.bold = True
             r.font.color.rgb = TEXT_COLOR
 
-    @staticmethod
-    def _table_pptx_add_pause_marker(slide, x, top, height, scale):
-        label_w = Inches(0.9)
+    def _table_pptx_add_pause_marker(self, slide, x, top, height, scale, pause_label=None):
+        pause_label = pause_label or PAUSE_LABELS['ru']
+        label_w = Inches(1.05)
         label_h = Inches(0.4)
+
+        # Ширина метки остаётся фиксированной (иначе соседние метки начинают
+        # наезжать друг на друга при узких блоках) — вместо этого шрифт
+        # подписи подстраивается под длину слова: «Пауза»/«Үзіліс» влезают
+        # без изменений, а более длинное «Duraklama» становится чуть мельче.
+        natural_w = self._text_width_emu(pause_label, FONT_PAUSE)
+        label_scale = min(1.0, (label_w - Inches(0.1)) / natural_w) if natural_w > 0 else 1.0
+
         label = slide.shapes.add_textbox(x - label_w // 2, top - label_h - Inches(0.06), label_w, label_h)
         tf = label.text_frame
         tf.word_wrap = False
@@ -576,8 +596,8 @@ class TableToPptxMixin:
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         r = p.add_run()
-        r.text = 'Пауза'
-        r.font.size = Pt(max(FONT_PAUSE * scale, 6))
+        r.text = pause_label
+        r.font.size = Pt(max(FONT_PAUSE * scale * label_scale, 6))
         r.font.bold = True
         r.font.color.rgb = PAUSE_COLOR
 
