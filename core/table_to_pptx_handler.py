@@ -18,6 +18,20 @@ CAPTION_COLOR = RGBColor(0x60, 0x60, 0x60)
 # в условие их поэтому не включаем).
 SUM_TIER_CAP = {'millions': 100, 'hundreds': 100, 'tenge': 100}
 
+# Заголовки в новом формате "<ключ_язык>" (например <million_tr>,
+# <yüz_bin_tr>, <tl_tr> — так ведутся турецкие и подобные таблицы «Суммы»,
+# где в заголовке используется голый смысловой ключ на латинице, а не
+# русское/казахское слово). Ключ сопоставляется напрямую, без завязки на
+# конкретный язык — работает для любого языкового суффикса (_tr/_ru/_kz/...).
+_TIER_TAG_KEYS = {
+    'millions': {'million', 'миллион'},
+    'hundred_thousands': {'hundred_thousand', 'yüz_bin', 'yuz_bin', 'yuzbin'},
+    'hundreds': {'hundred', 'yüz', 'yuz'},
+    'thousands': {'thousand', 'bin'},
+    'tenge': {'tenge', 'tl', 'lira'},
+}
+_LANG_SUFFIX_RE = re.compile(r'_(tr|ru|kz|kg|uz)$')
+
 # Фиксированный шаблон размеров — один и тот же на каждом слайде, никакого
 # автоподбора PowerPoint (он ненадёжно пересчитывался у пользователя и либо
 # оставлял текст огромным и наползающим, либо ломал слова переносом).
@@ -58,9 +72,13 @@ class TableToPptxMixin:
     ширине текста, а не поровну."""
 
     def table_pptx_pick_excel(self, lang='ru'):
-        """lang — «ru» или «kz»: РУ и КАЗ ведутся как два независимых
-        набора данных (своя таблица, свои колонки — структура и порядок
-        колонок у них разные), переключаются тумблером в интерфейсе."""
+        """lang — слот интерфейса («ru»/«kz»/«tr»...): каждый ведётся как
+        независимый набор данных (своя таблица, свои колонки), переключаются
+        тумблером в интерфейсе. Если в книге несколько листов, файл только
+        открывается и анализируется — какой именно лист анализировать,
+        выбирает пользователь отдельным шагом (table_pptx_pick_sheet),
+        т.к. один .xlsx нередко везёт параллельно несколько представлений
+        одних и тех же данных (например, текстовая и числовая запись сумм)."""
         filename = webview.windows[0].create_file_dialog(
             webview.FileDialog.OPEN, file_types=('Excel files (*.xlsx)', 'All files (*.*)'))
         if not filename:
@@ -69,22 +87,46 @@ class TableToPptxMixin:
 
         try:
             wb = openpyxl.load_workbook(path, data_only=True)
-            sheet = wb.active
         except Exception as e:
             return {"error": f"Не удалось открыть таблицу.\n\n{os.path.basename(path)}\n\n"
                               f"Поддерживается только формат .xlsx. Подробности: {e}"}
 
+        if not hasattr(self, 'table_pptx_pending'):
+            self.table_pptx_pending = {}
+        self.table_pptx_pending[lang] = path
+
+        if len(wb.sheetnames) > 1:
+            return {"status": "choose_sheet", "lang": lang, "file": os.path.basename(path),
+                     "sheets": wb.sheetnames}
+
+        return self._table_pptx_load_sheet(lang, path, wb[wb.sheetnames[0]])
+
+    def table_pptx_pick_sheet(self, lang, sheet_name):
+        """Второй шаг после table_pptx_pick_excel, когда в книге несколько
+        листов — грузит данные именно из выбранного листа."""
+        path = getattr(self, 'table_pptx_pending', {}).get(lang)
+        if not path or not os.path.exists(path):
+            return {"error": "Сессия выбора файла истекла — выберите Excel заново."}
+        try:
+            wb = openpyxl.load_workbook(path, data_only=True)
+        except Exception as e:
+            return {"error": f"Не удалось открыть таблицу.\n\nПодробности: {e}"}
+        if sheet_name not in wb.sheetnames:
+            return {"error": "Такого листа нет в этой таблице — выберите Excel заново."}
+        return self._table_pptx_load_sheet(lang, path, wb[sheet_name])
+
+    def _table_pptx_load_sheet(self, lang, path, sheet):
         rows_iter = sheet.iter_rows(values_only=True)
         try:
             header_row = next(rows_iter)
         except StopIteration:
-            return {"error": "Таблица пустая."}
+            return {"error": "Выбранный лист пустой."}
 
         headers = [self._table_pptx_cell_text(c) for c in header_row]
         while headers and not headers[-1]:
             headers.pop()
         if not headers:
-            return {"error": "В первой строке таблицы нет заголовков колонок."}
+            return {"error": "В первой строке листа нет заголовков колонок."}
 
         ncols = len(headers)
         data_rows = []
@@ -96,7 +138,7 @@ class TableToPptxMixin:
             data_rows.append(values)
 
         if not data_rows:
-            return {"error": "В таблице не нашлось ни одной строки с данными (кроме заголовков)."}
+            return {"error": "На выбранном листе не нашлось ни одной строки с данными (кроме заголовков)."}
 
         brand_idx, transcript_idx = self._table_pptx_find_brand_pair(headers)
         tier_cols = {}
@@ -104,8 +146,9 @@ class TableToPptxMixin:
             tier = self._table_pptx_classify_tier(h)
             if tier and tier not in tier_cols:
                 tier_cols[tier] = i
+        tier_lang = self._table_pptx_detect_tier_lang(headers, tier_cols)
         sum_flags = [i in tier_cols.values() for i in range(len(headers))]
-        logic2_cycle = self._table_pptx_collect_hundred_thousands_cycle(data_rows, tier_cols)
+        logic2_cycle = self._table_pptx_collect_hundred_thousands_cycle(data_rows, tier_cols, tier_lang)
         logic2_available = bool(logic2_cycle) and all(t in tier_cols for t in ('millions', 'hundreds', 'tenge'))
         # «start 2» («со стоимостью») — второй столбец с «служебной» связкой
         # (в отличие от самого первого «start», который остаётся всегда).
@@ -114,14 +157,23 @@ class TableToPptxMixin:
         extra_start_idxs = [i for i, h in enumerate(headers)
                              if i > 0 and re.fullmatch(r'start\s*\d+', h.lower().strip())]
 
+        # Колонка без заголовка (пустая ячейка в шапке) — не настоящее
+        # поле таблицы, а случайная заметка автора в одной из ячеек ниже
+        # (так бывает при копировании примеров прямо в рабочую таблицу).
+        # Без подписи её нечем объяснить на слайде, поэтому она целиком
+        # исключается — не показывается и не участвует в «протягивании»
+        # вниз, чтобы одна случайная запись не расползлась по всем слайдам.
+        blank_idxs = {i for i, h in enumerate(headers) if not h.strip()}
+
         # «Протягиваем вниз» пустые ячейки — в таких таблицах часто пишут
         # значение только один раз, а дальше оставляют пусто, подразумевая
         # «то же самое, что выше» (как в Excel при объединении ячеек).
         # Касается всех обычных колонок (start, год, start 2 и т.п.) —
         # не колонок-сумм (там пустая ячейка и правда значит «пропустить»,
-        # см. _table_pptx_collect_hundred_thousands_cycle) и не марки с
-        # транскрипцией (те должны быть каждый раз свои).
-        no_fill = set(tier_cols.values())
+        # см. _table_pptx_collect_hundred_thousands_cycle), не марки с
+        # транскрипцией (те должны быть каждый раз свои) и не безымянных
+        # колонок (см. выше).
+        no_fill = set(tier_cols.values()) | blank_idxs
         if brand_idx is not None:
             no_fill.add(brand_idx)
         if transcript_idx is not None:
@@ -140,23 +192,28 @@ class TableToPptxMixin:
             self.table_pptx_data = {}
         self.table_pptx_data[lang] = {
             "path": path,
+            "sheet": sheet.title,
             "headers": headers,
             "rows": data_rows,
             "brand_idx": brand_idx,
             "transcript_idx": transcript_idx,
             "sum_flags": sum_flags,
             "tier_cols": tier_cols,
+            "tier_lang": tier_lang,
             "extra_start_idxs": extra_start_idxs,
+            "blank_idxs": blank_idxs,
         }
 
         return {
             "lang": lang,
             "file": os.path.basename(path),
+            "sheet": sheet.title,
             "rows": len(data_rows),
             "columns": headers,
             "brand_pair": [headers[brand_idx], headers[transcript_idx]] if brand_idx is not None else None,
             "sum_columns": [headers[i] for i in tier_cols.values()],
             "logic2_available": logic2_available,
+            "ignored_columns": [headers[i] or '(без заголовка)' for i in sorted(blank_idxs)],
         }
 
     @staticmethod
@@ -187,13 +244,26 @@ class TableToPptxMixin:
 
     @staticmethod
     def _table_pptx_classify_tier(header):
-        """Определяет ярус колонки-суммы по слову в заголовке — та же
-        логика, что и для обычного «Режима сумм» на основном экране:
-        «млн»/«миллион» → Миллионы, «тенге» → Тенге, «тыс»/«мың»/«мын»
-        (казахский вариант того же яруса) + число ≥100 в заголовке →
-        Сотни тысяч (100-900 тыс.), без такого числа → Тысячи, голый
-        числовой диапазон без слов («100 - 900») → Сотни."""
+        """Определяет ярус колонки-суммы по слову в заголовке.
+
+        Сначала пробуем как тег вида "<ключ_язык>" (например <million_tr>,
+        <yüz_bin_tr>, <tl_tr>) — снимаем скобки и языковой суффикс
+        (_tr/_ru/_kz/...) и сравниваем голый ключ со словарём известных
+        ярусов _TIER_TAG_KEYS, независимо от того, какой это язык.
+
+        Если тег не распознан — старая логика для русских/казахских
+        заголовков произвольного вида: «млн»/«миллион» → Миллионы,
+        «тенге» → Тенге, «тыс»/«мың»/«мын» (казахский вариант того же
+        яруса) + число ≥100 в заголовке → Сотни тысяч (100-900 тыс.), без
+        такого числа → Тысячи, голый числовой диапазон без слов
+        («100 - 900») → Сотни."""
         low = header.lower().replace('ё', 'е')
+
+        tag_key = _LANG_SUFFIX_RE.sub('', low.strip().strip('<>'))
+        for tier, keys in _TIER_TAG_KEYS.items():
+            if tag_key in keys:
+                return tier
+
         if 'млн' in low or 'миллион' in low:
             return 'millions'
         if any(k in low for k in ('тенге', 'kzt', '₸')):
@@ -206,22 +276,46 @@ class TableToPptxMixin:
         return None
 
     @staticmethod
+    def _table_pptx_detect_tier_lang(headers, tier_cols):
+        """Язык заголовков яруса (по суффиксу _tr/_ru/_kz/...) — определяем,
+        только если ВСЕ найденные колонки-суммы согласны между собой
+        (единый суффикс); при free-form заголовках без суффикса (старые
+        русские/казахские таблицы) возвращает None — тогда форматирование
+        значений ведёт себя как раньше, без изменений."""
+        suffixes = set()
+        for idx in tier_cols.values():
+            m = _LANG_SUFFIX_RE.search(headers[idx].lower().strip().rstrip('>'))
+            if not m:
+                return None
+            suffixes.add(m.group(1))
+        return suffixes.pop() if len(suffixes) == 1 else None
+
+    @staticmethod
     def _table_pptx_first_number(text):
         m = re.search(r'\d+', text or '')
         return int(m.group()) if m else None
 
     @staticmethod
-    def _table_pptx_format_tier_value(tier, text):
+    def _table_pptx_format_tier_value(tier, text, tier_lang=None):
         """Ячейка «Сотни тысяч» в Excel часто хранит голое число (100), а
         «тыс» на экране появляется только через формат ячейки (custom
         number format) — сам текст этого не содержит, openpyxl видит
         только число. Чтобы на слайде не выпадало голое «100» без
         объяснения, что это, дописываем «тыс», если в тексте такого слова
-        ещё нет вообще (ни «тыс», ни «мың»/«мын»)."""
+        ещё нет вообще (ни «тыс», ни «мың»/«мын»).
+
+        Для таблиц с заголовками-тегами на другом языке (tier_lang, напр.
+        «tr») текст в ячейке обычно УЖЕ полностью записан словами («iki
+        yüz bin», а не голое число) — в этом случае ничего не дописываем,
+        чтобы не получить абракадабру вида «iki yüz bin тыс». Дописываем
+        «тыс» только для действительно голого числа (без единого слова) —
+        и то лишь когда язык яруса не распознан как не-русский."""
         if tier != 'hundred_thousands':
             return text
         low = (text or '').lower().replace('ё', 'е')
         if any(k in low for k in ('тыс', 'мың', 'мын')):
+            return text
+        if tier_lang and tier_lang != 'ru':
             return text
         return f"{text} тыс".strip()
 
@@ -236,7 +330,7 @@ class TableToPptxMixin:
                 return False
         return True
 
-    def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols):
+    def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols, tier_lang=None):
         """Собирает уже записанные значения яруса «Сотни тысяч» (обычно
         это всего 9 строк — «100 тыс»...«900 тыс», записанные один раз в
         начале таблицы) — после переключения они используются по очереди,
@@ -249,16 +343,16 @@ class TableToPptxMixin:
         cycle = []
         for row in rows:
             if idx < len(row) and self._table_pptx_first_number(row[idx]) is not None:
-                cycle.append(self._table_pptx_format_tier_value('hundred_thousands', row[idx]))
+                cycle.append(self._table_pptx_format_tier_value('hundred_thousands', row[idx], tier_lang))
         return cycle
 
-    def _table_pptx_build_logic2_context(self, rows, tier_cols):
+    def _table_pptx_build_logic2_context(self, rows, tier_cols, tier_lang=None):
         millions_idx = tier_cols.get('millions')
         tenge_idx = tier_cols.get('tenge')
         fixed_millions = rows[0][millions_idx] if rows and millions_idx is not None and millions_idx < len(rows[0]) else None
         fixed_tenge = rows[0][tenge_idx] if rows and tenge_idx is not None and tenge_idx < len(rows[0]) else None
         return {
-            "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols),
+            "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols, tier_lang),
             "cycle_pos": 0,
             "triggered": False,
             "exhausted": False,
@@ -283,7 +377,9 @@ class TableToPptxMixin:
         brand_idx = data['brand_idx']
         transcript_idx = data['transcript_idx']
         tier_cols = data['tier_cols']
-        logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols)
+        tier_lang = data.get('tier_lang')
+        blank_idxs = data.get('blank_idxs') or set()
+        logic2_ctx = self._table_pptx_build_logic2_context(rows, tier_cols, tier_lang)
 
         prs = Presentation()
         prs.slide_width = SLIDE_W
@@ -292,7 +388,8 @@ class TableToPptxMixin:
 
         try:
             for row in rows:
-                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx)
+                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols,
+                                              logic2_ctx, tier_lang, blank_idxs)
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
@@ -304,7 +401,9 @@ class TableToPptxMixin:
         chars = max(len(text or ''), 1)
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
-    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx):
+    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx,
+                                 tier_lang=None, blank_idxs=None):
+        blank_idxs = blank_idxs or set()
         tier_indices = set(tier_cols.values())
         first_tier_idx = min(tier_indices) if tier_indices else None
 
@@ -327,6 +426,7 @@ class TableToPptxMixin:
                 skip.discard(brand_idx)
         else:
             skip = {transcript_idx} if brand_idx is not None else set()
+        skip |= blank_idxs
         for i, val in enumerate(row):
             if i in skip:
                 continue
@@ -347,7 +447,7 @@ class TableToPptxMixin:
                     for tier in ('millions', 'hundreds', 'thousands', 'tenge'):
                         idx = tier_cols.get(tier)
                         if idx is not None and idx < len(row):
-                            text = self._table_pptx_format_tier_value(tier, row[idx])
+                            text = self._table_pptx_format_tier_value(tier, row[idx], tier_lang)
                             segments.append({"text": text, "font": FONT_SUM})
                 continue
             if brand_idx is not None and i == brand_idx:

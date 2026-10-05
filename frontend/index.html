@@ -391,8 +391,9 @@
             <div class="modal-hint">Каждая строка Excel становится отдельным слайдом, каждая ячейка — своим
                 блоком текста, а между блоками — метка «Пауза» (для чётких границ при нарезке аудио). Колонку
                 «марка» программа сама находит по названию и ставит подписью над колонкой «транскрипция» —
-                одним блоком, без паузы между ними. РУ и КАЗ таблицы загружаются отдельно — у них может быть
-                разный порядок колонок.</div>
+                одним блоком, без паузы между ними. РУ, КАЗ и TR таблицы загружаются отдельно — у них может быть
+                разный порядок и набор колонок. Если в файле несколько листов (например, отдельно текстовая и
+                числовая запись сумм) — после выбора файла программа спросит, какой лист анализировать.</div>
 
             <div class="tile-row sum-logic-row">
                 <button class="btn-tile sum-logic-btn" id="tablePptxLangRuBtn" onclick="setTablePptxLang('ru')">
@@ -400,6 +401,9 @@
                 </button>
                 <button class="btn-tile sum-logic-btn" id="tablePptxLangKzBtn" onclick="setTablePptxLang('kz')">
                     <span class="sum-logic-btn__title">KZ</span>
+                </button>
+                <button class="btn-tile sum-logic-btn" id="tablePptxLangTrBtn" onclick="setTablePptxLang('tr')">
+                    <span class="sum-logic-btn__title">TR</span>
                 </button>
             </div>
 

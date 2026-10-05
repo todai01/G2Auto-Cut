@@ -3112,16 +3112,16 @@ let isProcessing = false;
         }
 
         // === «Таблица → PowerPoint»: построчный экспорт Excel в слайды ===
-        // РУ и КАЗ таблицы загружаются и хранятся отдельно (разный порядок
-        // колонок) — тумблер только переключает, какую из них показывает
-        // и собирает интерфейс, сам выбор файла и результат экспорта
-        // остаются каждый при своём языке.
+        // РУ, КАЗ и TR таблицы загружаются и хранятся отдельно (разный
+        // порядок/набор колонок) — тумблер только переключает, какую из
+        // них показывает и собирает интерфейс, сам выбор файла и результат
+        // экспорта остаются каждый при своём языке.
         let tablePptxLang = 'ru';
-        let tablePptxState = { ru: null, kz: null };
+        let tablePptxState = { ru: null, kz: null, tr: null };
 
         function openTablePptx() {
             tablePptxLang = 'ru';
-            tablePptxState = { ru: null, kz: null };
+            tablePptxState = { ru: null, kz: null, tr: null };
             document.getElementById('tablePptxResult').style.display = 'none';
             renderTablePptxLangUI();
             document.getElementById('tablePptxOverlay').style.display = 'flex';
@@ -3139,8 +3139,10 @@ let isProcessing = false;
         function renderTablePptxLangUI() {
             let ruBtn = document.getElementById('tablePptxLangRuBtn');
             let kzBtn = document.getElementById('tablePptxLangKzBtn');
+            let trBtn = document.getElementById('tablePptxLangTrBtn');
             if (ruBtn) ruBtn.classList.toggle('btn-tile--solid-mode', tablePptxLang === 'ru');
             if (kzBtn) kzBtn.classList.toggle('btn-tile--solid-mode', tablePptxLang === 'kz');
+            if (trBtn) trBtn.classList.toggle('btn-tile--solid-mode', tablePptxLang === 'tr');
 
             let label = document.getElementById('tablePptxExcelLabel');
             let info = document.getElementById('tablePptxInfo');
@@ -3153,7 +3155,7 @@ let isProcessing = false;
                 btn.disabled = true;
                 return;
             }
-            label.innerText = `${result.file} — строк: ${result.rows}`;
+            label.innerText = `${result.file}${result.sheet ? ' · лист «' + result.sheet + '»' : ''} — строк: ${result.rows}`;
             let bits = [`Колонок в таблице: <b>${result.columns.length}</b> (${result.columns.map(escapeHtml).join(', ')})`];
             bits.push(result.brand_pair
                 ? `${iconHTML('check-circle')} Марка+транскрипция найдены: «${escapeHtml(result.brand_pair[0])}» над «${escapeHtml(result.brand_pair[1])}» — пойдут одним блоком`
@@ -3164,9 +3166,48 @@ let isProcessing = false;
             bits.push(result.logic2_available
                 ? `${iconHTML('check-circle')} На строке с «100 млн, 100, 100 тенге» переключится на «1 млн + Сотни тысяч (по кругу) + 1 тенге» — и так до конца таблицы`
                 : `${iconHTML('alert-triangle')} Для переключения на «Сотни тысяч» нужны колонки млн/100-900/тенге и хотя бы одна заполненная ячейка «Сотни тысяч»`);
+            if (result.ignored_columns && result.ignored_columns.length) {
+                bits.push(`${iconHTML('alert-triangle')} Без заголовка — не показываются на слайдах: ${result.ignored_columns.map(escapeHtml).join(', ')}`);
+            }
             info.innerHTML = bits.join('<br>');
             info.style.display = 'block';
             btn.disabled = false;
+        }
+
+        function renderTablePptxSheetChoice(result) {
+            let label = document.getElementById('tablePptxExcelLabel');
+            let info = document.getElementById('tablePptxInfo');
+            let btn = document.getElementById('btnRunTablePptx');
+            label.innerText = `${result.file} — выберите лист`;
+            btn.disabled = true;
+
+            info.innerHTML = '';
+            let intro = document.createElement('div');
+            intro.innerText = 'В файле несколько листов — выберите, какой анализировать:';
+            info.appendChild(intro);
+
+            let row = document.createElement('div');
+            row.style.marginTop = 'var(--space-2)';
+            result.sheets.forEach(name => {
+                let b = document.createElement('button');
+                b.className = 'custom-alert-btn';
+                b.style.margin = '4px 6px 0 0';
+                b.innerText = name;
+                b.onclick = () => chooseTablePptxSheet(result.lang, name);
+                row.appendChild(b);
+            });
+            info.appendChild(row);
+            info.style.display = 'block';
+        }
+
+        async function chooseTablePptxSheet(lang, sheetName) {
+            let result = await pywebview.api.table_pptx_pick_sheet(lang, sheetName);
+            if (!result || result.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                return;
+            }
+            tablePptxState[lang] = result;
+            renderTablePptxLangUI();
         }
 
         async function pickTablePptxExcel() {
@@ -3175,6 +3216,10 @@ let isProcessing = false;
                 if (!result || result.error !== 'cancel') {
                     showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
                 }
+                return;
+            }
+            if (result.status === 'choose_sheet') {
+                renderTablePptxSheetChoice(result);
                 return;
             }
             tablePptxState[tablePptxLang] = result;
