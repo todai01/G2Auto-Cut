@@ -1,4 +1,5 @@
 import os
+import re
 import math
 import time
 import webview
@@ -7,6 +8,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
 from core import project_state, recent_projects
+from core.variables_handler import SUM_TIER_ORDER
 
 try:
     import audioop  # быстрый расчёт громкости; удалён из Python 3.13
@@ -515,18 +517,11 @@ class ProjectMixin:
             self._sync_audacity_selection()
         return self.get_ui_state()
 
-    def audit_project_files(self):
-        if not self.phrases_data:
-            return {"error": "Сначала загрузите Excel-файл с текстами (Шаг 1)!"}
-
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return {"error": "cancel"}
-
-        scan_dir = folder[0]
+    def _audit_scan_folder(self, scan_dir):
+        """Рекурсивно собирает все .wav/.mp3 в папке (кроме «мусорных»
+        подпапок trash) — общая часть обоих видов аудита."""
         found_files = {}
         all_disk_files = set()
-
         for root_dir, _, files in os.walk(scan_dir):
             if 'trash' in root_dir.lower():
                 continue
@@ -535,9 +530,44 @@ class ProjectMixin:
                     f_low = file.lower()
                     full_p = os.path.join(root_dir, file)
                     all_disk_files.add(f_low)
-                    if f_low not in found_files:
-                        found_files[f_low] = []
-                    found_files[f_low].append(full_p)
+                    found_files.setdefault(f_low, []).append(full_p)
+        return found_files, all_disk_files
+
+    def _audit_available_categories(self):
+        """Категории словаря переменных, по которым можно свериться с
+        папкой — только те, для которых в загруженном словаре реально
+        есть хоть одно значение (без словаря — пустой список, тогда
+        аудит ведёт себя как раньше, по основной таблице Excel)."""
+        values_by_key = getattr(self, 'var_extra_tag_values', None) or {}
+        return [{"key": k, "label": self._category_label(k)}
+                for k in self._all_category_keys() if values_by_key.get(k)]
+
+    def audit_project_files(self, category=None):
+        """Без выбранной категории и при загруженном словаре переменных —
+        сперва спрашивает, по какой категории сверяться (Excel-список
+        дублей «Шага 1» или одна из категорий словаря — марка/год/ярусы
+        Суммы и т.п.), а уже потом открывает папку на сканирование."""
+        if category is None:
+            categories = self._audit_available_categories()
+            if categories:
+                return {
+                    "status": "choose_category",
+                    "categories": categories,
+                    "has_excel": bool(self.phrases_data),
+                }
+
+        if category and category != 'excel':
+            return self._audit_by_category(category)
+
+        if not self.phrases_data:
+            return {"error": "Сначала загрузите Excel-файл с текстами (Шаг 1)!"}
+
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+
+        scan_dir = folder[0]
+        found_files, all_disk_files = self._audit_scan_folder(scan_dir)
 
         missing_list = []
         duplicates_list = []
@@ -570,6 +600,52 @@ class ProjectMixin:
         return {
             "scan_dir": scan_dir,
             "total_excel": valid_excel_count,
+            "total_disk": len(all_disk_files),
+            "missing_count": len(missing_list),
+            "duplicates_count": len(duplicates_list),
+            "missing": missing_list,
+            "duplicates": duplicates_list
+        }
+
+    def _audit_by_category(self, category):
+        """Сверяет с папкой не основной Excel, а список значений ОДНОЙ
+        категории словаря переменных (марка/год/ярус Суммы и т.п.) — то
+        же имя файла, что ждёт сохранение эталона в этой категории (см.
+        _sum_stage2_resolve_value): для ярусов Суммы это голые цифры
+        значения, для остальных категорий — само значение, очищенное от
+        запрещённых в именах файлов символов."""
+        values = (getattr(self, 'var_extra_tag_values', None) or {}).get(category) or []
+        if not values:
+            return {"error": "Для этой категории в словаре переменных нет ни одного значения."}
+
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+
+        scan_dir = folder[0]
+        found_files, all_disk_files = self._audit_scan_folder(scan_dir)
+
+        missing_list = []
+        for i, value in enumerate(values):
+            clean_value = re.sub(r'[<>:"/\\|?*]', '', value).strip()
+            name_base = re.sub(r'\D', '', clean_value) if category in SUM_TIER_ORDER else clean_value
+            name_base = (name_base or clean_value).lower()
+            expected = {f"{name_base}.wav", f"{name_base}.mp3"}
+            if not expected & all_disk_files:
+                missing_list.append({
+                    "index": i + 1,
+                    "filename": f"{name_base}.wav",
+                    "text": value
+                })
+
+        duplicates_list = [{"filename": f, "count": len(paths), "paths": paths}
+                            for f, paths in found_files.items() if len(paths) > 1]
+
+        return {
+            "category": category,
+            "category_label": self._category_label(category),
+            "scan_dir": scan_dir,
+            "total_excel": len(values),
             "total_disk": len(all_disk_files),
             "missing_count": len(missing_list),
             "duplicates_count": len(duplicates_list),

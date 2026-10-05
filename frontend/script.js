@@ -3374,6 +3374,32 @@ let isProcessing = false;
             document.getElementById('auditOverlay').style.display = 'none';
         }
 
+        function closeAuditCategoryPicker() {
+            document.getElementById('auditCategoryOverlay').style.display = 'none';
+        }
+
+        function renderAuditCategoryChoice(res) {
+            let list = document.getElementById('auditCategoryList');
+            list.innerHTML = '';
+
+            const addOption = (key, label) => {
+                let btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'audit-category-item';
+                btn.textContent = label;
+                btn.onclick = () => {
+                    closeAuditCategoryPicker();
+                    runProjectAudit(key);
+                };
+                list.appendChild(btn);
+            };
+
+            if (res.has_excel) addOption('excel', 'Список дублей из Excel (Шаг 1)');
+            res.categories.forEach(c => addOption(c.key, c.label));
+
+            document.getElementById('auditCategoryOverlay').style.display = 'flex';
+        }
+
         // Функция плавной анимации цифр
         function animateValue(obj, start, end, duration) {
             let startTimestamp = null;
@@ -3390,22 +3416,31 @@ let isProcessing = false;
             window.requestAnimationFrame(step);
         }
 
-        async function runProjectAudit() {
+        async function runProjectAudit(category) {
             if (isProcessing) return; isProcessing = true;
 
-            // Вызываем Python-сканер (откроется окно выбора папки)
-            let res = await pywebview.api.audit_project_files();
+            // Вызываем Python-сканер. Без категории — если загружен словарь
+            // переменных, сперва вернётся запрос выбрать категорию (ниже),
+            // иначе сразу откроется окно выбора папки.
+            let res = await pywebview.api.audit_project_files(category);
             isProcessing = false;
 
             if (res && res.error === "cancel") return; // Юзер закрыл окно выбора
+            if (res && res.status === "choose_category") {
+                renderAuditCategoryChoice(res);
+                return;
+            }
             if (!res || res.error) {
                 alert(res?.error || "Сначала загрузите Excel-файл с текстом!");
                 return;
             }
 
             // Показываем красивое модальное окно
+            let categoryNote = res.category ? ` — категория «${res.category_label}»` : '';
             document.getElementById('auditOverlay').style.display = 'flex';
-            document.getElementById('auditPath').innerHTML = iconHTML('folder') + " Директория сканирования: " + escapeHtml(res.scan_dir);
+            document.getElementById('auditPath').innerHTML = iconHTML('folder') + " Директория сканирования: " + escapeHtml(res.scan_dir) + escapeHtml(categoryNote);
+            document.querySelector('#auditOverlay .stat-card--total .stat-card__label').textContent =
+                res.category ? 'Всего в словаре' : 'Всего в Excel';
 
             // Запускаем анимацию счетчиков (на 1200 миллисекунд)
             animateValue(document.getElementById('auditTotalExcel'), 0, res.total_excel, 1200);
@@ -3415,8 +3450,8 @@ let isProcessing = false;
 
             // Генерируем детальные списки и чистый текст для копирования
             let detailsHtml = '';
-            window.lastAuditReportText = `ОТЧЁТ АУДИТА ПРОЕКТА\nДиректория: ${res.scan_dir}\n`;
-            window.lastAuditReportText += `Excel база: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n\n`;
+            window.lastAuditReportText = `ОТЧЁТ АУДИТА ПРОЕКТА${categoryNote}\nДиректория: ${res.scan_dir}\n`;
+            window.lastAuditReportText += `База: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n\n`;
 
             // Блок отсутствующих файлов
             if (res.missing_count > 0) {
