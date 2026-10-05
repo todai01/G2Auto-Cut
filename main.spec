@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-# Собирает G2Studio в один .exe-файл для раздачи коллегам — не нужен
+# Собирает GVox в один .exe-файл для раздачи коллегам — не нужен
 # Python/PyCharm/git, просто двойной клик. ffmpeg.exe и ffprobe.exe везутся
 # прямо внутри .exe, поэтому софт работает даже без интернета и без
 # исключений в корпоративных блокировках.
@@ -10,7 +10,7 @@ import os
 #      (как для обычного запуска).
 #   2. pip install pyinstaller
 #   3. pyinstaller main.spec
-#   4. Готовый файл появится в dist\G2Studio.exe — вот его и раздаёшь
+#   4. Готовый файл появится в dist\GVox.exe — вот его и раздаёшь
 #      коллегам, больше ничего не нужно.
 
 _ffmpeg_binaries = [(f, '.') for f in ('ffmpeg.exe', 'ffprobe.exe') if os.path.exists(f)]
@@ -39,7 +39,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='G2Studio',
+    name='GVox',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

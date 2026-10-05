@@ -173,7 +173,7 @@ class MontageMixin:
 
     def _get_own_hwnd(self):
         try:
-            return ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
+            return ctypes.windll.user32.FindWindowW(None, "GVox | Автосрезка")
         except Exception:
             return None
 

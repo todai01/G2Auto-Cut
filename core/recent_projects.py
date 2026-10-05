@@ -9,7 +9,7 @@ import json
 import os
 import time
 
-RECENTS_DIR = os.path.join(os.path.expanduser('~'), '.g2autocut')
+RECENTS_DIR = os.path.join(os.path.expanduser('~'), '.gvox')
 RECENTS_PATH = os.path.join(RECENTS_DIR, 'recent_projects.json')
 MAX_RECENTS = 8
 
