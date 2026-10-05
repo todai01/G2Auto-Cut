@@ -3164,8 +3164,8 @@ let isProcessing = false;
                 bits.push(`${iconHTML('check-circle')} Колонки-суммы: ${result.sum_columns.map(escapeHtml).join(', ')}`);
             }
             bits.push(result.logic2_available
-                ? `${iconHTML('check-circle')} На строке с «100 млн, 100, 100 тенге» переключится на «1 млн + Сотни тысяч (по кругу) + 1 тенге» — и так до конца таблицы`
-                : `${iconHTML('alert-triangle')} Для переключения на «Сотни тысяч» нужны колонки млн/100-900/тенге и хотя бы одна заполненная ячейка «Сотни тысяч»`);
+                ? `${iconHTML('check-circle')} Там, где заканчивается колонка «Тенге», переключится на «Миллионы (на первом значении) + Сотни тысяч (по кругу) + Тенге (на первом значении)» — и так до конца таблицы`
+                : `${iconHTML('alert-triangle')} Для переключения на «Сотни тысяч» нужны колонки млн/тенге и хотя бы одна заполненная ячейка «Сотни тысяч»`);
             if (result.ignored_columns && result.ignored_columns.length) {
                 bits.push(`${iconHTML('alert-triangle')} Без заголовка — не показываются на слайдах: ${result.ignored_columns.map(escapeHtml).join(', ')}`);
             }

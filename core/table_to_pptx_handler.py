@@ -12,12 +12,6 @@ PAUSE_COLOR = RGBColor(0xC0, 0x00, 0x00)
 TEXT_COLOR = RGBColor(0x00, 0x00, 0x00)
 CAPTION_COLOR = RGBColor(0x60, 0x60, 0x60)
 
-# Условие перехода на «Миллионы + Сотни тысяч + Тенге»: строка, где
-# «Миллионы» и «Сотни» одновременно дошли до 100, а «Тенге» — тоже 100
-# («Тысячи» на этой строке в реальных таблицах обычно уже пустые —
-# в условие их поэтому не включаем).
-SUM_TIER_CAP = {'millions': 100, 'hundreds': 100, 'tenge': 100}
-
 # Заголовки в новом формате "<ключ_язык>" (например <million_tr>,
 # <yüz_bin_tr>, <tl_tr> — так ведутся турецкие и подобные таблицы «Суммы»,
 # где в заголовке используется голый смысловой ключ на латинице, а не
@@ -149,7 +143,7 @@ class TableToPptxMixin:
         tier_lang = self._table_pptx_detect_tier_lang(headers, tier_cols)
         sum_flags = [i in tier_cols.values() for i in range(len(headers))]
         logic2_cycle = self._table_pptx_collect_hundred_thousands_cycle(data_rows, tier_cols, tier_lang)
-        logic2_available = bool(logic2_cycle) and all(t in tier_cols for t in ('millions', 'hundreds', 'tenge'))
+        logic2_available = bool(logic2_cycle) and all(t in tier_cols for t in ('millions', 'tenge'))
         # «start 2» («со стоимостью») — второй столбец с «служебной» связкой
         # (в отличие от самого первого «start», который остаётся всегда).
         # После того как круг «Сотни тысяч» исчерпан, эта колонка тоже
@@ -319,16 +313,22 @@ class TableToPptxMixin:
             return text
         return f"{text} тыс".strip()
 
-    def _table_pptx_row_hits_switch(self, row, tier_cols):
-        """Строка, на которой пора переключаться на «Миллионы + Сотни
-        тысяч + Тенге» — «Миллионы» и «Сотни» одновременно дошли до 100, а
-        «Тенге» тоже 100. Проверяем именно число в ячейке, а не точный
-        текст (там бывают разные окончания: «млн», «млн-а», «млн-ов»)."""
-        for t in ('millions', 'hundreds', 'tenge'):
-            idx = tier_cols.get(t)
-            if idx is None or idx >= len(row) or self._table_pptx_first_number(row[idx]) != SUM_TIER_CAP[t]:
-                return False
-        return True
+    @staticmethod
+    def _table_pptx_find_trigger_idx(rows, tier_cols):
+        """Индекс строки, с которой начинается переключение на «Миллионы +
+        Сотни тысяч (по кругу) + Тенге» — это последняя строка, где у яруса
+        «Тенге»/tl ещё есть своё значение (дальше эта колонка в таблице
+        заканчивается). Именно эта строка становится первым «комбинированным»
+        слайдом — дальше «Миллионы» и «Тенге» держатся на значении из самой
+        первой строки таблицы, а крутится только «Сотни тысяч»."""
+        idx = tier_cols.get('tenge')
+        if idx is None:
+            return None
+        last = None
+        for i, row in enumerate(rows):
+            if idx < len(row) and row[idx]:
+                last = i
+        return last
 
     def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols, tier_lang=None):
         """Собирает уже записанные значения яруса «Сотни тысяч» (обычно
@@ -354,6 +354,7 @@ class TableToPptxMixin:
         return {
             "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols, tier_lang),
             "cycle_pos": 0,
+            "trigger_idx": self._table_pptx_find_trigger_idx(rows, tier_cols),
             "triggered": False,
             "exhausted": False,
             "fixed_millions": fixed_millions,
@@ -387,8 +388,8 @@ class TableToPptxMixin:
         blank_layout = prs.slide_layouts[6]
 
         try:
-            for row in rows:
-                self._table_pptx_build_slide(prs, blank_layout, row, brand_idx, transcript_idx, tier_cols,
+            for row_idx, row in enumerate(rows):
+                self._table_pptx_build_slide(prs, blank_layout, row, row_idx, brand_idx, transcript_idx, tier_cols,
                                               logic2_ctx, tier_lang, blank_idxs)
             prs.save(path)
         except Exception as e:
@@ -401,18 +402,18 @@ class TableToPptxMixin:
         chars = max(len(text or ''), 1)
         return int(chars * font_pt * AVG_CHAR_WIDTH_PT * EMU_PER_PT)
 
-    def _table_pptx_build_slide(self, prs, layout, row, brand_idx, transcript_idx, tier_cols, logic2_ctx,
+    def _table_pptx_build_slide(self, prs, layout, row, row_idx, brand_idx, transcript_idx, tier_cols, logic2_ctx,
                                  tier_lang=None, blank_idxs=None):
         blank_idxs = blank_idxs or set()
         tier_indices = set(tier_cols.values())
         first_tier_idx = min(tier_indices) if tier_indices else None
 
         # Переключение на «Миллионы + Сотни тысяч + Тенге» — одноразовое и
-        # дальше держится до конца таблицы (sticky): как только строка
-        # хоть раз попала под условие, все следующие строки (даже те, где
-        # своих сумм в ячейках уже нет вообще — обычно так и есть) идут по
-        # этому же сценарию, а не проверяются заново.
-        if not logic2_ctx['triggered'] and logic2_ctx['cycle'] and self._table_pptx_row_hits_switch(row, tier_cols):
+        # дальше держится до конца таблицы (sticky): срабатывает ровно на
+        # строке trigger_idx (последняя строка, где у «Тенге»/tl ещё есть
+        # значение), а дальше идёт по этому же сценарию без повторных проверок.
+        if not logic2_ctx['triggered'] and logic2_ctx['cycle'] and logic2_ctx['trigger_idx'] is not None \
+                and row_idx == logic2_ctx['trigger_idx']:
             logic2_ctx['triggered'] = True
         use_logic2 = logic2_ctx['triggered'] and not logic2_ctx['exhausted']
 
