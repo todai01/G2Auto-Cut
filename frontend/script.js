@@ -1540,7 +1540,6 @@ let isProcessing = false;
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
             renderSumSingleRow();
-            renderSumNextValuePicker(lastSumState && lastSumState.reels);
             triggerSumAnim(document.getElementById('sumSingleRow'), dir < 0 ? 'sum-anim-up' : 'sum-anim-down');
         }
         function sumStage1BrowseMove(dir) {
@@ -1593,13 +1592,12 @@ let isProcessing = false;
         function renderSumSingleRow() {
             let nameEl = document.getElementById('sumSingleName');
             let textEl = document.getElementById('sumSingleText');
-            let countEl = document.getElementById('sumSingleCount');
             let row = document.getElementById('sumSingleRow');
             let catPrevEl = document.getElementById('sumCatPrev');
             let catNextEl = document.getElementById('sumCatNext');
             let valPrevEl = document.getElementById('sumValPrev');
             let valNextEl = document.getElementById('sumValNext');
-            let expectedEl = document.getElementById('sumSingleExpected');
+            let recordedEl = document.getElementById('sumRecorded');
             if (!nameEl || !textEl || !lastSumState || !lastSumState.reels) return;
 
             let data = lastSumState.reels;
@@ -1607,12 +1605,11 @@ let isProcessing = false;
             if (!tierInfo) {
                 nameEl.innerText = '—';
                 textEl.innerText = '';
-                if (countEl) countEl.innerText = '';
                 if (catPrevEl) catPrevEl.innerText = '';
                 if (catNextEl) catNextEl.innerText = '';
                 if (valPrevEl) valPrevEl.innerText = '';
                 if (valNextEl) valNextEl.innerText = '';
-                if (expectedEl) expectedEl.innerText = '';
+                renderSumExpected(null);
                 return;
             }
             let tier = tierInfo.key;
@@ -1629,8 +1626,12 @@ let isProcessing = false;
                 row.classList.toggle('sum-single-row--empty', isEmpty);
                 row.classList.toggle('sum-single-row--active', !!info.active);
             }
-            textEl.innerText = isEmpty ? 'нет сырых файлов' : humanizeTierItem(tier, items[idx]);
-            if (countEl) countEl.innerText = isEmpty ? '' : `${idx + 1} / ${items.length}`;
+            textEl.innerText = isEmpty ? 'пока ничего' : sumRecordedLabel(tier, items[idx]);
+            if (recordedEl) {
+                recordedEl.classList.toggle('sum-recorded--empty', isEmpty);
+                let lbl = recordedEl.querySelector('.sum-recorded__label');
+                if (lbl) lbl.innerText = isEmpty ? 'Записано:' : `Записано ${idx + 1}/${items.length}:`;
+            }
 
             // Соседи по категории (↑/↓) — что покажется, если полистать
             // дальше в ту же сторону; при одной категории соседей нет.
@@ -1646,20 +1647,92 @@ let isProcessing = false;
 
             // Соседи по значению (←/→) внутри текущей категории — то же
             // самое, но по значениям, а не по категориям.
-            if (valPrevEl) {
-                valPrevEl.innerText = (!isEmpty && items.length > 1)
-                    ? humanizeTierItem(tier, items[(idx - 1 + items.length) % items.length]) : '';
-            }
-            if (valNextEl) {
-                valNextEl.innerText = (!isEmpty && items.length > 1)
-                    ? humanizeTierItem(tier, items[(idx + 1) % items.length]) : '';
-            }
+            // Листание ←/→ идёт по кругу, но соседей показываем без круга —
+            // иначе при двух записях одна и та же видна с обеих сторон.
+            if (valPrevEl) valPrevEl.innerText = (!isEmpty && idx > 0) ? sumRecordedLabel(tier, items[idx - 1]) : '';
+            if (valNextEl) valNextEl.innerText = (!isEmpty && idx < items.length - 1) ? sumRecordedLabel(tier, items[idx + 1]) : '';
 
-            // Значение из таблицы, которое присвоится следующему дублю,
-            // отправленному Z в эту категорию — сверяем со слухом, не
-            // пропустил ли диктор что-то в записи (см. expected_next).
-            if (expectedEl) {
-                expectedEl.innerText = info.expected_next ? `Ожидаю дальше: ${info.expected_next}` : '';
+            renderSumExpected(info);
+        }
+
+        function sumRecordedLabel(tier, raw) {
+            return humanizeTierItem(tier, (raw || '').replace(/^сырая_/, ''));
+        }
+
+        // «Сейчас ищем» — значение, которое получит дубль по Z. Это select:
+        // крупный текст, а по клику — весь список значений таблицы, чтобы
+        // продолжить с любого места.
+        function renderSumExpected(info) {
+            let select = document.getElementById('sumExpectPick');
+            let progress = document.getElementById('sumExpectProgress');
+            if (!select) return;
+            select.innerHTML = '';
+            let choices = (info && info.name_choices) || [];
+            if (!info || !info.expected_next || !choices.length) {
+                let opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = info ? 'в таблице нет значений' : '—';
+                select.appendChild(opt);
+                select.disabled = true;
+                if (progress) progress.innerText = '';
+                return;
+            }
+            select.disabled = false;
+            choices.forEach((name, i) => {
+                let opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = `${i + 1}. ${name}`;
+                select.appendChild(opt);
+            });
+            select.value = info.expected_next;
+            // Выбранная опция показывает номер — в закрытом виде нужен только сам текст.
+            let selOpt = select.options[select.selectedIndex];
+            if (selOpt) selOpt.textContent = info.expected_next;
+            if (progress && typeof info.expected_idx === 'number') {
+                progress.innerText = `${info.expected_idx + 1} / ${info.values_total || choices.length}`;
+            }
+        }
+
+        async function sumSetExpected(value) {
+            if (!value || !sumStage1Tiers.length) return;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let state = await pywebview.api.sum_set_expected_value(tier, value);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            document.getElementById('sumExpectPick')?.blur();
+        }
+
+        // X: убрать запись, которая сейчас показана в «Записано» (брак).
+        // Если это только что отправленный дубль — полный откат (дубль
+        // возвращается в очередь), иначе просто удаляется файл. Его значение
+        // снова становится «Сейчас ищем».
+        async function sumRemoveBrowsed() {
+            if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let info = lastSumState.reels.tiers[tier] || {};
+            let paths = info.paths || [];
+            if (!paths.length) {
+                showToast('В этой категории пока нечего убирать');
+                return;
+            }
+            let path = paths[sumStage1BrowseIdx[tier] || 0];
+            let wasLastSend = path && path === info.last_send_path;
+            let state = await pywebview.api.sum_remove_raw(tier, path);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            if (wasLastSend) {
+                // Откат отправки — категория и дубль возвращаются назад, как раньше у «Отменить».
+                sumStage1SelectedIdx = sumStage1Tiers.findIndex(t => t.key === tier);
+                if (sumStage1SelectedIdx < 0) sumStage1SelectedIdx = 0;
+                renderSumSingleRow();
+                triggerSumAnim(document.getElementById('sumSingleRow'), 'sum-anim-up');
+                playAudio(false);
             }
         }
         async function sumStage1SendSelected() {
@@ -1732,54 +1805,6 @@ let isProcessing = false;
             });
 
             renderSumSingleRow();
-            renderSumNextValuePicker(data);
-        }
-
-        // Список ВСЕХ значений категории, выбранной сейчас ↑/↓ (той же,
-        // что и на однострочном экране сортировки) — из самой таблицы,
-        // не только то, что уже разложено по сырым дублям. Выбор
-        // переключает всю сборку на ПЕРВУЮ строку таблицы с этим
-        // значением (sum_stage2_jump_to_value) — марка, год, суммы дальше
-        // берутся из этой же строки целиком, не порознь.
-        function renderSumNextValuePicker(data) {
-            let select = document.getElementById('sumNextValuePick');
-            let label = document.getElementById('sumNextValueTier');
-            if (!select || !data || !sumStage1Tiers.length) return;
-
-            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
-            let tierInfo = data.tiers[tier];
-            let choices = (tierInfo && tierInfo.name_choices) || [];
-            if (label) label.innerText = (tierInfo && tierInfo.label) || tier;
-
-            select.innerHTML = '';
-            if (!choices.length) {
-                let opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'в таблице нет значений для этой категории';
-                select.appendChild(opt);
-                select.disabled = true;
-                return;
-            }
-            select.disabled = false;
-            choices.forEach(name => {
-                let opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                select.appendChild(opt);
-            });
-            let current = tierInfo && tierInfo.row_value;
-            select.value = (current && choices.includes(current)) ? current : choices[0];
-        }
-
-        async function sumStage2JumpToValue(value) {
-            if (!sumStage1Tiers.length) return;
-            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
-            let state = await pywebview.api.sum_stage2_jump_to_value(tier, value);
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
         }
 
         function sumStage2Indices() {
@@ -2823,7 +2848,7 @@ let isProcessing = false;
                 return;
             }
 
-            if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
+            if (document.activeElement && (document.activeElement.tagName === 'BUTTON' || document.activeElement.id === 'sumExpectPick')) document.activeElement.blur();
 
             if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
 
@@ -2848,6 +2873,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
                 else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else saveVarBatch(false); }
                 else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
+                else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); sumRemoveBrowsed(); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
@@ -2869,6 +2895,7 @@ let isProcessing = false;
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else processAction('good'); }
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
+            else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); sumRemoveBrowsed(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
             else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }

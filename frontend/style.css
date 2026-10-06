@@ -1574,22 +1574,19 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
 .sum-stage2-embed__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
 
-/* Одна строка на экран. Название категории и счётчик — бейджи по углам
-   (листается ↑/↓, соседние категории видны сверху/снизу — см.
-   .sum-cat-neighbor), центр целиком отдан под значение и его соседей
-   слева/справа (листается ←/→, см. .sum-value-track) — раньше название
-   стояло в самой строке и сдвигало значение от истинного центра. */
+/* Карточка категории: бейдж категории в углу, по центру крупно —
+   «Сейчас ищем» (что получит дубль по Z), ниже мелко — уже записанное
+   (листается ←/→). Соседние категории (↑/↓) — над и под карточкой. */
 .sum-single-row{
     position: relative; display: flex; flex-direction: column; width: 100%;
     background: var(--screen); border: 1px solid var(--border-soft); border-radius: 12px;
-    padding: 32px 18px 34px; box-shadow: var(--shadow-screen);
+    padding: 34px 18px 16px; box-shadow: var(--shadow-screen);
     transition: border-color .15s;
 }
 .sum-single-row--active{
     border-color: var(--tier-accent, var(--accent-primary));
     box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary));
 }
-.sum-single-row--empty .sum-single-row__text{ color: var(--accent-trash); }
 .sum-single-row__name{
     position: absolute; top: 10px; left: 14px; max-width: 45%;
     font-weight: 700; font-size: 12px; line-height: 1.2;
@@ -1598,16 +1595,58 @@ select.search-input option{ background: var(--panel); color: var(--text); }
     border: 1px solid var(--tier-accent, var(--border-soft)); border-radius: 999px;
     padding: 3px 10px;
 }
-.sum-single-row__text{
-    min-width: 0; font-size: 19px; font-weight: 650; text-align: center;
-    font-family: var(--font-mono); overflow-wrap: break-word;
+.sum-single-row__progress{
+    position: absolute; top: 12px; right: 14px;
+    font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);
 }
-.sum-single-row__expected{
-    position: absolute; bottom: 8px; left: 0; right: 0;
-    text-align: center; font-size: 12px; font-weight: 600;
-    color: var(--tier-accent, var(--text-dim)); opacity: 0.85;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+
+/* Главное на карточке — что ищем в текущем дубле (значение, которое
+   получит дубль по Z). Это select: в закрытом виде — крупный текст,
+   по клику — весь список таблицы, чтобы начать с любого места. */
+.sum-expect{ display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 6px; }
+.sum-expect__label{
+    font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--tier-accent, var(--text-dim));
 }
+.sum-expect__value{
+    appearance: none; -webkit-appearance: none; max-width: 100%;
+    background: transparent; border: 1px dashed transparent; border-radius: 10px;
+    color: var(--text); font-family: var(--font-mono); font-size: 30px; font-weight: 750;
+    text-align: center; text-align-last: center; padding: 2px 14px; cursor: pointer;
+    text-overflow: ellipsis; transition: border-color .15s, background .15s;
+}
+.sum-expect__value:hover:not(:disabled){ border-color: var(--tier-accent, var(--border-soft)); background: rgba(255,255,255,0.03); }
+.sum-expect__value:disabled{ cursor: default; font-size: 16px; color: var(--text-faint); }
+.sum-expect__value option{ font-size: 14px; font-weight: 500; text-align: left; background: var(--panel); color: var(--text); }
+
+/* Уже записанное в этой категории — второстепенно: мелкая строка под
+   «Сейчас ищем», листается ←/→, рядом кнопка убрать брак. */
+.sum-recorded{
+    display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-soft);
+    font-size: 13px; color: var(--text-dim);
+}
+.sum-recorded__label{ color: var(--text-faint); font-size: 12px; }
+.sum-recorded__current{ display: inline-block; font-family: var(--font-mono); font-weight: 650; color: var(--text-dim); }
+.sum-recorded--empty .sum-recorded__current{ color: var(--text-faint); font-weight: 500; }
+.sum-recorded--empty .sum-recorded__remove{ display: none; }
+.sum-recorded__remove{
+    background: transparent; border: 1px solid var(--border-soft); border-radius: 8px;
+    color: var(--text-faint); font-size: 12px; padding: 3px 8px; cursor: pointer;
+}
+.sum-recorded__remove:hover{ border-color: var(--accent-trash); color: var(--accent-trash); }
+.sum-recorded__remove kbd{ font-size: 10px; }
+
+/* Редкие инструменты режима «Суммы» — свёрнуты по умолчанию. */
+.sum-more{ width: 100%; }
+.sum-more > summary{
+    cursor: pointer; list-style: none; font-size: 12px; color: var(--text-faint);
+    padding: 6px 2px; user-select: none;
+}
+.sum-more > summary::-webkit-details-marker{ display: none; }
+.sum-more > summary::before{ content: '▸ '; }
+.sum-more[open] > summary::before{ content: '▾ '; }
+.sum-more[open] > .tile-row{ margin-top: var(--space-2); }
 
 /* Подсветка: сейчас звучит именно то значение, что на экране — тот же
    приём с классом is-playing/.playTimeout, что и у обычной фразы. */
@@ -1629,32 +1668,10 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-cat-neighbor--next::before{ content: '▼ '; }
 .sum-cat-neighbor:empty::before{ content: none; }
 
-/* Соседи по значению (←/→) — слева и справа от текущего значения внутри
-   строки, тем же моноширинным шрифтом, но мельче и тусклее. Сетка из
-   трёх РАВНЫХ крайних колонок держит текущее значение по центру строки,
-   даже если соседние слова разной длины (flex так не умеет). */
-.sum-value-track{
-    width: 100%; display: grid; grid-template-columns: 1fr auto 1fr;
-    align-items: center; gap: var(--space-3);
-}
 .sum-val-neighbor{
-    flex: 0 1 auto; min-width: 0; font-size: 13px; color: var(--text-faint);
+    min-width: 0; max-width: 28%; font-size: 12px; color: var(--text-faint);
     font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; opacity: .6;
-}
-.sum-val-neighbor--prev{ text-align: right; }
-.sum-val-neighbor--next{ text-align: left; }
-
-/* Выбор следующего значения активной категории для финальной сборки —
-   видно заранее, какое имя присвоится куску, вместо слепого «следующее
-   по очереди». Выбор просто прокручивает очередь (sum_stage2_pick_value),
-   пропущенные значения не теряются. */
-.sum-next-value-row{ align-items: center; gap: var(--space-2); }
-.sum-next-value-label{ font-size: 13px; color: var(--text-faint); white-space: nowrap; }
-.sum-next-value-select{
-    flex: 1; min-width: 0; font-size: 13px; font-family: var(--font-mono);
-    background: var(--screen); color: var(--text); border: 1px solid var(--border-soft);
-    border-radius: 8px; padding: 6px 8px;
 }
 
 /* Быстрая анимация направления при листании — значение/категория как бы

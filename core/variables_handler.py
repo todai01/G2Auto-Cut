@@ -2029,15 +2029,103 @@ class VariablesMixin:
             return SUM_TIER_LABELS[key]
         return self._var_extra_tag_label(key)
 
-    def _var_next_tag_value(self, tag_key, position):
-        """N-е (по счёту отправки) значение из списка возможных для этой
-        доп.категории — присваиваем по порядку, не спрашивая юзера, какое
-        именно значение он услышал (см. sum_stage1_send). Список кончился —
-        крутим по кругу, чем ничего не терять."""
-        values = getattr(self, 'var_extra_tag_values', {}).get(tag_key) or []
+    @staticmethod
+    def _var_safe_value(value):
+        return re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
+
+    def _var_value_name_base(self, tier, value):
+        """Имя файла (без расширения), под которым значение лежит в
+        Проверенных — то же правило, что и в _sum_stage2_resolve_value."""
+        clean = re.sub(r'[<>:"/\\|?*]', '', value).strip()
+        base = re.sub(r'\D', '', clean) if tier in SUM_TIER_ORDER else clean
+        return (base or clean).lower()
+
+    def _var_expected_value(self, tier):
+        """Значение из таблицы, которое получит следующий отправленный в
+        категорию дубль, и его номер в списке.
+
+        Раньше это было «N-е значение, где N — сколько файлов уже лежит в
+        сырой папке», и любой лишний/удалённый/уже сохранённый в эталон
+        файл сдвигал всю очередь. Теперь — первое значение, начиная с
+        курсора категории, для которого ещё НЕТ записи ни в сырой папке,
+        ни в Проверенных. Удалили бракованную запись — её значение снова
+        «не записано» и ожидается заново; курсор можно переставить на
+        любое место списка (sum_set_expected_value). Если записано всё —
+        отдаём значение под курсором (перезапись дублем)."""
+        values = (getattr(self, 'var_extra_tag_values', None) or {}).get(tier) or []
         if not values:
-            return None
-        return values[position % len(values)]
+            return None, None
+        raw = {self._sum_raw_value_from_path(p)
+               for p in (getattr(self, 'constructor_tier_files', None) or {}).get(tier, [])}
+        checked_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
+        try:
+            checked = {os.path.splitext(f)[0].lower() for f in os.listdir(checked_dir)}
+        except OSError:
+            checked = set()
+
+        start = (getattr(self, 'var_expected_cursor', None) or {}).get(tier, 0) % len(values)
+        for off in range(len(values)):
+            i = (start + off) % len(values)
+            v = values[i]
+            if self._var_safe_value(v) in raw or self._var_value_name_base(tier, v) in checked:
+                continue
+            return v, i
+        return values[start], start
+
+    def _var_set_cursor(self, tier, idx):
+        if not hasattr(self, 'var_expected_cursor') or self.var_expected_cursor is None:
+            self.var_expected_cursor = {}
+        self.var_expected_cursor[tier] = idx
+
+    def _var_rewind_cursor_to(self, tier, raw_path):
+        """После удаления записи — ожидаем снова именно её значение."""
+        values = (getattr(self, 'var_extra_tag_values', None) or {}).get(tier) or []
+        removed = self._sum_raw_value_from_path(raw_path)
+        for i, v in enumerate(values):
+            if self._var_safe_value(v) == removed:
+                self._var_set_cursor(tier, i)
+                return
+
+    def sum_set_expected_value(self, tier, value):
+        """Юзер сам выбрал, с какого значения таблицы продолжать запись в
+        этой категории (например, начать с середины списка). Заодно
+        переключает сборку эталона на первую строку с этим значением."""
+        values = (getattr(self, 'var_extra_tag_values', None) or {}).get(tier) or []
+        if value not in values:
+            return {"error": f"В таблице нет значения «{value}» для этой категории."}
+        self._var_set_cursor(tier, values.index(value))
+        rows = getattr(self, 'var_template_rows', None) or []
+        for i, r in enumerate(rows):
+            if r.get(tier) == value:
+                self.sum_stage2_row_idx = i
+                break
+        return self.get_ui_state()
+
+    def sum_remove_raw(self, tier, raw_path):
+        """Убрать запись из категории. Если это последняя отправка — тот
+        же откат, что и «Отменить» (дубль возвращается в очередь). Иначе
+        просто удаляет бракованный сырой файл. В обоих случаях его
+        значение снова становится ожидаемым — список не «уезжает»."""
+        last = getattr(self, 'sum_stage1_last_send', None)
+        if last and last.get('raw_path') == raw_path:
+            return self.sum_stage1_undo()
+
+        files = (getattr(self, 'constructor_tier_files', None) or {}).get(tier, [])
+        if raw_path not in files:
+            return {"error": "Эта запись уже убрана из категории."}
+        try:
+            if os.path.exists(raw_path):
+                os.remove(raw_path)
+        except OSError as e:
+            return {"error": f"Не удалось удалить файл: {e}"}
+        files.remove(raw_path)
+        self._var_rewind_cursor_to(tier, raw_path)
+
+        value = self._sum_raw_value_from_path(raw_path)
+        msg = f"🗑 Убрано из «{self._category_label(tier)}»: {value} — жду его заново"
+        msg_js = msg.replace('\\', '\\\\').replace("'", "\\'")
+        webview.windows[0].evaluate_js(f"showToast('{msg_js}');")
+        return self.get_ui_state()
 
     def _sum_tier_excluded(self, tier, counts=None):
         """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
@@ -2392,11 +2480,10 @@ class VariablesMixin:
         # Без словаря (старый режим «только Суммы») список пуст — тогда
         # просто не теряем и не перезаписываем соседний сырой кусок.
         ext = os.path.splitext(source_name)[1] or '.wav'
-        position = len(self.constructor_tier_files.get(tier, []))
-        value = self._var_next_tag_value(tier, position)
+        value, value_idx = self._var_expected_value(tier)
         if value is not None:
-            safe_value = re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
-            save_name = f"{int(time.time() * 1000)}_сырая_{safe_value}{ext}"
+            self._var_set_cursor(tier, value_idx + 1)
+            save_name = f"{int(time.time() * 1000)}_сырая_{self._var_safe_value(value)}{ext}"
         else:
             save_name = f"{int(time.time() * 1000)}_{source_name}"
         target_path = os.path.join(target_dir, save_name)
@@ -2442,6 +2529,7 @@ class VariablesMixin:
             self.phrase_index -= 1
 
         tier = last['tier']
+        self._var_rewind_cursor_to(tier, last['raw_path'])
         self.sum_stage1_last_send = None
         webview.windows[0].evaluate_js(f"showToast('↩️ Отменено: убрано из «{self._category_label(tier)}»');")
         return self.get_ui_state()
@@ -2608,16 +2696,14 @@ class VariablesMixin:
 
         if not hasattr(self, 'constructor_tier_files'):
             self.constructor_tier_files = {}
-        position = len(self.constructor_tier_files.get(tier, []))
-        value = self._var_next_tag_value(tier, position)
+        value, value_idx = self._var_expected_value(tier)
         if value is None:
             return {"error": "Для этой категории нет списка значений в загруженной таблице."}
 
         target_dir = self._sum_stage1_raw_dir(tier)
         os.makedirs(target_dir, exist_ok=True)
         ext = os.path.splitext(pending['name'])[1] or '.wav'
-        safe_value = re.sub(r'[<>:"/\\|?*]', ' ', value).strip()
-        save_name = f"{int(time.time() * 1000)}_сырая_{safe_value}{ext}"
+        save_name = f"{int(time.time() * 1000)}_сырая_{self._var_safe_value(value)}{ext}"
         target_path = os.path.join(target_dir, save_name)
 
         resp = self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
@@ -2625,11 +2711,12 @@ class VariablesMixin:
             return {"error": "Не удалось сохранить — убедитесь, что в Audacity выделен нужный участок, и повторите."}
 
         self.constructor_tier_files.setdefault(tier, []).append(target_path)
+        self._var_set_cursor(tier, value_idx + 1)
 
         # Следующее ожидаемое значение ЭТОЙ ЖЕ категории — сразу после
         # сохранения, чтобы юзер видел на мини-алерте, что искать дальше,
         # не дожидаясь перерисовки всего экрана.
-        next_expected = self._var_next_tag_value(tier, position + 1)
+        next_expected, _ = self._var_expected_value(tier)
         label = self._category_label(tier)
         msg = f"✅ Сохранено в «{label}»: {value}"
         if next_expected:
@@ -2799,11 +2886,10 @@ class VariablesMixin:
             value = row.get(t)
             path, saveable = self._sum_stage2_resolve_value(t, value)
             # То самое значение, что sum_stage1_send присвоит СЛЕДУЮЩЕМУ
-            # отправленному в эту категорию дублю (см. _var_next_tag_value) —
-            # показываем его юзеру ДО отправки, чтобы на слух можно было
-            # сверить, что диктор не пропустил марку/год/сумму в записи.
-            position = len(tiers.get(t, []))
-            expected_next = self._var_next_tag_value(t, position)
+            # отправленному в эту категорию дублю (см. _var_expected_value).
+            expected_next, expected_idx = self._var_expected_value(t)
+            values_all = all_choices.get(t, []) or []
+            last_send = getattr(self, 'sum_stage1_last_send', None) or {}
             tiers_out[t] = {
                 "label": self._category_label(t),
                 "items": [display_name(p) for p in tiers.get(t, [])],
@@ -2825,6 +2911,9 @@ class VariablesMixin:
                 "row_value": value,
                 "row_ready": path is not None,
                 "expected_next": expected_next,
+                "expected_idx": expected_idx,
+                "values_total": len(values_all),
+                "last_send_path": last_send.get('raw_path') if last_send.get('tier') == t else None,
             }
 
         # Курсор внутри категории по умолчанию — на ПОСЛЕДНЕМ (самом

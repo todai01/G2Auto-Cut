@@ -12,6 +12,7 @@ from core import recent_projects
 STATE_FIELDS = [
     'phrases_data', 'excel_name', 'project_name', 'variables',
     'current_mode', 'state_memory', 'chunk_index', 'phrase_index',
+    'var_expected_cursor',
 ]
 
 STATE_FILENAME = 'project.json'

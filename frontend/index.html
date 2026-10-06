@@ -990,17 +990,30 @@
                                 <div class="sum-stage2-embed__head">
                                     <span class="sum-stage2-embed__label">Режим «Суммы»</span>
                                     <span class="sum-stage2-embed__next" id="sumStage2NextName"></span>
-                                    <span class="sum-stage2-embed__count" id="sumSingleCount"></span>
                                 </div>
                                 <div class="sum-cat-neighbor sum-cat-neighbor--prev" id="sumCatPrev"></div>
                                 <div class="sum-single-row" id="sumSingleRow">
                                     <div class="sum-single-row__name" id="sumSingleName">—</div>
-                                    <div class="sum-value-track">
-                                        <div class="sum-val-neighbor sum-val-neighbor--prev" id="sumValPrev"></div>
-                                        <div class="sum-single-row__text" id="sumSingleText"></div>
-                                        <div class="sum-val-neighbor sum-val-neighbor--next" id="sumValNext"></div>
+                                    <div class="sum-single-row__progress" id="sumExpectProgress"></div>
+
+                                    <!-- Главное на экране: что ищем в текущем дубле. Клик —
+                                         выбрать любое другое значение таблицы, с которого
+                                         продолжить (если начали не с начала списка). -->
+                                    <div class="sum-expect">
+                                        <div class="sum-expect__label">Сейчас ищем</div>
+                                        <select id="sumExpectPick" class="sum-expect__value" onchange="sumSetExpected(this.value)"
+                                                title="Значение, которое получит дубль по Z. Кликните, чтобы начать с другого места списка"></select>
                                     </div>
-                                    <div class="sum-single-row__expected" id="sumSingleExpected" title="Значение из таблицы, которое программа присвоит следующему отправленному сюда дублю — сверьте на слух, не пропустил ли диктор"></div>
+
+                                    <!-- Уже записанное в этой категории — мелко, листается ←/→. -->
+                                    <div class="sum-recorded" id="sumRecorded">
+                                        <span class="sum-recorded__label">Записано:</span>
+                                        <span class="sum-val-neighbor" id="sumValPrev"></span>
+                                        <span class="sum-recorded__current" id="sumSingleText"></span>
+                                        <span class="sum-val-neighbor" id="sumValNext"></span>
+                                        <button type="button" class="sum-recorded__remove" id="sumRemoveBtn" onclick="sumRemoveBrowsed()"
+                                                title="Убрать показанную запись (брак) — её значение снова станет ожидаемым">Убрать <kbd>Del</kbd></button>
+                                    </div>
                                 </div>
                                 <div class="sum-cat-neighbor sum-cat-neighbor--next" id="sumCatNext"></div>
                             </div>
@@ -1139,34 +1152,32 @@
                              ↓ отменить последнюю отправку. Сборка эталона: рулетки
                              крутятся вручную, «Отправить в Audacity» + «Сохранить». -->
                         <div id="sumActionsPanel" class="action-col" style="display:none">
+                            <!-- Основное: разбор дублей по категориям -->
                             <div class="tile-row">
-                                <button class="btn-tile btn-tile--var" onclick="sumStage1SendSelected()" title="Сохранить текущий дубль в выбранную категорию">В категорию <kbd>Z</kbd></button>
-                                <button class="btn-tile btn-tile--sub" onclick="sumStage1Undo()" title="Отменить последнюю отправку в категорию"><svg class="icon"><use href="#icon-refresh-cw"></use></svg> Отменить <kbd>X</kbd></button>
+                                <button class="btn-tile btn-tile--solid-var btn-tile--tall" onclick="sumStage1SendSelected()" title="Сохранить текущий дубль в категорию под ожидаемым значением">Записать в категорию <kbd>Z</kbd></button>
                             </div>
 
-                            <div class="tile-row sum-next-value-row">
-                                <label for="sumNextValuePick" class="sum-next-value-label">Перейти по (<span id="sumNextValueTier">—</span>):</label>
-                                <select id="sumNextValuePick" class="sum-next-value-select" onchange="sumStage2JumpToValue(this.value)">
-                                    <option value="">—</option>
-                                </select>
-                            </div>
+                            <!-- Сборка эталона по строке таблицы -->
                             <div class="tile-row">
-                                <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity (после V) — сохранит выделенный кусок под ожидаемым именем в текущую категорию. Не открыт — склеит текущий дубль со следующим">Поправить нарезку <kbd>N</kbd></button>
-                                <button class="btn-tile btn-tile--primary" onclick="sumStage2SendToAudacity()">В Audacity <kbd>C</kbd></button>
-                                <button class="btn-tile btn-tile--var" onclick="sumStage2Save()" title="Сохранить собранный эталон (сборка на рулетках)">Сохранить эталон</button>
-                            </div>
-                            <div class="tile-row">
-                                <button class="btn-tile btn-tile--mode" onclick="sumStage2TogglePlay()">Играть выбранное на рулетках</button>
-                            </div>
-                            <div class="tile-row">
-                                <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить ТЕКУЩИЙ дубль из Chunks целиком в Audacity — для случая, когда в нём слиплись две переменные подряд">Дубль в Audacity <kbd>V</kbd></button>
-                                <button class="btn-tile btn-tile--var" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
-                            </div>
-                            <div class="tile-row">
-                                <button class="btn-tile btn-tile--sub" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Если открыли/переключили Audacity уже после входа в режим — привяжите окно заново этой кнопкой">Прикрепить окно Audacity</button>
+                                <button class="btn-tile btn-tile--primary" onclick="sumStage2SendToAudacity()" title="Собрать текущую строку таблицы в Audacity для правки">Собрать в Audacity <kbd>C</kbd></button>
+                                <button class="btn-tile btn-tile--var" onclick="sumStage2Save()" title="Сохранить собранный эталон">Сохранить эталон</button>
                             </div>
 
-                            <div class="action-note">&uarr;/&darr; выбирает категорию, &larr;/&rarr; листает значения внутри неё, <kbd>Z</kbd> сохраняет дубль в категорию, <kbd>X</kbd> отменяет последнее сохранение. Слипшиеся переменные — <kbd>V</kbd> отправляет дубль в Audacity, разметьте метками «значение_категория» и заберите кнопкой <kbd>B</kbd>. Не сумма — пролистайте <kbd>D</kbd>.</div>
+                            <!-- Редкие инструменты — свёрнуты, горячие клавиши работают всегда -->
+                            <details class="sum-more">
+                                <summary>Ещё: правка нарезки, метки, Audacity</summary>
+                                <div class="tile-row">
+                                    <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить текущий дубль целиком в Audacity — если в нём слиплись две переменные или нужно подрезать">Дубль в Audacity <kbd>V</kbd></button>
+                                    <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity (после V) — сохранит выделенный кусок под ожидаемым значением. Не открыт — склеит текущий дубль со следующим">Поправить нарезку <kbd>N</kbd></button>
+                                    <button class="btn-tile btn-tile--sub" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
+                                </div>
+                                <div class="tile-row">
+                                    <button class="btn-tile btn-tile--sub" onclick="sumStage2TogglePlay()">Прослушать сборку</button>
+                                    <button class="btn-tile btn-tile--sub" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Если открыли/переключили Audacity уже после входа в режим — привяжите окно заново">Прикрепить окно Audacity</button>
+                                </div>
+                            </details>
+
+                            <div class="action-note"><kbd>&uarr;</kbd><kbd>&darr;</kbd> категория · <kbd>&larr;</kbd><kbd>&rarr;</kbd> листать записанное · <kbd>Z</kbd> записать · <kbd>X</kbd> отменить последнее · <kbd>Del</kbd> убрать показанную запись · не подходит — <kbd>D</kbd></div>
                         </div>
                     </div>
 
