@@ -966,7 +966,7 @@ class VariablesMixin:
                 self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
 
-            hwnd = ctypes.windll.user32.FindWindowW(None, "GVox | Автосрезка")
+            hwnd = self._get_own_hwnd()
             if hwnd:
                 self._force_foreground(hwnd)
         else:
@@ -1590,7 +1590,7 @@ class VariablesMixin:
             self.is_in_audacity = False
 
             # --- ВОЗВРАТ ФОКУСА В НАШУ ПРОГРАММУ ---
-            hwnd = ctypes.windll.user32.FindWindowW(None, "GVox | Автосрезка")
+            hwnd = self._get_own_hwnd()
             if hwnd:
                 self._force_foreground(hwnd)
         else:
@@ -3452,7 +3452,7 @@ class VariablesMixin:
                 self.audacity.send_command('RemoveTracks:')
             self.is_in_audacity = False
 
-            hwnd = ctypes.windll.user32.FindWindowW(None, "GVox | Автосрезка")
+            hwnd = self._get_own_hwnd()
             if hwnd:
                 self._force_foreground(hwnd)
         else:

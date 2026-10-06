@@ -172,10 +172,43 @@ class MontageMixin:
     SW_MINIMIZE = 6
 
     def _get_own_hwnd(self):
+        """Главное окно программы. Ищем по своему процессу, а не по точному
+        заголовку: окно может подхватить заголовок страницы (<title>), и тогда
+        FindWindowW по «GVox | Автосрезка» ничего не находит."""
         try:
-            return ctypes.windll.user32.FindWindowW(None, "GVox | Автосрезка")
+            user32 = ctypes.windll.user32
         except Exception:
             return None
+        cached = getattr(self, '_own_hwnd', None)
+        if cached and user32.IsWindow(cached):
+            return cached
+
+        hwnd = None
+        try:
+            from ctypes import wintypes
+            pid = ctypes.windll.kernel32.GetCurrentProcessId()
+            found = []
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def collect(h, _lparam):
+                owner = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(h, ctypes.byref(owner))
+                if owner.value == pid and user32.IsWindowVisible(h) and user32.GetWindowTextLengthW(h) > 0:
+                    r = wintypes.RECT()
+                    user32.GetWindowRect(h, ctypes.byref(r))
+                    found.append(((r.right - r.left) * (r.bottom - r.top), h))
+                return True
+
+            user32.EnumWindows(collect, 0)
+            if found:
+                hwnd = max(found, key=lambda x: x[0])[1]
+        except Exception:
+            hwnd = None
+
+        if not hwnd:
+            hwnd = user32.FindWindowW(None, "GVox | Автосрезка") or None
+        self._own_hwnd = hwnd
+        return hwnd
 
     def embed_audacity(self, x, y, width, height):
         # _embedded_hwnd переживает закрытие самого Audacity (Python-процесс
