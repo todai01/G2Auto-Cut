@@ -172,6 +172,21 @@
         </div>
     </div>
 
+    <!-- Нашлись файлы связок (start/end/…) в папке — подставить после подтверждения -->
+    <div id="connSuggestOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box">
+            <div class="modal-head">
+                <h3 class="modal-title">Нашёл файлы связок</h3>
+            </div>
+            <div class="modal-hint">В папке лежат файлы с подходящими именами. Подставить их?</div>
+            <div id="connSuggestList" class="conn-suggest-list"></div>
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="answerConnSuggest(false)" title="Не подставлять — выберете файлы сами, как раньше">Нет</button>
+                <button class="custom-alert-btn" onclick="answerConnSuggest(true)">Да, подставить</button>
+            </div>
+        </div>
+    </div>
+
     <!-- «Готовая папка с переменными»: Excel есть или нет? -->
     <div id="premadeExcelChoiceOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">

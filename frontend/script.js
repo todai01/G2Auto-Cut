@@ -1108,6 +1108,47 @@ let isProcessing = false;
             closePremadeVarTypeChoice();
             renderVarDictConnectors(res);
             document.getElementById('varDictConnectorsOverlay').style.display = 'flex';
+            showConnSuggest(res.connector_suggestions, 'dict');
+        }
+
+        // Программа нашла в папке файлы для связок (start.wav, end.wav,
+        // «на автомобиль».wav…) — подставляет их только после «Да».
+        let connSuggestContext = null;
+        function showConnSuggest(list, context) {
+            if (!list || !list.length) return;
+            connSuggestContext = context;
+            let box = document.getElementById('connSuggestList');
+            box.innerHTML = '';
+            list.forEach(item => {
+                let row = document.createElement('div');
+                row.className = 'conn-suggest-row';
+                let label = document.createElement('span');
+                label.className = 'conn-suggest-row__label';
+                label.textContent = `«${item.label}»`;
+                let file = document.createElement('span');
+                file.className = 'conn-suggest-row__file';
+                file.textContent = item.file;
+                file.title = item.path;
+                row.append(label, file);
+                box.appendChild(row);
+            });
+            document.getElementById('connSuggestOverlay').style.display = 'flex';
+        }
+        async function answerConnSuggest(accept) {
+            document.getElementById('connSuggestOverlay').style.display = 'none';
+            let res = await pywebview.api.apply_var_connector_suggestions(accept);
+            if (!res || res.error) {
+                if (res && res.error) showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${res.error}`);
+                return;
+            }
+            if (connSuggestContext === 'dict') {
+                let st = await pywebview.api.get_var_template_state();
+                renderVarDictConnectors({ extra_tags: st.extra_tags, connectors: res.connectors });
+            } else {
+                if (typeof sumEd !== 'undefined') sumEd.sig = null;
+                updateUI(res);
+            }
+            if (accept) showToast('Файлы связок подставлены');
         }
 
         let lastVarDictSumsPresent = false;
@@ -1253,6 +1294,7 @@ let isProcessing = false;
             showWorkspace();
             applySumModeLayout();
             await attachEmbeddedAudacity(true);
+            showConnSuggest(state.connector_suggestions, 'workspace');
         }
 
         // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ОТКРЫТЬ ГОТОВЫЕ ЧАНКИ" ---

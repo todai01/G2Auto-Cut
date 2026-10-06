@@ -1814,12 +1814,75 @@ class VariablesMixin:
         self.var_template_rows = template_rows
         self.sum_stage2_row_idx = 0
 
+        found = self._var_find_connector_files([os.path.dirname(picked[0])])
         return {
             "file_name": os.path.basename(picked[0]),
             "columns": [{"type": c["type"], "key": c.get("tag", c["key"])} for c in columns],
             "extra_tags": extra_tags,
             "connectors": connectors,
+            "connector_suggestions": self._var_connector_suggestions_payload(found),
         }
+
+    @staticmethod
+    def _var_norm_name(text):
+        return re.sub(r'[\s_\-]+', ' ', (text or '').lower().replace('ё', 'е')).strip()
+
+    def _var_find_connector_files(self, folders):
+        """Ищет готовые файлы для ещё не заполненных связок: файл, чьё имя
+        совпадает с ключом колонки («start.wav», «start_2.wav», «end.wav»)
+        или с её текстом («на автомобиль.wav»). Смотрим саму папку и её
+        подпапки на один уровень; файлы верхнего уровня важнее."""
+        missing = [c for c in (getattr(self, 'var_connectors', None) or [])
+                   if not c.get('path') or not os.path.exists(c['path'])]
+        if not missing:
+            return {}
+        by_name = {}
+        for folder in dict.fromkeys(folders):
+            if not folder or not os.path.isdir(folder):
+                continue
+            for root, dirs, files in os.walk(folder):
+                if os.path.relpath(root, folder) != '.':
+                    dirs[:] = []
+                for f in sorted(files):
+                    if f.lower().endswith(('.wav', '.mp3')):
+                        by_name.setdefault(self._var_norm_name(os.path.splitext(f)[0]), os.path.join(root, f))
+        found = {}
+        for c in missing:
+            for cand in (c['key'], c.get('label')):
+                n = self._var_norm_name(cand)
+                if n and n in by_name:
+                    found[c['key']] = by_name[n]
+                    break
+        return found
+
+    def _var_connector_suggestions_payload(self, found):
+        self._var_connector_suggestions = found
+        if not found:
+            return []
+        labels = {c['key']: c.get('label') or c['key'] for c in (getattr(self, 'var_connectors', None) or [])}
+        return [{"key": k, "label": labels.get(k, k), "file": os.path.basename(p), "path": p}
+                for k, p in found.items()]
+
+    def apply_var_connector_suggestions(self, accept):
+        """Ответ юзера на «Нашёл файлы связок — подставить?»."""
+        found = getattr(self, '_var_connector_suggestions', None) or {}
+        self._var_connector_suggestions = {}
+        if accept and found:
+            for c in (getattr(self, 'var_connectors', None) or []):
+                if c['key'] in found:
+                    c['path'] = found[c['key']]
+            # Файлы связок, лежащие среди дублей, — не дубли: убираем из ленты.
+            norm = lambda p: os.path.normcase(os.path.abspath(p))
+            used = {norm(p) for p in found.values()}
+            chunks = getattr(self, 'chunks_data', None) or []
+            if any(norm(ch['filepath']) in used for ch in chunks):
+                current = chunks[self.chunk_index]['filepath'] if self.chunk_index < len(chunks) else None
+                self.chunks_data = [ch for ch in chunks if norm(ch['filepath']) not in used]
+                idx = next((i for i, ch in enumerate(self.chunks_data) if ch['filepath'] == current), 0)
+                self.chunk_index = min(idx, max(0, len(self.chunks_data) - 1))
+        state = self.get_ui_state()
+        state["connectors"] = getattr(self, 'var_connectors', [])
+        return state
 
     def set_var_connector_audio(self, key):
         """Выбор озвученного файла для одной связки (например «на автомобиль»)."""
@@ -2448,6 +2511,11 @@ class VariablesMixin:
             return {"error": "В выбранной папке нет аудиофайлов."}
         files.sort(key=_numeric_sort_key)
 
+        # Файлы, уже назначенные связками (start/end…), — не дубли.
+        connector_paths = {os.path.normcase(os.path.abspath(c['path']))
+                           for c in (getattr(self, 'var_connectors', None) or []) if c.get('path')}
+        files = [f for f in files
+                 if os.path.normcase(os.path.abspath(os.path.join(selected_path, f))) not in connector_paths]
         self.chunks_data = [{"filepath": os.path.join(selected_path, f), "filename": f} for f in files]
         self.chunk_index = 0
         self.current_mode = 'Chunks'
@@ -2455,7 +2523,12 @@ class VariablesMixin:
 
         self.toggle_sum_mode(True)
 
-        return self.get_ui_state()
+        # Связки словаря, которые ещё не озвучены, — вдруг их файлы лежат в
+        # этой папке или в папке проекта. Подставим только после «Да».
+        found = self._var_find_connector_files([selected_path, self.work_dir])
+        state = self.get_ui_state()
+        state["connector_suggestions"] = self._var_connector_suggestions_payload(found)
+        return state
 
     def _sum_toast(self, msg, ms=None):
         msg_js = msg.replace('\\', '\\\\').replace("'", "\\'")
