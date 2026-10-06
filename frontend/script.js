@@ -434,7 +434,8 @@ let isProcessing = false;
             let panel = document.getElementById('stripPanel');
             if (!panel) return;
 
-            if (!strip || !strip.items || !strip.items.length) {
+            // В режиме «Суммы» вместо этой ленты — лента карточек для перетаскивания.
+            if (sumModeActive || !strip || !strip.items || !strip.items.length) {
                 panel.style.display = 'none';
                 return;
             }
@@ -1492,6 +1493,7 @@ let isProcessing = false;
 
             if (sumState.active) {
                 renderSumReels(sumState.reels);
+                renderSumDubs(sumState.dubs);
                 setSumEmbedMode('sum');
             } else {
                 setSumEmbedMode('text');
@@ -1540,7 +1542,7 @@ let isProcessing = false;
             if (!sumStage1Tiers.length) return;
             sumStage1SelectedIdx = (sumStage1SelectedIdx + dir + sumStage1Tiers.length) % sumStage1Tiers.length;
             renderSumSingleRow();
-            triggerSumAnim(document.getElementById('sumSingleRow'), dir < 0 ? 'sum-anim-up' : 'sum-anim-down');
+            triggerSumAnim(sumSelectedTile(), dir < 0 ? 'sum-anim-up' : 'sum-anim-down');
         }
         function sumStage1BrowseMove(dir) {
             if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
@@ -1550,226 +1552,331 @@ let isProcessing = false;
             let idx = sumStage1BrowseIdx[tier] || 0;
             sumStage1BrowseIdx[tier] = (idx + dir + items.length) % items.length;
             renderSumSingleRow();
-            triggerSumAnim(document.getElementById('sumSingleText'), dir < 0 ? 'sum-anim-left' : 'sum-anim-right');
+            triggerSumAnim(sumSelectedTile(), dir < 0 ? 'sum-anim-left' : 'sum-anim-right');
             playCurrentSumValue();
         }
 
-        // Проигрывает то самое значение, что сейчас показано в строке —
-        // вызывается сразу после листания ↑/↓/←/→, так текст и звук всегда
-        // меняются вместе, без отдельного нажатия Space. Подсветка (рамка
-        // строки) горит, пока играет именно это значение — тот же приём
-        // с таймаутом на длительность файла, что и у обычной фразы.
+        // ===== РЕЖИМ «СУММЫ»: перетаскивание =====
+        // Сверху — лента карточек дублей (тянутся мышкой, клик — прослушать,
+        // Ctrl/Shift — выбрать несколько). Ниже — все категории сразу, каждая
+        // — зона сброса: брошенный дубль получает значение «ждёт». Последняя
+        // зона — Audacity: туда (или кнопкой у выделения) отправляются один
+        // или несколько дублей подряд на одну дорожку.
+        // Клавиатура работает как раньше: ↑/↓ — выбранная категория
+        // (подсвечена), Z — текущий дубль в неё, ←/→ — записанное в ней.
+
+        function sumEl(tag, cls, text) {
+            let el = document.createElement(tag);
+            if (cls) el.className = cls;
+            if (text !== undefined && text !== null) el.textContent = text;
+            return el;
+        }
+        function sumSelectedTile() {
+            let tier = sumStage1Tiers[sumStage1SelectedIdx];
+            return tier ? document.querySelector(`.sum-cat[data-tier="${CSS.escape(tier.key)}"]`) : null;
+        }
+
         let sumTierPlayTimeout = null;
         function stopSumTierHighlight() {
             clearTimeout(sumTierPlayTimeout);
-            let row = document.getElementById('sumSingleRow');
-            if (row) row.classList.remove('sum-single-row--playing');
+            document.querySelectorAll('.sum-rec.is-playing, .sum-dub.is-playing').forEach(e => e.classList.remove('is-playing'));
         }
-        async function playCurrentSumValue() {
-            if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) { stopSumTierHighlight(); return; }
-            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
-            let info = lastSumState.reels.tiers[tier];
-            if (!info || !(info.items || []).length) { stopSumTierHighlight(); return; }
-            let idx = sumStage1BrowseIdx[tier] || 0;
-            let path = (info.paths || [])[idx];
-            if (!path) { stopSumTierHighlight(); return; }
-
+        async function sumPlayPath(path, el) {
+            if (!path) return;
             let res;
-            try {
-                res = await pywebview.api.play_specific_file(path);
-            } catch (e) {
-                return;
-            }
+            try { res = await pywebview.api.play_specific_file(path); } catch (e) { return; }
             stopSumTierHighlight();
-            if (res && res.playing) {
-                let row = document.getElementById('sumSingleRow');
-                if (row) row.classList.add('sum-single-row--playing');
+            if (res && res.playing && el) {
+                el.classList.add('is-playing');
                 sumTierPlayTimeout = setTimeout(stopSumTierHighlight, res.duration * 1000);
             }
         }
-        // Текст и подпись категории на экране — без перестройки DOM, просто
-        // обновляем содержимое уже существующих элементов.
-        function renderSumSingleRow() {
-            let nameEl = document.getElementById('sumSingleName');
-            let textEl = document.getElementById('sumSingleText');
-            let row = document.getElementById('sumSingleRow');
-            let catPrevEl = document.getElementById('sumCatPrev');
-            let catNextEl = document.getElementById('sumCatNext');
-            let valPrevEl = document.getElementById('sumValPrev');
-            let valNextEl = document.getElementById('sumValNext');
-            let recordedEl = document.getElementById('sumRecorded');
-            if (!nameEl || !textEl || !lastSumState || !lastSumState.reels) return;
-
-            let data = lastSumState.reels;
-            let tierInfo = sumStage1Tiers[sumStage1SelectedIdx];
-            if (!tierInfo) {
-                nameEl.innerText = '—';
-                textEl.innerText = '';
-                if (catPrevEl) catPrevEl.innerText = '';
-                if (catNextEl) catNextEl.innerText = '';
-                if (valPrevEl) valPrevEl.innerText = '';
-                if (valNextEl) valNextEl.innerText = '';
-                renderSumExpected(null);
-                return;
-            }
-            let tier = tierInfo.key;
-            let info = data.tiers[tier] || { items: [] };
-            let items = info.items || [];
-            let isEmpty = items.length === 0;
+        async function playCurrentSumValue() {
+            if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
+            let info = lastSumState.reels.tiers[tier] || {};
             let idx = sumStage1BrowseIdx[tier] || 0;
-            if (idx >= items.length) idx = Math.max(0, items.length - 1);
-            sumStage1BrowseIdx[tier] = idx;
-
-            nameEl.innerText = info.label || tierInfo.label;
-            if (row) {
-                row.style.setProperty('--tier-accent', CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)');
-                row.classList.toggle('sum-single-row--empty', isEmpty);
-                row.classList.toggle('sum-single-row--active', !!info.active);
-            }
-            textEl.innerText = isEmpty ? 'пока ничего' : sumRecordedLabel(tier, items[idx]);
-            if (recordedEl) {
-                recordedEl.classList.toggle('sum-recorded--empty', isEmpty);
-                let lbl = recordedEl.querySelector('.sum-recorded__label');
-                if (lbl) lbl.innerText = isEmpty ? 'Записано:' : `Записано ${idx + 1}/${items.length}:`;
-            }
-
-            // Соседи по категории (↑/↓) — что покажется, если полистать
-            // дальше в ту же сторону; при одной категории соседей нет.
-            let catCount = sumStage1Tiers.length;
-            if (catPrevEl) {
-                let prevTier = catCount > 1 ? sumStage1Tiers[(sumStage1SelectedIdx - 1 + catCount) % catCount] : null;
-                catPrevEl.innerText = prevTier ? (data.tiers[prevTier.key] || {}).label || prevTier.label : '';
-            }
-            if (catNextEl) {
-                let nextTier = catCount > 1 ? sumStage1Tiers[(sumStage1SelectedIdx + 1) % catCount] : null;
-                catNextEl.innerText = nextTier ? (data.tiers[nextTier.key] || {}).label || nextTier.label : '';
-            }
-
-            // Соседи по значению (←/→) внутри текущей категории — то же
-            // самое, но по значениям, а не по категориям.
-            // Листание ←/→ идёт по кругу, но соседей показываем без круга —
-            // иначе при двух записях одна и та же видна с обеих сторон.
-            if (valPrevEl) valPrevEl.innerText = (!isEmpty && idx > 0) ? sumRecordedLabel(tier, items[idx - 1]) : '';
-            if (valNextEl) valNextEl.innerText = (!isEmpty && idx < items.length - 1) ? sumRecordedLabel(tier, items[idx + 1]) : '';
-
-            renderSumExpected(info);
+            let path = (info.paths || [])[idx];
+            let tile = sumSelectedTile();
+            await sumPlayPath(path, tile ? tile.querySelector(`.sum-rec[data-idx="${idx}"]`) : null);
         }
 
         function sumRecordedLabel(tier, raw) {
             return humanizeTierItem(tier, (raw || '').replace(/^сырая_/, ''));
         }
 
-        // «Сейчас ищем» — значение, которое получит дубль по Z. Это select:
-        // крупный текст, а по клику — весь список значений таблицы, чтобы
-        // продолжить с любого места.
-        function renderSumExpected(info) {
-            let select = document.getElementById('sumExpectPick');
-            let progress = document.getElementById('sumExpectProgress');
-            if (!select) return;
-            select.innerHTML = '';
-            let choices = (info && info.name_choices) || [];
-            if (!info || !info.expected_next || !choices.length) {
-                let opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = info ? 'в таблице нет значений' : '—';
-                select.appendChild(opt);
-                select.disabled = true;
-                if (progress) progress.innerText = '';
-                return;
-            }
-            select.disabled = false;
-            choices.forEach((name, i) => {
-                let opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = `${i + 1}. ${name}`;
-                select.appendChild(opt);
+        // --- Перетаскивание: общие обработчики зон сброса ---
+        const SUM_DND_TYPE = 'application/x-gvox-dubs';
+        function sumDragIndices(e) {
+            try { return JSON.parse(e.dataTransfer.getData(SUM_DND_TYPE) || e.dataTransfer.getData('text/plain') || '[]'); }
+            catch (_) { return []; }
+        }
+        function sumMakeDropZone(el, onDrop) {
+            el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; el.classList.add('is-over'); });
+            el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('is-over'); });
+            el.addEventListener('drop', e => {
+                e.preventDefault();
+                el.classList.remove('is-over');
+                document.body.classList.remove('sum-dragging');
+                let indices = sumDragIndices(e);
+                if (indices.length) onDrop(indices);
             });
-            select.value = info.expected_next;
-            // Выбранная опция показывает номер — в закрытом виде нужен только сам текст.
-            let selOpt = select.options[select.selectedIndex];
-            if (selOpt) selOpt.textContent = info.expected_next;
-            if (progress && typeof info.expected_idx === 'number') {
-                progress.innerText = `${info.expected_idx + 1} / ${info.values_total || choices.length}`;
-            }
         }
 
-        async function sumSetExpected(value) {
-            if (!value || !sumStage1Tiers.length) return;
-            let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
-            let state = await pywebview.api.sum_set_expected_value(tier, value);
+        // --- Сетка категорий ---
+        function renderSumSingleRow() {
+            let grid = document.getElementById('sumCats');
+            if (!grid || !lastSumState || !lastSumState.reels) return;
+            let data = lastSumState.reels;
+            grid.innerHTML = '';
+
+            sumStage1Tiers.forEach((tierInfo, tIdx) => {
+                let tier = tierInfo.key;
+                let info = data.tiers[tier] || { items: [] };
+                let items = info.items || [];
+                let tile = sumEl('div', 'sum-cat' + (tIdx === sumStage1SelectedIdx ? ' is-selected' : ''));
+                tile.dataset.tier = tier;
+                tile.style.setProperty('--tier-accent', CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)');
+                tile.addEventListener('click', e => {
+                    if (e.target.closest('select, .sum-rec')) return;
+                    sumStage1SelectedIdx = tIdx;
+                    document.querySelectorAll('.sum-cat.is-selected').forEach(t => t.classList.remove('is-selected'));
+                    tile.classList.add('is-selected');
+                });
+
+                let head = sumEl('div', 'sum-cat__head');
+                head.appendChild(sumEl('span', 'sum-cat__name', info.label || tierInfo.label));
+                if (typeof info.expected_idx === 'number' && info.values_total) {
+                    head.appendChild(sumEl('span', 'sum-cat__progress', `${info.expected_idx + 1}/${info.values_total}`));
+                }
+                tile.appendChild(head);
+
+                tile.appendChild(sumEl('div', 'sum-cat__label', 'ждёт'));
+                let select = sumEl('select', 'sum-cat__expect');
+                let choices = info.name_choices || [];
+                if (!info.expected_next || !choices.length) {
+                    let opt = sumEl('option', null, 'нет значений');
+                    opt.value = '';
+                    select.appendChild(opt);
+                    select.disabled = true;
+                } else {
+                    choices.forEach((name, i) => {
+                        let opt = sumEl('option', null, `${i + 1}. ${name}`);
+                        opt.value = name;
+                        select.appendChild(opt);
+                    });
+                    select.value = info.expected_next;
+                    let sel = select.options[select.selectedIndex];
+                    if (sel) sel.textContent = info.expected_next;
+                }
+                select.title = 'Это значение получит следующий брошенный сюда дубль. Кликните, чтобы начать с другого места списка';
+                select.addEventListener('change', () => sumSetExpected(tier, select.value));
+                tile.appendChild(select);
+
+                // Записанное — чипы: клик слушать, × убрать (брак).
+                let recs = sumEl('div', 'sum-cat__recs');
+                if (!items.length) recs.appendChild(sumEl('span', 'sum-cat__empty', 'перетащите дубль сюда'));
+                let browse = sumStage1BrowseIdx[tier] || 0;
+                for (let i = items.length - 1; i >= 0; i--) {
+                    let chip = sumEl('span', 'sum-rec' + (i === browse && tIdx === sumStage1SelectedIdx ? ' is-browsed' : ''));
+                    chip.dataset.idx = i;
+                    chip.title = 'Клик — прослушать';
+                    chip.appendChild(sumEl('span', 'sum-rec__name', sumRecordedLabel(tier, items[i])));
+                    let x = sumEl('button', 'sum-rec__x', '×');
+                    x.type = 'button';
+                    x.title = 'Убрать запись (брак) — значение снова будет ожидаться';
+                    x.addEventListener('click', e => { e.stopPropagation(); sumRemoveRecord(tier, (info.paths || [])[i]); });
+                    chip.appendChild(x);
+                    chip.addEventListener('click', () => {
+                        sumStage1SelectedIdx = tIdx;
+                        sumStage1BrowseIdx[tier] = i;
+                        sumPlayPath((info.paths || [])[i], chip);
+                    });
+                    recs.appendChild(chip);
+                }
+                tile.appendChild(recs);
+
+                sumMakeDropZone(tile, indices => sumDropToCategory(tier, indices));
+                grid.appendChild(tile);
+            });
+
+            let aud = sumEl('div', 'sum-cat sum-cat--audacity');
+            aud.appendChild(sumEl('div', 'sum-cat__name', 'Audacity'));
+            aud.appendChild(sumEl('div', 'sum-cat__hint', 'Бросьте сюда дубли, чтобы поправить или разрезать слипшиеся'));
+            sumMakeDropZone(aud, indices => sumDubsToAudacity(indices));
+            grid.appendChild(aud);
+        }
+
+        // --- Лента карточек дублей ---
+        let sumDubSel = new Set();
+        let sumDubAnchor = null;
+        let sumDubLastCurrent = null;
+
+        function renderSumDubs(dubs) {
+            let rail = document.getElementById('sumDubsRail');
+            let range = document.getElementById('sumDubsRange');
+            if (!rail) return;
+            rail.innerHTML = '';
+            if (!dubs || !dubs.items || !dubs.items.length) {
+                if (range) range.innerText = '';
+                rail.appendChild(sumEl('div', 'sum-cat__empty', 'Дубли не загружены'));
+                renderSumSelbar();
+                return;
+            }
+            let items = dubs.items;
+            if (range) range.innerText = `${items[0].index + 1}–${items[items.length - 1].index + 1} из ${dubs.total}`;
+            let visible = new Set(items.map(it => it.index));
+            sumDubSel.forEach(i => { if (!visible.has(i)) sumDubSel.delete(i); });
+
+            let currentCard = null;
+            items.forEach(it => {
+                let card = sumEl('div', 'sum-dub');
+                card.classList.toggle('is-current', it.current);
+                card.classList.toggle('is-done', it.tiers.length > 0);
+                card.classList.toggle('is-selected', sumDubSel.has(it.index));
+                card.dataset.index = it.index;
+                card.draggable = true;
+                card.title = `${it.name}\nКлик — слушать, Ctrl/Shift — выбрать несколько, перетащите в категорию.\nДвойной клик — сделать текущим.`;
+
+                let m = it.name.match(/(\d+)\s*$/);
+                card.appendChild(sumEl('div', 'sum-dub__num', m ? m[1] : it.name));
+                let tags = sumEl('div', 'sum-dub__tags');
+                (it.tier_keys || []).forEach((k, n) => {
+                    let tag = sumEl('span', 'sum-dub__tag', it.tiers[n]);
+                    tag.style.setProperty('--tier-accent', CONSTRUCTOR_TIER_ACCENT[k] || 'var(--accent-primary)');
+                    tags.appendChild(tag);
+                });
+                card.appendChild(tags);
+
+                card.addEventListener('click', e => sumDubClick(e, it, card, items));
+                card.addEventListener('dblclick', () => sumFocusDub(it.index));
+                card.addEventListener('dragstart', e => {
+                    let indices = sumDubSel.has(it.index) ? [...sumDubSel].sort((a, b) => a - b) : [it.index];
+                    e.dataTransfer.setData(SUM_DND_TYPE, JSON.stringify(indices));
+                    e.dataTransfer.setData('text/plain', JSON.stringify(indices));
+                    e.dataTransfer.effectAllowed = 'copy';
+                    if (indices.length > 1) {
+                        let ghost = sumEl('div', 'sum-dub-ghost', `${indices.length} дублей`);
+                        document.body.appendChild(ghost);
+                        e.dataTransfer.setDragImage(ghost, 20, 20);
+                        setTimeout(() => ghost.remove(), 0);
+                    }
+                    document.body.classList.add('sum-dragging');
+                });
+                card.addEventListener('dragend', () => document.body.classList.remove('sum-dragging'));
+
+                if (it.current) currentCard = card;
+                rail.appendChild(card);
+            });
+
+            if (currentCard && sumDubLastCurrent !== dubs.current) {
+                currentCard.scrollIntoView({ inline: 'center', block: 'nearest' });
+            }
+            sumDubLastCurrent = dubs.current;
+            renderSumSelbar();
+        }
+
+        function sumDubClick(e, it, card, items) {
+            if (e.shiftKey && sumDubAnchor !== null) {
+                let [a, b] = [Math.min(sumDubAnchor, it.index), Math.max(sumDubAnchor, it.index)];
+                items.forEach(x => { if (x.index >= a && x.index <= b) sumDubSel.add(x.index); });
+            } else if (e.ctrlKey || e.metaKey) {
+                if (sumDubSel.has(it.index)) sumDubSel.delete(it.index); else sumDubSel.add(it.index);
+                sumDubAnchor = it.index;
+            } else {
+                sumDubSel = new Set([it.index]);
+                sumDubAnchor = it.index;
+                sumPlayPath(it.path, card);
+            }
+            document.querySelectorAll('#sumDubsRail .sum-dub').forEach(c =>
+                c.classList.toggle('is-selected', sumDubSel.has(parseInt(c.dataset.index))));
+            renderSumSelbar();
+        }
+
+        function renderSumSelbar() {
+            let bar = document.getElementById('sumDubsSelbar');
+            if (!bar) return;
+            let n = sumDubSel.size;
+            bar.style.display = n > 1 ? 'flex' : 'none';
+            let cnt = document.getElementById('sumDubsSelCount');
+            if (cnt) cnt.innerText = `Выбрано: ${n}`;
+        }
+        function sumClearDubSelection() {
+            sumDubSel.clear();
+            document.querySelectorAll('#sumDubsRail .sum-dub.is-selected').forEach(c => c.classList.remove('is-selected'));
+            renderSumSelbar();
+        }
+
+        // --- Действия ---
+        async function sumApply(call, playIfMoved) {
+            let before = lastSumState && lastSumState.dubs ? lastSumState.dubs.current : null;
+            let state;
+            try { state = await call(); } catch (e) { showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${e}`); return null; }
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
+                return null;
             }
             updateUI(state);
-            document.getElementById('sumExpectPick')?.blur();
+            let after = lastSumState && lastSumState.dubs ? lastSumState.dubs.current : null;
+            if (playIfMoved && before !== after) playAudio(false);
+            return state;
         }
-
-        // X: убрать запись, которая сейчас показана в «Записано» (брак).
-        // Если это только что отправленный дубль — полный откат (дубль
-        // возвращается в очередь), иначе просто удаляется файл. Его значение
-        // снова становится «Сейчас ищем».
+        async function sumDropToCategory(tier, indices) {
+            let res = await sumApply(() => pywebview.api.sum_send_dubs(tier, indices), true);
+            if (res) indices.forEach(i => sumDubSel.delete(i));
+            renderSumSelbar();
+        }
+        async function sumDubsToAudacity(indices) {
+            let res = await sumApply(() => pywebview.api.sum_dubs_to_audacity(indices), false);
+            if (res && sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
+        }
+        async function sumSelectedToAudacity() {
+            if (!sumDubSel.size) return;
+            await sumDubsToAudacity([...sumDubSel].sort((a, b) => a - b));
+        }
+        async function sumFocusDub(index) {
+            await sumApply(() => pywebview.api.sum_focus_dub(index), true);
+        }
+        async function sumSetExpected(tier, value) {
+            if (!value) return;
+            await sumApply(() => pywebview.api.sum_set_expected_value(tier, value), false);
+        }
+        // Убрать запись (брак). Если это только что отправленный дубль —
+        // полный откат: дубль возвращается текущим.
+        async function sumRemoveRecord(tier, path) {
+            if (!path) return;
+            await sumApply(() => pywebview.api.sum_remove_raw(tier, path), true);
+        }
+        // Delete — убрать запись, подсвеченную в выбранной категории.
         async function sumRemoveBrowsed() {
             if (!sumStage1Tiers.length || !lastSumState || !lastSumState.reels) return;
             let tier = sumStage1Tiers[sumStage1SelectedIdx].key;
             let info = lastSumState.reels.tiers[tier] || {};
             let paths = info.paths || [];
-            if (!paths.length) {
-                showToast('В этой категории пока нечего убирать');
-                return;
-            }
-            let path = paths[sumStage1BrowseIdx[tier] || 0];
-            let wasLastSend = path && path === info.last_send_path;
-            let state = await pywebview.api.sum_remove_raw(tier, path);
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            if (wasLastSend) {
-                // Откат отправки — категория и дубль возвращаются назад, как раньше у «Отменить».
-                sumStage1SelectedIdx = sumStage1Tiers.findIndex(t => t.key === tier);
-                if (sumStage1SelectedIdx < 0) sumStage1SelectedIdx = 0;
-                renderSumSingleRow();
-                triggerSumAnim(document.getElementById('sumSingleRow'), 'sum-anim-up');
-                playAudio(false);
-            }
+            if (!paths.length) { showToast('В этой категории пока нечего убирать'); return; }
+            await sumRemoveRecord(tier, paths[sumStage1BrowseIdx[tier] || 0]);
         }
+
         async function sumStage1SendSelected() {
             if (!sumStage1Tiers.length) return;
             await sumStage1Send(sumStage1Tiers[sumStage1SelectedIdx].key);
         }
         async function sumStage1Send(tier) {
-            let state = await pywebview.api.sum_stage1_send(tier);
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            // Сохранили дубль в категорию — сразу переключаемся на следующую
-            // по списку, чтобы не листать вниз вручную на каждый дубль (и не
-            // слышать при этом чужое старое значение — см. sumStage1MoveSelection).
+            let res = await sumApply(() => pywebview.api.sum_stage1_send(tier), false);
+            if (!res) return;
+            // Z: после записи — следующая категория и сразу звук следующего дубля.
             if (sumStage1Tiers.length) {
                 sumStage1SelectedIdx = (sumStage1SelectedIdx + 1) % sumStage1Tiers.length;
                 renderSumSingleRow();
-                triggerSumAnim(document.getElementById('sumSingleRow'), 'sum-anim-down');
             }
-            // Очередь сдвинулась на следующий дубль — сразу его и проигрываем,
-            // без повторного нажатия Space.
             playAudio(false);
         }
         async function sumStage1Undo() {
-            let state = await pywebview.api.sum_stage1_undo();
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            // Симметрично sumStage1Send — откатываем и автопереход категории.
+            let res = await sumApply(() => pywebview.api.sum_stage1_undo(), false);
+            if (!res) return;
             if (sumStage1Tiers.length) {
                 sumStage1SelectedIdx = (sumStage1SelectedIdx - 1 + sumStage1Tiers.length) % sumStage1Tiers.length;
                 renderSumSingleRow();
-                triggerSumAnim(document.getElementById('sumSingleRow'), 'sum-anim-up');
             }
             playAudio(false);
         }
@@ -1787,13 +1894,8 @@ let isProcessing = false;
                     : (data.next_name ? `→ ${data.next_name}` : '');
             }
 
-            // Курсор внутри категории по умолчанию — на следующем ещё не
-            // использованном значении для активной (растущей) категории,
-            // там, где юзер его в прошлый раз оставил — для остальных. Но
-            // если с прошлого рендера в категорию добавился новый сырой
-            // файл (например, отправили его, пока смотрели другую
-            // категорию), курсор всегда перескакивает на этот новый
-            // последний — а не остаётся на старом месте.
+            // Подсветка записанного (←/→) по умолчанию — на самом свежем;
+            // если в категорию что-то добавилось — переезжает на новое.
             let defaults = data.default_indices || {};
             tiersOrder.forEach(tier => {
                 let count = ((data.tiers[tier] || {}).items || []).length;
@@ -1801,6 +1903,7 @@ let isProcessing = false;
                 if ((!(tier in sumStage1BrowseIdx) || grew) && typeof defaults[tier] === 'number') {
                     sumStage1BrowseIdx[tier] = defaults[tier];
                 }
+                if (sumStage1BrowseIdx[tier] >= count) sumStage1BrowseIdx[tier] = Math.max(0, count - 1);
                 sumStage1BrowseCount[tier] = count;
             });
 
@@ -2848,7 +2951,7 @@ let isProcessing = false;
                 return;
             }
 
-            if (document.activeElement && (document.activeElement.tagName === 'BUTTON' || document.activeElement.id === 'sumExpectPick')) document.activeElement.blur();
+            if (document.activeElement && (document.activeElement.tagName === 'BUTTON' || document.activeElement.classList.contains('sum-cat__expect'))) document.activeElement.blur();
 
             if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
 

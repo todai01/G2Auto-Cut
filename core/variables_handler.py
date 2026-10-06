@@ -2119,6 +2119,7 @@ class VariablesMixin:
         except OSError as e:
             return {"error": f"Не удалось удалить файл: {e}"}
         files.remove(raw_path)
+        self._sum_forget_source(raw_path)
         self._var_rewind_cursor_to(tier, raw_path)
 
         value = self._sum_raw_value_from_path(raw_path)
@@ -2329,6 +2330,7 @@ class VariablesMixin:
             "detected_from": (phrase or {}).get('text', ''),
             "stats": stats,
             "reels": self._sum_stage2_state(),
+            "dubs": self._sum_dub_cards(),
         }
         return result
 
@@ -2456,50 +2458,199 @@ class VariablesMixin:
 
         return self.get_ui_state()
 
-    def sum_stage1_send(self, tier):
-        """Клавиша ↑: текущий дубль уходит КАК ЕСТЬ (без Audacity, без
-        имени из Excel) в сырую папку выбранной категории — программа уже
-        нарезала его автосрезкой по паузам, дополнительная правка тут не
-        нужна. Имя файлу дадим позже, при сборке эталона. Сразу же
-        добавляется в рулетку этой категории, без общего пересканирования."""
-        if tier not in self._all_category_keys():
-            return {"error": f"Неизвестная категория: {tier}"}
-        active_file, source_name, err = self._sum_current_source()
-        if err:
-            return {"error": err}
+    def _sum_toast(self, msg, ms=None):
+        msg_js = msg.replace('\\', '\\\\').replace("'", "\\'")
+        extra = f", {int(ms)}" if ms else ""
+        webview.windows[0].evaluate_js(f"showToast('{msg_js}'{extra});")
 
+    # ==================================================================
+    #  ПЕРЕТАСКИВАНИЕ: любой дубль из ленты (не только текущий) можно
+    #  бросить в категорию или отправить вместе с другими в Audacity.
+    # ==================================================================
+
+    def _sum_source_files(self):
+        """Список дублей, которые сейчас разбираются, и номер текущего —
+        и для обычной нарезки (Chunks), и для конвейера готовых переменных."""
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            return list(self.cascade_files.get(cat, [])), self.cascade_ptrs.get(cat, 0)
+        chunks = getattr(self, 'chunks_data', None) or []
+        return [c['filepath'] for c in chunks], getattr(self, 'chunk_index', 0)
+
+    def _sum_set_pointer(self, idx):
+        files, old = self._sum_source_files()
+        idx = max(0, min(idx, len(files)))
+        if self._sum_in_cascade():
+            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
+            self.cascade_ptrs[cat] = idx
+        else:
+            self.chunk_index = min(idx, max(0, len(files) - 1))
+        if getattr(self, 'phrases_data', None):
+            self.phrase_index = max(0, self.phrase_index + (idx - old))
+
+    def _sum_assigned_sources(self):
+        """Исходный дубль -> список категорий, куда из него уже что-то
+        записано (по sum_raw_sources: сырой файл -> исходный дубль)."""
+        out = {}
+        for raw, info in (getattr(self, 'sum_raw_sources', None) or {}).items():
+            out.setdefault(info['source'], []).append(info['tier'])
+        return out
+
+    def _sum_remember_source(self, raw_path, source, tier):
+        if not isinstance(getattr(self, 'sum_raw_sources', None), dict):
+            self.sum_raw_sources = {}
+        self.sum_raw_sources[raw_path] = {"source": source, "tier": tier}
+
+    def _sum_forget_source(self, raw_path):
+        (getattr(self, 'sum_raw_sources', None) or {}).pop(raw_path, None)
+
+    def _sum_after_consumed(self, indices):
+        """Текущий дубль среди разобранных — переводим указатель на
+        следующий ещё не разобранный после них. Иначе не трогаем."""
+        files, ptr = self._sum_source_files()
+        if ptr not in indices:
+            return
+        assigned = self._sum_assigned_sources()
+        nxt = max(indices) + 1
+        while nxt < len(files) and files[nxt] in assigned:
+            nxt += 1
+        self._sum_set_pointer(nxt)
+
+    def _sum_copy_to_category(self, tier, source_path):
+        """Копирует дубль в сырую папку категории под ожидаемым значением
+        таблицы (см. _var_expected_value). Возвращает (путь, значение)."""
         target_dir = self._sum_stage1_raw_dir(tier)
         os.makedirs(target_dir, exist_ok=True)
         if not hasattr(self, 'constructor_tier_files'):
             self.constructor_tier_files = {}
-
-        # Для ЛЮБОЙ категории из словаря (и ярусов Суммы, и mark/year/...)
-        # в таблице есть готовый список значений — присваиваем следующее
-        # по порядку значение из него сразу при отправке, с коротким
-        # префиксом «сырая», не спрашивая юзера, что именно он услышал.
-        # Без словаря (старый режим «только Суммы») список пуст — тогда
-        # просто не теряем и не перезаписываем соседний сырой кусок.
+        source_name = os.path.basename(source_path)
         ext = os.path.splitext(source_name)[1] or '.wav'
         value, value_idx = self._var_expected_value(tier)
         if value is not None:
             self._var_set_cursor(tier, value_idx + 1)
-            save_name = f"{int(time.time() * 1000)}_сырая_{self._var_safe_value(value)}{ext}"
+            save_name = f"{time.time_ns() // 1000}_сырая_{self._var_safe_value(value)}{ext}"
         else:
-            save_name = f"{int(time.time() * 1000)}_{source_name}"
+            save_name = f"{time.time_ns() // 1000}_{source_name}"
         target_path = os.path.join(target_dir, save_name)
-        shutil.copy(active_file, target_path)
-
+        shutil.copy(source_path, target_path)
         self.constructor_tier_files.setdefault(tier, []).append(target_path)
+        self._sum_remember_source(target_path, source_path, tier)
+        return target_path, value
 
-        # Запоминаем только ПОСЛЕДНЮЮ отправку — «Отменить» откатывает один
-        # шаг назад, не целую историю.
-        self.sum_stage1_last_send = {"tier": tier, "raw_path": target_path}
+    def sum_stage1_send(self, tier):
+        """Клавиша Z: текущий дубль уходит как есть в сырую папку категории."""
+        if tier not in self._all_category_keys():
+            return {"error": f"Неизвестная категория: {tier}"}
+        active_file, _, err = self._sum_current_source()
+        if err:
+            return {"error": err}
+        _, ptr = self._sum_source_files()
+        return self.sum_send_dubs(tier, [ptr])
 
-        self._sum_advance_pointer()
+    def sum_send_dubs(self, tier, indices):
+        """Перетащили один или несколько дублей из ленты в категорию.
+        Каждый получает следующее ожидаемое значение таблицы по порядку."""
+        if tier not in self._all_category_keys():
+            return {"error": f"Неизвестная категория: {tier}"}
+        files, ptr = self._sum_source_files()
+        indices = sorted({int(i) for i in (indices or []) if 0 <= int(i) < len(files)})
+        if not indices:
+            return {"error": "Не выбран ни один дубль."}
+
+        sent = []
+        for i in indices:
+            target, value = self._sum_copy_to_category(tier, files[i])
+            sent.append((target, value))
+
+        # «Отменить» (X) откатывает только одиночную отправку — вместе с
+        # указателем очереди, если он из-за неё сдвинулся.
+        self.sum_stage1_last_send = ({"tier": tier, "raw_path": sent[0][0], "ptr_before": ptr}
+                                     if len(sent) == 1 else None)
+        self._sum_after_consumed(indices)
+
         label = self._category_label(tier)
-        toast = f'➜ Отправлено в «{label}»: {value}' if value is not None else f'➜ Отправлено в «{label}»'
-        webview.windows[0].evaluate_js(f"showToast('{toast}');")
+        values = [v for _, v in sent if v is not None]
+        if len(sent) == 1:
+            self._sum_toast(f'➜ «{label}»: {values[0]}' if values else f'➜ Отправлено в «{label}»')
+        else:
+            self._sum_toast(f'➜ «{label}»: {len(sent)} дублей' + (f' ({values[0]} … {values[-1]})' if values else ''))
         return self.get_ui_state()
+
+    def sum_focus_dub(self, index):
+        """Сделать дубль из ленты текущим (то же, что листать A/D)."""
+        self._sum_set_pointer(int(index))
+        return self.get_ui_state()
+
+    def sum_dubs_to_audacity(self, indices):
+        """Один или несколько дублей — подряд на одну дорожку Audacity
+        (с секундой тишины между ними), чтобы поправить и разметить метками
+        «значение_категория» (B) или вырезать выделение в категорию (N)."""
+        files, _ = self._sum_source_files()
+        indices = sorted({int(i) for i in (indices or []) if 0 <= int(i) < len(files)})
+        if not indices:
+            return {"error": "Не выбран ни один дубль."}
+
+        if self._block_if_audacity_ambiguous():
+            return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
+        if not self._ensure_audacity_ready():
+            return {"error": "Не удалось запустить Audacity. Откройте его вручную и нажмите кнопку ещё раз."}
+
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('RemoveTracks:')
+        self.audacity.send_command('NewMonoTrack:')
+        t = 0.0
+        segments = []
+        for i in indices:
+            dur = self._import_clip_to_track0(files[i], t)
+            segments.append({"start": t, "end": t + dur, "source": files[i], "index": i})
+            t += dur + 1.0
+
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start=0 End={t + 1.0} RelativeTo=ProjectStart')
+        self.audacity.send_command('ZoomSel:')
+        self.audacity.send_command('SetProject: Rate=8000')
+
+        self.is_in_audacity = True
+        self._sum_split_pending = {"source": files[indices[0]], "name": os.path.basename(files[indices[0]]),
+                                   "segments": segments, "indices": indices}
+
+        windows = self.get_audacity_windows()
+        if windows:
+            self._force_foreground(windows[0]['hwnd'])
+
+        what = 'Дубль' if len(indices) == 1 else f'{len(indices)} дублей'
+        self._sum_toast(f'✂️ {what} в Audacity — выделите кусок и N, или метки «4_тыс» и B')
+        return self.get_ui_state()
+
+    def sum_send_current_dub_to_audacity(self):
+        """Клавиша V: текущий дубль целиком в Audacity."""
+        _, _, err = self._sum_current_source()
+        if err:
+            return {"error": err}
+        _, ptr = self._sum_source_files()
+        return self.sum_dubs_to_audacity([ptr])
+
+    def _sum_dub_cards(self, before=8, count=60):
+        """Окно ленты карточек вокруг текущего дубля."""
+        files, ptr = self._sum_source_files()
+        if not files:
+            return None
+        assigned = self._sum_assigned_sources()
+        start = max(0, min(ptr, len(files) - 1) - before)
+        end = min(len(files), start + count)
+        items = []
+        for i in range(start, end):
+            path = files[i]
+            tiers = assigned.get(path, [])
+            items.append({
+                "index": i,
+                "name": os.path.splitext(os.path.basename(path))[0],
+                "path": path,
+                "current": i == ptr,
+                "tiers": [self._category_label(t) for t in tiers],
+                "tier_keys": tiers,
+            })
+        return {"items": items, "total": len(files), "current": ptr}
 
     def sum_stage1_undo(self):
         """Клавиша ↓: убирает файл, отправленный последним нажатием
@@ -2520,13 +2671,16 @@ class VariablesMixin:
         if last['raw_path'] in files:
             files.remove(last['raw_path'])
 
-        if self._sum_in_cascade():
+        self._sum_forget_source(last['raw_path'])
+        if 'ptr_before' in last:
+            self._sum_set_pointer(last['ptr_before'])
+        elif self._sum_in_cascade():
             cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
             self.cascade_ptrs[cat] = max(0, self.cascade_ptrs.get(cat, 0) - 1)
         else:
             self.chunk_index = max(0, self.chunk_index - 1)
-        if getattr(self, 'phrases_data', None) and self.phrase_index > 0:
-            self.phrase_index -= 1
+            if getattr(self, 'phrases_data', None) and self.phrase_index > 0:
+                self.phrase_index -= 1
 
         tier = last['tier']
         self._var_rewind_cursor_to(tier, last['raw_path'])
@@ -2570,40 +2724,14 @@ class VariablesMixin:
                 return key
         return None
 
-    def sum_send_current_dub_to_audacity(self):
-        """Клавиша V: текущий дубль из Chunks — целиком, без объединения
-        со start/end/референсами — на стол Audacity, чтобы вручную
-        разметить метками участки, слипшиеся в один кусок."""
-        active_file, source_name, err = self._sum_current_source()
-        if err:
-            return {"error": err}
-
-        if self._block_if_audacity_ambiguous():
-            return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
-        if not self._ensure_audacity_ready():
-            return {"error": "Не удалось запустить Audacity. Откройте его вручную и нажмите кнопку ещё раз."}
-
-        self.audacity.send_command('SelectAll:')
-        self.audacity.send_command('RemoveTracks:')
-        self.audacity.send_command('NewMonoTrack:')
-        duration = self._import_clip_to_track0(active_file, 0.0)
-
-        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
-        self.audacity.send_command(f'SelectTime: Start=0 End={duration + 2.0} RelativeTo=ProjectStart')
-        self.audacity.send_command('ZoomSel:')
-        self.audacity.send_command('SetProject: Rate=8000')
-
-        self.is_in_audacity = True
-        self._sum_split_pending = {"source": active_file, "name": source_name}
-
-        windows = self.get_audacity_windows()
-        if windows:
-            self._force_foreground(windows[0]['hwnd'])
-
-        webview.windows[0].evaluate_js(
-            "showToast('✂️ Дубль в Audacity — выделите нужный кусок и нажмите «Поправить нарезку» (N), "
-            "или расставьте метки вида «4_тыс» и нажмите «Забрать метки» (B)');")
-        return self.get_ui_state()
+    @staticmethod
+    def _sum_segment_source(pending, t):
+        """Из какого дубля взят кусок на дорожке Audacity (по времени)."""
+        segs = pending.get('segments') or []
+        for seg in segs:
+            if seg['start'] - 0.5 <= t <= seg['end'] + 0.5:
+                return seg['source']
+        return pending.get('source')
 
     def sum_collect_dub_labels(self):
         """Клавиша B: читает метки, расставленные на дубле, отправленном
@@ -2666,11 +2794,15 @@ class VariablesMixin:
             self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
 
             self.constructor_tier_files.setdefault(tier, []).append(target_path)
+            self._sum_remember_source(target_path, self._sum_segment_source(pending, (t0 + t1) / 2), tier)
             exported.append(f'{self._category_label(tier)}: {value}')
 
         self._sum_split_pending = None
         self.sum_stage1_last_send = None  # разделённый дубль не откатывается обычной «Отменить»
-        self._sum_advance_pointer()
+        if pending.get('indices'):
+            self._sum_after_consumed(pending['indices'])
+        else:
+            self._sum_advance_pointer()
 
         summary = ', '.join(exported)
         webview.windows[0].evaluate_js(f"showToast('✂️ Разделено и сохранено: {summary}');")
@@ -2712,6 +2844,9 @@ class VariablesMixin:
 
         self.constructor_tier_files.setdefault(tier, []).append(target_path)
         self._var_set_cursor(tier, value_idx + 1)
+        segs = pending.get('segments') or []
+        if len(segs) <= 1:
+            self._sum_remember_source(target_path, pending['source'], tier)
 
         # Следующее ожидаемое значение ЭТОЙ ЖЕ категории — сразу после
         # сохранения, чтобы юзер видел на мини-алерте, что искать дальше,

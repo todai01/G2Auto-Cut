@@ -1574,68 +1574,97 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-stage2-embed__next{ font-size: var(--fs-sm); color: var(--accent-var); font-weight: 650; }
 .sum-stage2-embed__count{ font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
 
-/* Карточка категории: бейдж категории в углу, по центру крупно —
-   «Сейчас ищем» (что получит дубль по Z), ниже мелко — уже записанное
-   (листается ←/→). Соседние категории (↑/↓) — над и под карточкой. */
-.sum-single-row{
-    position: relative; display: flex; flex-direction: column; width: 100%;
+/* Лента дублей: карточки тянутся мышкой в категории. */
+.sum-dubs{ width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.sum-dubs__head{ display: flex; justify-content: space-between; align-items: baseline; }
+.sum-dubs__title{ font-size: 12px; font-weight: 650; color: var(--text-dim); }
+.sum-dubs__range{ font-size: 11px; font-family: var(--font-mono); color: var(--text-faint); }
+.sum-dubs__rail{
+    display: flex; gap: 6px; overflow-x: auto; padding: 4px 2px 8px;
+    scroll-snap-type: x proximity;
+}
+.sum-dub{
+    flex: 0 0 auto; min-width: 64px; padding: 8px 10px 6px; border-radius: 10px;
+    background: var(--screen); border: 1px solid var(--border-soft); cursor: grab;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    user-select: none; scroll-snap-align: center; transition: border-color .12s, transform .12s;
+}
+.sum-dub:hover{ border-color: var(--text-faint); }
+.sum-dub:active{ cursor: grabbing; }
+.sum-dub__num{ font-family: var(--font-mono); font-weight: 700; font-size: 15px; color: var(--text); }
+.sum-dub__tags{ display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; min-height: 14px; }
+.sum-dub__tag{
+    font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 999px;
+    color: var(--tier-accent); border: 1px solid var(--tier-accent);
+}
+.sum-dub.is-done{ opacity: .55; }
+.sum-dub.is-done .sum-dub__num{ color: var(--text-dim); }
+.sum-dub.is-current{ border-color: var(--accent-primary); box-shadow: 0 0 0 2px var(--accent-primary); opacity: 1; }
+.sum-dub.is-selected{ background: rgba(90,140,255,0.16); border-color: var(--accent-info); opacity: 1; }
+.sum-dub.is-playing{ box-shadow: 0 0 0 2px var(--accent-good), 0 0 12px var(--accent-good); }
+.sum-dub-ghost{
+    position: fixed; top: -100px; left: -100px; padding: 6px 12px; border-radius: 8px;
+    background: var(--accent-info); color: #fff; font-weight: 700; font-size: 13px;
+}
+.sum-dubs__selbar{ align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.sum-dubs__selbar .btn-tile{ flex: 0 0 auto; padding: 6px 12px; min-height: 0; }
+
+/* Категории — зоны сброса, все видны сразу. */
+.sum-cats{ width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.sum-cat{
+    position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: left;
     background: var(--screen); border: 1px solid var(--border-soft); border-radius: 12px;
-    padding: 34px 18px 16px; box-shadow: var(--shadow-screen);
-    transition: border-color .15s;
+    padding: 10px 12px 12px; transition: border-color .12s, box-shadow .12s, transform .12s;
 }
-.sum-single-row--active{
-    border-color: var(--tier-accent, var(--accent-primary));
-    box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary));
+.sum-cat.is-selected{ border-color: var(--tier-accent, var(--accent-primary)); }
+body.sum-dragging .sum-cat{ border-style: dashed; }
+.sum-cat.is-over{
+    border-style: solid !important; border-color: var(--tier-accent, var(--accent-primary));
+    box-shadow: 0 0 0 2px var(--tier-accent, var(--accent-primary)); transform: scale(1.02);
 }
-.sum-single-row__name{
-    position: absolute; top: 10px; left: 14px; max-width: 45%;
-    font-weight: 700; font-size: 12px; line-height: 1.2;
-    color: var(--tier-accent, var(--text)); white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-    border: 1px solid var(--tier-accent, var(--border-soft)); border-radius: 999px;
-    padding: 3px 10px;
+.sum-cat__head{ display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.sum-cat__name{
+    font-size: 12px; font-weight: 700; color: var(--tier-accent, var(--text));
+    border: 1px solid var(--tier-accent, var(--border-soft)); border-radius: 999px; padding: 2px 9px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.sum-single-row__progress{
-    position: absolute; top: 12px; right: 14px;
-    font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);
+.sum-cat__progress{ font-size: 10.5px; font-family: var(--font-mono); color: var(--text-faint); }
+.sum-cat__label{
+    margin-top: 4px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-faint);
 }
+.sum-cat__expect{
+    appearance: none; -webkit-appearance: none; width: 100%;
+    background: transparent; border: 1px dashed transparent; border-radius: 8px;
+    color: var(--text); font-family: var(--font-mono); font-size: 18px; font-weight: 750;
+    padding: 2px 4px; margin-left: -4px; cursor: pointer; text-overflow: ellipsis;
+}
+.sum-cat__expect:hover:not(:disabled){ border-color: var(--tier-accent, var(--border-soft)); }
+.sum-cat__expect:disabled{ cursor: default; font-size: 13px; color: var(--text-faint); }
+.sum-cat__expect option{ font-size: 13px; font-weight: 500; background: var(--panel); color: var(--text); }
+.sum-cat__recs{
+    display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; padding-top: 8px;
+    border-top: 1px solid var(--border-soft); max-height: 92px; overflow-y: auto;
+}
+.sum-cat__empty{ font-size: 11.5px; color: var(--text-faint); }
+.sum-rec{
+    display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
+    font-size: 11.5px; font-family: var(--font-mono); color: var(--text-dim);
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border-soft); border-radius: 6px;
+    padding: 1px 2px 1px 6px; cursor: pointer;
+}
+.sum-rec__name{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sum-rec.is-browsed{ border-color: var(--tier-accent, var(--accent-primary)); color: var(--text); }
+.sum-rec.is-playing{ border-color: var(--accent-good); color: var(--accent-good); }
+.sum-rec__x{
+    background: none; border: 0; color: var(--text-faint); cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 0 3px;
+}
+.sum-rec__x:hover{ color: var(--accent-trash); }
 
-/* Главное на карточке — что ищем в текущем дубле (значение, которое
-   получит дубль по Z). Это select: в закрытом виде — крупный текст,
-   по клику — весь список таблицы, чтобы начать с любого места. */
-.sum-expect{ display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 6px; }
-.sum-expect__label{
-    font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--tier-accent, var(--text-dim));
-}
-.sum-expect__value{
-    appearance: none; -webkit-appearance: none; max-width: 100%;
-    background: transparent; border: 1px dashed transparent; border-radius: 10px;
-    color: var(--text); font-family: var(--font-mono); font-size: 30px; font-weight: 750;
-    text-align: center; text-align-last: center; padding: 2px 14px; cursor: pointer;
-    text-overflow: ellipsis; transition: border-color .15s, background .15s;
-}
-.sum-expect__value:hover:not(:disabled){ border-color: var(--tier-accent, var(--border-soft)); background: rgba(255,255,255,0.03); }
-.sum-expect__value:disabled{ cursor: default; font-size: 16px; color: var(--text-faint); }
-.sum-expect__value option{ font-size: 14px; font-weight: 500; text-align: left; background: var(--panel); color: var(--text); }
-
-/* Уже записанное в этой категории — второстепенно: мелкая строка под
-   «Сейчас ищем», листается ←/→, рядом кнопка убрать брак. */
-.sum-recorded{
-    display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
-    margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-soft);
-    font-size: 13px; color: var(--text-dim);
-}
-.sum-recorded__label{ color: var(--text-faint); font-size: 12px; }
-.sum-recorded__current{ display: inline-block; font-family: var(--font-mono); font-weight: 650; color: var(--text-dim); }
-.sum-recorded--empty .sum-recorded__current{ color: var(--text-faint); font-weight: 500; }
-.sum-recorded--empty .sum-recorded__remove{ display: none; }
-.sum-recorded__remove{
-    background: transparent; border: 1px solid var(--border-soft); border-radius: 8px;
-    color: var(--text-faint); font-size: 12px; padding: 3px 8px; cursor: pointer;
-}
-.sum-recorded__remove:hover{ border-color: var(--accent-trash); color: var(--accent-trash); }
-.sum-recorded__remove kbd{ font-size: 10px; }
+.sum-cat--audacity{ justify-content: center; align-items: center; text-align: center; border-style: dashed; --tier-accent: var(--accent-info); }
+.sum-cat--audacity .sum-cat__name{ border: 0; font-size: 13px; }
+.sum-cat__hint{ font-size: 11px; color: var(--text-faint); line-height: 1.35; }
 
 /* Редкие инструменты режима «Суммы» — свёрнуты по умолчанию. */
 .sum-more{ width: 100%; }
@@ -1647,32 +1676,6 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-more > summary::before{ content: '▸ '; }
 .sum-more[open] > summary::before{ content: '▾ '; }
 .sum-more[open] > .tile-row{ margin-top: var(--space-2); }
-
-/* Подсветка: сейчас звучит именно то значение, что на экране — тот же
-   приём с классом is-playing/.playTimeout, что и у обычной фразы. */
-.sum-single-row--playing{
-    /* Тот же --tier-accent, что и цвет бейджа с названием категории —
-       renderSumSingleRow() уже выставляет его на строке при каждом рендере. */
-    border-color: var(--tier-accent, var(--accent-primary));
-    box-shadow: var(--shadow-screen), 0 0 0 2px var(--tier-accent, var(--accent-primary)), 0 0 16px var(--tier-accent, var(--accent-primary));
-}
-
-/* Соседи по категории (↑/↓) — над и под строкой, тусклым текстом, чтобы
-   было видно, что последует при листании, не листая вслепую. */
-.sum-cat-neighbor{
-    width: 100%; text-align: center; font-size: 12px; font-weight: 600;
-    color: var(--text-faint); min-height: 16px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; opacity: .7;
-}
-.sum-cat-neighbor--prev::before{ content: '▲ '; }
-.sum-cat-neighbor--next::before{ content: '▼ '; }
-.sum-cat-neighbor:empty::before{ content: none; }
-
-.sum-val-neighbor{
-    min-width: 0; max-width: 28%; font-size: 12px; color: var(--text-faint);
-    font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; opacity: .6;
-}
 
 /* Быстрая анимация направления при листании — значение/категория как бы
    «въезжает» с той стороны, куда листали (Вверх/Вниз/Влево/Вправо),
