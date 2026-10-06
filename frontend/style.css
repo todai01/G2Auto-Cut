@@ -1666,6 +1666,24 @@ body.sum-dragging .sum-cat{ border-style: dashed; }
 .sum-cat--audacity .sum-cat__name{ border: 0; font-size: 13px; }
 .sum-cat__hint{ font-size: 11px; color: var(--text-faint); line-height: 1.35; }
 
+/* Редактор тайминга: волна сборки строки с ручками краёв значений. */
+.sum-editor{
+    width: 100%; display: flex; flex-direction: column; gap: 8px; text-align: left;
+    background: var(--screen); border: 1px solid var(--border-soft); border-radius: 12px; padding: 10px 12px 12px;
+}
+.sum-editor__head{ display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.sum-editor__title{
+    font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint);
+}
+.sum-editor__row{ flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sum-editor__time{ font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); }
+.sum-editor__canvas{ width: 100%; height: 120px; display: block; border-radius: 8px; background: rgba(0,0,0,0.25); touch-action: none; }
+.sum-editor__msg{ font-size: 12px; color: var(--text-faint); min-height: 0; }
+.sum-editor__msg:empty{ display: none; }
+.sum-editor__actions{ display: flex; gap: 8px; }
+.sum-editor__actions .btn-tile{ flex: 1; }
+.sum-editor__actions .sum-editor__reset{ flex: 0 0 auto; }
+
 /* Редкие инструменты режима «Суммы» — свёрнуты по умолчанию. */
 .sum-more{ width: 100%; }
 .sum-more > summary{

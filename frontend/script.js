@@ -1571,6 +1571,16 @@ let isProcessing = false;
             if (text !== undefined && text !== null) el.textContent = text;
             return el;
         }
+        // Цвет категории: ярусы Суммы — свои постоянные, доп.категории
+        // словаря (марка, год…) — из отдельной палитры по порядку колонок.
+        const SUM_EXTRA_ACCENTS = ['#ff7eb6', '#7dd3fc', '#c3e88d', '#f78c6c', '#c792ea', '#ffcb6b'];
+        function sumTierAccent(key) {
+            if (CONSTRUCTOR_TIER_ACCENT[key]) return CONSTRUCTOR_TIER_ACCENT[key];
+            let extras = sumStage1Tiers.map(t => t.key).filter(k => !CONSTRUCTOR_TIER_ACCENT[k]);
+            let i = extras.indexOf(key);
+            if (i < 0) i = [...String(key)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+            return SUM_EXTRA_ACCENTS[i % SUM_EXTRA_ACCENTS.length];
+        }
         function sumSelectedTile() {
             let tier = sumStage1Tiers[sumStage1SelectedIdx];
             return tier ? document.querySelector(`.sum-cat[data-tier="${CSS.escape(tier.key)}"]`) : null;
@@ -1636,7 +1646,7 @@ let isProcessing = false;
                 let items = info.items || [];
                 let tile = sumEl('div', 'sum-cat' + (tIdx === sumStage1SelectedIdx ? ' is-selected' : ''));
                 tile.dataset.tier = tier;
-                tile.style.setProperty('--tier-accent', CONSTRUCTOR_TIER_ACCENT[tier] || 'var(--accent-primary)');
+                tile.style.setProperty('--tier-accent', sumTierAccent(tier));
                 tile.addEventListener('click', e => {
                     if (e.target.closest('select, .sum-rec')) return;
                     sumStage1SelectedIdx = tIdx;
@@ -1743,7 +1753,7 @@ let isProcessing = false;
                 let tags = sumEl('div', 'sum-dub__tags');
                 (it.tier_keys || []).forEach((k, n) => {
                     let tag = sumEl('span', 'sum-dub__tag', it.tiers[n]);
-                    tag.style.setProperty('--tier-accent', CONSTRUCTOR_TIER_ACCENT[k] || 'var(--accent-primary)');
+                    tag.style.setProperty('--tier-accent', sumTierAccent(k));
                     tags.appendChild(tag);
                 });
                 card.appendChild(tags);
@@ -1908,6 +1918,285 @@ let isProcessing = false;
             });
 
             renderSumSingleRow();
+            sumEditorBind();
+            sumEditorMaybeReload(data);
+            sumEditorRenderRow();
+        }
+
+        // ===== РЕДАКТОР ТАЙМИНГА (сборка строки прямо в программе) =====
+        // Волна всей сборки: связки (start/end) серым, значения категорий —
+        // цветом категории, у каждого значения две ручки — начало и конец.
+        // Тянете ручку — после отпускания звучит стык; клик по волне —
+        // слушать с этого места. «Сохранить эталон» пишет обрезанные значения
+        // в «Проверенные» и переходит к следующей строке.
+        let sumEd = { segs: [], trims: [], bucket: 10, sig: null, drag: null, play: null, loading: false };
+        const ED_PAD = 6, ED_LABEL_H = 20, ED_HANDLE_HIT = 7;
+
+        function sumEditorSignature(reels) {
+            let parts = [reels.row_idx, reels.rows_total];
+            Object.keys(reels.tiers || {}).sort().forEach(t => {
+                let x = reels.tiers[t];
+                parts.push(t, x.row_value, x.row_ready, x.active, (x.paths || []).length);
+            });
+            if (!reels.rows_total) parts.push(JSON.stringify(sumStage2Indices()));
+            return JSON.stringify(parts);
+        }
+        function sumEditorMaybeReload(reels) {
+            if (!reels || !document.getElementById('sumEditor')) return;
+            let sig = sumEditorSignature(reels);
+            if (sig === sumEd.sig) return;
+            sumEd.sig = sig;
+            sumEditorLoad();
+        }
+        async function sumEditorLoad() {
+            if (sumEd.loading) return;
+            sumEd.loading = true;
+            let res;
+            try { res = await pywebview.api.sum_editor_load(sumStage2Indices()); }
+            catch (e) { res = { error: String(e) }; }
+            finally { sumEd.loading = false; }
+            sumEditorStopPlayhead();
+            let msg = document.getElementById('sumEditorMsg');
+            if (res && res.error) {
+                sumEd.segs = []; sumEd.trims = [];
+                if (msg) msg.innerText = res.error;
+            } else {
+                sumEd.segs = (res && res.segments) || [];
+                sumEd.bucket = (res && res.bucket_ms) || 10;
+                sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
+                let missing = (res && res.missing) || [];
+                if (msg) msg.innerText = !sumEd.segs.length
+                    ? 'Для этой строки ещё нет записей — перетащите дубли в категории'
+                    : (missing.length ? `Нет записи: ${missing.join(', ')} — эта часть в сборку не попадёт` : '');
+            }
+            sumEditorRenderRow();
+            sumEditorDraw();
+        }
+        function sumEditorRenderRow() {
+            let el = document.getElementById('sumEditorRow');
+            let reels = lastSumState && lastSumState.reels;
+            if (!el || !reels) return;
+            let values = Object.values(reels.row_values || {}).filter(Boolean);
+            el.innerText = reels.rows_total
+                ? `Строка ${(reels.row_idx || 0) + 1} / ${reels.rows_total}${values.length ? ' · ' + values.join(' · ') : ''}`
+                : '';
+        }
+
+        // --- геометрия ---
+        function edTotal() { return sumEd.segs.reduce((a, s) => a + s.duration_ms, 0); }
+        function edSegStart(i) { let t = 0; for (let j = 0; j < i; j++) t += sumEd.segs[j].duration_ms; return t; }
+        function edX(canvas, ms) { let w = canvas.clientWidth - 2 * ED_PAD; return ED_PAD + (edTotal() ? ms / edTotal() * w : 0); }
+        function edMsAt(canvas, x) { let w = canvas.clientWidth - 2 * ED_PAD; return Math.max(0, Math.min(edTotal(), (x - ED_PAD) / w * edTotal())); }
+        function edOutLen(j) { return sumEd.trims[j][1] - sumEd.trims[j][0]; }
+        function edOrigToOut(ms) {
+            let acc = 0, start = 0;
+            for (let j = 0; j < sumEd.segs.length; j++) {
+                let d = sumEd.segs[j].duration_ms;
+                if (ms < start + d) {
+                    let [a, b] = sumEd.trims[j];
+                    return acc + Math.max(0, Math.min(ms - start, b) - a);
+                }
+                acc += edOutLen(j); start += d;
+            }
+            return acc;
+        }
+        function edOutToOrig(out) {
+            let start = 0;
+            for (let j = 0; j < sumEd.segs.length; j++) {
+                let len = edOutLen(j);
+                if (out < len) return start + sumEd.trims[j][0] + out;
+                out -= len; start += sumEd.segs[j].duration_ms;
+            }
+            return edTotal();
+        }
+        function edAccent(seg) {
+            return seg.connector ? 'rgba(160,170,190,0.75)'
+                : (getComputedStyle(document.documentElement).getPropertyValue('--accent-var').trim() || '#eeac3e');
+        }
+        function edTierColor(seg) {
+            let c = sumTierAccent(seg.key);
+            if (c && c.startsWith('var(')) c = getComputedStyle(document.documentElement).getPropertyValue(c.slice(4, -1)).trim();
+            return c || edAccent(seg);
+        }
+
+        // --- отрисовка ---
+        function sumEditorDraw(playOrigMs) {
+            let canvas = document.getElementById('sumEditorCanvas');
+            if (!canvas) return;
+            let dpr = window.devicePixelRatio || 1;
+            let W = canvas.clientWidth, H = canvas.clientHeight;
+            if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
+                canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+            }
+            let ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, W, H);
+            let timeEl = document.getElementById('sumEditorTime');
+            if (!sumEd.segs.length) { if (timeEl) timeEl.innerText = ''; return; }
+
+            let top = ED_LABEL_H, h = H - ED_LABEL_H - 4, mid = top + h / 2;
+            ctx.font = '600 11px system-ui, sans-serif';
+            ctx.textBaseline = 'middle';
+            sumEd.segs.forEach((seg, i) => {
+                let s0 = edSegStart(i), x0 = edX(canvas, s0), x1 = edX(canvas, s0 + seg.duration_ms);
+                let color = seg.connector ? edAccent(seg) : edTierColor(seg);
+                ctx.fillStyle = seg.connector ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.06)';
+                ctx.fillRect(x0, top, x1 - x0, h);
+
+                ctx.strokeStyle = color; ctx.lineWidth = 1;
+                ctx.beginPath();
+                let n = seg.peaks.length;
+                for (let k = 0; k < n; k++) {
+                    let x = edX(canvas, s0 + k * sumEd.bucket);
+                    let amp = Math.max(0.5, seg.peaks[k] * (h / 2 - 2));
+                    ctx.moveTo(x, mid - amp); ctx.lineTo(x, mid + amp);
+                }
+                ctx.stroke();
+
+                let [a, b] = sumEd.trims[i];
+                ctx.fillStyle = 'rgba(8,10,14,0.72)';
+                if (a > 0) ctx.fillRect(x0, top, edX(canvas, s0 + a) - x0, h);
+                if (b < seg.duration_ms) { let xb = edX(canvas, s0 + b); ctx.fillRect(xb, top, x1 - xb, h); }
+
+                ctx.fillStyle = 'rgba(255,255,255,0.18)';
+                ctx.fillRect(x1 - 0.5, top, 1, h);
+
+                let label = seg.connector ? seg.label : `${seg.label}: ${seg.value || ''}`;
+                ctx.save();
+                ctx.beginPath(); ctx.rect(x0 + 2, 0, Math.max(0, x1 - x0 - 4), ED_LABEL_H); ctx.clip();
+                ctx.fillStyle = seg.connector ? 'rgba(160,170,190,0.8)' : color;
+                ctx.fillText(label, x0 + 4, ED_LABEL_H / 2);
+                ctx.restore();
+
+                if (!seg.connector) {
+                    [a, b].forEach((ms, side) => {
+                        let x = edX(canvas, s0 + ms);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x - 1, top, 2, h);
+                        let tabW = 7;
+                        ctx.fillRect(side === 0 ? x : x - tabW, top, tabW, 14);
+                    });
+                }
+            });
+
+            if (typeof playOrigMs === 'number') {
+                let x = edX(canvas, playOrigMs);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(x - 1, top - 2, 2, h + 4);
+            }
+
+            if (timeEl) {
+                let total = sumEd.trims.reduce((acc, t) => acc + (t[1] - t[0]), 0);
+                timeEl.innerText = `${(total / 1000).toFixed(2)} с`;
+            }
+        }
+
+        // --- мышь ---
+        function edHit(canvas, x) {
+            let best = null;
+            sumEd.segs.forEach((seg, i) => {
+                if (seg.connector) return;
+                let s0 = edSegStart(i);
+                sumEd.trims[i].forEach((ms, side) => {
+                    let d = Math.abs(edX(canvas, s0 + ms) - x);
+                    if (d <= ED_HANDLE_HIT && (!best || d < best.d)) best = { i, side, d };
+                });
+            });
+            return best;
+        }
+        function sumEditorBind() {
+            let canvas = document.getElementById('sumEditorCanvas');
+            if (!canvas || canvas.dataset.bound) return;
+            canvas.dataset.bound = '1';
+            canvas.addEventListener('pointerdown', e => {
+                if (!sumEd.segs.length) return;
+                let x = e.offsetX, hit = edHit(canvas, x);
+                if (hit) {
+                    sumEd.drag = hit;
+                    canvas.setPointerCapture(e.pointerId);
+                    sumEditorStop();
+                } else {
+                    sumEditorPlay(edOrigToOut(edMsAt(canvas, x)));
+                }
+            });
+            canvas.addEventListener('pointermove', e => {
+                let x = e.offsetX;
+                if (!sumEd.drag) {
+                    canvas.style.cursor = edHit(canvas, x) ? 'ew-resize' : 'pointer';
+                    return;
+                }
+                let { i, side } = sumEd.drag;
+                let s0 = edSegStart(i), dur = sumEd.segs[i].duration_ms;
+                let ms = Math.round(edMsAt(canvas, x) - s0);
+                let t = sumEd.trims[i];
+                if (side === 0) t[0] = Math.max(0, Math.min(ms, t[1] - 40));
+                else t[1] = Math.min(dur, Math.max(ms, t[0] + 40));
+                sumEditorDraw();
+            });
+            const end = e => {
+                if (!sumEd.drag) return;
+                let { i, side } = sumEd.drag;
+                sumEd.drag = null;
+                try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+                // Сразу слышно стык, который поправили: с ~0.8 с до края.
+                let edge = edSegStart(i) + sumEd.trims[i][side];
+                sumEditorPlay(Math.max(0, edOrigToOut(edge) - 800));
+            };
+            canvas.addEventListener('pointerup', end);
+            canvas.addEventListener('pointercancel', end);
+            window.addEventListener('resize', () => sumEditorDraw());
+        }
+
+        // --- звук ---
+        function sumEditorTrimsPayload() {
+            let out = {};
+            sumEd.trims.forEach((t, i) => {
+                let seg = sumEd.segs[i];
+                if (!seg.connector && (t[0] > 0 || t[1] < seg.duration_ms)) out[i] = t;
+            });
+            return out;
+        }
+        function sumEditorStopPlayhead() {
+            if (sumEd.play) cancelAnimationFrame(sumEd.play.raf);
+            sumEd.play = null;
+            sumEditorDraw();
+        }
+        async function sumEditorStop() {
+            if (!sumEd.play) return;
+            sumEditorStopPlayhead();
+            try { await pywebview.api.stop_audio(); } catch (_) {}
+        }
+        async function sumEditorPlay(fromOut) {
+            if (!sumEd.segs.length) return;
+            let res;
+            try { res = await pywebview.api.sum_editor_play(sumEditorTrimsPayload(), Math.round(fromOut || 0)); }
+            catch (e) { return; }
+            if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+            if (sumEd.play) cancelAnimationFrame(sumEd.play.raf);
+            let t0 = performance.now(), from = res.from_ms || 0, len = (res.duration || 0) * 1000;
+            sumEd.play = { raf: 0 };
+            const tick = () => {
+                let el = performance.now() - t0;
+                if (!sumEd.play || el >= len) { sumEd.play = null; sumEditorDraw(); return; }
+                sumEditorDraw(edOutToOrig(from + el));
+                sumEd.play.raf = requestAnimationFrame(tick);
+            };
+            sumEd.play.raf = requestAnimationFrame(tick);
+            let btn = document.getElementById('sumEditorPlayBtn');
+            if (btn) btn.blur();
+        }
+        function sumEditorTogglePlay() {
+            if (sumEd.play) sumEditorStop(); else sumEditorPlay(0);
+        }
+        function sumEditorReset() {
+            sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
+            sumEditorDraw();
+        }
+        async function sumEditorSave() {
+            if (!sumEd.segs.length) { showToast('Нечего сохранять — для строки нет записей'); return; }
+            await sumEditorStop();
+            sumEd.sig = null;
+            await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload()), false);
         }
 
         function sumStage2Indices() {
@@ -2977,6 +3266,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else saveVarBatch(false); }
                 else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
                 else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); sumRemoveBrowsed(); }
+                else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
@@ -2999,6 +3289,7 @@ let isProcessing = false;
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else processAction('good'); }
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); sumRemoveBrowsed(); }
+            else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
             else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }

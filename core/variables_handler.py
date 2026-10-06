@@ -3082,17 +3082,11 @@ class VariablesMixin:
             stem = stem[len('сырая_'):]
         return stem
 
-    def _sum_stage2_save_one(self, tier, raw_path, clip, name_override=None):
-        """Экспортирует один кусок (по его клипу на дорожке) в Проверенные
-        нужной категории, убирает исходник из сырой очереди и обновляет
-        кэш «последнего сохранённого». Имя файла обычно берём из самого
-        сырого файла (то, что ему присвоила сырая сортировка — оно и
-        совпадает со значением строки таблицы, раз мы его для этого
-        значения и искали, см. _sum_stage2_resolve_value); name_override
-        остаётся как ручной способ переопределить имя при прямом вызове."""
+    def _sum_checked_target(self, tier, raw_path, name_override=None):
+        """Куда в Проверенные ляжет эталон этого сырого файла: имя — само
+        значение категории («AUDI 80.wav»), для ярусов Суммы — цифры («95.wav»)."""
         target_dir = os.path.join(self._sum_manual_tier_root(), self._sum_manual_tier_dir(tier))
         os.makedirs(target_dir, exist_ok=True)
-
         ext = os.path.splitext(raw_path)[1] or '.wav'
         raw_value = name_override if name_override else self._sum_raw_value_from_path(raw_path)
         clean_value = re.sub(r'[<>:"/\\|?*]', '', raw_value).strip()
@@ -3102,6 +3096,17 @@ class VariablesMixin:
         else:
             save_name = f"{clean_value}{ext}" if clean_value else os.path.basename(raw_path)
         target_path = os.path.abspath(os.path.join(target_dir, save_name)).replace('\\', '/')
+        return target_path, save_name
+
+    def _sum_stage2_save_one(self, tier, raw_path, clip, name_override=None):
+        """Экспортирует один кусок (по его клипу на дорожке) в Проверенные
+        нужной категории, убирает исходник из сырой очереди и обновляет
+        кэш «последнего сохранённого». Имя файла обычно берём из самого
+        сырого файла (то, что ему присвоила сырая сортировка — оно и
+        совпадает со значением строки таблицы, раз мы его для этого
+        значения и искали, см. _sum_stage2_resolve_value); name_override
+        остаётся как ручной способ переопределить имя при прямом вызове."""
+        target_path, save_name = self._sum_checked_target(tier, raw_path, name_override)
         if os.path.exists(target_path):
             try: os.remove(target_path)
             except OSError: pass

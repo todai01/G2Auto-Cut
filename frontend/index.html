@@ -1008,6 +1008,23 @@
                                 </div>
 
                                 <div class="sum-cats" id="sumCats"></div>
+
+                                <!-- Редактор тайминга: сборка текущей строки, правка краёв мышью -->
+                                <div class="sum-editor" id="sumEditor">
+                                    <div class="sum-editor__head">
+                                        <span class="sum-editor__title">Сборка</span>
+                                        <span class="sum-editor__row" id="sumEditorRow"></span>
+                                        <span class="sum-editor__time" id="sumEditorTime"></span>
+                                    </div>
+                                    <canvas class="sum-editor__canvas" id="sumEditorCanvas"
+                                            title="Тяните цветные ручки — начало и конец значения. Клик по волне — слушать с этого места"></canvas>
+                                    <div class="sum-editor__msg" id="sumEditorMsg"></div>
+                                    <div class="sum-editor__actions">
+                                        <button type="button" class="btn-tile btn-tile--primary" id="sumEditorPlayBtn" onclick="sumEditorTogglePlay()">Прослушать <kbd>P</kbd></button>
+                                        <button type="button" class="btn-tile btn-tile--solid-var" onclick="sumEditorSave()">Сохранить эталон</button>
+                                        <button type="button" class="btn-tile btn-tile--sub sum-editor__reset" onclick="sumEditorReset()" title="Вернуть края как были">Сбросить</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1144,27 +1161,22 @@
                              ↓ отменить последнюю отправку. Сборка эталона: рулетки
                              крутятся вручную, «Отправить в Audacity» + «Сохранить». -->
                         <div id="sumActionsPanel" class="action-col" style="display:none">
-                            <!-- Сборка эталона по строке таблицы -->
-                            <div class="tile-row">
-                                <button class="btn-tile btn-tile--primary" onclick="sumStage2SendToAudacity()" title="Собрать текущую строку таблицы в Audacity для правки">Собрать в Audacity <kbd>C</kbd></button>
-                                <button class="btn-tile btn-tile--var" onclick="sumStage2Save()" title="Сохранить собранный эталон">Сохранить эталон</button>
-                            </div>
-
                             <!-- Редкие инструменты — свёрнуты, горячие клавиши работают всегда -->
                             <details class="sum-more">
-                                <summary>Ещё: правка нарезки, метки</summary>
+                                <summary>Ещё: Audacity, правка нарезки, метки</summary>
                                 <div class="tile-row">
                                     <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить текущий дубль целиком в Audacity — если в нём слиплись две переменные или нужно подрезать">Дубль в Audacity <kbd>V</kbd></button>
                                     <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity (после V) — сохранит выделенный кусок под ожидаемым значением. Не открыт — склеит текущий дубль со следующим">Поправить нарезку <kbd>N</kbd></button>
                                     <button class="btn-tile btn-tile--sub" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
                                 </div>
                                 <div class="tile-row">
-                                    <button class="btn-tile btn-tile--sub" onclick="sumStage2TogglePlay()">Прослушать сборку</button>
+                                    <button class="btn-tile btn-tile--sub" onclick="sumStage2SendToAudacity()" title="Сложная правка: собрать строку в Audacity, затем «Сохранить из Audacity»">Собрать в Audacity <kbd>C</kbd></button>
+                                    <button class="btn-tile btn-tile--sub" onclick="sumStage2Save()" title="Сохранить эталон, поправленный в Audacity">Сохранить из Audacity</button>
                                     <button class="btn-tile btn-tile--sub" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Если открыли/переключили Audacity уже после входа в режим — привяжите окно заново">Прикрепить окно Audacity</button>
                                 </div>
                             </details>
 
-                            <div class="action-note">Мышью: перетащите дубль в категорию · клик — слушать · Ctrl/Shift — несколько · × на записи — убрать брак.<br>Клавиши: <kbd>&uarr;</kbd><kbd>&darr;</kbd> категория · <kbd>Z</kbd> текущий дубль в неё · <kbd>X</kbd> отменить · <kbd>Del</kbd> убрать запись</div>
+                            <div class="action-note">Мышью: перетащите дубль в категорию · клик — слушать · Ctrl/Shift — несколько · × на записи — убрать брак · в сборке тяните ручки краёв.<br>Клавиши: <kbd>&uarr;</kbd><kbd>&darr;</kbd> категория · <kbd>Z</kbd> текущий дубль в неё · <kbd>X</kbd> отменить · <kbd>Del</kbd> убрать запись · <kbd>P</kbd> слушать сборку</div>
                         </div>
                     </div>
 
