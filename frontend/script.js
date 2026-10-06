@@ -2595,7 +2595,18 @@ let isProcessing = false;
             const badge = document.getElementById('playSourceBadge');
             if (!phraseEl || !badge) return;
             const sync = () => {
-                if (phraseEl.classList.contains('is-playing') && phraseEl.dataset.playSource) {
+                // В «Суммах» бейдж над лентой сдвигал всё вниз — там вместо него
+                // пульсирует карточка текущего дубля (класс на ленте переживает
+                // перерисовку карточек).
+                let rail = document.getElementById('sumDubsRail');
+                let playing = phraseEl.classList.contains('is-playing');
+                if (rail) rail.classList.toggle('is-playing', playing);
+                if (document.body.classList.contains('sum-mode')) {
+                    badge.className = 'play-source-badge';
+                    badge.innerHTML = '';
+                    return;
+                }
+                if (playing && phraseEl.dataset.playSource) {
                     badge.className = 'play-source-badge is-visible src-' + phraseEl.dataset.playSource;
                     badge.innerHTML = playSourceLabel(phraseEl.dataset.playSource);
                 } else {

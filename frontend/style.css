@@ -1610,6 +1610,21 @@ select.search-input option{ background: var(--panel); color: var(--text); }
 .sum-dub.is-done .sum-dub__num{ color: var(--text-dim); }
 .sum-dub.is-current{ border-color: var(--accent-primary); box-shadow: 0 0 0 2px var(--accent-primary); opacity: 1; }
 .sum-dub.is-selected{ background: rgba(90,140,255,0.16); border-color: var(--accent-info); opacity: 1; }
+/* Звучит текущий дубль (Space / после броска) — вместо бейджа над лентой. */
+.sum-dubs__rail.is-playing .sum-dub.is-current{
+    position: relative; border-color: var(--accent-good);
+    box-shadow: 0 0 0 2px var(--accent-good); animation: sumDubPlaying 1.1s ease-in-out infinite;
+}
+.sum-dubs__rail.is-playing .sum-dub.is-current .sum-dub__num{ color: var(--accent-good); }
+.sum-dubs__rail.is-playing .sum-dub.is-current::after{
+    content: ''; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent-good); animation: sumDubDot 0.9s ease-in-out infinite;
+}
+@keyframes sumDubPlaying{ 50%{ box-shadow: 0 0 0 2px var(--accent-good), 0 0 14px rgba(47,191,125,0.55); } }
+@keyframes sumDubDot{ 50%{ opacity: .25; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce){
+    .sum-dubs__rail.is-playing .sum-dub.is-current, .sum-dubs__rail.is-playing .sum-dub.is-current::after{ animation: none; }
+}
 .sum-dub.is-playing{ box-shadow: 0 0 0 2px var(--accent-good), 0 0 12px var(--accent-good); }
 .sum-dub-ghost{
     position: fixed; top: -100px; left: -100px; padding: 6px 12px; border-radius: 8px;
