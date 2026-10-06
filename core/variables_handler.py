@@ -2703,12 +2703,19 @@ class VariablesMixin:
         return self.sum_dubs_to_audacity([ptr])
 
     def _sum_dub_cards(self, before=8, count=60):
-        """Окно ленты карточек вокруг текущего дубля."""
+        """Окно ленты карточек: вокруг текущего дубля, либо там, куда юзер
+        сам долистал колесом (пока текущий дубль не сменился)."""
         files, ptr = self._sum_source_files()
         if not files:
             return None
         assigned = self._sum_assigned_sources()
-        start = max(0, min(ptr, len(files) - 1) - before)
+        view = getattr(self, '_sum_dub_view', None)
+        if view and view.get('ptr') == ptr:
+            start = view['start']
+        else:
+            self._sum_dub_view = None
+            start = min(ptr, len(files) - 1) - before
+        start = max(0, min(start, len(files) - count))
         end = min(len(files), start + count)
         items = []
         for i in range(start, end):
@@ -2722,7 +2729,13 @@ class VariablesMixin:
                 "tiers": [self._category_label(t) for t in tiers],
                 "tier_keys": tiers,
             })
-        return {"items": items, "total": len(files), "current": ptr}
+        return {"items": items, "total": len(files), "current": ptr, "from": start}
+
+    def sum_dub_cards_at(self, start):
+        """Колесо мыши довело ленту до края — следующий/предыдущий кусок."""
+        _, ptr = self._sum_source_files()
+        self._sum_dub_view = {"start": max(0, int(start)), "ptr": ptr}
+        return self._sum_dub_cards()
 
     def sum_stage1_undo(self):
         """Клавиша ↓: убирает файл, отправленный последним нажатием

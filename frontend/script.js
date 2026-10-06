@@ -1534,9 +1534,10 @@ let isProcessing = false;
             if (panel) panel.style.display = sumState.active ? 'flex' : 'none';
 
             if (sumState.active) {
+                // Сначала показать блок: в скрытом прокрутка ленты к текущему не работает.
+                setSumEmbedMode('sum');
                 renderSumReels(sumState.reels);
                 renderSumDubs(sumState.dubs);
-                setSumEmbedMode('sum');
             } else {
                 setSumEmbedMode('text');
             }
@@ -1764,10 +1765,25 @@ let isProcessing = false;
         let sumDubAnchor = null;
         let sumDubLastCurrent = null;
 
-        function renderSumDubs(dubs) {
+        let sumDubWindow = null;   // {from, count, total} — что сейчас загружено в ленту
+        let sumDubPaging = false;
+
+        function renderSumDubs(dubs, keepAnchor) {
             let rail = document.getElementById('sumDubsRail');
             let range = document.getElementById('sumDubsRange');
             if (!rail) return;
+            sumDubsBindWheel(rail);
+            // Какая карточка стояла у левого края — чтобы после перерисовки
+            // лента не прыгала (ни после действий, ни после подгрузки куска).
+            let anchorIdx = null, anchorOffset = 0;
+            let cards = rail.querySelectorAll('.sum-dub');
+            for (let c of cards) {
+                if (c.offsetLeft + c.offsetWidth > rail.scrollLeft) {
+                    anchorIdx = parseInt(c.dataset.index);
+                    anchorOffset = c.offsetLeft - rail.scrollLeft;
+                    break;
+                }
+            }
             rail.innerHTML = '';
             if (!dubs || !dubs.items || !dubs.items.length) {
                 if (range) range.innerText = '';
@@ -1821,11 +1837,51 @@ let isProcessing = false;
                 rail.appendChild(card);
             });
 
-            if (currentCard && sumDubLastCurrent !== dubs.current) {
+            sumDubWindow = { from: items[0].index, count: items.length, total: dubs.total };
+            let anchorCard = anchorIdx !== null ? rail.querySelector(`.sum-dub[data-index="${anchorIdx}"]`) : null;
+            if (currentCard && sumDubLastCurrent !== dubs.current && !keepAnchor) {
                 currentCard.scrollIntoView({ inline: 'center', block: 'nearest' });
+            } else if (anchorCard) {
+                rail.scrollLeft = anchorCard.offsetLeft - anchorOffset;
             }
             sumDubLastCurrent = dubs.current;
             renderSumSelbar();
+        }
+
+        // Колесо мыши над лентой — листает её вбок; у края загруженного
+        // куска подгружает следующий, так что можно пройти весь список.
+        function sumDubsBindWheel(rail) {
+            if (rail.dataset.wheel) return;
+            rail.dataset.wheel = '1';
+            rail.addEventListener('wheel', e => {
+                let delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+                if (!delta) return;
+                e.preventDefault();
+                if (e.deltaMode === 1) delta *= 40;
+                rail.scrollLeft += delta;
+                let atEnd = rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 4;
+                let atStart = rail.scrollLeft <= 4;
+                if (delta > 0 && atEnd) sumDubsPage(1);
+                else if (delta < 0 && atStart) sumDubsPage(-1);
+            }, { passive: false });
+        }
+        async function sumDubsPage(dir) {
+            let w = sumDubWindow;
+            if (!w || sumDubPaging) return;
+            let step = Math.floor(w.count / 2);
+            let start = dir > 0 ? w.from + step : Math.max(0, w.from - step);
+            if (dir > 0 && w.from + w.count >= w.total) return;
+            if (dir < 0 && w.from === 0) return;
+            sumDubPaging = true;
+            try {
+                let dubs = await pywebview.api.sum_dub_cards_at(start);
+                if (dubs) {
+                    if (lastSumState) lastSumState.dubs = dubs;
+                    renderSumDubs(dubs, true);
+                }
+            } finally {
+                sumDubPaging = false;
+            }
         }
 
         function sumDubClick(e, it, card, items) {
