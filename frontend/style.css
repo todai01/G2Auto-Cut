@@ -303,6 +303,16 @@ body.sum-mode .workspace-header{ margin-bottom: 10px; }
    Высота жёстко прибита к высоте окна, а левая колонка при нехватке
    места скорее ужмёт внутренние отступы (ниже), чем вызовет скролл. */
 body.sum-mode{ height: 100vh; overflow: hidden; }
+/* Страница не прокручивается (иначе встроенное окно Audacity съезжает),
+   поэтому левая колонка прокручивается сама по себе — рамка Audacity
+   справа при этом стоит на месте. */
+body.sum-mode .stage-workspace{ height: calc(100vh - 20px); }
+body.sum-mode .workspace-grid--sum{ flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.workspace-grid--sum > .panel-column:first-child{ max-height: 100%; overflow-y: auto; padding-right: 4px; }
+/* Вторая колонка (монтажный стол, кнопки обычного режима) в «Суммах» не нужна. */
+.workspace-grid--sum > .panel-column:nth-child(2){ display: none; }
+.sum-only{ display: none; }
+body.sum-mode .sum-only{ display: inline-flex; }
 
 /* Раньше режим «Суммы» наследовал общую двухколоночную сетку страницы —
    слева рулетки, справа кнопки, а между ними и по бокам от всей сетки

@@ -919,6 +919,7 @@
                 <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
                 <button class="btn-ghost btn-ghost--var" onclick="runProjectAudit()">Аудит проекта</button>
                 <button class="btn-ghost btn-ghost--info" onclick="openSearch()">Поиск <kbd>F</kbd></button>
+                <button class="btn-ghost btn-ghost--info sum-only" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Привязать окно Audacity к рамке справа (если открыли его уже после входа в режим)">Прикрепить Audacity</button>
             </div>
 
             <div class="stat-row">
@@ -1025,6 +1026,21 @@
                                         <button type="button" class="btn-tile btn-tile--sub sum-editor__reset" onclick="sumEditorReset()" title="Вернуть края как были">Сбросить</button>
                                     </div>
                                 </div>
+
+                                <details class="sum-more">
+                                    <summary>Ещё: Audacity, правка нарезки, метки</summary>
+                                    <div class="tile-row">
+                                        <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить текущий дубль целиком в Audacity — если в нём слиплись две переменные или нужно подрезать">Дубль в Audacity <kbd>V</kbd></button>
+                                        <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity (после V) — сохранит выделенный кусок под ожидаемым значением. Не открыт — склеит текущий дубль со следующим">Поправить нарезку <kbd>N</kbd></button>
+                                        <button class="btn-tile btn-tile--sub" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
+                                    </div>
+                                    <div class="tile-row">
+                                        <button class="btn-tile btn-tile--sub" onclick="sumStage2SendToAudacity()" title="Сложная правка: собрать строку в Audacity, затем «Сохранить из Audacity»">Собрать в Audacity <kbd>C</kbd></button>
+                                        <button class="btn-tile btn-tile--sub" onclick="sumStage2Save()" title="Сохранить эталон, поправленный в Audacity">Сохранить из Audacity</button>
+                                    </div>
+                                </details>
+
+                                <div class="action-note">Мышью: перетащите дубль в категорию · клик — слушать · Ctrl/Shift — несколько · × на записи — убрать брак · в сборке тяните ручки краёв.<br>Клавиши: <kbd>&uarr;</kbd><kbd>&darr;</kbd> категория · <kbd>Z</kbd> текущий дубль в неё · <kbd>X</kbd> отменить · <kbd>Del</kbd> убрать запись · <kbd>P</kbd> слушать сборку</div>
                             </div>
                         </div>
 
@@ -1146,39 +1162,7 @@
                         <div class="action-note">Ненужный дубль просто пролистайте — <kbd>D</kbd></div>
                     </div>
 
-                    <div id="sumManualActions" class="action-col" style="display: none;">
-                        <div class="sum-header-row">
-                            <div id="sumDoneCounter" class="sum-done-counter sum-done-counter--clickable" onclick="showSumStatsModal()" title="Подробная статистика по ярусам">Готово: 0 / 0</div>
-                            <div class="tile-row sum-logic-row">
-                                <button class="btn-tile sum-logic-chip" id="sumLogic1Btn" onclick="setSumLogic(false)" title="Логика 1: Млн + Сотни + Тысячи + Тенге">Л1</button>
-                                <button class="btn-tile sum-logic-chip" id="sumLogic2Btn" onclick="setSumLogic(true)" title="Логика 2: Млн + Сотни тысяч + Тенге">Л2</button>
-                            </div>
-                        </div>
-
-                        <!-- Единый экран: колонки-категории (рулетки) встроены в текст
-                             выше, тут — все действия сразу. Слух-сортировка: клик по
-                             колонке, либо ←/→ выбор категории, ↑ отправить дубль,
-                             ↓ отменить последнюю отправку. Сборка эталона: рулетки
-                             крутятся вручную, «Отправить в Audacity» + «Сохранить». -->
-                        <div id="sumActionsPanel" class="action-col" style="display:none">
-                            <!-- Редкие инструменты — свёрнуты, горячие клавиши работают всегда -->
-                            <details class="sum-more">
-                                <summary>Ещё: Audacity, правка нарезки, метки</summary>
-                                <div class="tile-row">
-                                    <button class="btn-tile btn-tile--sub" onclick="sumSendDubToAudacity()" title="Отправить текущий дубль целиком в Audacity — если в нём слиплись две переменные или нужно подрезать">Дубль в Audacity <kbd>V</kbd></button>
-                                    <button class="btn-tile btn-tile--sub" onclick="sumFixSplit()" title="Дубль открыт в Audacity (после V) — сохранит выделенный кусок под ожидаемым значением. Не открыт — склеит текущий дубль со следующим">Поправить нарезку <kbd>N</kbd></button>
-                                    <button class="btn-tile btn-tile--sub" onclick="sumCollectDubLabels()" title="Прочитать метки вида «4_тыс», «4_тенге» и разложить размеченные куски по категориям">Забрать метки <kbd>B</kbd></button>
-                                </div>
-                                <div class="tile-row">
-                                    <button class="btn-tile btn-tile--sub" onclick="sumStage2SendToAudacity()" title="Сложная правка: собрать строку в Audacity, затем «Сохранить из Audacity»">Собрать в Audacity <kbd>C</kbd></button>
-                                    <button class="btn-tile btn-tile--sub" onclick="sumStage2Save()" title="Сохранить эталон, поправленный в Audacity">Сохранить из Audacity</button>
-                                    <button class="btn-tile btn-tile--sub" id="sumEmbedAudacityBtn" onclick="toggleEmbedAudacity()" title="Если открыли/переключили Audacity уже после входа в режим — привяжите окно заново">Прикрепить окно Audacity</button>
-                                </div>
-                            </details>
-
-                            <div class="action-note">Мышью: перетащите дубль в категорию · клик — слушать · Ctrl/Shift — несколько · × на записи — убрать брак · в сборке тяните ручки краёв.<br>Клавиши: <kbd>&uarr;</kbd><kbd>&darr;</kbd> категория · <kbd>Z</kbd> текущий дубль в неё · <kbd>X</kbd> отменить · <kbd>Del</kbd> убрать запись · <kbd>P</kbd> слушать сборку</div>
-                        </div>
-                    </div>
+                    <div id="sumManualActions" class="action-col" style="display: none;"></div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">
                         <!-- Переключение категорий -->

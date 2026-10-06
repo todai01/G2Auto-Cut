@@ -2449,7 +2449,7 @@ let isProcessing = false;
                     audacityEmbedded = false;
                     stopEmbedWatchdog();
                     let btn = document.getElementById(embedBtnId);
-                    if (btn) btn.innerText = 'Встроить окно Audacity сюда';
+                    if (btn) btn.innerText = embedBtnId === 'sumEmbedAudacityBtn' ? 'Прикрепить Audacity' : 'Встроить окно Audacity сюда';
                 }
             }, 500);
         }
@@ -2525,7 +2525,7 @@ let isProcessing = false;
             // В режиме «Суммы» рамка остаётся на экране: место под окно
             // Audacity закреплено за ней, даже когда окно отсоединено.
             if (area) area.style.display = sumModeActive ? 'block' : 'none';
-            if (btn) btn.innerText = 'Встроить окно Audacity сюда';
+            if (btn) btn.innerText = embedBtnId === 'sumEmbedAudacityBtn' ? 'Прикрепить Audacity' : 'Встроить окно Audacity сюда';
             try {
                 // При возврате в главное меню окно не просто отсоединяем
                 // (это возвращает его на передний план поверх всего) —

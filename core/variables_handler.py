@@ -2004,21 +2004,20 @@ class VariablesMixin:
         том порядке, в каком колонки идут в самой загруженной таблице
         (марка → год → суммы, как в RU.xlsx), а не «сначала суммы, потом
         доп.категории», как было раньше. Без словаря (чистый режим
-        «Суммы» без Excel) — просто ярусы активной логики по порядку
-        каскада, доп.категорий тогда и не бывает."""
+        «Суммы» без Excel) — все пять ярусов по порядку.
+
+        Логик 1/2 здесь больше нет: видны все категории, а что попадёт в
+        сборку, решает строка таблицы."""
         columns = getattr(self, 'var_template_columns', None)
         if not columns:
-            return self._sum_active_logic_tiers()
+            return list(SUM_TIER_ORDER)
 
-        active_sum = set(self._sum_active_logic_tiers())
         order, seen = [], set()
         for col in columns:
             if col['type'] == 'connector':
                 continue
             key = col['key']
             if key in seen:
-                continue
-            if col['type'] == 'sum' and key not in active_sum:
                 continue
             order.append(key)
             seen.add(key)
