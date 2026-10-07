@@ -2346,3 +2346,40 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 }
 .menu-recent__clear:hover{ color: var(--accent-trash); border-color: rgba(239,91,80,.35); background: var(--tint-trash); }
 .menu-recent__clear.is-confirm{ color: var(--accent-trash); border-color: var(--accent-trash); background: var(--tint-trash); }
+
+/* --- «Прожектор»: мягкий свет вокруг курсора внутри карточек меню ---
+   Координаты курсора (--mx/--my) ставит script.js. ::before — пятно
+   света внутри, ::after — подсветка ближайшего к курсору участка рамки. */
+.stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut{ position: relative; isolation: isolate; }
+.stage-loading .option-card::before, .menu-row::before, .menu-tool::before, .menu-recent__item::before,
+.stage-loading .option-card::after, .menu-row::after, .menu-tool::after, .menu-recent__item::after, .menu-cut::after{
+    content: ""; position: absolute; pointer-events: none; border-radius: inherit;
+    opacity: 0; transition: opacity .35s ease;
+}
+.stage-loading .option-card::before, .menu-row::before, .menu-tool::before, .menu-recent__item::before{
+    inset: 0; z-index: -1;
+    background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%),
+                rgba(var(--glow-rgb, 120,170,255), .17), transparent 62%);
+}
+.stage-loading .option-card::after, .menu-row::after, .menu-tool::after, .menu-recent__item::after, .menu-cut::after{
+    inset: -1px; padding: 1px; z-index: 1;
+    background: radial-gradient(160px circle at var(--mx, 50%) var(--my, 50%),
+                rgba(var(--glow-rgb, 120,170,255), .55), transparent 70%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+}
+.stage-loading .option-card:hover::before, .menu-row:hover::before, .menu-tool:hover::before, .menu-recent__item:hover::before,
+.stage-loading .option-card:hover::after, .menu-row:hover::after, .menu-tool:hover::after, .menu-recent__item:hover::after, .menu-cut:hover::after{ opacity: 1; }
+/* Свет — цветом режима */
+.menu-row--var{ --glow-rgb: 238,172,62; }
+.menu-row--good{ --glow-rgb: 47,191,125; }
+.menu-row--info{ --glow-rgb: 77,149,234; }
+.stage-loading .option-card.loaded{ --glow-rgb: 47,191,125; }
+@media (prefers-reduced-motion: reduce){
+    .stage-loading .option-card::before, .menu-row::before, .menu-tool::before, .menu-recent__item::before{ transition: none; }
+}
+
+/* Рамка при наведении — приглушённая, яркий участок даёт «прожектор» */
+.menu-row:hover{ border-color: rgba(var(--glow-rgb, 120,170,255), .30); }
+.stage-loading .option-card:hover{ border-color: rgba(var(--glow-rgb, 120,170,255), .30); }
+.menu-tool:hover{ border-color: rgba(var(--glow-rgb, 120,170,255), .22); }

@@ -427,6 +427,28 @@ let isProcessing = false;
             showToast('Список недавних проектов очищен');
         }
 
+        // «Прожектор» в меню: карточка под курсором знает, где мышь (--mx/--my).
+        (function initMenuSpotlight() {
+            const SEL = '.option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut';
+            let stage = document.getElementById('stage1-loading');
+            if (!stage) return;
+            let raf = 0, last = null;
+            stage.addEventListener('pointermove', e => {
+                last = e;
+                if (raf) return;
+                raf = requestAnimationFrame(() => {
+                    raf = 0;
+                    let card = last.target.closest && last.target.closest(SEL);
+                    if (!card || !stage.contains(card)) return;
+                    let r = card.getBoundingClientRect();
+                    // zoom у сетки меню: clientX в экранных пикселях, а --mx — в CSS-пикселях карточки.
+                    let k = card.offsetWidth ? r.width / card.offsetWidth : 1;
+                    card.style.setProperty('--mx', ((last.clientX - r.left) / k) + 'px');
+                    card.style.setProperty('--my', ((last.clientY - r.top) / k) + 'px');
+                });
+            }, { passive: true });
+        })();
+
         // Плавное раскрытие «Настроек нарезки» (у <details> анимации нет).
         function toggleMenuCut(e) {
             let det = e.currentTarget.parentElement;
