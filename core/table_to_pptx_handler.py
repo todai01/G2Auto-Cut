@@ -40,10 +40,10 @@ _LANG_SUFFIX_RE = re.compile(r'_(tr|ru|kz|kg|uz)$')
 # словами, только цифрами). Применяется только к таблицам нового формата
 # с тегами в заголовках (tier_lang определён) — старые свободные
 # русские/казахские таблицы это не затрагивает, см. _table_pptx_format_tier_value.
+# «Сотни» слова не получают: число там и так понятно («2», «200»).
 _TIER_UNIT_WORDS = {
     'millions': {'ru': 'млн', 'kz': 'млн', 'tr': 'milyon'},
     'hundred_thousands': {'ru': 'тыс', 'kz': 'мың', 'tr': 'bin'},
-    'hundreds': {'ru': 'сот', 'kz': 'жүз', 'tr': 'yüz'},
     'thousands': {'ru': 'тыс', 'kz': 'мың', 'tr': 'bin'},
     'tenge': {'ru': 'тенге', 'kz': 'теңге', 'tr': 'tl'},
 }
@@ -319,11 +319,6 @@ class TableToPptxMixin:
         return suffixes.pop() if len(suffixes) == 1 else None
 
     @staticmethod
-    def _table_pptx_first_number(text):
-        m = re.search(r'\d+', text or '')
-        return int(m.group()) if m else None
-
-    @staticmethod
     def _table_pptx_format_tier_value(tier, text, tier_lang=None):
         """Ячейка яруса-суммы в Excel часто хранит голое число (100,
         2000000), а слово-единица («тыс», «bin», «milyon») на экране в
@@ -371,14 +366,12 @@ class TableToPptxMixin:
         return bool(re.search(r'(?<!\d)0(?!\d)', low))
 
     def _table_pptx_find_trigger_idx(self, rows, tier_cols):
-        """Индекс строки, с которой начинается переключение на «Миллионы +
-        Сотни тысяч (по кругу) + Тенге» — это строка, где ярус «Тенге»/tl
-        явно помечен как «ноль» («ноль тенге», «sıfır tl»/«sıfır lira»).
-        Именно эта строка становится первым «комбинированным» слайдом —
-        дальше «Миллионы» и «Тенге» держатся на значении из самой первой
-        строки таблицы (не на «нуле» — ноль это только сигнал переключения,
-        а не то, что нужно показать на слайде), а крутится только «Сотни
-        тысяч»."""
+        """Индекс строки, где ярус «Тенге»/tl помечен как «ноль» («0 tl»,
+        «sıfır tl»/«sıfır lira», «ноль тенге»). Сама эта строка показывается
+        как обычно, со своими значениями (включая «0 tl»); переключение на
+        «Миллионы + Сотни тысяч + Тенге» начинается со СЛЕДУЮЩЕЙ строки —
+        «Миллионы» и «Тенге» там держатся на значении из первой строки
+        таблицы, а «Сотни тысяч» идут по колонке до её конца."""
         idx = tier_cols.get('tenge')
         if idx is None:
             return None
@@ -388,20 +381,15 @@ class TableToPptxMixin:
         return None
 
     def _table_pptx_collect_hundred_thousands_cycle(self, rows, tier_cols, tier_lang=None):
-        """Собирает уже записанные значения яруса «Сотни тысяч» (обычно
-        это всего 9 строк — «100 тыс»...«900 тыс», записанные один раз в
-        начале таблицы) — после переключения они используются по очереди,
-        один раз каждое, а не читаются из собственных (обычно пустых)
-        ячеек строки. Когда список исчерпан (использовали «900 тыс») —
-        суммы на слайдах пропадают совсем, без зацикливания заново."""
+        """Все значения колонки «Сотни тысяч» по порядку, сверху вниз, до
+        конца колонки — каждая непустая ячейка, и цифрами («100»), и словами
+        («bir yüz bin»). После переключения они идут по одному на слайд;
+        когда колонка закончилась — суммы на слайдах больше не показываются."""
         idx = tier_cols.get('hundred_thousands')
         if idx is None:
             return []
-        cycle = []
-        for row in rows:
-            if idx < len(row) and self._table_pptx_first_number(row[idx]) is not None:
-                cycle.append(self._table_pptx_format_tier_value('hundred_thousands', row[idx], tier_lang))
-        return cycle
+        return [self._table_pptx_format_tier_value('hundred_thousands', row[idx], tier_lang)
+                for row in rows if idx < len(row) and (row[idx] or '').strip()]
 
     def _table_pptx_build_logic2_context(self, rows, tier_cols, tier_lang=None):
         millions_idx = tier_cols.get('millions')
@@ -469,11 +457,10 @@ class TableToPptxMixin:
         first_tier_idx = min(tier_indices) if tier_indices else None
 
         # Переключение на «Миллионы + Сотни тысяч + Тенге» — одноразовое и
-        # дальше держится до конца таблицы (sticky): срабатывает ровно на
-        # строке trigger_idx (последняя строка, где у «Тенге»/tl ещё есть
-        # значение), а дальше идёт по этому же сценарию без повторных проверок.
+        # дальше держится до конца таблицы: строка с «нулём» (trigger_idx)
+        # ещё показывается как есть, переключаемся со следующей.
         if not logic2_ctx['triggered'] and logic2_ctx['cycle'] and logic2_ctx['trigger_idx'] is not None \
-                and row_idx == logic2_ctx['trigger_idx']:
+                and row_idx == logic2_ctx['trigger_idx'] + 1:
             logic2_ctx['triggered'] = True
         use_logic2 = logic2_ctx['triggered'] and not logic2_ctx['exhausted']
 
