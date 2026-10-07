@@ -2523,3 +2523,16 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 .fx-letter.is-g{ text-shadow: 0 0 16px rgba(255,255,255,.25); }
 .stage-loading.menu-entering .rise, .stage-loading.menu-entering .section-label{ will-change: transform, opacity; }
 .fx-wave{ will-change: transform, opacity; }
+
+/* Свет по рамке карточки при «активации» волной */
+@property --fx-p{ syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@property --fx-start{ syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.fx-trace{
+    position: absolute; inset: -1px; z-index: 3; pointer-events: none; border-radius: inherit;
+    padding: 1.5px;
+    background: conic-gradient(from var(--fx-start),
+        rgba(150,195,255,1) 0deg, rgba(110,170,255,.85) var(--fx-p), transparent calc(var(--fx-p) + .5deg),
+        transparent calc(359.5deg - var(--fx-p)), rgba(110,170,255,.85) calc(360deg - var(--fx-p)), rgba(150,195,255,1) 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+}

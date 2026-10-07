@@ -415,6 +415,10 @@ let isProcessing = false;
                     { transform: `translate(${tx}px, ${ty}px) scale(${k})`, textShadow: glow(0), filter: 'blur(0)' }
                 ], { duration: 1320, delay: 0, fill: 'forwards' }).finished;
                 jobs.push(gJob);
+                // Волна стартует ровно в момент касания (93% полёта «G»), не дожидаясь усадки.
+                setTimeout(() => {
+                    revealMenuFromLogo(menu, gOrigin);
+                }, Math.round(1320 * .93));
             });
 
             await Promise.all(jobs).catch(() => {});
@@ -422,8 +426,10 @@ let isProcessing = false;
             target.classList.add('is-landing');
             layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished
                 .catch(() => {}).then(() => layer.remove());
-            let lr = target.getBoundingClientRect();
-            revealMenuFromLogo(menu, gOrigin || { x: lr.left + lr.width / 2, y: lr.top + lr.height / 2 });
+            if (!gOrigin) {
+                let lr = target.getBoundingClientRect();
+                revealMenuFromLogo(menu, { x: lr.left + lr.width / 2, y: lr.top + lr.height / 2 });
+            }
             setTimeout(() => target.classList.remove('is-landing'), 1400);
             stageAnimating = false;
         }
@@ -437,7 +443,7 @@ let isProcessing = false;
                 '.setup-brand__sub, .setup-header__right, .section-label, .rise'))
                 .filter(el => el.offsetParent !== null);
             let R = Math.hypot(Math.max(ox, innerWidth - ox), Math.max(oy, innerHeight - oy));
-            const WAVE_MS = 700;   // волна быстро стартует и замедляется к краям (easeOutCubic)
+            const WAVE_MS = 1100;  // волна быстро стартует и замедляется к краям (easeOutCubic)
             const EASE = 'cubic-bezier(.33,1,.68,1)';
             // Момент, когда кольцо (easeOutCubic) доходит до расстояния d.
             const reach = d => WAVE_MS * (1 - Math.cbrt(1 - Math.min(1, d / R)));
@@ -483,15 +489,33 @@ let isProcessing = false;
                     { opacity: 1, transform: `translate(${dx / n * 2}px, ${dy / n * 2}px) scale(1.012)`, offset: .62 },
                     { opacity: 1, transform: 'none' }
                 ], { duration: 520, delay, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
-                if (el.matches('.option-card, .menu-row, .menu-tool, .menu-cut')) {
-                    el.animate([
-                        { boxShadow: '0 0 0 1px rgba(110,170,255,.75), 0 0 26px rgba(77,149,234,.45)' },
-                        { boxShadow: '0 0 0 1px rgba(110,170,255,0), 0 0 0 rgba(77,149,234,0)' }
-                    ], { duration: 650, delay: delay + 60, easing: 'ease-out' });
-                }
+                if (el.matches('.option-card, .menu-row, .menu-tool, .menu-cut')) traceBorder(el, ox, oy, delay);
             });
             menu.classList.add('menu-fx');
             menu.classList.remove('menu-entering');
+        }
+
+        // «Активация» карточки: от точки, где её коснулась волна, по рамке в обе
+        // стороны бегут две полоски света, встречаются напротив — и вся рамка
+        // коротко вспыхивает.
+        function traceBorder(card, ox, oy, delay) {
+            let r = card.getBoundingClientRect();
+            let deg = Math.atan2(ox - (r.left + r.width / 2), -(oy - (r.top + r.height / 2))) * 180 / Math.PI;
+            let tr = document.createElement('span');
+            tr.className = 'fx-trace';
+            tr.style.setProperty('--fx-start', deg + 'deg');
+            card.appendChild(tr);
+            let run = tr.animate([
+                { '--fx-p': '0deg', opacity: 1 },
+                { '--fx-p': '180deg', opacity: 1, offset: .72 },
+                { '--fx-p': '180deg', opacity: 0 }
+            ], { duration: 820, delay, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'both' });
+            tr.animate([
+                { filter: 'drop-shadow(0 0 0 rgba(77,149,234,0))' },
+                { filter: 'drop-shadow(0 0 6px rgba(110,170,255,.9))', offset: .72 },
+                { filter: 'drop-shadow(0 0 0 rgba(77,149,234,0))' }
+            ], { duration: 820, delay, fill: 'both' });
+            run.finished.catch(() => {}).then(() => tr.remove());
         }
 
         // Запоминаем, что рабочий экран уже открывался: тогда из меню
