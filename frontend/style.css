@@ -2398,3 +2398,26 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 @media (prefers-reduced-motion: reduce){
     .stage-loading .option-card:hover, .menu-row:hover, .menu-tool:hover, .menu-recent__item:hover, .menu-cut:hover{ transform: none; }
 }
+
+/* Параметры «Пакетной сборки» — тихие переключатели внутри карточки */
+div.menu-row{ cursor: pointer; }
+div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset: 2px; }
+.menu-row__opts{ margin-left: auto; display: inline-flex; gap: 6px; flex: none; }
+.menu-row__opts + .menu-row__go{ margin-left: 6px; }
+.row-opt{ position: relative; cursor: pointer; }
+.row-opt input{ position: absolute; opacity: 0; pointer-events: none; }
+.row-opt span{
+    display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px;
+    border: 1px solid var(--border-soft); background: rgba(255,255,255,0.02);
+    font-size: var(--fs-xs); font-weight: 600; color: var(--text-faint); white-space: nowrap;
+    transition: color .2s ease, border-color .2s ease, background .2s ease;
+}
+.row-opt span::before{
+    content: ""; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px;
+    background: var(--text-faint); opacity: .5; transition: background .2s ease, opacity .2s ease, box-shadow .2s ease;
+}
+.row-opt:hover span{ color: var(--text-dim); border-color: var(--border); }
+.row-opt input:checked + span{ color: var(--accent-var); border-color: rgba(238,172,62,.4); background: var(--tint-var); }
+.row-opt input:checked + span::before{ background: var(--accent-var); opacity: 1; box-shadow: 0 0 6px var(--accent-var); }
+.row-opt input:focus-visible + span{ outline: 2px solid var(--accent-var); outline-offset: 1px; }
+@media (max-width: 700px){ .menu-row__opts{ display: none; } }

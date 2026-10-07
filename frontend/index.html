@@ -910,15 +910,25 @@
                 <div class="section-label"><span>Режимы переменных</span></div>
 
                 <div class="menu-list">
-                    <button class="menu-row menu-row--var rise" style="--d: 2" onclick="initVarBatch()"
-                            title="Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity">
+                    <div class="menu-row menu-row--var rise" style="--d: 2" role="button" tabindex="0"
+                         onclick="initVarBatch()" onkeydown="if (event.key === 'Enter' && event.target === this) initVarBatch()"
+                         title="Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity">
                         <span class="menu-row__icon"><svg class="icon"><use href="#icon-refresh-cw"></use></svg></span>
                         <span class="menu-row__text">
                             <span class="menu-row__title">Пакетная сборка</span>
                             <span class="menu-row__desc">Суммы по эталону в Audacity</span>
                         </span>
+                        <!-- Параметры именно этого режима — прямо в карточке -->
+                        <span class="menu-row__opts" onclick="event.stopPropagation()">
+                            <label class="row-opt" title="Без start/end и подгонки длительности">
+                                <input type="checkbox" id="simpleExportCheck"><span>Простой экспорт</span>
+                            </label>
+                            <label class="row-opt" title="Сортировать названия клипов и метки по цифрам">
+                                <input type="checkbox" id="sortByNameCheck"><span>По цифрам</span>
+                            </label>
+                        </span>
                         <span class="menu-row__go">&#8594;</span>
-                    </button>
+                    </div>
                     <button class="menu-row menu-row--good rise" style="--d: 3" onclick="showPremadeVarTypeChoice()"
                             title="Раскидать дубли по категориям и сразу собирать эталон, без start/end">
                         <span class="menu-row__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
@@ -939,15 +949,6 @@
                     </button>
                 </div>
 
-                <div class="menu-opts rise" style="--d: 5">
-                    <span class="menu-opts__label">Для пакетной сборки:</span>
-                    <label class="menu-opt" title="Без start/end и подгонки длительности">
-                        <input type="checkbox" id="simpleExportCheck"> Простой экспорт
-                    </label>
-                    <label class="menu-opt" title="Сортировать названия клипов и метки по цифрам">
-                        <input type="checkbox" id="sortByNameCheck"> Сортировка по цифрам
-                    </label>
-                </div>
 
                 <div class="section-label section-label--spaced"><span>Утилиты</span></div>
 
