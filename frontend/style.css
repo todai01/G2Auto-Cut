@@ -71,10 +71,7 @@
 body{
     margin:0;
     font-family: var(--font-ui);
-    background:
-        radial-gradient(ellipse 900px 500px at 15% -5%, rgba(77,149,234,0.08), transparent 60%),
-        radial-gradient(ellipse 700px 500px at 100% 0%, rgba(146,112,234,0.06), transparent 55%),
-        var(--bg);
+    background: var(--bg);   /* ровный строгий фон без цветных отсветов */
     color: var(--text);
     padding: 32px 20px 48px;
     -webkit-font-smoothing: antialiased;
@@ -2277,25 +2274,7 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 
 /* --- Плавные анимации меню --- */
 /* Мягкий «живой» фон: два размытых пятна медленно плывут. */
-.app-aurora{ position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0; transition: opacity .8s ease; }
-body.aurora-on .app-aurora{ opacity: 1; }
-.app-aurora::before, .app-aurora::after{
-    content: ""; position: absolute; border-radius: 50%;
-    filter: blur(90px); opacity: .16; will-change: transform;
-}
-.app-aurora::before{
-    width: 46vw; height: 46vw; left: -12vw; top: 8vh;
-    background: radial-gradient(circle, var(--accent-primary), transparent 65%);
-    animation: menuDriftA 26s ease-in-out infinite alternate;
-}
-.app-aurora::after{
-    width: 40vw; height: 40vw; right: -10vw; bottom: -8vh;
-    background: radial-gradient(circle, var(--accent-mode), transparent 65%);
-    animation: menuDriftB 32s ease-in-out infinite alternate;
-}
 .stage-splash, .stage-loading{ position: relative; z-index: 1; }
-@keyframes menuDriftA{ to{ transform: translate(14vw, 10vh) scale(1.15); } }
-@keyframes menuDriftB{ to{ transform: translate(-12vw, -12vh) scale(1.1); } }
 
 /* Появление «лесенкой»: из лёгкого размытия и снизу. */
 .stage-loading .rise{ animation: menuRise .6s cubic-bezier(.2,.7,.3,1) backwards; animation-delay: calc(var(--d, 0) * 55ms); }
@@ -2327,7 +2306,6 @@ body.aurora-on .app-aurora{ opacity: 1; }
 @keyframes menuPop{ from{ opacity: 0; transform: translateY(10px) scale(.97); } to{ opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce){
-    .app-aurora::before, .app-aurora::after{ animation: none; }
     .stage-loading .rise, #menuHelpOverlay .custom-alert-box{ animation: none; }
     .menu-row:hover, .menu-tool:hover, .stage-loading .option-card:hover{ transform: none; }
 }
@@ -2434,26 +2412,69 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
     background: linear-gradient(92deg, var(--accent-primary), var(--accent-mode));
     -webkit-background-clip: text; background-clip: text; color: transparent;
 }
-/* Уход заставки: текст и кнопка уплывают вверх с размытием, «дорожка» опадает */
-.stage-splash .splash-tagline, .stage-splash .splash-btn, .stage-splash .splash-note, .stage-splash .recent-projects{
-    transition: opacity .26s ease, transform .3s cubic-bezier(.4,0,.2,1), filter .3s ease;
-}
-.stage-splash.is-leaving .splash-tagline,
-.stage-splash.is-leaving .splash-btn,
-.stage-splash.is-leaving .splash-note,
-.stage-splash.is-leaving .recent-projects{ opacity: 0; transform: translateY(-14px); filter: blur(4px); animation: none; }
-.stage-splash.is-leaving .splash-btn{ transition-delay: .03s; }
-.stage-splash.is-leaving .splash-note{ transition-delay: .06s; }
-.stage-splash.is-leaving .splash-bars span{ animation: none; transform: scaleY(0); transition: transform .28s cubic-bezier(.4,0,.2,1); }
-.stage-splash.is-leaving .splash-mark{ animation: none; }
 
-/* Заставка в стиле меню: кнопка «Начать работу» тоже реагирует на мышь */
-.stage-splash .splash-btn{ position: relative; overflow: hidden; transition: transform .3s cubic-bezier(.2,.7,.3,1), box-shadow .3s ease; }
-.stage-splash .splash-btn:hover{ transform: scale(1.04); }
-.stage-splash .splash-btn::after{
-    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s ease;
-    background: radial-gradient(160px circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,.28), transparent 65%);
+
+/* ============================================================
+   ЗАСТАВКА — строгая и минималистичная, в одном стиле с меню
+   ============================================================ */
+.stage-splash{ flex-direction: column; min-height: calc(100vh - 80px); }
+.entry{
+    width: 100%; max-width: 380px; margin: auto;
+    display: flex; flex-direction: column; align-items: stretch;
 }
-.stage-splash .splash-btn:hover::after{ opacity: 1; }
-.stage-splash .recent-project{ transition: transform .3s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease; }
-.stage-splash .recent-project:hover{ transform: scale(1.02); }
+.entry__mark{
+    font-size: 56px; font-weight: 800; letter-spacing: -0.04em; line-height: 1;
+    color: var(--text); text-align: left; animation: entryIn .6s cubic-bezier(.2,.7,.3,1) both;
+}
+/* В минималистичном варианте — без градиента, ровный акцент */
+.entry__mark span, .setup-brand__mark span, .logo-fly span{
+    background: none; -webkit-background-clip: border-box; background-clip: border-box; color: var(--accent-primary);
+}
+.entry__tagline{
+    margin-top: 10px; padding-bottom: var(--space-5); border-bottom: 1px solid var(--border);
+    font-size: var(--fs-md); color: var(--text-dim);
+    animation: entryIn .6s cubic-bezier(.2,.7,.3,1) .06s both;
+}
+.entry__start{
+    position: relative; overflow: hidden; isolation: isolate;
+    margin-top: var(--space-5); width: 100%; height: 52px; padding: 0 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+    border-radius: var(--radius-md); cursor: pointer;
+    border: 1px solid rgba(77,149,234,.45); background: var(--tint-primary); color: var(--text);
+    font-size: var(--fs-lg); font-weight: 650; text-align: left;
+    transition: transform .3s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease, box-shadow .3s ease;
+    animation: entryIn .6s cubic-bezier(.2,.7,.3,1) .12s backwards;
+}
+.entry__start:hover{ transform: scale(1.025); border-color: var(--accent-primary); background: rgba(77,149,234,.16); box-shadow: 0 10px 26px rgba(0,0,0,.35); }
+.entry__start:active{ transform: scale(.985); transition-duration: .1s; }
+.entry__start kbd{ margin: 0; }
+.entry__start::before{
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .3s ease;
+    background: radial-gradient(200px circle at var(--mx, 50%) var(--my, 50%), rgba(120,170,255,.18), transparent 65%);
+}
+.entry__start:hover::before{ opacity: 1; }
+.entry__recent{ margin-top: var(--space-6); animation: entryIn .6s cubic-bezier(.2,.7,.3,1) .18s backwards; }
+.entry__recent .section-label{ margin-bottom: 6px; }
+.entry__recent-list{ display: flex; flex-direction: column; gap: 2px; }
+.entry__recent-list .menu-recent__item{ margin-left: -12px; width: calc(100% + 24px); }
+.entry__footer{
+    padding: var(--space-4) 0 0; text-align: center;
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint);
+    animation: entryIn .6s cubic-bezier(.2,.7,.3,1) .24s backwards;
+}
+@keyframes entryIn{ from{ opacity: 0; transform: translateY(10px); } to{ opacity: 1; transform: none; } }
+
+/* Уход заставки: всё, кроме логотипа, гаснет и уплывает вверх */
+.stage-splash .entry__tagline, .stage-splash .entry__start, .stage-splash .entry__recent, .stage-splash .entry__footer{
+    transition: opacity .25s ease, transform .3s cubic-bezier(.4,0,.2,1);
+}
+.stage-splash.is-leaving .entry__tagline,
+.stage-splash.is-leaving .entry__start,
+.stage-splash.is-leaving .entry__recent,
+.stage-splash.is-leaving .entry__footer{ opacity: 0; transform: translateY(-10px); animation: none; }
+.stage-splash.is-leaving .entry__start{ transition-delay: .03s; }
+.stage-splash.is-leaving .entry__recent{ transition-delay: .06s; }
+.stage-splash.is-leaving .entry__mark{ animation: none; }
+@media (prefers-reduced-motion: reduce){
+    .entry__mark, .entry__tagline, .entry__start, .entry__recent, .entry__footer{ animation: none; }
+}

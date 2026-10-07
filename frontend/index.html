@@ -7,9 +7,7 @@
 <link rel="stylesheet" href="style.css">
 
 </head>
-<body class="aurora-on">
-    <!-- Общий «живой» фон заставки и меню: один слой, чтобы при переходе не дёргался -->
-    <div id="appAurora" class="app-aurora" aria-hidden="true"></div>
+<body>
 
     <!-- Единый набор линейных иконок вместо смайликов — используется через
          <svg class="icon"><use href="#icon-ИМЯ"></use></svg> по всему софту. -->
@@ -799,26 +797,21 @@
 
     <!-- ЭКРАН 0 — Заставка -->
     <div id="stage0-splash" class="stage stage-splash">
-        <div class="splash">
-            <div class="splash-bars" aria-hidden="true">
-                <span></span><span></span><span></span><span></span><span></span>
-                <span></span><span></span><span></span><span></span><span></span>
-                <span></span><span></span><span></span><span></span><span></span>
-            </div>
-            <div class="splash-inner">
-                <div class="splash-mark">G<span>Vox</span></div>
-                <div class="splash-tagline">Студийная нарезка и монтаж озвучки</div>
-                <button class="splash-btn" onclick="enterApp()">
-                    Начать работу <kbd>Enter</kbd>
-                </button>
-                <div class="splash-note">GVox · работает в связке с Audacity</div>
+        <div class="entry">
+            <div class="splash-mark entry__mark">G<span>Vox</span></div>
+            <div class="entry__tagline">Студийная нарезка и монтаж озвучки</div>
 
-                <div id="recentProjectsPanel" class="recent-projects" style="display:none;">
-                    <div class="recent-projects__title">Недавние проекты</div>
-                    <div id="recentProjectsList" class="recent-projects__list"></div>
-                </div>
+            <button class="entry__start" onclick="enterApp()">
+                <span class="entry__start-text">Начать работу</span>
+                <kbd>Enter</kbd>
+            </button>
+
+            <div id="recentProjectsPanel" class="entry__recent" style="display:none;">
+                <div class="section-label"><span>Недавние проекты</span></div>
+                <div id="recentProjectsList" class="entry__recent-list"></div>
             </div>
         </div>
+        <div class="entry__footer">Работает в связке с Audacity</div>
     </div>
 
     <!-- ЭКРАН 1 — Подготовка проекта и выбор режима -->

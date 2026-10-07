@@ -252,8 +252,6 @@ let isProcessing = false;
                 let el = document.getElementById(id);
                 if (el) el.style.display = (id === activeId) ? STAGE_DISPLAY[id] : 'none';
             });
-            // Живой фон — только на заставке и в меню.
-            document.body.classList.toggle('aurora-on', activeId === 'stage0-splash' || activeId === 'stage1-loading');
         }
 
         const motionOK = () => !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -380,12 +378,12 @@ let isProcessing = false;
                 return;
             }
 
-            list.innerHTML = recentProjectsCache.map((it, idx) => `
-                <button class="recent-project" onclick="openRecentProject(${idx})">
-                    <span class="recent-project__name">${escapeHtml(it.name)}</span>
-                    <span class="recent-project__time">${formatRecentTime(it.updated_at)}</span>
-                </button>
-            `).join('');
+            list.innerHTML = recentProjectsCache.slice(0, 4).map((it, idx) => `
+                <button class="menu-recent__item" onclick="openRecentProject(${idx})" title="${escapeHtml(it.path || '')}">
+                    <span class="menu-recent__icon">${iconHTML('folder')}</span>
+                    <span class="menu-recent__name">${escapeHtml(it.name)}</span>
+                    <span class="menu-recent__time">${formatRecentTime(it.updated_at)}</span>
+                </button>`).join('');
             panel.style.display = 'block';
         }
 
@@ -535,7 +533,7 @@ let isProcessing = false;
 
         // Тот же «прожектор» на кнопке заставки.
         (function initSplashSpotlight() {
-            let btn = document.querySelector('#stage0-splash .splash-btn');
+            let btn = document.querySelector('#stage0-splash .entry__start');
             if (!btn) return;
             btn.addEventListener('pointermove', e => {
                 let r = btn.getBoundingClientRect();
