@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import webview
 
@@ -22,6 +23,18 @@ MODEL_DIR_NAME = 'whisper-model'
 DEFAULT_MODEL = 'small'
 MODEL_PATH_FILE = os.path.join(os.path.expanduser('~'), '.gvox', 'whisper_model_path.txt')
 NEED_MODEL = object()   # модель не скачалась и локальной нет — спросить папку
+
+ASR_RATE = 16000        # Whisper работает на 16 кГц
+PACK_MAX_SEC = 24.0     # дубли склеиваются в окна до ~24 с (модель всё равно считает окно 30 с)
+PACK_GAP_SEC = 1.0      # тишина между дублями внутри окна
+CLIP_SOLO_SEC = 10.0    # длинный дубль идёт отдельным окном
+NOISE_MIN_MS = 150      # короче — точно не слово
+NOISE_MAX_DBFS = -42.0  # тише пика -42 дБ — тишина/фон, распознавать незачем
+SPEECH_MIN_SCORE = 0.45 # ниже — распознанное ни на что не похоже, считаем шумом
+# Фразы, которые Whisper «придумывает» на тишине и шуме.
+_HALLUCINATIONS = ('продолжение следует', 'субтитр', 'спасибо за просмотр', 'спасибо за внимание',
+                   'подписывайтесь', 'редактор', 'торзок', 'thank you', 'thanks for watching',
+                   'altyazı', 'izlediğiniz için')
 
 _LAT2CYR = [
     ('shch', 'щ'), ('sch', 'щ'), ('sh', 'ш'), ('ch', 'ч'), ('zh', 'ж'), ('kh', 'х'), ('ts', 'ц'),
@@ -142,8 +155,11 @@ class AutoCheckMixin:
             return None, ("Не установлен модуль распознавания речи. В командной строке выполните:\n"
                           "pip install faster-whisper")
         local = self._auto_check_model_path()
+        cores = os.cpu_count() or 2
+        self._asr_workers = 2 if cores >= 4 else 1
         try:
-            model = WhisperModel(local or DEFAULT_MODEL, device='cpu', compute_type='int8')
+            model = WhisperModel(local or DEFAULT_MODEL, device='cpu', compute_type='int8',
+                                 cpu_threads=max(1, cores // self._asr_workers), num_workers=self._asr_workers)
         except Exception as e:
             if local:
                 return None, f"Не удалось загрузить модель из папки «{local}».\n\n{e}"
@@ -157,15 +173,86 @@ class AutoCheckMixin:
         except Exception:
             pass
 
+    @staticmethod
+    def _asr_load(path):
+        """Дубль как float32 16 кГц моно + длительность и пик (дБ)."""
+        import numpy as np
+        from pydub import AudioSegment
+        seg = AudioSegment.from_file(path).set_channels(1).set_frame_rate(ASR_RATE).set_sample_width(2)
+        samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
+        return samples, len(seg), seg.max_dBFS
+
+    @staticmethod
+    def _asr_packs(items):
+        """Склеивает короткие дубли в окна до PACK_MAX_SEC — модель считает
+        каждое окно как 30 с, так что один проход на 10 дублей вместо 10."""
+        packs, cur, cur_len = [], [], 0.0
+        for it in items:
+            d = it['ms'] / 1000.0
+            if d >= CLIP_SOLO_SEC:
+                packs.append([it])
+                continue
+            if cur and cur_len + PACK_GAP_SEC + d > PACK_MAX_SEC:
+                packs.append(cur)
+                cur, cur_len = [], 0.0
+            cur_len += (PACK_GAP_SEC if cur else 0.0) + d
+            cur.append(it)
+        if cur:
+            packs.append(cur)
+        return packs
+
+    def _asr_transcribe_pack(self, model, pack, language):
+        """Распознаёт окно и раскладывает слова обратно по дублям по времени."""
+        import numpy as np
+        gap = np.zeros(int(PACK_GAP_SEC * ASR_RATE), dtype=np.float32)
+        parts, spans, t = [], [], 0.0
+        for k, it in enumerate(pack):
+            if k:
+                parts.append(gap)
+                t += PACK_GAP_SEC
+            parts.append(it['audio'])
+            d = len(it['audio']) / ASR_RATE
+            spans.append((t, t + d))
+            t += d
+        audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
+        segments, _info = model.transcribe(
+            audio, language=None if language == 'auto' else language,
+            beam_size=1, best_of=1, word_timestamps=True, vad_filter=True,
+            condition_on_previous_text=False)
+        words = [[] for _ in pack]
+        for seg in segments:
+            # Кусок, который сама модель считает «не речью», — выдумка на шуме.
+            if getattr(seg, 'no_speech_prob', 0) > 0.6 and getattr(seg, 'avg_logprob', 0) < -0.7:
+                continue
+            for w in (seg.words or []):
+                mid = (w.start + w.end) / 2
+                for k, (a, b) in enumerate(spans):
+                    if a - 0.3 <= mid <= b + 0.3:
+                        words[k].append(w.word)
+                        break
+        return [''.join(ws).strip() for ws in words]
+
+    @staticmethod
+    def _asr_is_noise(heard):
+        low = _norm(heard)
+        return len(low.replace(' ', '')) < 2 or any(h in low for h in _HALLUCINATIONS)
+
     def sum_auto_check(self, tier, indices, language='ru'):
-        """Распознать выбранные дубли и сверить со значениями категории tier."""
+        """Распознать дубли и сверить со значениями категории tier.
+        indices=None — все ещё не разобранные и не проверенные дубли списка."""
         values = (getattr(self, 'var_extra_tag_values', None) or {}).get(tier) or []
         if not values:
             return {"error": "Для этой категории в таблице нет списка значений."}
         files, _ = self._sum_source_files()
+        if not isinstance(getattr(self, 'sum_asr_results', None), dict):
+            self.sum_asr_results = {}
+        if indices is None:
+            assigned = self._sum_assigned_sources()
+            indices = [i for i, p in enumerate(files)
+                       if p not in assigned and (self.sum_asr_results.get(p) or {}).get('tier') != tier]
         indices = sorted({int(i) for i in (indices or []) if 0 <= int(i) < len(files)})
         if not indices:
-            return {"error": "Нет дублей для проверки."}
+            return {"error": "Нет дублей для проверки — все уже разобраны или проверены."}
         lock = getattr(self, '_auto_check_lock', None)
         if lock is None:
             lock = self._auto_check_lock = threading.Lock()
@@ -178,37 +265,64 @@ class AutoCheckMixin:
             if err:
                 return {"error": err}
             transcripts = (getattr(self, 'var_transcripts', None) or {}).get(tier, {})
-            expected, _ = self._var_expected_value(tier)
-            if not isinstance(getattr(self, 'sum_asr_results', None), dict):
-                self.sum_asr_results = {}
             self._auto_check_stop = False
-            done = 0
-            for n, i in enumerate(indices):
-                if self._auto_check_stop:
-                    break
-                path = files[i]
-                try:
-                    segments, _info = model.transcribe(path, language=None if language == 'auto' else language,
-                                                       beam_size=5, without_timestamps=True,
-                                                       condition_on_previous_text=False)
-                    heard = ' '.join(s.text for s in segments).strip()
-                except Exception as e:
-                    heard, err_text = '', str(e)
-                else:
-                    err_text = None
-                scored = score_candidates(heard, values, transcripts) if heard else []
+            total = len(indices)
+            progress = {"done": 0}
+            finish_lock = threading.Lock()
+
+            def finish(i, heard, noise=False, err_text=None):
+                scored = score_candidates(heard, values, transcripts) if heard and not noise else []
                 best, best_score = scored[0] if scored else (None, 0.0)
                 second = scored[1][1] if len(scored) > 1 else 0.0
-                confident = best_score >= AUTO_CHECK_THRESHOLD and best_score - second >= AUTO_CHECK_MARGIN
-                result = {
-                    "tier": tier, "heard": heard, "best": best, "score": round(best_score, 3),
-                    "second": round(second, 3), "confident": confident,
-                    "is_expected": bool(best and best == expected), "error": err_text,
-                }
-                self.sum_asr_results[path] = result
-                done += 1
-                self._auto_check_push({"index": i, "path": path, "done": n + 1, "total": len(indices), **result})
-            return {"status": "ok", "done": done, "total": len(indices), "stopped": self._auto_check_stop}
+                if not noise and heard and best_score < SPEECH_MIN_SCORE:
+                    noise = True
+                confident = (not noise and best_score >= AUTO_CHECK_THRESHOLD
+                             and best_score - second >= AUTO_CHECK_MARGIN)
+                result = {"tier": tier, "heard": heard, "best": None if noise else best,
+                          "score": round(best_score, 3), "second": round(second, 3),
+                          "confident": confident, "noise": noise, "error": err_text}
+                with finish_lock:
+                    self.sum_asr_results[files[i]] = result
+                    progress["done"] += 1
+                    done = progress["done"]
+                self._auto_check_push({"index": i, "path": files[i], "done": done, "total": total, **result})
+
+            # 1) Быстрый отсев: слишком короткое или тихое — шум без распознавания.
+            items = []
+            for i in indices:
+                if self._auto_check_stop:
+                    break
+                try:
+                    audio, ms, peak = self._asr_load(files[i])
+                except Exception as e:
+                    finish(i, '', err_text=str(e))
+                    continue
+                if ms < NOISE_MIN_MS or peak < NOISE_MAX_DBFS:
+                    finish(i, '', noise=True)
+                else:
+                    items.append({"index": i, "audio": audio, "ms": ms})
+
+            # 2) Остальное — окнами, параллельно.
+            def run(pack):
+                if self._auto_check_stop:
+                    return
+                try:
+                    heard_list = self._asr_transcribe_pack(model, pack, language)
+                except Exception as e:
+                    for it in pack:
+                        finish(it['index'], '', err_text=str(e))
+                    return
+                for it, heard in zip(pack, heard_list):
+                    finish(it['index'], heard, noise=self._asr_is_noise(heard))
+
+            with ThreadPoolExecutor(max_workers=getattr(self, '_asr_workers', 1)) as ex:
+                list(ex.map(run, self._asr_packs(items)))
+            try:
+                from core import project_state
+                project_state.save(self)
+            except Exception:
+                pass
+            return {"status": "ok", "done": progress["done"], "total": total, "stopped": self._auto_check_stop}
         finally:
             lock.release()
 

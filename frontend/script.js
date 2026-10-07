@@ -1899,11 +1899,14 @@ let isProcessing = false;
         function sumDubRenderAsr(card, asr) {
             let old = card.querySelector('.sum-dub__asr');
             if (old) old.remove();
-            card.classList.remove('asr-ok', 'asr-low');
+            card.classList.remove('asr-ok', 'asr-low', 'asr-noise');
             if (!asr) return;
             let line = document.createElement('div');
             line.className = 'sum-dub__asr';
-            if (asr.error || !asr.heard) {
+            if (asr.noise) {
+                line.textContent = 'шум';
+                card.classList.add('asr-noise');
+            } else if (asr.error || !asr.heard) {
                 line.textContent = asr.error ? 'ошибка' : 'тишина?';
                 card.classList.add('asr-low');
             } else {
@@ -1912,11 +1915,13 @@ let isProcessing = false;
             }
             card.title = (asr.heard ? `Распознано: «${asr.heard}»\n` : '')
                 + (asr.best ? `Похоже на: ${asr.best} — ${Math.round(asr.score * 100)}% (второй вариант ${Math.round((asr.second || 0) * 100)}%)\n` : '')
-                + (asr.confident ? 'Уверенно — можно переносить' : 'Не уверен — послушайте')
+                + (asr.noise ? 'Похоже на шум/тишину — слов не нашлось' : asr.confident ? 'Уверенно — можно переносить' : 'Не уверен — послушайте')
                 + (asr.error ? `\nОшибка: ${asr.error}` : '');
             card.appendChild(line);
         }
+        let sumAsrStats = { ok: 0, low: 0, noise: 0 };
         function sumAutoCheckProgress(p) {
+            if (p.noise) sumAsrStats.noise++; else if (p.confident) sumAsrStats.ok++; else sumAsrStats.low++;
             let dubs = lastSumState && lastSumState.dubs;
             if (dubs) {
                 let it = dubs.items.find(x => x.index === p.index);
@@ -1946,15 +1951,16 @@ let isProcessing = false;
             }
             if (!sumStage1Tiers.length) return;
             let tier = sumStage1Tiers[sumStage1SelectedIdx];
-            let dubs = (lastSumState && lastSumState.dubs && lastSumState.dubs.items) || [];
-            let indices = sumDubSel.size ? [...sumDubSel].sort((a, b) => a - b)
-                : dubs.filter(it => !it.tiers.length).map(it => it.index);
-            if (!indices.length) { showToast('Нет неразобранных дублей в ленте'); return; }
+            // Выделены дубли — проверяем их; иначе все неразобранные и ещё не
+            // проверенные во всём списке (не только в видимой ленте).
+            let indices = sumDubSel.size ? [...sumDubSel].sort((a, b) => a - b) : null;
             let lang = (document.getElementById('sumAsrLang') || {}).value || 'ru';
             sumAsrRunning = true;
+            sumAsrStats = { ok: 0, low: 0, noise: 0 };
             btn.classList.add('is-running');
             btn.textContent = 'Загружаю модель…';
-            showToast(`Автопроверка: ${indices.length} дубл. против «${tier.label}»`);
+            showToast(indices ? `Автопроверка: ${indices.length} выделенных против «${tier.label}»`
+                              : `Автопроверка всех неразобранных против «${tier.label}» — можно продолжать работать`);
             let res;
             try { res = await pywebview.api.sum_auto_check(tier.key, indices, lang); }
             catch (e) { res = { error: String(e) }; }
@@ -1963,9 +1969,7 @@ let isProcessing = false;
             btn.textContent = 'Автопроверка';
             if (res && res.need_model) { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
             if (res && res.error) { showBeautifulAlert(`❌ <b>Автопроверка</b><br><br>${escapeHtml(res.error).replace(/\n/g, '<br>')}`); return; }
-            let ok = ((lastSumState && lastSumState.dubs && lastSumState.dubs.items) || [])
-                .filter(it => indices.includes(it.index) && it.asr && it.asr.confident).length;
-            showToast(`${res.stopped ? 'Остановлено' : 'Готово'}: проверено ${res.done}, уверенно ${ok}, на прослушку ${res.done - ok}`);
+            showToast(`${res.stopped ? 'Остановлено' : 'Готово'}: проверено ${res.done} — уверенно ${sumAsrStats.ok}, на прослушку ${sumAsrStats.low}, шум ${sumAsrStats.noise}`, 6000);
         }
 
         function sumDubClick(e, it, card, items) {
