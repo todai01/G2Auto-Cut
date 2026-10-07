@@ -2184,7 +2184,8 @@ let isProcessing = false;
                 sumEd.segs = (res && res.segments) || [];
                 sumEd.bucket = (res && res.bucket_ms) || 10;
                 sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
-                sumEd.gains = sumEd.segs.map(() => 0);
+                sumEd.ref = (res && res.ref_loudness_db != null) ? res.ref_loudness_db : null;
+                sumEd.gains = sumEditorAutoGains();
                 sumEd.cuts = sumEd.segs.map(() => []);
                 sumEd.sel = null;
                 let missing = (res && res.missing) || [];
@@ -2556,11 +2557,40 @@ let isProcessing = false;
             sumEd.gains.forEach((g, i) => { if (g) out[i] = g; });
             return out;
         }
+        // Авто-громкость: переменная подгоняется под громкость связок,
+        // чтобы сборка звучала единым потоком. Выключатель запоминается.
+        function sumEditorAutoOn() {
+            try { return localStorage.getItem('gvox_auto_gain') !== '0'; } catch (e) { return true; }
+        }
+        function sumEditorAutoGains() {
+            let on = sumEditorAutoOn();
+            return sumEd.segs.map(s => (on && !s.connector && s.auto_gain_db) ? s.auto_gain_db : 0);
+        }
+        function sumEditorToggleAuto(on) {
+            try { localStorage.setItem('gvox_auto_gain', on ? '1' : '0'); } catch (e) {}
+            sumEd.gains = sumEditorAutoGains();
+            sumEditorRenderGains();
+            sumEditorDraw();
+        }
+        const edDb = g => `${g > 0 ? '+' : ''}${g} дБ`;
         // Громкость каждой переменной: ▼/▲ по 1 дБ, сразу слышно.
         function sumEditorRenderGains() {
             let box = document.getElementById('sumEditorGains');
             if (!box) return;
             box.innerHTML = '';
+            if (sumEd.segs.some(s => !s.connector && !s.missing)) {
+                let auto = sumEl('label', 'sum-gain sum-gain--auto');
+                let cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = sumEditorAutoOn();
+                cb.addEventListener('change', () => sumEditorToggleAuto(cb.checked));
+                auto.append(cb, sumEl('span', '', 'Авто-громкость под связки'));
+                auto.title = sumEd.ref != null
+                    ? `Громкость речи в связках: ${sumEd.ref} дБ. Переменные подтягиваются к ней; ▲▼ — поправить на слух`
+                    : 'Связок в сборке нет — подгонять не под что';
+                if (sumEd.ref == null) auto.classList.add('is-off');
+                box.appendChild(auto);
+            }
             sumEd.segs.forEach((seg, i) => {
                 if (seg.connector || seg.missing) return;
                 let row = sumEl('span', 'sum-gain');
@@ -2574,11 +2604,15 @@ let isProcessing = false;
                 down.title = 'Тише на 1 дБ'; up.title = 'Громче на 1 дБ';
                 const paint = () => {
                     let g = sumEd.gains[i] || 0;
-                    val.textContent = g ? `${g > 0 ? '+' : ''}${g} дБ` : '0 дБ';
+                    val.textContent = g ? edDb(g) : '0 дБ';
                     val.classList.toggle('is-changed', !!g);
+                    let auto = sumEditorAutoOn() && seg.auto_gain_db;
+                    val.classList.toggle('is-auto', !!auto && g === seg.auto_gain_db);
+                    val.title = (seg.loudness_db != null ? `Громкость записи: ${seg.loudness_db} дБ` : '')
+                        + (auto ? `\nАвто-поправка под связки: ${edDb(seg.auto_gain_db)}` : '');
                 };
                 const bump = d => {
-                    sumEd.gains[i] = Math.max(-20, Math.min(20, (sumEd.gains[i] || 0) + d));
+                    sumEd.gains[i] = Math.round(Math.max(-20, Math.min(20, (sumEd.gains[i] || 0) + d)) * 10) / 10;
                     paint(); sumEditorDraw();
                     sumEditorPlay(Math.max(0, edOrigToOut(edSegStart(i) + sumEd.trims[i][0]) - 400));
                 };
@@ -2654,7 +2688,7 @@ let isProcessing = false;
             try { res = await pywebview.api.sum_editor_clear_slots(sumStage2Indices()); } catch (e) { res = null; }
             if (res && !res.error) { sumEditorApplyLoad(res); return; }
             sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
-            sumEd.gains = sumEd.segs.map(() => 0);
+            sumEd.gains = sumEditorAutoGains();
             sumEd.cuts = sumEd.segs.map(() => []);
             sumEd.sel = null;
             sumEditorRenderGains();

@@ -2,10 +2,12 @@
 
 Собирает текущую строку таблицы (связки start/end + значения категорий)
 одной дорожкой. Правка прямо в программе: у каждого значения можно
-подвинуть начало и конец мышью, поменять громкость, подставить в слот
+подвинуть начало и конец мышью, поменять громкость (по умолчанию она
+сама подгоняется под громкость связок), подставить в слот
 любую другую запись (чип из категории или дубль из ленты), прослушать
 сборку и сохранить эталон в «Проверенные» — без Audacity."""
 
+import math
 import os
 import tempfile
 import time
@@ -16,6 +18,13 @@ EDITOR_RATE = 8000          # как SetProject: Rate=8000 в сборке че�
 PEAK_BUCKET_MS = 10
 MIN_KEEP_MS = 40
 GAIN_LIMIT_DB = 20
+# Анализ громкости: меряем только речь — кадры по 50 мс, тишину и
+# паузы между словами отбрасываем (порог −60 дБ и 25 дБ ниже пика).
+LOUD_FRAME_MS = 50
+LOUD_ABS_GATE_DB = -60
+LOUD_REL_GATE_DB = 25
+AUTO_GAIN_DEADZONE_DB = 1.0   # мельче — не трогаем, на слух не заметно
+PEAK_HEADROOM_DB = 1.0        # поднимаем не выше, чем до −1 дБ пика
 
 
 class TimingEditorMixin:
@@ -30,6 +39,53 @@ class TimingEditorMixin:
         full = float(1 << (8 * audio.sample_width - 1))
         return [round(max(max(samples[i:i + per]), -min(samples[i:i + per])) / full, 3)
                 for i in range(0, len(samples), per)]
+
+    @staticmethod
+    def _editor_speech_powers(audio):
+        """Мощности кадров с речью (без тишины и пауз)."""
+        if audio is None or len(audio) < LOUD_FRAME_MS:
+            return []
+        full = float(1 << (8 * audio.sample_width - 1))
+        frames = []
+        for i in range(0, len(audio) - LOUD_FRAME_MS + 1, LOUD_FRAME_MS):
+            rms = audio[i:i + LOUD_FRAME_MS].rms / full
+            if rms > 0:
+                frames.append(rms * rms)
+        if not frames:
+            return []
+        to_db = lambda pw: 10 * math.log10(pw)
+        top = to_db(max(frames))
+        return [pw for pw in frames
+                if to_db(pw) >= LOUD_ABS_GATE_DB and to_db(pw) >= top - LOUD_REL_GATE_DB]
+
+    @staticmethod
+    def _editor_loudness_db(powers):
+        return round(10 * math.log10(sum(powers) / len(powers)), 1) if powers else None
+
+    def _editor_auto_gains(self, segments):
+        """Поправка громкости переменных под связки: (опорный уровень,
+        {номер: (громкость, поправка_дБ)}). Без связок — опоры нет."""
+        ref_powers = []
+        for seg in segments:
+            if seg["connector"] and seg["audio"] is not None:
+                ref_powers += self._editor_speech_powers(seg["audio"])
+        ref = self._editor_loudness_db(ref_powers)
+        out = {}
+        for i, seg in enumerate(segments):
+            if seg["connector"] or seg["audio"] is None:
+                continue
+            loud = self._editor_loudness_db(self._editor_speech_powers(seg["audio"]))
+            gain = 0.0
+            if ref is not None and loud is not None:
+                gain = ref - loud
+                # Не доводим до клиппинга.
+                peak = seg["audio"].max_dBFS
+                if gain > 0 and peak != float('-inf'):
+                    gain = max(0.0, min(gain, -PEAK_HEADROOM_DB - peak))
+                gain = max(-GAIN_LIMIT_DB, min(GAIN_LIMIT_DB, gain))
+                gain = 0.0 if abs(gain) < AUTO_GAIN_DEADZONE_DB else round(gain * 2) / 2
+            out[i] = (loud, gain)
+        return ref, out
 
     def _editor_overrides(self):
         """Подставленные вручную записи {категория: путь} — только для той
@@ -104,8 +160,15 @@ class TimingEditorMixin:
                 "duration_ms": len(audio) if audio is not None else 0,
                 "peaks": self._editor_peaks(audio) if audio is not None else [],
             })
+        ref, auto = self._editor_auto_gains(cache)
+        for i, seg in enumerate(out):
+            loud, gain = auto.get(i, (None, 0.0))
+            if seg["connector"] and cache[i]["audio"] is not None:
+                loud = self._editor_loudness_db(self._editor_speech_powers(cache[i]["audio"]))
+            seg["loudness_db"] = loud
+            seg["auto_gain_db"] = gain
         self._sum_editor = {"segments": cache, "row_idx": getattr(self, 'sum_stage2_row_idx', 0)}
-        return {"segments": out, "bucket_ms": PEAK_BUCKET_MS, "missing": missing}
+        return {"segments": out, "bucket_ms": PEAK_BUCKET_MS, "missing": missing, "ref_loudness_db": ref}
 
     def sum_editor_set_slot(self, key, path=None, dub_index=None, indices=None):
         """Подставить в слот категории key запись: путь (чип из категории)

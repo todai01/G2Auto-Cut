@@ -2152,3 +2152,9 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
     opacity: 0.45;
     cursor: not-allowed;
 }
+
+.sum-gain--auto{ cursor: pointer; padding: 2px 8px; gap: 6px; color: var(--text); user-select: none; }
+.sum-gain--auto input{ accent-color: var(--accent-primary); margin: 0; cursor: pointer; }
+.sum-gain--auto.is-off{ opacity: 0.5; }
+.sum-gain__val.is-auto{ color: var(--accent-primary); }
+.sum-gain__val.is-auto::before{ content: "авто "; font-size: 10px; opacity: 0.75; }
