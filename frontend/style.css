@@ -2107,3 +2107,23 @@ input:focus-visible + .opt-chip__box{
 .asr-model-hint code{ font-family: var(--font-mono); font-size: 12px; }
 .sum-dub.asr-noise .sum-dub__asr{ color: var(--text-faint); }
 .sum-dub.asr-noise{ border-bottom: 2px dashed var(--text-faint); opacity: .6; }
+
+/* Полные названия: «ждёт», записанное, метки на карточках, автопроверка */
+.sum-cat__expect-box{ position: relative; }
+.sum-cat__expect-text{
+    font-family: var(--font-mono); font-size: 17px; font-weight: 750; color: var(--text);
+    line-height: 1.25; overflow-wrap: anywhere; padding: 2px 0;
+    border-bottom: 1px dashed transparent;
+}
+.sum-cat__expect-text.is-empty{ font-size: 13px; color: var(--text-faint); }
+.sum-cat__expect-box:hover .sum-cat__expect-text:not(.is-empty){ border-bottom-color: var(--tier-accent, var(--border-soft)); }
+.sum-cat__expect-box .sum-cat__expect{
+    position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer;
+}
+.sum-cat__expect-box .sum-cat__expect:disabled{ cursor: default; }
+.sum-rec{ max-width: 100%; }
+.sum-rec__name{ white-space: normal; overflow-wrap: anywhere; }
+.sum-cat__recs{ max-height: 140px; }
+.sum-dub{ max-width: 170px; }
+.sum-dub__tag{ max-width: 150px; white-space: normal; overflow-wrap: anywhere; line-height: 1.15; text-align: center; }
+.sum-dub__asr{ max-width: 150px; white-space: normal; overflow-wrap: anywhere; text-align: center; }

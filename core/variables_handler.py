@@ -2371,6 +2371,9 @@ class VariablesMixin:
         return segments
 
     def get_sum_manual_state(self):
+        files, ptr = self._sum_source_files()
+        if files and 0 <= ptr < len(files):
+            self.sum_last_dub = os.path.basename(files[ptr])
         counts = getattr(self, 'sum_manual_counts', None) or {t: 0 for t in SUM_TIER_ORDER}
         last_file = getattr(self, 'sum_manual_last_file', {})
         phrase = self._current_sum_phrase()
@@ -2517,6 +2520,7 @@ class VariablesMixin:
                           if os.path.basename(selected_path).lower() in _STAGE1_SCAN_EXCLUDE
                           else selected_path)
         self.project_name = os.path.basename(self.work_dir)
+        self.sum_last_dub = None
         project_state.apply(self, project_state.load(self.work_dir))
 
         # Через словарь переменных имена/текст файлов берём из него (и из
@@ -2543,11 +2547,15 @@ class VariablesMixin:
         files = [f for f in files
                  if os.path.normcase(os.path.abspath(os.path.join(selected_path, f))) not in connector_paths]
         self.chunks_data = [{"filepath": os.path.join(selected_path, f), "filename": f} for f in files]
-        self.chunk_index = 0
+        # Продолжаем с того дубля, на котором остановились (по имени файла).
+        last = getattr(self, 'sum_last_dub', None)
+        self.chunk_index = next((i for i, f in enumerate(files) if f == last), 0)
         self.current_mode = 'Chunks'
         self.raw_audio_full = None
 
         self.toggle_sum_mode(True)
+        if self.chunk_index:
+            self._sum_toast(f'↪ Продолжаем с {files[self.chunk_index]}')
 
         # Связки словаря, которые ещё не озвучены, — вдруг их файлы лежат в
         # этой папке или в папке проекта. Подставим только после «Да».
@@ -2735,6 +2743,9 @@ class VariablesMixin:
         if not files:
             return None
         assigned = self._sum_assigned_sources()
+        assigned_values = {}
+        for raw, info in (getattr(self, 'sum_raw_sources', None) or {}).items():
+            assigned_values.setdefault(info['source'], []).append(self._sum_raw_value_from_path(raw))
         view = getattr(self, '_sum_dub_view', None)
         if view and view.get('ptr') == ptr:
             start = view['start']
@@ -2754,6 +2765,7 @@ class VariablesMixin:
                 "current": i == ptr,
                 "tiers": [self._category_label(t) for t in tiers],
                 "tier_keys": tiers,
+                "values": assigned_values.get(path, []),
                 "asr": (getattr(self, 'sum_asr_results', None) or {}).get(path),
             })
         return {"items": items, "total": len(files), "current": ptr, "from": start}

@@ -1730,7 +1730,14 @@ let isProcessing = false;
                 }
                 select.title = 'Это значение получит следующий брошенный сюда дубль. Кликните, чтобы начать с другого места списка';
                 select.addEventListener('change', () => sumSetExpected(tier, select.value));
-                tile.appendChild(select);
+                // Сам select не умеет переносить строку — длинная марка
+                // обрезалась. Видимый текст — отдельно, полностью, с
+                // переносом; прозрачный select поверх ловит клик.
+                let expectBox = sumEl('div', 'sum-cat__expect-box');
+                expectBox.appendChild(sumEl('div', 'sum-cat__expect-text' + (select.disabled ? ' is-empty' : ''),
+                    select.disabled ? 'нет значений' : info.expected_next));
+                expectBox.appendChild(select);
+                tile.appendChild(expectBox);
 
                 // Записанное — чипы: клик слушать, × убрать (брак).
                 let recs = sumEl('div', 'sum-cat__recs');
@@ -1816,7 +1823,10 @@ let isProcessing = false;
                 card.appendChild(sumEl('div', 'sum-dub__num', m ? m[1] : it.name));
                 let tags = sumEl('div', 'sum-dub__tags');
                 (it.tier_keys || []).forEach((k, n) => {
-                    let tag = sumEl('span', 'sum-dub__tag', it.tiers[n]);
+                    // Видно, какое значение получил дубль, а не только категорию.
+                    let value = (it.values || [])[n];
+                    let tag = sumEl('span', 'sum-dub__tag', value || it.tiers[n]);
+                    tag.title = `${it.tiers[n]}${value ? ': ' + value : ''}`;
                     tag.style.setProperty('--tier-accent', sumTierAccent(k));
                     tags.appendChild(tag);
                 });
