@@ -2158,3 +2158,11 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 .sum-gain--auto.is-off{ opacity: 0.5; }
 .sum-gain__val.is-auto{ color: var(--accent-primary); }
 .sum-gain__val.is-auto::before{ content: "авто "; font-size: 10px; opacity: 0.75; }
+
+.sum-pieces{ padding: 2px 4px 2px 8px; }
+.sum-pieces__btn{
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border-soft); color: var(--text);
+    border-radius: 6px; min-width: 24px; height: 22px; padding: 0 6px; font-size: 11px; font-weight: 650; cursor: pointer;
+}
+.sum-pieces__btn:hover{ border-color: var(--tier-accent, var(--accent-primary)); }
+.sum-pieces__btn.is-on{ background: var(--tier-accent, var(--accent-primary)); border-color: transparent; color: #111; }

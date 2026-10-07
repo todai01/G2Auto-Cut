@@ -25,14 +25,24 @@ LOUD_ABS_GATE_DB = -60
 LOUD_REL_GATE_DB = 25
 AUTO_GAIN_DEADZONE_DB = 1.0   # мельче — не трогаем, на слух не заметно
 PEAK_HEADROOM_DB = 1.0        # поднимаем не выше, чем до −1 дБ пика
-# Авто-обрезка тишины по краям переменной: речь — кадры 10 мс не тише
-# −55 дБ и не ниже 35 дБ от пика, подряд хотя бы 30 мс (щелчок — не речь).
+# Авто-обрезка тишины по краям переменной. Порог считается от шума
+# самой записи: «ядро» речи — кадры 10 мс заметно громче фона (и не
+# тише 25 дБ от пика), подряд хотя бы 30 мс (щелчок — не речь). От ядра
+# края чуть расширяются на тихие начала/затухания, но не на гул и шум.
 TRIM_FRAME_MS = 10
 TRIM_ABS_GATE_DB = -55
-TRIM_REL_GATE_DB = 35
+TRIM_CORE_BELOW_PEAK_DB = 25
+TRIM_CORE_ABOVE_FLOOR_DB = 15
+TRIM_SOFT_BELOW_PEAK_DB = 38
+TRIM_SOFT_ABOVE_FLOOR_DB = 9
 TRIM_MIN_RUN = 3
-TRIM_PAD_BEFORE_MS = 50
-TRIM_PAD_AFTER_MS = 100       # хвост слова затухает — оставляем больше
+TRIM_EXTEND_BEFORE_MS = 80
+TRIM_EXTEND_AFTER_MS = 150
+TRIM_PAD_BEFORE_MS = 20
+TRIM_PAD_AFTER_MS = 40
+TRIM_FLAT_WINDOW = 5          # 50 мс: за это время затухание теряет ≥ 3 дБ,
+TRIM_FLAT_DB = 3              # а гул — нет
+TRIM_GROUP_GAP_MS = 350       # пауза длиннее — в записи несколько кусков (два слова/дубля)
 
 
 class TimingEditorMixin:
@@ -67,34 +77,73 @@ class TimingEditorMixin:
                 if to_db(pw) >= LOUD_ABS_GATE_DB and to_db(pw) >= top - LOUD_REL_GATE_DB]
 
     @staticmethod
-    def _editor_auto_trim(audio):
-        """[начало, конец] речи в записи с небольшим запасом — края без тишины."""
+    def _editor_speech_groups(audio):
+        """Куски речи [[начало, конец], ...] с небольшим запасом; куски,
+        разделённые паузой длиннее TRIM_GROUP_GAP_MS, — отдельно."""
         n = len(audio) // TRIM_FRAME_MS
         if n < TRIM_MIN_RUN:
-            return [0, len(audio)]
+            return []
         full = float(1 << (8 * audio.sample_width - 1))
         db = []
         for k in range(n):
             rms = audio[k * TRIM_FRAME_MS:(k + 1) * TRIM_FRAME_MS].rms / full
             db.append(20 * math.log10(rms) if rms > 0 else -120.0)
-        gate = max(TRIM_ABS_GATE_DB, max(db) - TRIM_REL_GATE_DB)
-        loud = [d >= gate for d in db]
+        peak = max(db)
+        floor = sorted(db)[len(db) // 10]           # фон: самые тихие 10% кадров
+        core_gate = max(TRIM_ABS_GATE_DB, min(peak - 6, max(peak - TRIM_CORE_BELOW_PEAK_DB,
+                                                            floor + TRIM_CORE_ABOVE_FLOOR_DB)))
+        soft_gate = max(TRIM_ABS_GATE_DB, min(core_gate, max(peak - TRIM_SOFT_BELOW_PEAK_DB,
+                                                             floor + TRIM_SOFT_ABOVE_FLOOR_DB)))
+        # Ядра — непрерывные участки громче core_gate длиной от TRIM_MIN_RUN.
+        cores, k = [], 0
+        while k < n:
+            if db[k] >= core_gate:
+                j = k
+                while j < n and db[j] >= core_gate:
+                    j += 1
+                if j - k >= TRIM_MIN_RUN:
+                    cores.append([k, j])
+                k = j
+            else:
+                k += 1
+        if not cores:
+            return []
+        # Ядра, между которыми короткая пауза (внутри слова/фразы), — в одно.
+        gap_frames = TRIM_GROUP_GAP_MS // TRIM_FRAME_MS
+        groups = [cores[0]]
+        for c in cores[1:]:
+            if c[0] - groups[-1][1] <= gap_frames:
+                groups[-1][1] = c[1]
+            else:
+                groups.append(c)
+        out = []
+        for gi, (a, b) in enumerate(groups):
+            lo = groups[gi - 1][1] if gi else 0
+            hi = groups[gi + 1][0] if gi + 1 < len(groups) else n
+            # Мягкие края: тихое начало слова и затухание — пока громче фона
+            # и пока уровень меняется. Ровный уровень (гул, шум) — не речь.
+            w = TRIM_FLAT_WINDOW
+            a0, ext = a, TRIM_EXTEND_BEFORE_MS // TRIM_FRAME_MS
+            while a > lo and ext > 0 and db[a - 1] >= soft_gate:
+                if a0 - a >= w and db[a - 1 + w] - db[a - 1] < TRIM_FLAT_DB:
+                    break
+                a -= 1; ext -= 1
+            b0, ext = b, TRIM_EXTEND_AFTER_MS // TRIM_FRAME_MS
+            while b < hi and ext > 0 and db[b] >= soft_gate:
+                if b - b0 >= w and db[b - w] - db[b] < TRIM_FLAT_DB:
+                    break
+                b += 1; ext -= 1
+            start = max(0, a * TRIM_FRAME_MS - TRIM_PAD_BEFORE_MS)
+            end = min(len(audio), b * TRIM_FRAME_MS + TRIM_PAD_AFTER_MS)
+            if end - start >= MIN_KEEP_MS:
+                out.append([start, end])
+        return out
 
-        def first_run(order):
-            run = 0
-            for k in order:
-                run = run + 1 if loud[k] else 0
-                if run >= TRIM_MIN_RUN:
-                    return k
-            return None
-        a = first_run(range(n))
-        b = first_run(range(n - 1, -1, -1))
-        if a is None or b is None:
-            return [0, len(audio)]
-        start = (a - TRIM_MIN_RUN + 1) * TRIM_FRAME_MS - TRIM_PAD_BEFORE_MS
-        end = (b + TRIM_MIN_RUN) * TRIM_FRAME_MS + TRIM_PAD_AFTER_MS
-        start, end = max(0, start), min(len(audio), end)
-        return [start, end] if end - start >= MIN_KEEP_MS else [0, len(audio)]
+    @classmethod
+    def _editor_auto_trim(cls, audio, groups=None):
+        """[начало, конец] всей речи в записи — края без тишины."""
+        groups = cls._editor_speech_groups(audio) if groups is None else groups
+        return [groups[0][0], groups[-1][1]] if groups else [0, len(audio)]
 
     @staticmethod
     def _editor_loudness_db(powers):
@@ -208,8 +257,10 @@ class TimingEditorMixin:
             seg["loudness_db"] = loud
             seg["auto_gain_db"] = gain
             audio = cache[i]["audio"]
-            seg["auto_trim"] = (self._editor_auto_trim(audio) if audio is not None and not seg["connector"]
-                                else [0, seg["duration_ms"]])
+            groups = self._editor_speech_groups(audio) if audio is not None and not seg["connector"] else []
+            seg["auto_trim"] = self._editor_auto_trim(audio, groups) if groups else [0, seg["duration_ms"]]
+            # Несколько кусков через длинную паузу — юзер выбирает нужный.
+            seg["speech_groups"] = groups if len(groups) > 1 else []
         self._sum_editor = {"segments": cache, "row_idx": getattr(self, 'sum_stage2_row_idx', 0)}
         return {"segments": out, "bucket_ms": PEAK_BUCKET_MS, "missing": missing, "ref_loudness_db": ref}
 

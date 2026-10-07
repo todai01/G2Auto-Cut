@@ -2358,6 +2358,25 @@ let isProcessing = false;
                 ctx.fillText(label, x0 + 4, ED_LABEL_H / 2);
                 ctx.restore();
 
+                if (!seg.connector && (seg.speech_groups || []).length) {
+                    // Несколько кусков речи — номер над каждым (клавиши 1, 2…).
+                    ctx.save();
+                    ctx.font = '700 11px system-ui, sans-serif';
+                    seg.speech_groups.forEach((g, k) => {
+                        let gx0 = edX(canvas, s0 + g[0]), gx1 = edX(canvas, s0 + g[1]);
+                        let picked = a === g[0] && b === g[1];
+                        ctx.fillStyle = picked ? color : 'rgba(255,255,255,0.10)';
+                        ctx.fillRect(gx0, top + h - 3, Math.max(2, gx1 - gx0), 3);
+                        ctx.fillStyle = picked ? '#111' : 'rgba(255,255,255,0.85)';
+                        let tx = (gx0 + gx1) / 2;
+                        ctx.beginPath(); ctx.arc(tx, top + 10, 8, 0, Math.PI * 2);
+                        ctx.fillStyle = picked ? color : 'rgba(0,0,0,0.65)'; ctx.fill();
+                        ctx.fillStyle = picked ? '#111' : '#fff';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(String(k + 1), tx, top + 10.5);
+                    });
+                    ctx.restore();
+                }
                 if (!seg.connector) {
                     [a, b].forEach((ms, side) => {
                         let x = edX(canvas, s0 + ms);
@@ -2585,6 +2604,23 @@ let isProcessing = false;
             sumEditorRenderGains();
             sumEditorDraw();
         }
+        // Оставить один кусок речи (или все) — и сразу послушать его.
+        function sumEditorPickPiece(i, g) {
+            sumEd.trims[i] = [g[0], g[1]];
+            (sumEd.cuts[i] || []).length = 0;
+            sumEditorRenderGains();
+            sumEditorDraw();
+            sumEditorPlay(Math.max(0, edOrigToOut(edSegStart(i) + g[0]) - 400));
+        }
+        // Клавиши 1…9: кусок в первой переменной, где их несколько.
+        function sumEditorPieceKey(n) {
+            let i = sumEd.segs.findIndex(s => !s.connector && (s.speech_groups || []).length);
+            if (i < 0) return false;
+            let g = sumEd.segs[i].speech_groups[n - 1];
+            if (!g) return false;
+            sumEditorPickPiece(i, g);
+            return true;
+        }
         function sumEditorToggleTrim(on) {
             sumEditorSetOpt('gvox_auto_trim', on);
             sumEd.trims = sumEditorAutoTrims();
@@ -2653,6 +2689,23 @@ let isProcessing = false;
                 paint();
                 row.append(down, val, up);
                 box.appendChild(row);
+                let groups = seg.speech_groups || [];
+                if (groups.length) {
+                    let pick = sumEl('span', 'sum-gain sum-pieces');
+                    pick.style.setProperty('--tier-accent', sumTierAccent(seg.key));
+                    pick.title = 'В записи несколько кусков речи через паузу — выберите нужный (клавиши 1, 2…), «Всё» — оставить целиком';
+                    pick.appendChild(sumEl('span', 'sum-gain__name', 'Кусок'));
+                    let opts = groups.map((g, k) => [String(k + 1), g]).concat([['Всё', [groups[0][0], groups[groups.length - 1][1]]]]);
+                    opts.forEach(([text, g]) => {
+                        let btn = sumEl('button', 'sum-pieces__btn', text);
+                        btn.type = 'button';
+                        let t = sumEd.trims[i];
+                        if (t && t[0] === g[0] && t[1] === g[1]) btn.classList.add('is-on');
+                        btn.addEventListener('click', () => { btn.blur(); sumEditorPickPiece(i, g); });
+                        pick.appendChild(btn);
+                    });
+                    box.appendChild(pick);
+                }
             });
         }
         // Куда ставить брошенный дубль: слот под курсором, иначе пустой
@@ -3795,6 +3848,13 @@ let isProcessing = false;
             if (document.activeElement && (document.activeElement.tagName === 'BUTTON' || document.activeElement.classList.contains('sum-cat__expect'))) document.activeElement.blur();
 
             if (e.repeat && !['KeyQ', 'KeyE', 'KeyA', 'KeyD'].includes(e.code)) return;
+
+            // «Суммы»: 1…9 — выбрать кусок речи в переменной, где их несколько.
+            let digit = /^(Digit|Numpad)([1-9])$/.exec(e.code);
+            if (digit && sumModeActive && typeof sumEd !== 'undefined' && sumEditorPieceKey(+digit[2])) {
+                e.preventDefault();
+                return;
+            }
 
             if (currentState && currentState.mode === 'VarBatch') {
                 // Цифры 1-5 — это разметка монтажа в основном режиме, здесь её нет
