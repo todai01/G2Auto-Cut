@@ -3048,26 +3048,42 @@ class VariablesMixin:
         rows = getattr(self, 'var_template_rows', None) or []
         if not rows:
             return
-        columns = getattr(self, 'var_template_columns', None) or []
+        self.sum_stage2_row_idx = self._sum_first_open_row((getattr(self, 'sum_stage2_row_idx', 0) + 1) % len(rows))
+
+    def _sum_row_done(self, row):
+        """Все значения строки уже лежат в Проверенных — делать нечего."""
+        for col in getattr(self, 'var_template_columns', None) or []:
+            if col['type'] == 'connector':
+                continue
+            value = row.get(col['key'])
+            if not value:
+                continue
+            path, saveable = self._sum_stage2_resolve_value(col['key'], value)
+            if saveable or not path:
+                return False
+        return True
+
+    def _sum_first_open_row(self, start):
+        """Первая незаконченная строка, начиная с start (по кругу)."""
+        rows = getattr(self, 'var_template_rows', None) or []
         total = len(rows)
-        idx = (getattr(self, 'sum_stage2_row_idx', 0) + 1) % total
-        for _ in range(total):
-            row = rows[idx]
-            done = True
-            for col in columns:
-                if col['type'] == 'connector':
-                    continue
-                value = row.get(col['key'])
-                if not value:
-                    continue
-                path, saveable = self._sum_stage2_resolve_value(col['key'], value)
-                if saveable or not path:
-                    done = False
-                    break
-            if not done:
-                break
-            idx = (idx + 1) % total
-        self.sum_stage2_row_idx = idx
+        for off in range(total):
+            idx = (start + off) % total
+            if not self._sum_row_done(rows[idx]):
+                return idx
+        return start % total if total else 0
+
+    def _sum_skip_done_row(self):
+        """Текущая строка уже готова целиком — сразу на следующую
+        незаконченную. Кроме строки, которую юзер выбрал сам."""
+        rows = getattr(self, 'var_template_rows', None) or []
+        if not rows:
+            return
+        idx = max(0, min(getattr(self, 'sum_stage2_row_idx', 0), len(rows) - 1))
+        if idx == getattr(self, '_sum_row_pinned', None) or not self._sum_row_done(rows[idx]):
+            return
+        self.sum_stage2_row_idx = self._sum_first_open_row(idx)
+        self._sum_row_pinned = None
 
     def sum_stage2_jump_to_value(self, tier, value):
         """Юзер выбрал значение категории из ПОЛНОГО списка таблицы (не
@@ -3089,6 +3105,7 @@ class VariablesMixin:
             idx = (start + offset) % total
             if rows[idx].get(tier) == value:
                 self.sum_stage2_row_idx = idx
+                self._sum_row_pinned = idx
                 return self.get_ui_state()
         return {"error": f"В таблице нет строки со значением «{value}» в этой категории."}
 
@@ -3135,10 +3152,22 @@ class VariablesMixin:
         # РЕЖИМ СО СЛОВАРЁМ: собираем ОДНУ КОНКРЕТНУЮ СТРОКУ таблицы
         # целиком (марка+год+суммы вместе, как они реально стоят в этой
         # строке) — см. _sum_stage2_current_row/sum_stage2_jump_to_value.
+        self._sum_skip_done_row()
         row = self._sum_stage2_current_row()
         rows_total = len(getattr(self, 'var_template_rows', None) or [])
         active_logic = self._active_category_keys()
         all_choices = getattr(self, 'var_extra_tag_values', {}) or {}
+
+        def pending(t):
+            # В списке категории — только ещё сырые записи: значение,
+            # которое уже лежит в Проверенных, не показываем (файл не трогаем).
+            out = []
+            for p in tiers.get(t, []):
+                found, saveable = self._sum_stage2_resolve_value(t, self._sum_raw_value_from_path(p))
+                if saveable or not found:
+                    out.append(p)
+            return out
+        shown = {t: pending(t) for t in active_logic}
 
         tiers_out = {}
         for t in active_logic:
@@ -3151,11 +3180,11 @@ class VariablesMixin:
             last_send = getattr(self, 'sum_stage1_last_send', None) or {}
             tiers_out[t] = {
                 "label": self._category_label(t),
-                "items": [display_name(p) for p in tiers.get(t, [])],
+                "items": [display_name(p) for p in shown[t]],
                 # Пути рядом с именами — чтобы фронтенд мог проиграть
                 # конкретное сырое значение при листании ←/→, а не
                 # только показать его название (play_specific_file).
-                "paths": list(tiers.get(t, [])),
+                "paths": shown[t],
                 # Полный список значений ЭТОЙ колонки из самой таблицы —
                 # не только то, что уже разложено по сырым дублям — юзер
                 # выбирает из него, на какую строку переключиться целиком
@@ -3179,7 +3208,7 @@ class VariablesMixin:
         # свежем, раз items отсортирован по mtime — см. _sum_reels_refresh)
         # сыром значении, а не на первом: обычно интересует именно то, что
         # только что добавили, а не самое старое в очереди.
-        default_indices = {t: max(0, len(tiers.get(t, [])) - 1) for t in active_logic}
+        default_indices = {t: max(0, len(shown[t]) - 1) for t in active_logic}
 
         return {
             "active_tier": None,

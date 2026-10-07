@@ -78,12 +78,14 @@ class TimingEditorMixin:
             gain = 0.0
             if ref is not None and loud is not None:
                 gain = ref - loud
+                if abs(gain) < AUTO_GAIN_DEADZONE_DB:
+                    gain = 0.0
                 # Не доводим до клиппинга.
                 peak = seg["audio"].max_dBFS
                 if gain > 0 and peak != float('-inf'):
                     gain = max(0.0, min(gain, -PEAK_HEADROOM_DB - peak))
                 gain = max(-GAIN_LIMIT_DB, min(GAIN_LIMIT_DB, gain))
-                gain = 0.0 if abs(gain) < AUTO_GAIN_DEADZONE_DB else round(gain * 2) / 2
+                gain = round(gain * 2) / 2
             out[i] = (loud, gain)
         return ref, out
 
