@@ -82,9 +82,17 @@ class AuditAsrMixin:
     def audit_recognize(self, category, source, language='ru'):
         """source: 'folder' — папка с уже нарезанными чанками без названий,
         'cut' — сырая запись, которую сперва нарежем."""
-        values = (getattr(self, 'var_extra_tag_values', None) or {}).get(category) or []
+        if category == 'excel':
+            seen, values = set(), []
+            for p in getattr(self, 'phrases_data', None) or []:
+                t = str(p.get('text') or '').strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    values.append(t)
+        else:
+            values = (getattr(self, 'var_extra_tag_values', None) or {}).get(category) or []
         if not values:
-            return {"error": "Для этой категории в таблице-словаре нет ни одного значения."}
+            return {"error": "Нет значений для сверки — загрузите таблицу."}
 
         if source == 'cut':
             picked = webview.windows[0].create_file_dialog(
@@ -195,14 +203,15 @@ class AuditAsrMixin:
                             for i, v in enumerate(values) if v not in found]
             self._audit_last = {"category": category, "missing": {m["text"] for m in missing_list}}
             template = getattr(self, 'var_template_path', None)
+            can_export = self._excel_source_ok() if category == 'excel' else bool(template and os.path.exists(template))
             return {
                 "category": category,
-                "category_label": self._category_label(category),
+                "category_label": "Текст из Excel" if category == 'excel' else self._category_label(category),
                 "by_voice": True,
                 "stopped": stopped,
                 "scan_dir": scan_dir,
                 "chunks_total": total,
-                "can_export": bool(missing_list and template and os.path.exists(template)),
+                "can_export": bool(missing_list and can_export),
                 "total_excel": len(values),
                 "total_disk": len(found),
                 "missing_count": len(missing_list),

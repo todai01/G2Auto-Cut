@@ -4969,7 +4969,7 @@ let isProcessing = false;
                 btn.textContent = label;
                 btn.onclick = () => {
                     closeAuditCategoryPicker();
-                    if (key === 'excel') runProjectAudit(key); else askAuditChunks(key, label);
+                    askAuditChunks(key, key === 'excel' ? 'Текст из Excel' : label);
                 };
                 list.appendChild(btn);
             };
@@ -5053,6 +5053,10 @@ let isProcessing = false;
             if (res && res.error === "cancel") return; // Юзер закрыл окно выбора
             if (res && res.status === "choose_category") {
                 renderAuditCategoryChoice(res);
+                return;
+            }
+            if (res && res.status === "choose_chunks") {
+                askAuditChunks(res.category, res.label);
                 return;
             }
             if (!res || res.error) {

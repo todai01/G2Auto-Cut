@@ -13,6 +13,7 @@ STATE_FIELDS = [
     'phrases_data', 'excel_name', 'project_name', 'variables',
     'current_mode', 'state_memory', 'chunk_index', 'phrase_index',
     'var_expected_cursor', 'sum_raw_sources', 'sum_asr_results', 'sum_last_dub',
+    'excel_path', 'excel_cols', 'excel_header_row',
 ]
 
 STATE_FILENAME = 'project.json'

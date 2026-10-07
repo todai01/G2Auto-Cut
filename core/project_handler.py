@@ -566,6 +566,9 @@ class ProjectMixin:
                     "categories": categories,
                     "has_excel": bool(self.phrases_data),
                 }
+            if self.phrases_data:
+                # Только Excel — сразу спрашиваем, готовы ли чанки.
+                return {"status": "choose_chunks", "category": "excel", "label": "Текст из Excel"}
 
         if category and category != 'excel':
             return self._audit_by_category(category)
@@ -608,7 +611,10 @@ class ProjectMixin:
                     "paths": paths
                 })
 
+        self._audit_last = {"category": "excel", "missing": {m["text"] for m in missing_list}}
+
         return {
+            "can_export": bool(missing_list and self._excel_source_ok()),
             "scan_dir": scan_dir,
             "total_excel": valid_excel_count,
             "total_disk": len(all_disk_files),
@@ -669,15 +675,72 @@ class ProjectMixin:
             "duplicates": duplicates_list
         }
 
+    def _excel_source_ok(self):
+        p = getattr(self, 'excel_path', None)
+        return bool(p and os.path.exists(p) and getattr(self, 'excel_cols', None))
+
+    def _audit_export_excel(self, missing):
+        """Копия исходного Excel (шапка, колонки, оформление) только со
+        строками, где есть ещё не записанная фраза."""
+        import openpyxl
+        path = self.excel_path
+        try:
+            wb = openpyxl.load_workbook(path)
+        except Exception as e:
+            return None, {"error": f"Не удалось открыть исходную таблицу: {e}"}
+        ws = wb.active
+        cols = [c + 1 for c in self.excel_cols]
+        first = int(getattr(self, 'excel_header_row', 0) or 0) + 1
+        drop = []
+        for r in range(first, ws.max_row + 1):
+            keep = False
+            for c in cols:
+                v = ws.cell(row=r, column=c).value
+                if v not in (None, '') and str(v).strip() in missing:
+                    keep = True
+                    break
+            if not keep:
+                drop.append(r)
+        kept = ws.max_row - (first - 1) - len(drop)
+        while drop:
+            end = drop.pop()
+            start = end
+            while drop and drop[-1] == start - 1:
+                start = drop.pop()
+            ws.delete_rows(start, end - start + 1)
+        return (wb, kept), None
+
     def audit_export_missing(self):
         """Таблица в том же формате, что загруженный словарь (та же шапка,
         те же колонки и оформление), но только со строками, где значение
         проверенной категории не нашлось в папке — её сразу можно
         загрузить как словарь и записывать только недостающее."""
         last = getattr(self, '_audit_last', None)
-        template = getattr(self, 'var_template_path', None)
         if not last or not last.get("missing"):
-            return {"error": "Сначала запустите аудит по категории — выгружать пока нечего."}
+            return {"error": "Сначала запустите аудит — выгружать пока нечего."}
+        if last.get("category") == "excel":
+            if not self._excel_source_ok():
+                return {"error": "Не нашёл исходный Excel — загрузите текст (Шаг 1) заново."}
+            res, err = self._audit_export_excel(last["missing"])
+            if err:
+                return err
+            wb, kept = res
+            src = self.excel_path
+            stem = os.path.splitext(os.path.basename(src))[0]
+            picked = webview.windows[0].create_file_dialog(
+                webview.FileDialog.SAVE, directory=os.path.dirname(src),
+                save_filename=f'{stem} — недостающие.xlsx', file_types=('Excel files (*.xlsx)',))
+            if not picked:
+                return {"error": "cancel"}
+            out = picked if isinstance(picked, str) else picked[0]
+            if not out.lower().endswith('.xlsx'):
+                out += '.xlsx'
+            try:
+                wb.save(out)
+            except Exception as e:
+                return {"error": f"Не удалось сохранить таблицу (может, она открыта в Excel?): {e}"}
+            return {"saved": out, "rows": kept}
+        template = getattr(self, 'var_template_path', None)
         if not template or not os.path.exists(template):
             return {"error": "Не нашёл исходную таблицу-словарь — загрузите её заново."}
 
