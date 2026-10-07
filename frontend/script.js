@@ -1927,6 +1927,17 @@ let isProcessing = false;
             let btn = document.getElementById('sumAsrBtn');
             if (btn && sumAsrRunning) btn.textContent = `Стоп (${p.done}/${p.total})`;
         }
+        function closeAsrModel() {
+            document.getElementById('asrModelOverlay').style.display = 'none';
+        }
+        async function pickAsrModel() {
+            let res = await pywebview.api.sum_auto_check_pick_model();
+            if (!res || res.error === 'cancel') return;
+            if (res.error) { showBeautifulAlert(`❌ <b>Модель</b><br><br>${escapeHtml(res.error)}`); return; }
+            closeAsrModel();
+            showToast('Модель найдена — запускаю автопроверку');
+            sumAutoCheckToggle();
+        }
         async function sumAutoCheckToggle() {
             let btn = document.getElementById('sumAsrBtn');
             if (sumAsrRunning) {
@@ -1950,6 +1961,7 @@ let isProcessing = false;
             sumAsrRunning = false;
             btn.classList.remove('is-running');
             btn.textContent = 'Автопроверка';
+            if (res && res.need_model) { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
             if (res && res.error) { showBeautifulAlert(`❌ <b>Автопроверка</b><br><br>${escapeHtml(res.error).replace(/\n/g, '<br>')}`); return; }
             let ok = ((lastSumState && lastSumState.dubs && lastSumState.dubs.items) || [])
                 .filter(it => indices.includes(it.index) && it.asr && it.asr.confident).length;

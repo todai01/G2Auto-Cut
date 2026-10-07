@@ -172,6 +172,29 @@
         </div>
     </div>
 
+    <!-- Автопроверка: модель распознавания не скачалась — указать папку вручную -->
+    <div id="asrModelOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Нужна модель распознавания</h3>
+                <button class="modal-close" onclick="closeAsrModel()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint asr-model-hint">
+                Скачать модель автоматически не получилось — похоже, доступ к сайту <b>huggingface.co</b> из этой сети закрыт.
+                Скачайте её один раз вручную (можно на другом компьютере):
+                <ol>
+                    <li>Откройте <b>huggingface.co/Systran/faster-whisper-small</b> → вкладка <b>Files</b>.</li>
+                    <li>Скачайте 4 файла: <code>config.json</code>, <code>model.bin</code> (~480 МБ), <code>tokenizer.json</code>, <code>vocabulary.txt</code>.</li>
+                    <li>Сложите их в одну папку и укажите её кнопкой ниже — программа запомнит.</li>
+                </ol>
+            </div>
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="closeAsrModel()">Закрыть</button>
+                <button class="custom-alert-btn" onclick="pickAsrModel()">Указать папку с моделью</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Нашлись файлы связок (start/end/…) в папке — подставить после подтверждения -->
     <div id="connSuggestOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box">

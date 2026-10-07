@@ -20,6 +20,8 @@ AUTO_CHECK_THRESHOLD = 0.80   # совпадение, начиная с кото
 AUTO_CHECK_MARGIN = 0.10      # насколько лучший вариант должен опережать второй
 MODEL_DIR_NAME = 'whisper-model'
 DEFAULT_MODEL = 'small'
+MODEL_PATH_FILE = os.path.join(os.path.expanduser('~'), '.gvox', 'whisper_model_path.txt')
+NEED_MODEL = object()   # модель не скачалась и локальной нет — спросить папку
 
 _LAT2CYR = [
     ('shch', 'щ'), ('sch', 'щ'), ('sh', 'ш'), ('ch', 'ч'), ('zh', 'ж'), ('kh', 'х'), ('ts', 'ц'),
@@ -87,16 +89,48 @@ def score_candidates(heard, values, transcripts):
 
 class AutoCheckMixin:
 
+    @staticmethod
+    def _is_model_dir(path):
+        return bool(path) and os.path.isfile(os.path.join(path, 'model.bin')) \
+            and os.path.isfile(os.path.join(path, 'config.json'))
+
     def _auto_check_model_path(self):
+        """Папка с моделью: та, что юзер указал сам (запоминается), или
+        «whisper-model» рядом с программой."""
+        try:
+            with open(MODEL_PATH_FILE, 'r', encoding='utf-8') as f:
+                saved = f.read().strip()
+            if self._is_model_dir(saved):
+                return saved
+        except OSError:
+            pass
         bases = [os.path.dirname(os.path.abspath(sys.argv[0])), os.getcwd(),
                  os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
         if getattr(sys, 'frozen', False):
             bases.insert(0, os.path.dirname(sys.executable))
         for base in bases:
             p = os.path.join(base, MODEL_DIR_NAME)
-            if os.path.isdir(p):
+            if self._is_model_dir(p):
                 return p
         return None
+
+    def sum_auto_check_pick_model(self):
+        """Указать папку с уже скачанной моделью (если интернет закрыт)."""
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked[0]
+        if not self._is_model_dir(folder):
+            return {"error": "В этой папке нет файлов модели (нужны model.bin, config.json, "
+                              "tokenizer.json, vocabulary.txt)."}
+        try:
+            os.makedirs(os.path.dirname(MODEL_PATH_FILE), exist_ok=True)
+            with open(MODEL_PATH_FILE, 'w', encoding='utf-8') as f:
+                f.write(folder)
+        except OSError:
+            pass
+        self._asr_model = None
+        return {"status": "ok", "path": folder}
 
     def _auto_check_model(self):
         model = getattr(self, '_asr_model', None)
@@ -111,10 +145,9 @@ class AutoCheckMixin:
         try:
             model = WhisperModel(local or DEFAULT_MODEL, device='cpu', compute_type='int8')
         except Exception as e:
-            where = (f"из папки «{local}»" if local else
-                     f"«{DEFAULT_MODEL}» (скачивается из интернета при первом запуске — "
-                     f"без интернета положите модель в папку «{MODEL_DIR_NAME}» рядом с программой)")
-            return None, f"Не удалось загрузить модель распознавания {where}.\n\n{e}"
+            if local:
+                return None, f"Не удалось загрузить модель из папки «{local}».\n\n{e}"
+            return None, NEED_MODEL
         self._asr_model = model
         return model, None
 
@@ -140,6 +173,8 @@ class AutoCheckMixin:
             return {"error": "Автопроверка уже идёт."}
         try:
             model, err = self._auto_check_model()
+            if err is NEED_MODEL:
+                return {"need_model": True}
             if err:
                 return {"error": err}
             transcripts = (getattr(self, 'var_transcripts', None) or {}).get(tier, {})
