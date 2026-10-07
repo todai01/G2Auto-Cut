@@ -252,6 +252,76 @@ let isProcessing = false;
                 let el = document.getElementById(id);
                 if (el) el.style.display = (id === activeId) ? STAGE_DISPLAY[id] : 'none';
             });
+            // Живой фон — только на заставке и в меню.
+            document.body.classList.toggle('aurora-on', activeId === 'stage0-splash' || activeId === 'stage1-loading');
+        }
+
+        const motionOK = () => !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+        const isShown = id => { let el = document.getElementById(id); return !!el && el.style.display !== 'none'; };
+        let stageAnimating = false;
+
+        // Прямоугольник самого текста (без отступов кнопки) — для «перелёта» логотипа.
+        function textRect(el) {
+            let r = document.createRange();
+            r.selectNodeContents(el);
+            return r.getBoundingClientRect();
+        }
+
+        // Логотип «перелетает» из центра заставки в шапку меню.
+        function flyLogo(fromEl, toEl, duration) {
+            let a = textRect(fromEl);
+            // Конечное место в шапке: меню ещё «въезжает» — меряем, промотав
+            // анимации предков в конец, и возвращаем их обратно.
+            let anims = [];
+            for (let el = toEl; el && el.getAnimations; el = el.parentElement) {
+                el.getAnimations().forEach(an => { anims.push([an, an.currentTime]); });
+            }
+            anims.forEach(([an]) => { let t = an.effect && an.effect.getComputedTiming(); if (t) an.currentTime = t.endTime; });
+            let b = textRect(toEl);
+            anims.forEach(([an, t]) => { an.currentTime = t; });
+            if (!a.width || !b.width) return Promise.resolve();
+            let cs = getComputedStyle(fromEl);
+            let clone = document.createElement('div');
+            clone.className = 'logo-fly';
+            clone.innerHTML = fromEl.innerHTML;
+            Object.assign(clone.style, {
+                left: a.left + 'px', top: a.top + 'px', fontSize: cs.fontSize, fontWeight: cs.fontWeight,
+                letterSpacing: cs.letterSpacing, lineHeight: a.height + 'px'
+            });
+            document.body.appendChild(clone);
+            toEl.style.visibility = 'hidden';
+            let k = b.height / a.height;
+            let anim = clone.animate([
+                { transform: 'translate(0,0) scale(1)' },
+                { transform: `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(${k})` }
+            ], { duration, easing: 'cubic-bezier(.65,0,.25,1)', fill: 'forwards' });
+            return anim.finished.catch(() => {}).then(() => {
+                toEl.style.visibility = '';
+                clone.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120 }).finished
+                    .catch(() => {}).then(() => clone.remove());
+            });
+        }
+
+        // Заставка → меню: содержимое заставки уходит, логотип улетает в шапку,
+        // карточки меню встают лесенкой.
+        async function animateSplashToMenu() {
+            stageAnimating = true;
+            let splash = document.getElementById('stage0-splash');
+            let mark = splash.querySelector('.splash-mark');
+            splash.classList.add('is-leaving');
+            await new Promise(r => setTimeout(r, 280));
+            // Позицию логотипа меряем до переключения экрана.
+            let markRect = textRect(mark);
+            showMenuNow();
+            splash.classList.remove('is-leaving');
+            // Временно возвращаем заставочный логотип на прежнее место (невидимо) — для замера.
+            let tmp = mark.cloneNode(true);
+            tmp.classList.add('logo-measure');
+            Object.assign(tmp.style, { position: 'fixed', left: markRect.left + 'px', top: markRect.top + 'px', margin: 0, visibility: 'hidden', animation: 'none' });
+            document.body.appendChild(tmp);
+            await flyLogo(tmp, document.querySelector('#stage1-loading .setup-brand__mark'), 650);
+            tmp.remove();
+            stageAnimating = false;
         }
 
         // Запоминаем, что рабочий экран уже открывался: тогда из меню
@@ -264,7 +334,15 @@ let isProcessing = false;
         // работу» на заставке сразу ведут в меню, без повторного вопроса.
         let resumePromptAnswered = false;
 
-        function showSplash() {
+        async function showSplash() {
+            // Меню → заставка: меню мягко гаснет, заставка проявляется заново.
+            if (isShown('stage1-loading') && motionOK() && !stageAnimating) {
+                stageAnimating = true;
+                let menu = document.getElementById('stage1-loading');
+                await menu.animate([{ opacity: 1, filter: 'blur(0)' }, { opacity: 0, filter: 'blur(6px)' }],
+                                   { duration: 260, easing: 'ease-in' }).finished.catch(() => {});
+                stageAnimating = false;
+            }
             showStage('stage0-splash');
             loadRecentProjects();
         }
@@ -364,6 +442,12 @@ let isProcessing = false;
         }
 
         function showMenu() {
+            if (stageAnimating) return;
+            if (isShown('stage0-splash') && motionOK()) { animateSplashToMenu(); return; }
+            showMenuNow();
+        }
+
+        function showMenuNow() {
             detachEmbeddedAudacity(true);
             embedAreaId = 'audacityEmbedArea';
             embedBtnId = 'btnEmbedAudacity';
@@ -446,6 +530,17 @@ let isProcessing = false;
                     card.style.setProperty('--mx', ((last.clientX - r.left) / k) + 'px');
                     card.style.setProperty('--my', ((last.clientY - r.top) / k) + 'px');
                 });
+            }, { passive: true });
+        })();
+
+        // Тот же «прожектор» на кнопке заставки.
+        (function initSplashSpotlight() {
+            let btn = document.querySelector('#stage0-splash .splash-btn');
+            if (!btn) return;
+            btn.addEventListener('pointermove', e => {
+                let r = btn.getBoundingClientRect();
+                btn.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+                btn.style.setProperty('--my', (e.clientY - r.top) + 'px');
             }, { passive: true });
         })();
 
