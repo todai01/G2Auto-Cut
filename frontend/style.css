@@ -2078,3 +2078,26 @@ input:focus-visible + .opt-chip__box{
 }
 .conn-suggest-row__label{ font-weight: 650; color: var(--text); }
 .conn-suggest-row__file{ font-family: var(--font-mono); font-size: 12.5px; color: var(--accent-good); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Автопроверка (прототип): кнопка над лентой и результат на карточках */
+.sum-dubs__head{ gap: 8px; }
+.sum-asr{ display: inline-flex; gap: 4px; margin-left: auto; margin-right: 8px; }
+.sum-asr__lang{
+    background: var(--screen); color: var(--text-dim); border: 1px solid var(--border-soft);
+    border-radius: 6px; font-size: 11px; padding: 2px 4px;
+}
+.sum-asr__btn{
+    background: transparent; color: var(--accent-info); border: 1px solid rgba(43,192,207,0.45);
+    border-radius: 6px; font-size: 11.5px; font-weight: 650; padding: 3px 10px; cursor: pointer;
+}
+.sum-asr__btn:hover{ background: rgba(43,192,207,0.12); }
+.sum-asr__btn.is-running{ color: var(--accent-trash); border-color: var(--accent-trash); }
+.sum-dub{ max-width: 120px; }
+.sum-dub__asr{
+    max-width: 104px; font-size: 9.5px; font-family: var(--font-mono); line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sum-dub.asr-ok .sum-dub__asr{ color: var(--accent-good); }
+.sum-dub.asr-low .sum-dub__asr{ color: var(--accent-var); }
+.sum-dub.asr-ok{ border-bottom: 2px solid var(--accent-good); }
+.sum-dub.asr-low{ border-bottom: 2px solid var(--accent-var); }

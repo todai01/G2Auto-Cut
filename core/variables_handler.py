@@ -1739,14 +1739,27 @@ class VariablesMixin:
                              # таблице тоже есть готовый список значений
                              # (1-100 млн, 100-900 тыс и т.д.)
 
+        transcript_cols = []  # (ключ категории, номер колонки) — транскрипции кириллицей
+        last_tag_key = None
         for col_idx, cell in enumerate(header):
             text = str(cell).strip() if cell is not None else ''
             if not text:
+                continue
+            # Колонка транскрипции («<mark_транскрипция>» или просто
+            # «Транскрипция» сразу после колонки категории) — не связка и не
+            # категория: это то, как значение звучит, для автопроверки.
+            if re.search(r'транскрип|transcri', text, re.I):
+                inner = text.strip('<> ')
+                base = re.sub(r'[_\s]*(транскрип\w*|transcri\w*)$', '', inner, flags=re.I).strip()
+                base_key = (_match_sum_tag(base) or base) if base else last_tag_key
+                if base_key:
+                    transcript_cols.append((base_key, col_idx))
                 continue
             m = _VAR_TAG_RE.match(text)
             if m:
                 tag_key = m.group(1).strip()
                 sum_internal = _match_sum_tag(tag_key)
+                last_tag_key = sum_internal or tag_key
                 if sum_internal:
                     columns.append({"type": "sum", "key": sum_internal, "tag": tag_key, "col_idx": col_idx})
                     sum_tag_col.setdefault(sum_internal, col_idx)
@@ -1814,6 +1827,18 @@ class VariablesMixin:
         self.var_template_rows = template_rows
         self.sum_stage2_row_idx = 0
 
+        transcripts = {}
+        for base_key, t_idx in transcript_cols:
+            v_idx = extra_tag_col.get(base_key, sum_tag_col.get(base_key))
+            if v_idx is None:
+                continue
+            for r in data_rows:
+                v = r[v_idx] if v_idx < len(r) else None
+                t = r[t_idx] if t_idx < len(r) else None
+                if v not in (None, '') and t not in (None, ''):
+                    transcripts.setdefault(base_key, {})[str(v).strip()] = str(t).strip()
+        self.var_transcripts = transcripts
+
         found = self._var_find_connector_files([os.path.dirname(picked[0])])
         return {
             "file_name": os.path.basename(picked[0]),
@@ -1821,6 +1846,7 @@ class VariablesMixin:
             "extra_tags": extra_tags,
             "connectors": connectors,
             "connector_suggestions": self._var_connector_suggestions_payload(found),
+            "transcripts": {self._category_label(k): len(v) for k, v in transcripts.items()},
         }
 
     @staticmethod
@@ -2728,6 +2754,7 @@ class VariablesMixin:
                 "current": i == ptr,
                 "tiers": [self._category_label(t) for t in tiers],
                 "tier_keys": tiers,
+                "asr": (getattr(self, 'sum_asr_results', None) or {}).get(path),
             })
         return {"items": items, "total": len(files), "current": ptr, "from": start}
 

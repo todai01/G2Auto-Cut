@@ -1152,13 +1152,19 @@ let isProcessing = false;
         }
 
         let lastVarDictSumsPresent = false;
+        let lastVarDictTranscripts = null;
         function renderVarDictConnectors(res) {
             let extraTags = (res.extra_tags || []).map(t => t.label);
             if (res.columns) lastVarDictSumsPresent = res.columns.some(c => c.type === 'sum');
+            if (res.transcripts) lastVarDictTranscripts = res.transcripts;
+            res.transcripts = lastVarDictTranscripts;
             let sumsPresent = lastVarDictSumsPresent;
             let summary = `Найдено: ${extraTags.length ? extraTags.join(', ') : '—'}`
                 + (sumsPresent ? ' + Суммы (Миллионы/Сотни/Тысячи/Тенге)' : '')
-                + `. Связок нужно озвучить: ${(res.connectors || []).length}.`;
+                + `. Связок нужно озвучить: ${(res.connectors || []).length}.`
+                + (res.transcripts && Object.keys(res.transcripts).length
+                    ? `<br>Транскрипция для автопроверки: ${Object.entries(res.transcripts).map(([k, n]) => `${escapeHtml(k)} (${n})`).join(', ')}.`
+                    : (res.transcripts ? '<br>Колонки транскрипции нет — автопроверка будет сверять с самими значениями (менее точно).' : ''));
             document.getElementById('varDictSummary').innerHTML = summary;
 
             let list = document.getElementById('varDictConnectorsList');
@@ -1815,6 +1821,7 @@ let isProcessing = false;
                     tags.appendChild(tag);
                 });
                 card.appendChild(tags);
+                sumDubRenderAsr(card, it.asr);
 
                 card.addEventListener('click', e => sumDubClick(e, it, card, items));
                 card.addEventListener('dblclick', () => sumFocusDub(it.index));
@@ -1882,6 +1889,71 @@ let isProcessing = false;
             } finally {
                 sumDubPaging = false;
             }
+        }
+
+        // ===== АВТОПРОВЕРКА (прототип) =====
+        // Распознаёт дубли локально и показывает на карточке, на какое
+        // значение категории это похоже и на сколько процентов. Ничего не
+        // сохраняет само — зелёные можно смело тащить, жёлтые — послушать.
+        let sumAsrRunning = false;
+        function sumDubRenderAsr(card, asr) {
+            let old = card.querySelector('.sum-dub__asr');
+            if (old) old.remove();
+            card.classList.remove('asr-ok', 'asr-low');
+            if (!asr) return;
+            let line = document.createElement('div');
+            line.className = 'sum-dub__asr';
+            if (asr.error || !asr.heard) {
+                line.textContent = asr.error ? 'ошибка' : 'тишина?';
+                card.classList.add('asr-low');
+            } else {
+                line.textContent = `${Math.round(asr.score * 100)}% ${asr.best || ''}`;
+                card.classList.add(asr.confident ? 'asr-ok' : 'asr-low');
+            }
+            card.title = (asr.heard ? `Распознано: «${asr.heard}»\n` : '')
+                + (asr.best ? `Похоже на: ${asr.best} — ${Math.round(asr.score * 100)}% (второй вариант ${Math.round((asr.second || 0) * 100)}%)\n` : '')
+                + (asr.confident ? 'Уверенно — можно переносить' : 'Не уверен — послушайте')
+                + (asr.error ? `\nОшибка: ${asr.error}` : '');
+            card.appendChild(line);
+        }
+        function sumAutoCheckProgress(p) {
+            let dubs = lastSumState && lastSumState.dubs;
+            if (dubs) {
+                let it = dubs.items.find(x => x.index === p.index);
+                if (it) it.asr = p;
+            }
+            let card = document.querySelector(`#sumDubsRail .sum-dub[data-index="${p.index}"]`);
+            if (card) sumDubRenderAsr(card, p);
+            let btn = document.getElementById('sumAsrBtn');
+            if (btn && sumAsrRunning) btn.textContent = `Стоп (${p.done}/${p.total})`;
+        }
+        async function sumAutoCheckToggle() {
+            let btn = document.getElementById('sumAsrBtn');
+            if (sumAsrRunning) {
+                try { await pywebview.api.sum_auto_check_stop(); } catch (_) {}
+                return;
+            }
+            if (!sumStage1Tiers.length) return;
+            let tier = sumStage1Tiers[sumStage1SelectedIdx];
+            let dubs = (lastSumState && lastSumState.dubs && lastSumState.dubs.items) || [];
+            let indices = sumDubSel.size ? [...sumDubSel].sort((a, b) => a - b)
+                : dubs.filter(it => !it.tiers.length).map(it => it.index);
+            if (!indices.length) { showToast('Нет неразобранных дублей в ленте'); return; }
+            let lang = (document.getElementById('sumAsrLang') || {}).value || 'ru';
+            sumAsrRunning = true;
+            btn.classList.add('is-running');
+            btn.textContent = 'Загружаю модель…';
+            showToast(`Автопроверка: ${indices.length} дубл. против «${tier.label}»`);
+            let res;
+            try { res = await pywebview.api.sum_auto_check(tier.key, indices, lang); }
+            catch (e) { res = { error: String(e) }; }
+            sumAsrRunning = false;
+            btn.classList.remove('is-running');
+            btn.textContent = 'Автопроверка';
+            if (res && res.error) { showBeautifulAlert(`❌ <b>Автопроверка</b><br><br>${escapeHtml(res.error).replace(/\n/g, '<br>')}`); return; }
+            let ok = ((lastSumState && lastSumState.dubs && lastSumState.dubs.items) || [])
+                .filter(it => indices.includes(it.index) && it.asr && it.asr.confident).length;
+            showToast(`${res.stopped ? 'Остановлено' : 'Готово'}: проверено ${res.done}, уверенно ${ok}, на прослушку ${res.done - ok}`);
         }
 
         function sumDubClick(e, it, card, items) {

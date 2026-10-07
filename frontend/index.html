@@ -1013,6 +1013,16 @@
                                 <div class="sum-dubs">
                                     <div class="sum-dubs__head">
                                         <span class="sum-dubs__title">Дубли — перетащите в категорию</span>
+                                        <span class="sum-asr">
+                                            <select id="sumAsrLang" class="sum-asr__lang" title="Язык записи для распознавания">
+                                                <option value="ru">RU</option>
+                                                <option value="kk">KZ</option>
+                                                <option value="tr">TR</option>
+                                                <option value="auto">Авто</option>
+                                            </select>
+                                            <button type="button" class="sum-asr__btn" id="sumAsrBtn" onclick="sumAutoCheckToggle()"
+                                                    title="Распознать выделенные дубли (или все неразобранные в ленте) и сверить с выбранной категорией">Автопроверка</button>
+                                        </span>
                                         <span class="sum-dubs__range" id="sumDubsRange"></span>
                                     </div>
                                     <div class="sum-dubs__rail" id="sumDubsRail"></div>
