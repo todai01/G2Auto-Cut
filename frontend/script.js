@@ -1096,14 +1096,16 @@ let isProcessing = false;
             showBeautifulAlert(`❌ <b>Таблица не загружена</b><br><br>${String(msg).replace(/\n/g, '<br>')}`);
         }
 
+        // Загрузку Excel запустили из аудита — после неё аудит продолжится сам.
+        let pendingAuditAfterExcel = false;
         async function loadExcel() {
             let picked;
             try {
                 picked = await pywebview.api.pick_excel();
-            } catch (e) { excelError(e); return; }
+            } catch (e) { pendingAuditAfterExcel = false; excelError(e); return; }
 
-            if (!picked || picked.error === 'cancel') { pendingPremadeAfterExcel = false; return; }
-            if (picked.error) { pendingPremadeAfterExcel = false; excelError(picked.error); return; }
+            if (!picked || picked.error === 'cancel') { pendingPremadeAfterExcel = false; pendingAuditAfterExcel = false; return; }
+            if (picked.error) { pendingPremadeAfterExcel = false; pendingAuditAfterExcel = false; excelError(picked.error); return; }
 
             await analyzeExcel(true);
         }
@@ -1242,6 +1244,7 @@ let isProcessing = false;
             // Отменили выбор колонок — значит и «Готовую папку», которую
             // собирались открыть сразу после загрузки Excel, тоже не открываем.
             pendingPremadeAfterExcel = false;
+            pendingAuditAfterExcel = false;
         }
 
         async function confirmExcelSelection() {
@@ -1260,6 +1263,7 @@ let isProcessing = false;
             // closeExcelPicker() сбрасывает pendingPremadeAfterExcel (на случай
             // отмены) — запоминаем значение до вызова, а не после.
             let openPremadeAfter = pendingPremadeAfterExcel;
+            let auditAfter = pendingAuditAfterExcel;
             closeExcelPicker();
             updateUI(state);
 
@@ -1272,6 +1276,8 @@ let isProcessing = false;
 
             if (openPremadeAfter) {
                 startPremadeSumMode();
+            } else if (auditAfter) {
+                runProjectAudit();
             }
         }
 
@@ -5062,8 +5068,10 @@ let isProcessing = false;
             if (!res || res.error) {
                 let msg = res?.error || '';
                 if (!msg || /Сначала загрузите Excel/i.test(msg)) {
-                    showBeautifulAlert('ℹ️ <b>Нечего сверять</b><br><br>Для аудита нужна таблица: загрузите текст (<b>Excel</b>, шаг 1) '
-                        + 'или таблицу-словарь переменных (режим <b>«Готовая папка с переменными»</b>) — и запустите аудит снова.');
+                    // Не «загрузите», а сразу предлагаем загрузить — и продолжаем аудит.
+                    let go = await showBeautifulConfirm('ℹ️ <b>Нужна таблица</b><br><br>Чтобы найти недостающие записи, выберите Excel-таблицу — '
+                        + 'после загрузки аудит продолжится сам.', 'Загрузить таблицу', 'Отмена');
+                    if (go) { pendingAuditAfterExcel = true; loadExcel(); }
                 } else {
                     showBeautifulAlert(`❌ <b>Ошибка аудита</b><br><br>${escapeHtml(msg)}`);
                 }
