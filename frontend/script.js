@@ -2144,7 +2144,7 @@ let isProcessing = false;
         // Тянете ручку — после отпускания звучит стык; клик по волне —
         // слушать с этого места. «Сохранить эталон» пишет обрезанные значения
         // в «Проверенные» и переходит к следующей строке.
-        let sumEd = { segs: [], trims: [], gains: [], bucket: 10, sig: null, drag: null, play: null, loading: false };
+        let sumEd = { segs: [], trims: [], gains: [], cuts: [], sel: null, bucket: 10, sig: null, drag: null, play: null, loading: false };
         const ED_PAD = 6, ED_LABEL_H = 20, ED_HANDLE_HIT = 7;
         const ED_MISSING_MS = 900;   // ширина пустого слота на дорожке (записи ещё нет)
         const SUM_REC_TYPE = 'application/x-gvox-rec';   // перетаскивание записанного чипа
@@ -2178,13 +2178,15 @@ let isProcessing = false;
             sumEditorStopPlayhead();
             let msg = document.getElementById('sumEditorMsg');
             if (res && res.error) {
-                sumEd.segs = []; sumEd.trims = []; sumEd.gains = [];
+                sumEd.segs = []; sumEd.trims = []; sumEd.gains = []; sumEd.cuts = []; sumEd.sel = null;
                 if (msg) msg.innerText = res.error;
             } else {
                 sumEd.segs = (res && res.segments) || [];
                 sumEd.bucket = (res && res.bucket_ms) || 10;
                 sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
                 sumEd.gains = sumEd.segs.map(() => 0);
+                sumEd.cuts = sumEd.segs.map(() => []);
+                sumEd.sel = null;
                 let missing = (res && res.missing) || [];
                 if (msg) msg.innerText = !sumEd.segs.length
                     ? 'Для этой строки ещё нет записей — перетащите сюда дубль или запись из категории'
@@ -2192,6 +2194,7 @@ let isProcessing = false;
             }
             sumEditorRenderRow();
             sumEditorRenderGains();
+            sumEditorRenderCutBtn();
             sumEditorDraw();
         }
         function sumEditorRenderRow() {
@@ -2218,14 +2221,24 @@ let isProcessing = false;
         }
         function edX(canvas, ms) { let w = canvas.clientWidth - 2 * ED_PAD; return ED_PAD + (edTotal() ? ms / edTotal() * w : 0); }
         function edMsAt(canvas, x) { let w = canvas.clientWidth - 2 * ED_PAD; return Math.max(0, Math.min(edTotal(), (x - ED_PAD) / w * edTotal())); }
-        function edOutLen(j) { return sumEd.trims[j][1] - sumEd.trims[j][0]; }
+        // Оставшиеся после обрезки краёв и вырезов куски сегмента j (мс от его начала).
+        function edKept(j) {
+            let [a, b] = sumEd.trims[j];
+            let cuts = (sumEd.cuts[j] || []).map(c => [Math.max(a, c[0]), Math.min(b, c[1])])
+                .filter(c => c[1] > c[0]).sort((x, y) => x[0] - y[0]);
+            let out = [], cur = a;
+            for (let [c0, c1] of cuts) { if (c0 > cur) out.push([cur, c0]); cur = Math.max(cur, c1); }
+            if (b > cur) out.push([cur, b]);
+            return out;
+        }
+        function edOutLen(j) { return edKept(j).reduce((acc, k) => acc + k[1] - k[0], 0); }
         function edOrigToOut(ms) {
             let acc = 0, start = 0;
             for (let j = 0; j < sumEd.segs.length; j++) {
                 let d = edDur(j);
                 if (ms < start + d) {
-                    let [a, b] = sumEd.trims[j];
-                    return acc + Math.max(0, Math.min(ms - start, b) - a);
+                    let local = ms - start;
+                    return acc + edKept(j).reduce((x, k) => x + Math.max(0, Math.min(local, k[1]) - k[0]), 0);
                 }
                 acc += edOutLen(j); start += d;
             }
@@ -2234,9 +2247,11 @@ let isProcessing = false;
         function edOutToOrig(out) {
             let start = 0;
             for (let j = 0; j < sumEd.segs.length; j++) {
-                let len = edOutLen(j);
-                if (out < len) return start + sumEd.trims[j][0] + out;
-                out -= len; start += edDur(j);
+                for (let [k0, k1] of edKept(j)) {
+                    if (out < k1 - k0) return start + k0 + out;
+                    out -= k1 - k0;
+                }
+                start += edDur(j);
             }
             return edTotal();
         }
@@ -2305,6 +2320,26 @@ let isProcessing = false;
                 ctx.fillStyle = 'rgba(8,10,14,0.72)';
                 if (a > 0) ctx.fillRect(x0, top, edX(canvas, s0 + a) - x0, h);
                 if (b < seg.duration_ms) { let xb = edX(canvas, s0 + b); ctx.fillRect(xb, top, x1 - xb, h); }
+                // Вырезанное из середины — затемнено со штриховкой, клик возвращает.
+                (sumEd.cuts[i] || []).forEach(([c0, c1]) => {
+                    let cx0 = edX(canvas, s0 + c0), cx1 = edX(canvas, s0 + c1);
+                    ctx.fillStyle = 'rgba(8,10,14,0.78)';
+                    ctx.fillRect(cx0, top, cx1 - cx0, h);
+                    ctx.save();
+                    ctx.beginPath(); ctx.rect(cx0, top, cx1 - cx0, h); ctx.clip();
+                    ctx.strokeStyle = 'rgba(229,72,77,0.55)'; ctx.lineWidth = 1;
+                    for (let hx = cx0 - h; hx < cx1; hx += 7) { ctx.beginPath(); ctx.moveTo(hx, top + h); ctx.lineTo(hx + h, top); ctx.stroke(); }
+                    ctx.restore();
+                    ctx.fillStyle = 'rgba(229,72,77,0.9)';
+                    ctx.fillRect(cx0, top, 1, h); ctx.fillRect(cx1 - 1, top, 1, h);
+                });
+                if (sumEd.sel && sumEd.sel.i === i) {
+                    let sx0 = edX(canvas, s0 + sumEd.sel.a), sx1 = edX(canvas, s0 + sumEd.sel.b);
+                    ctx.fillStyle = 'rgba(122,162,255,0.28)';
+                    ctx.fillRect(sx0, top, sx1 - sx0, h);
+                    ctx.fillStyle = 'rgba(122,162,255,0.95)';
+                    ctx.fillRect(sx0, top, 1, h); ctx.fillRect(sx1 - 1, top, 1, h);
+                }
 
                 ctx.fillStyle = 'rgba(255,255,255,0.18)';
                 ctx.fillRect(x1 - 0.5, top, 1, h);
@@ -2336,7 +2371,7 @@ let isProcessing = false;
             }
 
             if (timeEl) {
-                let total = sumEd.trims.reduce((acc, t) => acc + (t[1] - t[0]), 0);
+                let total = sumEd.segs.reduce((acc, _, j) => acc + edOutLen(j), 0);
                 timeEl.innerText = `${(total / 1000).toFixed(2)} с`;
             }
         }
@@ -2361,18 +2396,36 @@ let isProcessing = false;
             canvas.addEventListener('pointerdown', e => {
                 if (!sumEd.segs.length) return;
                 let x = e.offsetX, hit = edHit(canvas, x);
+                canvas.setPointerCapture(e.pointerId);
                 if (hit) {
                     sumEd.drag = hit;
-                    canvas.setPointerCapture(e.pointerId);
                     sumEditorStop();
                 } else {
-                    sumEditorPlay(edOrigToOut(edMsAt(canvas, x)));
+                    // Клик — слушать отсюда; протянуть по переменной — выделить кусок.
+                    sumEd.press = { x, slot: edSlotAt(canvas, x), selecting: false };
                 }
             });
             canvas.addEventListener('pointermove', e => {
                 let x = e.offsetX;
+                let pr = sumEd.press;
+                if (pr) {
+                    let seg = sumEd.segs[pr.slot];
+                    if (!pr.selecting && Math.abs(x - pr.x) > 4 && seg && !seg.connector && !seg.missing) {
+                        pr.selecting = true;
+                        sumEditorStop();
+                    }
+                    if (pr.selecting) {
+                        let s0 = edSegStart(pr.slot), [ta, tb] = sumEd.trims[pr.slot];
+                        let m1 = Math.round(edMsAt(canvas, pr.x) - s0), m2 = Math.round(edMsAt(canvas, x) - s0);
+                        let a = Math.max(ta, Math.min(m1, m2)), b = Math.min(tb, Math.max(m1, m2));
+                        sumEd.sel = b - a >= 10 ? { i: pr.slot, a, b } : null;
+                        sumEditorRenderCutBtn();
+                        sumEditorDraw();
+                    }
+                    return;
+                }
                 if (!sumEd.drag) {
-                    canvas.style.cursor = edHit(canvas, x) ? 'ew-resize' : 'pointer';
+                    canvas.style.cursor = edHit(canvas, x) ? 'ew-resize' : (edCutAt(canvas, x) ? 'pointer' : 'text');
                     return;
                 }
                 let { i, side } = sumEd.drag;
@@ -2384,6 +2437,22 @@ let isProcessing = false;
                 sumEditorDraw();
             });
             const end = e => {
+                let pr = sumEd.press;
+                if (pr) {
+                    sumEd.press = null;
+                    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+                    if (pr.selecting) {
+                        // Сразу слышно, что выделено.
+                        if (sumEd.sel) sumEditorPlay(edOrigToOut(edSegStart(sumEd.sel.i) + sumEd.sel.a));
+                        return;
+                    }
+                    let cut = edCutAt(canvas, pr.x);
+                    if (cut) { sumEditorUncut(cut.i, cut.k); return; }
+                    sumEd.sel = null;
+                    sumEditorRenderCutBtn();
+                    sumEditorPlay(edOrigToOut(edMsAt(canvas, pr.x)));
+                    return;
+                }
                 if (!sumEd.drag) return;
                 let { i, side } = sumEd.drag;
                 sumEd.drag = null;
@@ -2438,6 +2507,48 @@ let isProcessing = false;
                 let seg = sumEd.segs[i];
                 if (!seg.connector && (t[0] > 0 || t[1] < seg.duration_ms)) out[i] = t;
             });
+            return out;
+        }
+        // Вырез под курсором (для «вернуть»).
+        function edCutAt(canvas, x) {
+            let j = edSlotAt(canvas, x);
+            if (j < 0) return null;
+            let local = edMsAt(canvas, x) - edSegStart(j);
+            let k = (sumEd.cuts[j] || []).findIndex(c => local >= c[0] && local <= c[1]);
+            return k >= 0 ? { i: j, k } : null;
+        }
+        function sumEditorRenderCutBtn() {
+            let btn = document.getElementById('sumEditorCutBtn');
+            if (btn) btn.disabled = !sumEd.sel;
+        }
+        // Вырезать выделенный кусок из середины переменной.
+        function sumEditorCut() {
+            let sel = sumEd.sel;
+            if (!sel) { showToast('Сначала протяните мышью по волне переменной, чтобы выделить кусок'); return; }
+            let list = sumEd.cuts[sel.i] || (sumEd.cuts[sel.i] = []);
+            list.push([sel.a, sel.b]);
+            // Пересекающиеся вырезы — в один.
+            list.sort((x, y) => x[0] - y[0]);
+            let merged = [];
+            for (let c of list) {
+                let last = merged[merged.length - 1];
+                if (last && c[0] <= last[1]) last[1] = Math.max(last[1], c[1]); else merged.push([c[0], c[1]]);
+            }
+            sumEd.cuts[sel.i] = merged;
+            sumEd.sel = null;
+            sumEditorRenderCutBtn();
+            sumEditorDraw();
+            // Слушаем стык: с ~0.8 с до места выреза.
+            sumEditorPlay(Math.max(0, edOrigToOut(edSegStart(sel.i) + sel.a) - 800));
+        }
+        function sumEditorUncut(i, k) {
+            sumEd.cuts[i].splice(k, 1);
+            sumEditorDraw();
+            showToast('Вырезанный кусок возвращён');
+        }
+        function sumEditorCutsPayload() {
+            let out = {};
+            sumEd.cuts.forEach((c, i) => { if (c && c.length) out[i] = c; });
             return out;
         }
         function sumEditorGainsPayload() {
@@ -2518,7 +2629,7 @@ let isProcessing = false;
         async function sumEditorPlay(fromOut) {
             if (!sumEd.segs.length) return;
             let res;
-            try { res = await pywebview.api.sum_editor_play(sumEditorTrimsPayload(), Math.round(fromOut || 0), sumEditorGainsPayload()); }
+            try { res = await pywebview.api.sum_editor_play(sumEditorTrimsPayload(), Math.round(fromOut || 0), sumEditorGainsPayload(), sumEditorCutsPayload()); }
             catch (e) { return; }
             if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
             if (sumEd.play) cancelAnimationFrame(sumEd.play.raf);
@@ -2544,6 +2655,8 @@ let isProcessing = false;
             if (res && !res.error) { sumEditorApplyLoad(res); return; }
             sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
             sumEd.gains = sumEd.segs.map(() => 0);
+            sumEd.cuts = sumEd.segs.map(() => []);
+            sumEd.sel = null;
             sumEditorRenderGains();
             sumEditorDraw();
         }
@@ -2551,7 +2664,7 @@ let isProcessing = false;
             if (!sumEd.segs.length) { showToast('Нечего сохранять — для строки нет записей'); return; }
             await sumEditorStop();
             sumEd.sig = null;
-            await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload(), sumEditorGainsPayload()), false);
+            await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload(), sumEditorGainsPayload(), sumEditorCutsPayload()), false);
         }
 
         function sumStage2Indices() {
@@ -3631,7 +3744,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
                 else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else saveVarBatch(false); }
                 else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
-                else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); sumRemoveBrowsed(); }
+                else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); if (sumEd.sel) sumEditorCut(); else sumRemoveBrowsed(); }
                 else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
@@ -3654,7 +3767,7 @@ let isProcessing = false;
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
             else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else processAction('good'); }
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
-            else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); sumRemoveBrowsed(); }
+            else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); if (sumEd.sel) sumEditorCut(); else sumRemoveBrowsed(); }
             else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumFixSplit(); }

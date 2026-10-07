@@ -132,9 +132,25 @@ class TimingEditorMixin:
     def _editor_get(d, i):
         return (d or {}).get(str(i)) if (d or {}).get(str(i)) is not None else (d or {}).get(i)
 
-    def _editor_trimmed(self, trims, gains=None):
-        """Сегменты с учётом обрезки и громкости:
-        trims = {номер: [начало_мс, конец_мс]}, gains = {номер: дБ}."""
+    @staticmethod
+    def _editor_kept(a, b, cuts):
+        """Оставшиеся куски [начало, конец) внутри обрезки [a, b) без вырезанного."""
+        spans = sorted((max(a, int(c0)), min(b, int(c1))) for c0, c1 in (cuts or []))
+        kept, cur = [], a
+        for c0, c1 in spans:
+            if c1 <= c0:
+                continue
+            if c0 > cur:
+                kept.append((cur, c0))
+            cur = max(cur, c1)
+        if b > cur:
+            kept.append((cur, b))
+        return kept
+
+    def _editor_trimmed(self, trims, gains=None, cuts=None):
+        """Сегменты с учётом обрезки краёв, вырезанных кусков и громкости:
+        trims = {номер: [начало_мс, конец_мс]}, cuts = {номер: [[начало, конец], ...]},
+        gains = {номер: дБ}."""
         editor = getattr(self, '_sum_editor', None)
         if not editor:
             return None
@@ -145,19 +161,32 @@ class TimingEditorMixin:
                 continue
             if not seg["connector"]:
                 t = self._editor_get(trims, i)
-                if t:
-                    a = max(0, min(int(t[0]), len(audio)))
-                    b = max(a + MIN_KEEP_MS, min(int(t[1]), len(audio)))
-                    audio = audio[a:b]
+                a, b = (int(t[0]), int(t[1])) if t else (0, len(audio))
+                a = max(0, min(a, len(audio)))
+                b = max(a + MIN_KEEP_MS, min(b, len(audio)))
+                kept = self._editor_kept(a, b, self._editor_get(cuts, i)) or [(a, min(len(audio), a + MIN_KEEP_MS))]
+                if len(kept) == 1:
+                    audio = audio[kept[0][0]:kept[0][1]]
+                else:
+                    # Склейка без щелчков: 5 мс затухания/нарастания на стыках.
+                    out = None
+                    for k0, k1 in kept:
+                        piece = audio[k0:k1]
+                        fade = min(5, len(piece) // 4)
+                        if out is None:
+                            out = piece.fade_out(fade)
+                        else:
+                            out += piece.fade_in(fade) if (k0, k1) == kept[-1] else piece.fade_in(fade).fade_out(fade)
+                    audio = out
                 g = self._editor_get(gains, i)
                 if g:
                     audio = audio.apply_gain(max(-GAIN_LIMIT_DB, min(GAIN_LIMIT_DB, float(g))))
             parts.append((i, seg, audio))
         return parts
 
-    def sum_editor_play(self, trims, from_ms=0, gains=None):
-        """Прослушать сборку с обрезкой и громкостью, начиная с from_ms (по итоговой сборке)."""
-        parts = self._editor_trimmed(trims, gains)
+    def sum_editor_play(self, trims, from_ms=0, gains=None, cuts=None):
+        """Прослушать сборку с обрезкой, вырезами и громкостью, начиная с from_ms (по итоговой сборке)."""
+        parts = self._editor_trimmed(trims, gains, cuts)
         if not parts:
             return {"error": "Редактор пуст — нет сборки для этой строки."}
         combined = AudioSegment.silent(duration=0, frame_rate=EDITOR_RATE)
@@ -179,7 +208,7 @@ class TimingEditorMixin:
             return {"error": f"Не удалось проиграть: {e}"}
         return {"playing": True, "duration": len(piece) / 1000.0, "from_ms": from_ms}
 
-    def sum_editor_save(self, trims, gains=None):
+    def sum_editor_save(self, trims, gains=None, cuts=None):
         """Сохранить эталон строки: каждое значение — с его обрезкой и
         громкостью — в «Проверенные». Сырые и подставленные вручную
         значения сохраняются всегда, уже готовые — только если их меняли."""
@@ -188,7 +217,7 @@ class TimingEditorMixin:
             return {"error": "Редактор пуст — нет сборки для этой строки."}
         if editor.get("row_idx") != getattr(self, 'sum_stage2_row_idx', 0):
             return {"error": "Строка таблицы сменилась — откройте редактор заново."}
-        parts = self._editor_trimmed(trims, gains)
+        parts = self._editor_trimmed(trims, gains, cuts)
 
         raw_files = getattr(self, 'constructor_tier_files', None) or {}
         saved = {}

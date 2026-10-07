@@ -2147,3 +2147,8 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 .sum-gain__val.is-changed{ color: var(--accent-var); }
 .sum-rec[draggable="true"]{ cursor: grab; }
 .sum-gain__src{ font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin-right: 4px; }
+
+.sum-editor__actions .btn-tile:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
