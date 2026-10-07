@@ -2353,6 +2353,11 @@ let isProcessing = false;
             canvas.addEventListener('pointerup', end);
             canvas.addEventListener('pointercancel', end);
             window.addEventListener('resize', () => sumEditorDraw());
+            // Волна могла загрузиться, пока экран был скрыт (размер 0) —
+            // перерисовываем, как только у холста появился/сменился размер.
+            if (window.ResizeObserver) {
+                new ResizeObserver(() => sumEditorDraw()).observe(canvas);
+            }
         }
 
         // --- звук ---
