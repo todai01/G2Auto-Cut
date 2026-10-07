@@ -2541,3 +2541,11 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 /* Линия, отделившаяся от подписи, до своего полёта — как обычный разделитель */
 .fx-line.is-resting{ background: var(--border); box-shadow: none; }
 .fx-line{ transition: background .3s ease, box-shadow .3s ease; }
+
+/* Граница шапки рисуется слева направо + бегущая «головка» света */
+.fx-line--draw{ transform-origin: 0 50%; }
+.fx-head{
+    position: fixed; width: 90px; height: 10px; pointer-events: none; will-change: transform, opacity;
+    background: radial-gradient(ellipse at 70% 50%, rgba(190,220,255,.95), rgba(77,149,234,.45) 35%, transparent 70%);
+    filter: blur(.5px);
+}

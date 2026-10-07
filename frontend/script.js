@@ -293,9 +293,21 @@ let isProcessing = false;
 
         // Подпись по буквам и кнопка «втягиваются» в логотип заставки;
         // логотип при этом коротко «заряжается» светом. Промис — когда всё вошло.
-        function absorbIntoLogo(splash, tagline, btn, logo, layer) {
+        function absorbIntoLogo(splash, tagline, btn, logo, layer, line) {
             let jobs = [];
             let cx = logo.left + logo.width / 2, cy = logo.top + logo.height * .62;
+            if (line) {
+                // Линия стягивается к центру, светлеет и уходит вверх в буквы.
+                let r = line.getBoundingClientRect();
+                let dx = cx - (r.left + r.width / 2), dy = cy - r.top;
+                line.style.transformOrigin = '50% 50%';
+                jobs.push(line.animate([
+                    { transform: 'translate(0,0) scaleX(1)', opacity: 1, background: 'rgba(38,43,52,1)' },
+                    { transform: 'translate(0,0) scaleX(.35)', opacity: 1, background: 'rgba(110,170,255,1)', offset: .45 },
+                    { transform: `translate(${dx}px, ${dy}px) scaleX(.02)`, opacity: 0, background: 'rgba(150,195,255,1)' }
+                ], { duration: 460, delay: 120, easing: 'cubic-bezier(.55,0,.6,.3)', fill: 'forwards' }).finished
+                    .then(() => line.remove()));
+            }
             if (tagline && tagline.firstChild) {
                 let text = tagline.textContent, node = tagline.firstChild;
                 let chars = [];
@@ -408,7 +420,7 @@ let isProcessing = false;
             }
 
             // Подпись и кнопка «втягиваются» в логотип.
-            let absorb = absorbIntoLogo(splash, tagline, startBtn, wordA, layer);
+            let absorb = absorbIntoLogo(splash, tagline, startBtn, wordA, layer, line);
             splash.classList.add('is-leaving');
             await absorb;
 
@@ -426,15 +438,24 @@ let isProcessing = false;
             let k = wordB.height / wordA.height;
             target.style.visibility = 'hidden';
 
-            // Линия-граница: из-под подписи заставки — в низ шапки.
-            if (line) {
-                line.classList.remove('is-resting');
-                let sx = headB.width / lineA.width;
-                jobs.push(line.animate([
-                    { transform: 'translate(0,0) scaleX(1)', opacity: 1 },
-                    { transform: `translate(${headB.left - lineA.left}px, ${(headB.bottom - 1) - (lineA.bottom - 1)}px) scaleX(${sx})`, opacity: 1, offset: .85 },
-                    { transform: `translate(${headB.left - lineA.left}px, ${(headB.bottom - 1) - (lineA.bottom - 1)}px) scaleX(${sx})`, opacity: 0 }
-                ], { duration: 900, delay: 60, easing: 'cubic-bezier(.77,0,.18,1)', fill: 'forwards' }).finished);
+            // Граница шапки рисуется слева направо, по ней бежит яркая «головка».
+            {
+                let y = headB.bottom - 1;
+                let ln = document.createElement('div');
+                ln.className = 'fx-line fx-line--draw';
+                Object.assign(ln.style, { left: headB.left + 'px', top: y + 'px', width: headB.width + 'px' });
+                let head = document.createElement('div');
+                head.className = 'fx-head';
+                Object.assign(head.style, { left: headB.left + 'px', top: y + 'px' });
+                layer.append(ln, head);
+                const opts = { duration: 760, delay: 420, easing: 'cubic-bezier(.6,0,.25,1)', fill: 'both' };
+                ln.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], opts);
+                head.animate([
+                    { transform: 'translate(-50%,-50%) translateX(0)', opacity: 0 },
+                    { opacity: 1, offset: .1 },
+                    { opacity: 1, offset: .85 },
+                    { transform: `translate(-50%,-50%) translateX(${headB.width}px)`, opacity: 0 }
+                ], opts);
             }
 
             // Сначала «Vox» по дуге собирается в шапке; «G» ждёт на месте.
@@ -462,30 +483,45 @@ let isProcessing = false;
                     { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
                 ], { duration: 820, delay: 40 + i * 50, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
             });
-            // «G» — рогатка: пока «Vox» летит, она натягивается назад (от цели),
-            // копит свечение и дрожит от напряжения — и выстреливает в шапку.
-            // Её посадка запускает волну.
+            // «G» — бумеранг: вылетает вправо, крутясь уходит по широкой дуге,
+            // разворачивается и возвращается точно на своё место в шапке.
+            // Момент «поимки» запускает волну.
             g.forEach(L => {
-                let el = spawn(L), { tx, ty } = place(L);
+                let el = spawn(L);
                 el.classList.add('is-g');
-                gOrigin = { x: L.rect.left + tx + L.rect.width * k / 2, y: L.rect.top + ty + L.rect.height * k / 2 };
-                let n = Math.hypot(tx, ty) || 1, ux = tx / n, uy = ty / n;
-                const back = d => `translate(${-ux * d}px, ${-uy * d}px)`;
-                const glow = a => `0 0 ${8 + a * 26}px rgba(120,175,255,${(.15 + a * .6).toFixed(2)})`;
-                gJob = el.animate([
-                    { transform: 'translate(0,0) scale(1)', textShadow: glow(0), filter: 'blur(0)', easing: 'cubic-bezier(.4,0,.6,1)' },
-                    { transform: `${back(34)} scale(1.07, .95)`, textShadow: glow(.8), offset: .6, easing: 'linear' },
-                    { transform: `translate(${-ux * 35 + 1.6}px, ${-uy * 35 - 1.2}px) scale(1.08, .94)`, textShadow: glow(.9), offset: .64, easing: 'linear' },
-                    { transform: `translate(${-ux * 36 - 1.6}px, ${-uy * 36 + 1.2}px) scale(1.08, .94)`, textShadow: glow(.95), offset: .68, easing: 'linear' },
-                    { transform: `${back(38)} scale(1.09, .93)`, textShadow: glow(1), filter: 'blur(0)', offset: .72, easing: 'cubic-bezier(.9,0,.35,1)' },
-                    { transform: `translate(${tx + ux * 6}px, ${ty + uy * 6}px) scale(${k * 1.06}, ${k * .96})`, textShadow: glow(.6), filter: 'blur(2.5px)', offset: .93, easing: 'cubic-bezier(.2,.8,.3,1)' },
-                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, textShadow: glow(0), filter: 'blur(0)' }
-                ], { duration: 1320, delay: 0, fill: 'forwards' }).finished;
+                el.style.transformOrigin = '50% 50%';
+                let sx = L.rect.left + L.rect.width / 2, sy = L.rect.top + L.rect.height / 2;
+                let { tx, ty } = place(L);
+                let ex = L.rect.left + tx + L.rect.width * k / 2, ey = L.rect.top + ty + L.rect.height * k / 2;
+                gOrigin = { x: ex, y: ey };
+                let W = innerWidth, H = innerHeight;
+                // Кубическая кривая: вправо-вниз, широкий разворот справа, назад вдоль верха.
+                let P = [[sx, sy], [sx + W * .62, sy + H * .22], [ex + W * .78, ey - H * .02], [ex, ey]];
+                const bez = t => {
+                    let u = 1 - t;
+                    return [0, 1].map(j => u*u*u*P[0][j] + 3*u*u*t*P[1][j] + 3*u*t*t*P[2][j] + t*t*t*P[3][j]);
+                };
+                const DUR = 1500, N = 36, TURNS = 3;
+                // Время по кривой: резкий бросок, плавный разворот, мягкая «поимка».
+                const ease = u => u + .05 * Math.sin(2 * Math.PI * u);   // быстрее на броске и возврате, медленнее в развороте
+                let frames = [];
+                for (let i = 0; i <= N; i++) {
+                    let u = i / N;
+                    let t = Math.min(1, Math.max(0, ease(u)));
+                    let [x, y] = bez(t);
+                    let spin = TURNS * 360 * (1 - Math.pow(1 - u, 1.6));   // крутится быстро, к поимке затихает
+                    let far = Math.sin(Math.PI * t);                         // вдали — чуть меньше (перспектива)
+                    let sc = (1 + (k - 1) * t) * (1 - .18 * far);
+                    frames.push({
+                        transform: `translate(${(x - sx).toFixed(1)}px, ${(y - sy).toFixed(1)}px) rotate(${(i === N ? TURNS * 360 : spin).toFixed(1)}deg) scale(${(i === N ? k : sc).toFixed(4)})`,
+                        textShadow: `0 0 ${(6 + far * 18).toFixed(1)}px rgba(120,175,255,${(.2 + far * .45).toFixed(2)})`,
+                        offset: u
+                    });
+                }
+                gJob = el.animate(frames, { duration: DUR, delay: 80, easing: 'linear', fill: 'forwards' }).finished;
                 jobs.push(gJob);
-                // Волна стартует ровно в момент касания (93% полёта «G»), не дожидаясь усадки.
-                setTimeout(() => {
-                    revealMenuFromLogo(menu, gOrigin);
-                }, Math.round(1320 * .93));
+                // Волна — ровно в момент поимки.
+                setTimeout(() => revealMenuFromLogo(menu, gOrigin), 80 + DUR);
             });
 
             await Promise.all(jobs).catch(() => {});
