@@ -2183,7 +2183,7 @@ let isProcessing = false;
             } else {
                 sumEd.segs = (res && res.segments) || [];
                 sumEd.bucket = (res && res.bucket_ms) || 10;
-                sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
+                sumEd.trims = sumEditorAutoTrims();
                 sumEd.ref = (res && res.ref_loudness_db != null) ? res.ref_loudness_db : null;
                 sumEd.gains = sumEditorAutoGains();
                 sumEd.cuts = sumEd.segs.map(() => []);
@@ -2197,6 +2197,10 @@ let isProcessing = false;
             sumEditorRenderGains();
             sumEditorRenderCutBtn();
             sumEditorDraw();
+            // После «Сохранить эталон» следующая строка сразу звучит.
+            if (sumEd.playNext && sumEd.segs.length && sumEditorOpt('gvox_auto_play')) sumEditorPlay(0);
+            sumEd.playNext = false;
+            sumEd.loadedAt = performance.now();
         }
         function sumEditorRenderRow() {
             let el = document.getElementById('sumEditorRow');
@@ -2559,18 +2563,42 @@ let isProcessing = false;
         }
         // Авто-громкость: переменная подгоняется под громкость связок,
         // чтобы сборка звучала единым потоком. Выключатель запоминается.
-        function sumEditorAutoOn() {
-            try { return localStorage.getItem('gvox_auto_gain') !== '0'; } catch (e) { return true; }
+        function sumEditorOpt(name) {
+            try { return localStorage.getItem(name) !== '0'; } catch (e) { return true; }
         }
+        function sumEditorSetOpt(name, on) {
+            try { localStorage.setItem(name, on ? '1' : '0'); } catch (e) {}
+        }
+        function sumEditorAutoOn() { return sumEditorOpt('gvox_auto_gain'); }
         function sumEditorAutoGains() {
             let on = sumEditorAutoOn();
             return sumEd.segs.map(s => (on && !s.connector && s.auto_gain_db) ? s.auto_gain_db : 0);
         }
+        // Авто-обрезка: ручки краёв сразу стоят по речи, без тишины.
+        function sumEditorAutoTrims() {
+            let on = sumEditorOpt('gvox_auto_trim');
+            return sumEd.segs.map(s => (on && !s.connector && s.auto_trim) ? [s.auto_trim[0], s.auto_trim[1]] : [0, s.duration_ms]);
+        }
         function sumEditorToggleAuto(on) {
-            try { localStorage.setItem('gvox_auto_gain', on ? '1' : '0'); } catch (e) {}
+            sumEditorSetOpt('gvox_auto_gain', on);
             sumEd.gains = sumEditorAutoGains();
             sumEditorRenderGains();
             sumEditorDraw();
+        }
+        function sumEditorToggleTrim(on) {
+            sumEditorSetOpt('gvox_auto_trim', on);
+            sumEd.trims = sumEditorAutoTrims();
+            sumEditorDraw();
+        }
+        function sumEditorOptBox(text, name, onChange, title) {
+            let box = sumEl('label', 'sum-gain sum-gain--auto');
+            let cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = sumEditorOpt(name);
+            cb.addEventListener('change', () => { cb.blur(); onChange ? onChange(cb.checked) : sumEditorSetOpt(name, cb.checked); });
+            box.append(cb, sumEl('span', '', text));
+            box.title = title;
+            return box;
         }
         const edDb = g => `${g > 0 ? '+' : ''}${g} дБ`;
         // Громкость каждой переменной: ▼/▲ по 1 дБ, сразу слышно.
@@ -2583,13 +2611,17 @@ let isProcessing = false;
                 let cb = document.createElement('input');
                 cb.type = 'checkbox';
                 cb.checked = sumEditorAutoOn();
-                cb.addEventListener('change', () => sumEditorToggleAuto(cb.checked));
+                cb.addEventListener('change', () => { cb.blur(); sumEditorToggleAuto(cb.checked); });
                 auto.append(cb, sumEl('span', '', 'Авто-громкость под связки'));
                 auto.title = sumEd.ref != null
                     ? `Громкость речи в связках: ${sumEd.ref} дБ. Переменные подтягиваются к ней; ▲▼ — поправить на слух`
                     : 'Связок в сборке нет — подгонять не под что';
                 if (sumEd.ref == null) auto.classList.add('is-off');
                 box.appendChild(auto);
+                box.appendChild(sumEditorOptBox('Авто-обрезка тишины', 'gvox_auto_trim', sumEditorToggleTrim,
+                    'Ручки краёв сразу ставятся по началу и концу речи. Поправить — тянуть ручки как раньше'));
+                box.appendChild(sumEditorOptBox('Слушать следующую сразу', 'gvox_auto_play', null,
+                    'После «Сохранить эталон» (Enter) следующая строка проигрывается сама'));
             }
             sumEd.segs.forEach((seg, i) => {
                 if (seg.connector || seg.missing) return;
@@ -2687,7 +2719,7 @@ let isProcessing = false;
             let res;
             try { res = await pywebview.api.sum_editor_clear_slots(sumStage2Indices()); } catch (e) { res = null; }
             if (res && !res.error) { sumEditorApplyLoad(res); return; }
-            sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
+            sumEd.trims = sumEditorAutoTrims();
             sumEd.gains = sumEditorAutoGains();
             sumEd.cuts = sumEd.segs.map(() => []);
             sumEd.sel = null;
@@ -2696,9 +2728,16 @@ let isProcessing = false;
         }
         async function sumEditorSave() {
             if (!sumEd.segs.length) { showToast('Нечего сохранять — для строки нет записей'); return; }
-            await sumEditorStop();
-            sumEd.sig = null;
-            await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload(), sumEditorGainsPayload(), sumEditorCutsPayload()), false);
+            // Двойной Enter не сохраняет следующую строку вслепую.
+            if (sumEd.saving || sumEd.loading || performance.now() - (sumEd.loadedAt || 0) < 400) return;
+            sumEd.saving = true;
+            try {
+                await sumEditorStop();
+                sumEd.sig = null;
+                sumEd.playNext = true;
+                let ok = await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload(), sumEditorGainsPayload(), sumEditorCutsPayload()), false);
+                if (!ok) sumEd.playNext = false;
+            } finally { sumEd.saving = false; }
         }
 
         function sumStage2Indices() {
@@ -3780,6 +3819,7 @@ let isProcessing = false;
                 else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
                 else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); if (sumEd.sel) sumEditorCut(); else sumRemoveBrowsed(); }
                 else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
+                else if ((e.code === 'Enter' || e.code === 'NumpadEnter') && sumModeActive) { e.preventDefault(); sumEditorSave(); }
                 else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
                 else if (e.code === 'KeyR') { e.preventDefault(); loadCheckedToAudacity(); }
                 else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else sendToAudacity(); }
@@ -3803,6 +3843,7 @@ let isProcessing = false;
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); if (sumEd.sel) sumEditorCut(); else sumRemoveBrowsed(); }
             else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
+            else if ((e.code === 'Enter' || e.code === 'NumpadEnter') && sumModeActive) { e.preventDefault(); sumEditorSave(); }
             else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
             else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
             else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
