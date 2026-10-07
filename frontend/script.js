@@ -291,6 +291,61 @@ let isProcessing = false;
 
         const wait = ms => new Promise(r => setTimeout(r, ms));
 
+        // Подпись по буквам и кнопка «втягиваются» в логотип заставки;
+        // логотип при этом коротко «заряжается» светом. Промис — когда всё вошло.
+        function absorbIntoLogo(splash, tagline, btn, logo, layer) {
+            let jobs = [];
+            let cx = logo.left + logo.width / 2, cy = logo.top + logo.height * .62;
+            if (tagline && tagline.firstChild) {
+                let text = tagline.textContent, node = tagline.firstChild;
+                let chars = [];
+                for (let i = 0; i < text.length; i++) {
+                    if (!text[i].trim()) continue;
+                    let r = document.createRange();
+                    r.setStart(node, i); r.setEnd(node, i + 1);
+                    chars.push({ ch: text[i], rect: r.getBoundingClientRect() });
+                }
+                let cs = getComputedStyle(tagline);
+                tagline.style.visibility = 'hidden';
+                let n = chars.length;
+                chars.forEach((c, i) => {
+                    let el = document.createElement('span');
+                    el.className = 'fx-char';
+                    el.textContent = c.ch;
+                    Object.assign(el.style, { left: c.rect.left + 'px', top: c.rect.top + 'px', fontSize: cs.fontSize, color: cs.color, lineHeight: c.rect.height + 'px' });
+                    layer.appendChild(el);
+                    // Каждая буква — в свою точку внутри логотипа; уходят от краёв к центру.
+                    let tx = cx + (i / Math.max(1, n - 1) - .5) * logo.width * .55 - (c.rect.left + c.rect.width / 2);
+                    let ty = cy - (c.rect.top + c.rect.height / 2);
+                    let order = Math.abs(i - (n - 1) / 2) / ((n - 1) / 2 || 1);
+                    jobs.push(el.animate([
+                        { transform: 'translate(0,0) scale(1)', opacity: 1 },
+                        { transform: `translate(${tx * .35}px, ${ty * .2 + 6}px) scale(.9)`, opacity: 1, offset: .35 },
+                        { transform: `translate(${tx}px, ${ty}px) scale(.15)`, opacity: 0 }
+                    ], { duration: 420, delay: (1 - order) * 140, easing: 'cubic-bezier(.55,0,.75,.2)', fill: 'forwards' })
+                        .finished.then(() => el.remove()));
+                });
+            }
+            if (btn) {
+                let r = btn.getBoundingClientRect();
+                let dy = cy - (r.top + r.height / 2), dx = cx - (r.left + r.width / 2);
+                btn.style.transformOrigin = '50% 50%';
+                jobs.push(btn.animate([
+                    { transform: 'translate(0,0) scale(1,1)', opacity: 1, filter: 'brightness(1)' },
+                    { transform: 'translate(0,0) scale(.92,.12)', opacity: 1, filter: 'brightness(1.8)', offset: .4 },
+                    { transform: `translate(${dx}px, ${dy}px) scale(.06,.04)`, opacity: 0, filter: 'brightness(2)' }
+                ], { duration: 460, delay: 90, easing: 'cubic-bezier(.55,0,.6,.3)', fill: 'forwards' }).finished);
+            }
+            // Логотип «заряжается», впитывая подпись и кнопку.
+            let mark = splash.querySelector('.splash-mark');
+            mark.animate([
+                { textShadow: '0 0 0 rgba(120,175,255,0)' },
+                { textShadow: '0 0 26px rgba(120,175,255,.55)', offset: .8 },
+                { textShadow: '0 0 18px rgba(120,175,255,.35)' }
+            ], { duration: 560, easing: 'ease-in', fill: 'forwards' });
+            return Promise.all(jobs).catch(() => {});
+        }
+
         // Прямоугольник элемента в КОНЕЧНОМ положении: анимации предков
         // (меню ещё «въезжает») на миг проматываем в конец и возвращаем.
         function finalRect(el, measure) {
@@ -330,19 +385,39 @@ let isProcessing = false;
             let splash = document.getElementById('stage0-splash');
             let mark = splash.querySelector('.splash-mark');
             let tagline = splash.querySelector('.entry__tagline');
-            splash.classList.add('is-leaving');
-            await wait(230);
+            let startBtn = splash.querySelector('.entry__start');
 
-            // Исходные позиции — пока заставка ещё на экране.
+            // Исходные позиции — пока заставка ещё нетронута.
             let from = logoLetters(mark);
             let wordA = textRect(mark);
             let fontSize = parseFloat(getComputedStyle(mark).fontSize);
             let lineA = tagline ? tagline.getBoundingClientRect() : null;
 
+            let layer = document.createElement('div');
+            layer.className = 'fx-layer';
+            document.body.appendChild(layer);
+            let jobs = [];
+
+            // Линия-разделитель отделяется от подписи и ждёт своего полёта.
+            let line = null;
+            if (lineA) {
+                line = document.createElement('div');
+                line.className = 'fx-line is-resting';
+                Object.assign(line.style, { left: lineA.left + 'px', top: (lineA.bottom - 1) + 'px', width: lineA.width + 'px' });
+                layer.appendChild(line);
+            }
+
+            // Подпись и кнопка «втягиваются» в логотип.
+            let absorb = absorbIntoLogo(splash, tagline, startBtn, wordA, layer);
+            splash.classList.add('is-leaving');
+            await absorb;
+
             let menu = document.getElementById('stage1-loading');
             menu.classList.add('menu-entering');
             showMenuNow();
             splash.classList.remove('is-leaving');
+            splash.getAnimations({ subtree: true }).forEach(an => an.cancel());
+            if (tagline) tagline.style.visibility = '';
 
             let target = menu.querySelector('.setup-brand__mark');
             let header = menu.querySelector('.setup-header');
@@ -351,17 +426,9 @@ let isProcessing = false;
             let k = wordB.height / wordA.height;
             target.style.visibility = 'hidden';
 
-            let layer = document.createElement('div');
-            layer.className = 'fx-layer';
-            document.body.appendChild(layer);
-            let jobs = [];
-
             // Линия-граница: из-под подписи заставки — в низ шапки.
-            if (lineA) {
-                let line = document.createElement('div');
-                line.className = 'fx-line';
-                Object.assign(line.style, { left: lineA.left + 'px', top: (lineA.bottom - 1) + 'px', width: lineA.width + 'px' });
-                layer.appendChild(line);
+            if (line) {
+                line.classList.remove('is-resting');
                 let sx = headB.width / lineA.width;
                 jobs.push(line.animate([
                     { transform: 'translate(0,0) scaleX(1)', opacity: 1 },

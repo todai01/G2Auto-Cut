@@ -2468,11 +2468,9 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 .stage-splash .entry__tagline, .stage-splash .entry__start, .stage-splash .entry__recent, .stage-splash .entry__footer{
     transition: opacity .25s ease, transform .3s cubic-bezier(.4,0,.2,1);
 }
-.stage-splash.is-leaving .entry__tagline,
-.stage-splash.is-leaving .entry__start,
 .stage-splash.is-leaving .entry__recent,
 .stage-splash.is-leaving .entry__footer{ opacity: 0; transform: translateY(-10px); animation: none; }
-.stage-splash.is-leaving .entry__start{ transition-delay: .03s; }
+.stage-splash.is-leaving .entry__tagline, .stage-splash.is-leaving .entry__start{ animation: none; }
 .stage-splash.is-leaving .entry__recent{ transition-delay: .06s; }
 .stage-splash.is-leaving .entry__mark{ animation: none; }
 @media (prefers-reduced-motion: reduce){
@@ -2537,3 +2535,9 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
     -webkit-mask-composite: xor; mask-composite: exclude;
 }
 .fx-canvas{ position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 9998; pointer-events: none; }
+
+/* Буквы подписи, «втягивающиеся» в логотип */
+.fx-char{ position: fixed; margin: 0; white-space: pre; will-change: transform, opacity; font-family: var(--font-ui); }
+/* Линия, отделившаяся от подписи, до своего полёта — как обычный разделитель */
+.fx-line.is-resting{ background: var(--border); box-shadow: none; }
+.fx-line{ transition: background .3s ease, box-shadow .3s ease; }
