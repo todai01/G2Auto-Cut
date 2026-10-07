@@ -8,6 +8,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
 from core import project_state, recent_projects
+from core.ui_dialogs import ui_confirm, ui_toast
 from core.variables_handler import SUM_TIER_ORDER
 
 try:
@@ -425,18 +426,17 @@ class ProjectMixin:
             has_tracks = True
 
         if has_tracks:
-            use_existing = webview.windows[0].create_confirmation_dialog('Audacity',
-                                                                         'Обнаружен открытый проект в Audacity. Использовать его (ОК) или создать новый (Отмена)?')
+            use_existing = ui_confirm('ℹ️ <b>В Audacity уже открыт проект</b><br><br>Использовать его или создать новый?',
+                                      ok='Использовать', cancel='Новый проект')
             if use_existing:
-                webview.windows[0].evaluate_js(
-                    "alert('Пожалуйста, укажите ИСХОДНЫЙ WAV-файл (только для памяти точного среза).');")
+                ui_toast('Укажите ИСХОДНЫЙ WAV-файл — он нужен только для точного среза')
                 raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
                                                                  file_types=('Audio Files (*.wav)', 'All files (*.*)'))
                 if raw_file:
                     self.raw_audio_full = AudioSegment.from_file(raw_file[0])
                 return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'), 'Chunks')
 
-        webview.windows[0].evaluate_js("alert('Пожалуйста, выберите ИСХОДНЫЙ WAV-файл для памяти Audacity.');")
+        ui_toast('Выберите ИСХОДНЫЙ WAV-файл для памяти Audacity')
         raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
                                                          file_types=('Audio Files (*.wav)', 'All files (*.*)'))
         if raw_file:

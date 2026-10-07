@@ -4,6 +4,7 @@ import time
 import shutil
 import ctypes
 import webview
+from core.ui_dialogs import ui_alert, ui_toast
 from pydub import AudioSegment
 from utils.file_utils import FileUtils
 
@@ -411,11 +412,11 @@ class MontageMixin:
         self.audacity.send_command('SelectTracks: Track=1 Mode=Set')
         self.audacity.send_command(f'SelectTime: Start={insert_time} End={current_paste} RelativeTo=ProjectStart')
         self.audacity.send_command('ZoomSel:')
-        webview.windows[0].evaluate_js("alert('Файлы успешно импортированы на монтажную дорожку!');")
+        ui_toast('Файлы импортированы на монтажную дорожку')
 
     def save_separate_parts(self, parts_paths, add_silence):
         if not hasattr(self, 'last_montage_sequence') or not self.last_montage_sequence:
-            webview.windows[0].evaluate_js("alert('Нет данных о загруженных файлах!');")
+            ui_alert('ℹ️ <b>Нет данных о загруженных файлах</b><br><br>Сначала загрузите файлы на монтажную дорожку.')
             return False
 
         response = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
@@ -435,14 +436,14 @@ class MontageMixin:
                 if item.get('track') == m_idx: montage_clips.append(item)
 
         if not montage_clips:
-            webview.windows[0].evaluate_js("alert('Монтажная дорожка пуста!');")
+            ui_alert('ℹ️ <b>Монтажная дорожка пуста</b>')
             return False
 
         montage_clips.sort(key=lambda x: x['start'])
 
         if len(montage_clips) != len(self.last_montage_sequence):
-            webview.windows[0].evaluate_js(
-                f"alert('Ошибка! Вы закинули {len(self.last_montage_sequence)} фрагментов, а на дорожке их {len(montage_clips)}.\\n\\nНе разрезайте аудио на части, скрипт работает по позициям.');")
+            ui_alert(f'❌ <b>Не совпадает число фрагментов</b><br><br>Вы закинули {len(self.last_montage_sequence)}, '
+                     f'а на дорожке их {len(montage_clips)}.<br><br>Не разрезайте аудио на части — скрипт работает по позициям.')
             return False
 
         checked_dir = os.path.join(self.work_dir, 'Проверенные')
@@ -522,8 +523,7 @@ class MontageMixin:
             self.audacity.send_command(f'SelectTracks: Track={m_idx} Mode=Set')
             self.audacity.send_command('SelectTime: Start=0 End=99999 RelativeTo=ProjectStart')
             self.audacity.send_command('Delete:')
-            webview.windows[0].evaluate_js(
-                "alert('Отредактированные фразы успешно вырезаны и сохранены в папку Проверенные (без переменной)!');")
+            ui_toast('Отредактированные фразы вырезаны и сохранены в «Проверенные» (без переменной)')
 
         return self.get_ui_state()
 

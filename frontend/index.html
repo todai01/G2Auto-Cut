@@ -45,7 +45,10 @@
             <button class="custom-alert-close" onclick="closeCustomAlert(false)" title="Закрыть">&times;</button>
             <div class="custom-alert-icon" id="customAlertIcon"><svg class="icon"><use href="#icon-alert-circle"></use></svg></div>
             <div id="customAlertText" class="custom-alert-text">Сообщение</div>
-            <button class="custom-alert-btn" onclick="closeCustomAlert()">ОК <kbd>Enter</kbd></button>
+            <div class="custom-alert-actions">
+                <button class="custom-alert-btn btn-secondary" id="customAlertCancel" style="display:none" onclick="closeCustomAlert(false)">Отмена <kbd>Esc</kbd></button>
+                <button class="custom-alert-btn" id="customAlertOk" onclick="closeCustomAlert()">ОК <kbd>Enter</kbd></button>
+            </div>
         </div>
     </div>
 

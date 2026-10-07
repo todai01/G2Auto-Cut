@@ -30,7 +30,7 @@ const EMOJI_ICON_MAP = {
     '🎧': { icon: 'headphones', tone: 'info' },
 };
 function extractLeadingIcon(text) {
-    let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}])️?\s*/u.exec(text || '');
+    let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2139}])️?\s*/u.exec(text || '');
     if (!m) return { icon: 'alert-circle', tone: 'info', text: text || '' };
     let mapped = EMOJI_ICON_MAP[m[0].trim()] || EMOJI_ICON_MAP[m[1]] || { icon: 'alert-circle', tone: 'info' };
     return { icon: mapped.icon, tone: mapped.tone, text: (text || '').slice(m[0].length) };
@@ -3922,7 +3922,7 @@ let isProcessing = false;
         async function mixWithVar(varType) {
             let activeParts = mergeParts.filter(p => p !== null);
             if (activeParts.length === 0) {
-                alert("Сначала отметьте фразы на монтажном столе (клавиши 1, 2...)!");
+                showBeautifulAlert("ℹ️ <b>Нечего выгружать</b><br><br>Сначала отметьте фразы на монтажном столе клавишами <b>1</b>, <b>2</b>…");
                 return;
             }
             if (isProcessing) return; isProcessing = true;
@@ -3937,7 +3937,7 @@ let isProcessing = false;
         async function saveSeparateParts() {
             let activeParts = mergeParts.filter(p => p !== null);
             if (activeParts.length === 0) {
-                alert("Нет фраз для экспорта! Отметьте их клавишами 1, 2...");
+                showBeautifulAlert("ℹ️ <b>Нет фраз для экспорта</b><br><br>Отметьте их клавишами <b>1</b>, <b>2</b>…");
                 return;
             }
             if (isProcessing) return; isProcessing = true;
@@ -4195,7 +4195,7 @@ let isProcessing = false;
             let activeParts = mergeParts.filter(p => p !== null);
 
             if (activeParts.length === 0) {
-                alert("Отметьте хотя бы одну часть для выгрузки на монтаж (клавиши 1, 2...)!");
+                showBeautifulAlert("ℹ️ <b>Нет частей для монтажа</b><br><br>Отметьте хотя бы одну часть клавишами <b>1</b>, <b>2</b>…");
                 return;
             }
 
@@ -4205,10 +4205,10 @@ let isProcessing = false;
         }
 
         async function saveMerge() {
-            if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
+            if (!saveFilenameForMerge) { showBeautifulAlert("ℹ️ <b>Нет данных</b><br><br>Сначала выберите части для склейки."); return; }
             if (isProcessing) return; isProcessing = true;
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
-            alert("Склейка сохранена в Проверенные!");
+            showToast("Склейка сохранена в «Проверенные»");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -4222,11 +4222,11 @@ let isProcessing = false;
         }
 
         async function saveMergeVar() {
-            if (!saveFilenameForMerge) { alert("Нет данных. Выберите части."); return; }
+            if (!saveFilenameForMerge) { showBeautifulAlert("ℹ️ <b>Нет данных</b><br><br>Сначала выберите части для склейки."); return; }
             if (isProcessing) return; isProcessing = true;
             // Передаем true в Python, чтобы файл ушел в папку Переменные
             await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, true);
-            alert("Склейка сохранена в Переменные!");
+            showToast("Склейка сохранена в «Переменные»");
 
             mergeParts = [null, null, null, null, null];
             saveFilenameForMerge = null;
@@ -4501,12 +4501,28 @@ let isProcessing = false;
             });
         }
 
+        // Вопрос с двумя кнопками в том же окне: resolve(true) — «ok»,
+        // resolve(false) — «cancel», крестик или Escape.
+        function showBeautifulConfirm(message, okText = 'ОК', cancelText = 'Отмена') {
+            let ok = document.getElementById('customAlertOk');
+            let cancel = document.getElementById('customAlertCancel');
+            ok.innerHTML = `${escapeHtml(okText)} <kbd>Enter</kbd>`;
+            cancel.innerHTML = `${escapeHtml(cancelText)} <kbd>Esc</kbd>`;
+            cancel.style.display = '';
+            return showBeautifulAlert(message);
+        }
+
         // confirmed=true — закрыли по «ОК»/Enter/Space (действие после алерта
         // продолжается); confirmed=false — закрыли крестиком/Escape (это
         // отмена, вызвавший код должен остановиться, а не продолжать как
         // будто нажали «ОК»).
         function closeCustomAlert(confirmed = true) {
             document.getElementById('customAlertOverlay').style.display = 'none';
+            // Окно снова обычное «сообщение с ОК» для следующего раза.
+            let cancel = document.getElementById('customAlertCancel');
+            if (cancel) cancel.style.display = 'none';
+            let ok = document.getElementById('customAlertOk');
+            if (ok) ok.innerHTML = 'ОК <kbd>Enter</kbd>';
             // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
             if (window.customAlertCallback) {
                 window.customAlertCallback(confirmed);
@@ -5040,7 +5056,13 @@ let isProcessing = false;
                 return;
             }
             if (!res || res.error) {
-                alert(res?.error || "Сначала загрузите Excel-файл с текстом!");
+                let msg = res?.error || '';
+                if (!msg || /Сначала загрузите Excel/i.test(msg)) {
+                    showBeautifulAlert('ℹ️ <b>Нечего сверять</b><br><br>Для аудита нужна таблица: загрузите текст (<b>Excel</b>, шаг 1) '
+                        + 'или таблицу-словарь переменных (режим <b>«Готовая папка с переменными»</b>) — и запустите аудит снова.');
+                } else {
+                    showBeautifulAlert(`❌ <b>Ошибка аудита</b><br><br>${escapeHtml(msg)}`);
+                }
                 return;
             }
             renderAuditResult(res);
