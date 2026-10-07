@@ -1865,8 +1865,10 @@ let isProcessing = false;
             renderSumSelbar();
         }
 
-        // Колесо мыши над лентой — листает её вбок; у края загруженного
-        // куска подгружает следующий, так что можно пройти весь список.
+        // Колесо мыши над лентой — листает её вбок. Подгрузка соседнего
+        // куска срабатывает от ЛЮБОЙ прокрутки (колесо, полоса прокрутки,
+        // тачпад) и заранее — за ~300 px до края, чтобы лента не упиралась.
+        const SUM_DUB_PREFETCH_PX = 300;
         function sumDubsBindWheel(rail) {
             if (rail.dataset.wheel) return;
             rail.dataset.wheel = '1';
@@ -1876,29 +1878,39 @@ let isProcessing = false;
                 e.preventDefault();
                 if (e.deltaMode === 1) delta *= 40;
                 rail.scrollLeft += delta;
-                let atEnd = rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 4;
-                let atStart = rail.scrollLeft <= 4;
-                if (delta > 0 && atEnd) sumDubsPage(1);
-                else if (delta < 0 && atStart) sumDubsPage(-1);
+                sumDubsCheckEdge();
             }, { passive: false });
+            rail.addEventListener('scroll', sumDubsCheckEdge, { passive: true });
+        }
+        function sumDubsCheckEdge() {
+            let rail = document.getElementById('sumDubsRail');
+            let w = sumDubWindow;
+            if (!rail || !w || sumDubPaging) return;
+            let toEnd = rail.scrollWidth - (rail.scrollLeft + rail.clientWidth);
+            if (toEnd <= SUM_DUB_PREFETCH_PX && w.from + w.count < w.total) sumDubsPage(1);
+            else if (rail.scrollLeft <= SUM_DUB_PREFETCH_PX && w.from > 0) sumDubsPage(-1);
         }
         async function sumDubsPage(dir) {
             let w = sumDubWindow;
             if (!w || sumDubPaging) return;
             let step = Math.floor(w.count / 2);
             let start = dir > 0 ? w.from + step : Math.max(0, w.from - step);
-            if (dir > 0 && w.from + w.count >= w.total) return;
-            if (dir < 0 && w.from === 0) return;
             sumDubPaging = true;
+            let ok = false;
             try {
                 let dubs = await pywebview.api.sum_dub_cards_at(start);
-                if (dubs) {
+                if (dubs && dubs.items && dubs.items.length) {
                     if (lastSumState) lastSumState.dubs = dubs;
                     renderSumDubs(dubs, true);
+                    ok = true;
                 }
+            } catch (e) {
+                showToast(`Не удалось подгрузить дубли: ${e}`);
             } finally {
                 sumDubPaging = false;
             }
+            // Прокрутили быстро и снова у края — подгружаем дальше.
+            if (ok) requestAnimationFrame(sumDubsCheckEdge);
         }
 
         // ===== АВТОПРОВЕРКА (прототип) =====
