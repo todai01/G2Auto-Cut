@@ -369,10 +369,50 @@ let isProcessing = false;
             target.classList.add('is-landing');
             layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished
                 .catch(() => {}).then(() => layer.remove());
-            menu.classList.remove('menu-entering');
-            menu.classList.add('menu-entered');
-            setTimeout(() => { target.classList.remove('is-landing'); menu.classList.remove('menu-entered'); }, 1400);
+            revealMenuFromLogo(menu, target);
+            setTimeout(() => target.classList.remove('is-landing'), 1400);
             stageAnimating = false;
+        }
+
+        // Посадка логотипа «включает» меню: от логотипа расходится световая
+        // волна, и каждый элемент проявляется, когда она до него доходит —
+        // ближние раньше, дальние позже, чуть «вытягиваясь» со стороны логотипа.
+        function revealMenuFromLogo(menu, logo) {
+            let lr = logo.getBoundingClientRect();
+            let ox = lr.left + lr.width / 2, oy = lr.top + lr.height / 2;
+            let items = Array.from(menu.querySelectorAll(
+                '.setup-brand__sub, .setup-header__right, .section-label, .rise'))
+                .filter(el => el.offsetParent !== null);
+            let maxD = Math.hypot(innerWidth, innerHeight);
+            const WAVE_MS = 900;   // столько волна идёт до дальнего угла окна
+
+            // Волна света из логотипа.
+            let wave = document.createElement('div');
+            wave.className = 'fx-wave';
+            Object.assign(wave.style, { left: ox + 'px', top: oy + 'px' });
+            document.body.appendChild(wave);
+            wave.animate([
+                { width: '0px', height: '0px', opacity: .9 },
+                { width: maxD * 2 + 'px', height: maxD * 2 + 'px', opacity: 0 }
+            ], { duration: WAVE_MS * 1.15, easing: 'cubic-bezier(.25,.6,.3,1)' }).finished
+                .catch(() => {}).then(() => wave.remove());
+
+            // Сначала заводим анимации (fill: backwards держит элементы скрытыми
+            // до их очереди), потом снимаем скрытие — без единого «мигания».
+            items.forEach(el => {
+                let r = el.getBoundingClientRect();
+                let cx = Math.max(r.left, Math.min(ox, r.right));
+                let cy = Math.max(r.top, Math.min(oy, r.bottom));
+                let dx = cx - ox, dy = cy - oy;
+                let d = Math.hypot(dx, dy);
+                let n = d || 1;
+                el.animate([
+                    { opacity: 0, transform: `translate(${-dx / n * 18}px, ${-dy / n * 18}px) scale(.965)`, filter: 'blur(5px)' },
+                    { opacity: 1, transform: 'none', filter: 'blur(0)' }
+                ], { duration: 620, delay: d / maxD * WAVE_MS, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'backwards' });
+            });
+            menu.classList.add('menu-fx');
+            menu.classList.remove('menu-entering');
         }
 
         // Запоминаем, что рабочий экран уже открывался: тогда из меню
@@ -499,6 +539,8 @@ let isProcessing = false;
         }
 
         function showMenuNow() {
+            // Следы прошлого входа из заставки: обычные анимации меню — снова как есть.
+            document.getElementById('stage1-loading').classList.remove('menu-fx');
             detachEmbeddedAudacity(true);
             embedAreaId = 'audacityEmbedArea';
             embedBtnId = 'btnEmbedAudacity';

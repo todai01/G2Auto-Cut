@@ -2499,12 +2499,15 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 .stage-loading.menu-entering .setup-header__right,
 .stage-loading.menu-entering .section-label,
 .stage-loading.menu-entering .rise{ opacity: 0; animation: none; }
-.stage-loading.menu-entered .section-label{ animation: fxFadeRight .5s cubic-bezier(.2,.7,.3,1) .05s both; }
-/* Посадка: шапка проявляется слева направо, карточки — лесенкой */
-.stage-loading.menu-entered .setup-header{ transition: border-color .6s ease; }
-.stage-loading.menu-entered .setup-brand__sub{ animation: fxFadeRight .5s cubic-bezier(.2,.7,.3,1) both; }
-.stage-loading.menu-entered .setup-header__right{ animation: fxFadeRight .5s cubic-bezier(.2,.7,.3,1) .08s both; }
-@keyframes fxFadeRight{ from{ opacity: 0; transform: translateX(-10px); } to{ opacity: 1; transform: none; } }
+/* После входа из заставки элементы показаны своей волной (JS) —
+   CSS-анимации экрана и «лесенки» не должны перезапускаться поверх неё. */
+.stage-loading.menu-fx, .stage-loading.menu-fx .rise{ animation: none; }
+.fx-wave{
+    position: fixed; z-index: 9998; pointer-events: none;
+    width: 0; height: 0; border-radius: 50%; transform: translate(-50%, -50%);
+    border: 1px solid rgba(77,149,234,.55);
+    box-shadow: 0 0 28px rgba(77,149,234,.30), inset 0 0 28px rgba(77,149,234,.20);
+}
 .setup-brand__mark.is-landing{ animation: fxLand 1.2s ease-out; }
 .setup-brand__mark.is-landing span{ animation: fxLandAccent 1.2s ease-out; }
 @keyframes fxLand{ 0%{ text-shadow: 0 0 22px rgba(255,255,255,.45); } 100%{ text-shadow: 0 0 0 transparent; } }
