@@ -2536,3 +2536,4 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor; mask-composite: exclude;
 }
+.fx-canvas{ position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 9998; pointer-events: none; }

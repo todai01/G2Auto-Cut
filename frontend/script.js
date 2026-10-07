@@ -444,36 +444,13 @@ let isProcessing = false;
                 .filter(el => el.offsetParent !== null);
             let R = Math.hypot(Math.max(ox, innerWidth - ox), Math.max(oy, innerHeight - oy));
             const WAVE_MS = 1100;  // волна быстро стартует и замедляется к краям (easeOutCubic)
-            const EASE = 'cubic-bezier(.33,1,.68,1)';
             // Момент, когда кольцо (easeOutCubic) доходит до расстояния d.
             const reach = d => WAVE_MS * (1 - Math.cbrt(1 - Math.min(1, d / R)));
 
-            // Вспышка в точке посадки «G».
-            let flash = document.createElement('div');
-            flash.className = 'fx-flash';
-            Object.assign(flash.style, { left: ox + 'px', top: oy + 'px' });
-            document.body.appendChild(flash);
-            flash.animate([
-                { transform: 'translate(-50%,-50%) scale(.2)', opacity: 1 },
-                { transform: 'translate(-50%,-50%) scale(1.6)', opacity: 0 }
-            ], { duration: 420, easing: 'cubic-bezier(.2,.8,.3,1)' }).finished.catch(() => {}).then(() => flash.remove());
-
-            // Два кольца: яркое ведущее и мягкое следом.
-            [{ cls: 'fx-wave', delay: 0, dur: WAVE_MS, op: 1 },
-             { cls: 'fx-wave fx-wave--soft', delay: 110, dur: WAVE_MS * 1.25, op: .7 }].forEach(w => {
-                // Кольцо сразу конечного размера, растёт через scale — это
-                // делает видеокарта, без перерисовки на каждом кадре.
-                let el = document.createElement('div');
-                el.className = w.cls;
-                Object.assign(el.style, { left: ox + 'px', top: oy + 'px', width: R * 2 + 'px', height: R * 2 + 'px' });
-                document.body.appendChild(el);
-                el.animate([
-                    { transform: 'translate(-50%,-50%) scale(0.001)', opacity: w.op },
-                    { transform: 'translate(-50%,-50%) scale(1)', opacity: w.op * .8, offset: .7 },
-                    { transform: 'translate(-50%,-50%) scale(1.05)', opacity: 0 }
-                ], { duration: w.dur, delay: w.delay, easing: EASE, fill: 'backwards' }).finished
-                    .catch(() => {}).then(() => el.remove());
-            });
+            // Вспышка и два кольца (яркое ведущее + мягкое следом) рисуются на
+            // одном холсте покадрово: никаких огромных слоёв с размытыми тенями,
+            // которые подвешивали первый кадр волны.
+            drawWaveCanvas(ox, oy, R, WAVE_MS);
 
             // Каждый элемент включается, когда его касается кольцо: с пружинкой
             // и короткой вспышкой рамки. fill: backwards держит их скрытыми до очереди.
@@ -495,27 +472,71 @@ let isProcessing = false;
             menu.classList.remove('menu-entering');
         }
 
+        // Волна на холсте: вспышка в точке «G» и два кольца с мягким свечением
+        // (свечение — несколько широких полупрозрачных обводок, без shadowBlur).
+        function drawWaveCanvas(ox, oy, R, waveMs) {
+            let dpr = Math.min(2, window.devicePixelRatio || 1);
+            let cv = document.createElement('canvas');
+            cv.className = 'fx-canvas';
+            cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+            document.body.appendChild(cv);
+            let ctx = cv.getContext('2d');
+            ctx.scale(dpr, dpr);
+            const easeOut = t => 1 - Math.pow(1 - t, 3);
+            const rings = [
+                { delay: 0, dur: waveMs, alpha: 1, width: 2 },
+                { delay: 110, dur: waveMs * 1.25, alpha: .45, width: 1.2 }
+            ];
+            const total = Math.max(...rings.map(r => r.delay + r.dur));
+            let t0 = performance.now();
+            const frame = now => {
+                let t = now - t0;
+                ctx.clearRect(0, 0, innerWidth, innerHeight);
+                // Вспышка
+                if (t < 420) {
+                    let p = t / 420, rr = 14 + 100 * easeOut(p);
+                    let g = ctx.createRadialGradient(ox, oy, 0, ox, oy, rr);
+                    g.addColorStop(0, `rgba(170,205,255,${.75 * (1 - p)})`);
+                    g.addColorStop(.4, `rgba(77,149,234,${.28 * (1 - p)})`);
+                    g.addColorStop(1, 'rgba(77,149,234,0)');
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(ox, oy, rr, 0, Math.PI * 2); ctx.fill();
+                }
+                rings.forEach(w => {
+                    let p = (t - w.delay) / w.dur;
+                    if (p <= 0 || p >= 1) return;
+                    let rad = R * 1.05 * easeOut(p);
+                    let a = w.alpha * (p < .7 ? 1 : 1 - (p - .7) / .3);
+                    ctx.beginPath(); ctx.arc(ox, oy, rad, 0, Math.PI * 2);
+                    [[16, .05], [9, .09], [4, .18]].forEach(([lw, k]) => {
+                        ctx.strokeStyle = `rgba(77,149,234,${a * k})`; ctx.lineWidth = lw; ctx.stroke();
+                    });
+                    ctx.strokeStyle = `rgba(140,190,255,${a * .9})`; ctx.lineWidth = w.width; ctx.stroke();
+                });
+                if (t < total) requestAnimationFrame(frame); else cv.remove();
+            };
+            requestAnimationFrame(frame);
+        }
+
         // «Активация» карточки: от точки, где её коснулась волна, по рамке в обе
         // стороны бегут две полоски света, встречаются напротив — и вся рамка
         // коротко вспыхивает.
         function traceBorder(card, ox, oy, delay) {
             let r = card.getBoundingClientRect();
             let deg = Math.atan2(ox - (r.left + r.width / 2), -(oy - (r.top + r.height / 2))) * 180 / Math.PI;
-            let tr = document.createElement('span');
-            tr.className = 'fx-trace';
-            tr.style.setProperty('--fx-start', deg + 'deg');
-            card.appendChild(tr);
-            let run = tr.animate([
-                { '--fx-p': '0deg', opacity: 1 },
-                { '--fx-p': '180deg', opacity: 1, offset: .72 },
-                { '--fx-p': '180deg', opacity: 0 }
-            ], { duration: 820, delay, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'both' });
-            tr.animate([
-                { filter: 'drop-shadow(0 0 0 rgba(77,149,234,0))' },
-                { filter: 'drop-shadow(0 0 6px rgba(110,170,255,.9))', offset: .72 },
-                { filter: 'drop-shadow(0 0 0 rgba(77,149,234,0))' }
-            ], { duration: 820, delay, fill: 'both' });
-            run.finished.catch(() => {}).then(() => tr.remove());
+            // Элемент подсветки создаём ровно в момент касания — не все сразу.
+            setTimeout(() => {
+                let tr = document.createElement('span');
+                tr.className = 'fx-trace';
+                tr.style.setProperty('--fx-start', deg + 'deg');
+                card.appendChild(tr);
+                tr.animate([
+                    { '--fx-p': '0deg', opacity: 1 },
+                    { '--fx-p': '180deg', opacity: 1, offset: .72 },
+                    { '--fx-p': '180deg', opacity: 0 }
+                ], { duration: 820, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'both' })
+                    .finished.catch(() => {}).then(() => tr.remove());
+            }, delay);
         }
 
         // Запоминаем, что рабочий экран уже открывался: тогда из меню
