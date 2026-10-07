@@ -205,6 +205,30 @@ let isProcessing = false;
             loadRecentProjects();
         });
 
+        // Прогрев при запуске: мост к Python готов — заранее берём недавние
+        // проекты и один раз невидимо раскладываем меню, чтобы первое же
+        // «Начать работу» шло плавно, без расчётов в момент перехода.
+        let appWarmed = false;
+        function warmUpApp() {
+            if (appWarmed || !window.pywebview || !pywebview.api) return;
+            appWarmed = true;
+            loadRecentProjects();
+            loadMenuRecent();
+            const prerender = () => {
+                let menu = document.getElementById('stage1-loading');
+                if (!menu || menu.style.display !== 'none') return;
+                Object.assign(menu.style, { visibility: 'hidden', position: 'absolute', left: '0', right: '0', top: '0', display: 'flex' });
+                void menu.offsetHeight;
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    Object.assign(menu.style, { visibility: '', position: '', left: '', right: '', top: '', display: 'none' });
+                }));
+            };
+            (document.fonts ? document.fonts.ready : Promise.resolve()).then(() =>
+                (window.requestIdleCallback || (f => setTimeout(f, 200)))(prerender));
+        }
+        window.addEventListener('pywebviewready', warmUpApp);
+        document.addEventListener('DOMContentLoaded', () => setTimeout(warmUpApp, 50));
+
         // Размытие/затемнение фона, когда окно программы теряет фокус ОС
         // (например, когда Audacity выходит на передний план после C, R
         // или выбора исходника для start/end). Это стандартные события
@@ -371,18 +395,25 @@ let isProcessing = false;
                     { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
                 ], { duration: 820, delay: 40 + i * 50, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
             });
-            // «G» — последняя: короткий замах, резкий бросок и защёлкивание.
-            // Её посадка и запускает волну.
+            // «G» — рогатка: пока «Vox» летит, она натягивается назад (от цели),
+            // копит свечение и дрожит от напряжения — и выстреливает в шапку.
+            // Её посадка запускает волну.
             g.forEach(L => {
                 let el = spawn(L), { tx, ty } = place(L);
                 el.classList.add('is-g');
                 gOrigin = { x: L.rect.left + tx + L.rect.width * k / 2, y: L.rect.top + ty + L.rect.height * k / 2 };
+                let n = Math.hypot(tx, ty) || 1, ux = tx / n, uy = ty / n;
+                const back = d => `translate(${-ux * d}px, ${-uy * d}px)`;
+                const glow = a => `0 0 ${8 + a * 26}px rgba(120,175,255,${(.15 + a * .6).toFixed(2)})`;
                 gJob = el.animate([
-                    { transform: 'translate(0,0) scale(1)', filter: 'blur(0)', easing: 'cubic-bezier(.3,0,.5,1)' },
-                    { transform: 'translate(10px, 6px) scale(1.06)', filter: 'blur(0)', offset: .18, easing: 'cubic-bezier(.8,0,.25,1)' },
-                    { transform: `translate(${tx - 4}px, ${ty}px) scale(${k * 1.04})`, filter: 'blur(2px)', offset: .86, easing: 'ease-out' },
-                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)' }
-                ], { duration: 520, delay: 700, fill: 'forwards' }).finished;
+                    { transform: 'translate(0,0) scale(1)', textShadow: glow(0), filter: 'blur(0)', easing: 'cubic-bezier(.4,0,.6,1)' },
+                    { transform: `${back(34)} scale(1.07, .95)`, textShadow: glow(.8), offset: .6, easing: 'linear' },
+                    { transform: `translate(${-ux * 35 + 1.6}px, ${-uy * 35 - 1.2}px) scale(1.08, .94)`, textShadow: glow(.9), offset: .64, easing: 'linear' },
+                    { transform: `translate(${-ux * 36 - 1.6}px, ${-uy * 36 + 1.2}px) scale(1.08, .94)`, textShadow: glow(.95), offset: .68, easing: 'linear' },
+                    { transform: `${back(38)} scale(1.09, .93)`, textShadow: glow(1), filter: 'blur(0)', offset: .72, easing: 'cubic-bezier(.9,0,.35,1)' },
+                    { transform: `translate(${tx + ux * 6}px, ${ty + uy * 6}px) scale(${k * 1.06}, ${k * .96})`, textShadow: glow(.6), filter: 'blur(2.5px)', offset: .93, easing: 'cubic-bezier(.2,.8,.3,1)' },
+                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, textShadow: glow(0), filter: 'blur(0)' }
+                ], { duration: 1320, delay: 0, fill: 'forwards' }).finished;
                 jobs.push(gJob);
             });
 
@@ -424,14 +455,16 @@ let isProcessing = false;
             // Два кольца: яркое ведущее и мягкое следом.
             [{ cls: 'fx-wave', delay: 0, dur: WAVE_MS, op: 1 },
              { cls: 'fx-wave fx-wave--soft', delay: 110, dur: WAVE_MS * 1.25, op: .7 }].forEach(w => {
+                // Кольцо сразу конечного размера, растёт через scale — это
+                // делает видеокарта, без перерисовки на каждом кадре.
                 let el = document.createElement('div');
                 el.className = w.cls;
-                Object.assign(el.style, { left: ox + 'px', top: oy + 'px' });
+                Object.assign(el.style, { left: ox + 'px', top: oy + 'px', width: R * 2 + 'px', height: R * 2 + 'px' });
                 document.body.appendChild(el);
                 el.animate([
-                    { width: '0px', height: '0px', opacity: w.op },
-                    { width: R * 2 + 'px', height: R * 2 + 'px', opacity: w.op * .8, offset: .7 },
-                    { width: R * 2.1 + 'px', height: R * 2.1 + 'px', opacity: 0 }
+                    { transform: 'translate(-50%,-50%) scale(0.001)', opacity: w.op },
+                    { transform: 'translate(-50%,-50%) scale(1)', opacity: w.op * .8, offset: .7 },
+                    { transform: 'translate(-50%,-50%) scale(1.05)', opacity: 0 }
                 ], { duration: w.dur, delay: w.delay, easing: EASE, fill: 'backwards' }).finished
                     .catch(() => {}).then(() => el.remove());
             });
@@ -446,9 +479,9 @@ let isProcessing = false;
                 let n = Math.hypot(dx, dy) || 1;
                 let delay = reach(n);
                 el.animate([
-                    { opacity: 0, transform: `translate(${-dx / n * 22}px, ${-dy / n * 22}px) scale(.94)`, filter: 'blur(6px)' },
-                    { opacity: 1, transform: `translate(${dx / n * 2}px, ${dy / n * 2}px) scale(1.012)`, filter: 'blur(0)', offset: .62 },
-                    { opacity: 1, transform: 'none', filter: 'blur(0)' }
+                    { opacity: 0, transform: `translate(${-dx / n * 22}px, ${-dy / n * 22}px) scale(.94)` },
+                    { opacity: 1, transform: `translate(${dx / n * 2}px, ${dy / n * 2}px) scale(1.012)`, offset: .62 },
+                    { opacity: 1, transform: 'none' }
                 ], { duration: 520, delay, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
                 if (el.matches('.option-card, .menu-row, .menu-tool, .menu-cut')) {
                     el.animate([
@@ -509,7 +542,7 @@ let isProcessing = false;
             if (!panel || !list) return;
 
             let items = [];
-            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
+            try { items = await pywebview.api.get_recent_projects(); recentsLoaded = true; } catch (e) { items = []; }
             recentProjectsCache = items || [];
 
             if (!recentProjectsCache.length) {
@@ -554,9 +587,12 @@ let isProcessing = false;
                 return;
             }
 
-            let items = [];
-            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
-            recentProjectsCache = items || [];
+            if (!recentsLoaded) {
+                let items = [];
+                try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
+                recentProjectsCache = items || [];
+                recentsLoaded = true;
+            }
 
             if (recentProjectsCache.length) {
                 document.getElementById('resumeProjectName').innerText = recentProjectsCache[0].name;
@@ -606,13 +642,25 @@ let isProcessing = false;
         }
 
         // Недавние проекты прямо в меню — открыть в один клик.
+        let recentsLoaded = false;
+        let menuRecentSig = null;
         async function loadMenuRecent() {
+            // Сначала — мгновенно из уже загруженного списка (переход в меню
+            // не ждёт Python), потом тихо обновляем, только если что-то поменялось.
+            if (recentsLoaded) renderMenuRecent();
+            let items;
+            try { items = await pywebview.api.get_recent_projects(); } catch (e) { return; }
+            recentProjectsCache = items || [];
+            recentsLoaded = true;
+            if (!stageAnimating) renderMenuRecent();
+        }
+        function renderMenuRecent() {
             let box = document.getElementById('menuRecent');
             let list = document.getElementById('menuRecentList');
             if (!box || !list) return;
-            let items = [];
-            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
-            recentProjectsCache = items || [];
+            let sig = JSON.stringify(recentProjectsCache.slice(0, 4).map(it => [it.name, it.path, it.updated_at]));
+            if (sig === menuRecentSig) return;
+            menuRecentSig = sig;
             if (!recentProjectsCache.length) { box.style.display = 'none'; return; }
             list.innerHTML = recentProjectsCache.slice(0, 4).map((it, idx) => `
                 <button class="menu-recent__item rise" style="--d: ${6 + idx}" onclick="openRecentProject(${idx})" title="${escapeHtml(it.path || '')}">
@@ -644,6 +692,7 @@ let isProcessing = false;
                                   { duration: 220, easing: 'ease-in' }).finished.catch(() => {});
             }
             recentProjectsCache = [];
+            menuRecentSig = null;
             if (box) box.style.display = 'none';
             let splashPanel = document.getElementById('recentProjectsPanel');
             if (splashPanel) splashPanel.style.display = 'none';

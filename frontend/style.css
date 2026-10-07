@@ -2521,3 +2521,5 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
     background: radial-gradient(circle, rgba(170,205,255,.75), rgba(77,149,234,.25) 40%, transparent 70%);
 }
 .fx-letter.is-g{ text-shadow: 0 0 16px rgba(255,255,255,.25); }
+.stage-loading.menu-entering .rise, .stage-loading.menu-entering .section-label{ will-change: transform, opacity; }
+.fx-wave{ will-change: transform, opacity; }
