@@ -265,60 +265,113 @@ let isProcessing = false;
             return r.getBoundingClientRect();
         }
 
-        // Логотип «перелетает» из центра заставки в шапку меню.
-        function flyLogo(fromEl, toEl, duration) {
-            let a = textRect(fromEl);
-            // Конечное место в шапке: меню ещё «въезжает» — меряем, промотав
-            // анимации предков в конец, и возвращаем их обратно.
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+
+        // Прямоугольник элемента в КОНЕЧНОМ положении: анимации предков
+        // (меню ещё «въезжает») на миг проматываем в конец и возвращаем.
+        function finalRect(el, measure) {
             let anims = [];
-            for (let el = toEl; el && el.getAnimations; el = el.parentElement) {
-                el.getAnimations().forEach(an => { anims.push([an, an.currentTime]); });
+            for (let n = el; n && n.getAnimations; n = n.parentElement) {
+                n.getAnimations().forEach(an => anims.push([an, an.currentTime]));
             }
             anims.forEach(([an]) => { let t = an.effect && an.effect.getComputedTiming(); if (t) an.currentTime = t.endTime; });
-            let b = textRect(toEl);
+            let r = measure(el);
             anims.forEach(([an, t]) => { an.currentTime = t; });
-            if (!a.width || !b.width) return Promise.resolve();
-            let cs = getComputedStyle(fromEl);
-            let clone = document.createElement('div');
-            clone.className = 'logo-fly';
-            clone.innerHTML = fromEl.innerHTML;
-            Object.assign(clone.style, {
-                left: a.left + 'px', top: a.top + 'px', fontSize: cs.fontSize, fontWeight: cs.fontWeight,
-                letterSpacing: cs.letterSpacing, lineHeight: a.height + 'px'
-            });
-            document.body.appendChild(clone);
-            toEl.style.visibility = 'hidden';
-            let k = b.height / a.height;
-            let anim = clone.animate([
-                { transform: 'translate(0,0) scale(1)' },
-                { transform: `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(${k})` }
-            ], { duration, easing: 'cubic-bezier(.65,0,.25,1)', fill: 'forwards' });
-            return anim.finished.catch(() => {}).then(() => {
-                toEl.style.visibility = '';
-                clone.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120 }).finished
-                    .catch(() => {}).then(() => clone.remove());
-            });
+            return r;
         }
 
-        // Заставка → меню: содержимое заставки уходит, логотип улетает в шапку,
-        // карточки меню встают лесенкой.
+        // Буквы логотипа с их прямоугольниками: каждая полетит отдельно.
+        function logoLetters(markEl) {
+            let out = [];
+            markEl.childNodes.forEach(node => {
+                let accent = node.nodeType === 1;
+                let text = node.textContent;
+                let textNode = accent ? node.firstChild : node;
+                for (let i = 0; i < text.length; i++) {
+                    let r = document.createRange();
+                    r.setStart(textNode, i); r.setEnd(textNode, i + 1);
+                    out.push({ ch: text[i], accent, rect: r.getBoundingClientRect() });
+                }
+            });
+            return out;
+        }
+
+        // Заставка → меню. Хореография:
+        //  1) подпись, кнопка и список уходят;
+        //  2) линия под подписью растягивается в нижнюю границу шапки;
+        //  3) буквы GVox по одной перелетают по дуге в шапку (с размытием в движении);
+        //  4) логотип вспыхивает при посадке, проявляется шапка, карточки встают лесенкой.
         async function animateSplashToMenu() {
             stageAnimating = true;
             let splash = document.getElementById('stage0-splash');
             let mark = splash.querySelector('.splash-mark');
+            let tagline = splash.querySelector('.entry__tagline');
             splash.classList.add('is-leaving');
-            await new Promise(r => setTimeout(r, 280));
-            // Позицию логотипа меряем до переключения экрана.
-            let markRect = textRect(mark);
+            await wait(230);
+
+            // Исходные позиции — пока заставка ещё на экране.
+            let from = logoLetters(mark);
+            let wordA = textRect(mark);
+            let fontSize = parseFloat(getComputedStyle(mark).fontSize);
+            let lineA = tagline ? tagline.getBoundingClientRect() : null;
+
+            let menu = document.getElementById('stage1-loading');
+            menu.classList.add('menu-entering');
             showMenuNow();
             splash.classList.remove('is-leaving');
-            // Временно возвращаем заставочный логотип на прежнее место (невидимо) — для замера.
-            let tmp = mark.cloneNode(true);
-            tmp.classList.add('logo-measure');
-            Object.assign(tmp.style, { position: 'fixed', left: markRect.left + 'px', top: markRect.top + 'px', margin: 0, visibility: 'hidden', animation: 'none' });
-            document.body.appendChild(tmp);
-            await flyLogo(tmp, document.querySelector('#stage1-loading .setup-brand__mark'), 650);
-            tmp.remove();
+
+            let target = menu.querySelector('.setup-brand__mark');
+            let header = menu.querySelector('.setup-header');
+            let wordB = finalRect(target, textRect);
+            let headB = finalRect(header, el => el.getBoundingClientRect());
+            let k = wordB.height / wordA.height;
+            target.style.visibility = 'hidden';
+
+            let layer = document.createElement('div');
+            layer.className = 'fx-layer';
+            document.body.appendChild(layer);
+            let jobs = [];
+
+            // Линия-граница: из-под подписи заставки — в низ шапки.
+            if (lineA) {
+                let line = document.createElement('div');
+                line.className = 'fx-line';
+                Object.assign(line.style, { left: lineA.left + 'px', top: (lineA.bottom - 1) + 'px', width: lineA.width + 'px' });
+                layer.appendChild(line);
+                let sx = headB.width / lineA.width;
+                jobs.push(line.animate([
+                    { transform: 'translate(0,0) scaleX(1)', opacity: 1 },
+                    { transform: `translate(${headB.left - lineA.left}px, ${(headB.bottom - 1) - (lineA.bottom - 1)}px) scaleX(${sx})`, opacity: 1, offset: .85 },
+                    { transform: `translate(${headB.left - lineA.left}px, ${(headB.bottom - 1) - (lineA.bottom - 1)}px) scaleX(${sx})`, opacity: 0 }
+                ], { duration: 900, delay: 60, easing: 'cubic-bezier(.77,0,.18,1)', fill: 'forwards' }).finished);
+            }
+
+            // Буквы: каждая по своей дуге, с небольшой задержкой друг за другом.
+            from.forEach((L, i) => {
+                let el = document.createElement('span');
+                el.className = 'fx-letter' + (L.accent ? ' is-accent' : '');
+                el.textContent = L.ch;
+                Object.assign(el.style, { left: L.rect.left + 'px', top: L.rect.top + 'px', fontSize: fontSize + 'px', lineHeight: L.rect.height + 'px' });
+                layer.appendChild(el);
+                let tx = wordB.left + (L.rect.left - wordA.left) * k - L.rect.left;
+                let ty = wordB.top + (L.rect.top - wordA.top) * k - L.rect.top;
+                let lift = 34 + i * 2;  // общая дуга с лёгкой «волной» — слово держит форму
+                jobs.push(el.animate([
+                    { transform: 'translate(0,0) scale(1)', filter: 'blur(0)', offset: 0 },
+                    { transform: `translate(${tx * .18}px, ${ty * .1 - lift}px) scale(${1 - (1 - k) * .25})`, filter: 'blur(.6px)', offset: .28 },
+                    { transform: `translate(${tx * .78}px, ${ty * .82}px) scale(${k + (1 - k) * .12})`, filter: 'blur(1.4px)', offset: .72 },
+                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
+                ], { duration: 900, delay: 40 + i * 28, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
+            });
+
+            await Promise.all(jobs).catch(() => {});
+            target.style.visibility = '';
+            target.classList.add('is-landing');
+            layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished
+                .catch(() => {}).then(() => layer.remove());
+            menu.classList.remove('menu-entering');
+            menu.classList.add('menu-entered');
+            setTimeout(() => { target.classList.remove('is-landing'); menu.classList.remove('menu-entered'); }, 1400);
             stageAnimating = false;
         }
 

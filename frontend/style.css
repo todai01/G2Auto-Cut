@@ -2478,3 +2478,34 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 @media (prefers-reduced-motion: reduce){
     .entry__mark, .entry__tagline, .entry__start, .entry__recent, .entry__footer{ animation: none; }
 }
+
+/* --- Переход заставка → меню: «хореография» --- */
+.fx-layer{ position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+.fx-letter{
+    position: fixed; margin: 0; white-space: pre; transform-origin: 0 0; will-change: transform, filter;
+    font-family: var(--font-ui); font-weight: 800; letter-spacing: -0.04em; color: var(--text);
+}
+.fx-letter.is-accent{ color: var(--accent-primary); text-shadow: 0 0 18px rgba(77,149,234,.35); }
+.fx-line{
+    position: fixed; height: 1px; transform-origin: 0 50%; will-change: transform;
+    background: linear-gradient(90deg, transparent, var(--accent-primary) 30%, var(--accent-primary) 70%, transparent);
+    box-shadow: 0 0 10px rgba(77,149,234,.6);
+}
+
+/* Пока идёт хореография: шапка и карточки ждут, меню не «въезжает» целиком */
+.stage-loading.menu-entering{ animation: none; }
+.stage-loading.menu-entering .setup-header{ border-bottom-color: transparent; }
+.stage-loading.menu-entering .setup-brand__sub,
+.stage-loading.menu-entering .setup-header__right,
+.stage-loading.menu-entering .section-label,
+.stage-loading.menu-entering .rise{ opacity: 0; animation: none; }
+.stage-loading.menu-entered .section-label{ animation: fxFadeRight .5s cubic-bezier(.2,.7,.3,1) .05s both; }
+/* Посадка: шапка проявляется слева направо, карточки — лесенкой */
+.stage-loading.menu-entered .setup-header{ transition: border-color .6s ease; }
+.stage-loading.menu-entered .setup-brand__sub{ animation: fxFadeRight .5s cubic-bezier(.2,.7,.3,1) both; }
+.stage-loading.menu-entered .setup-header__right{ animation: fxFadeRight .5s cubic-bezier(.2,.7,.3,1) .08s both; }
+@keyframes fxFadeRight{ from{ opacity: 0; transform: translateX(-10px); } to{ opacity: 1; transform: none; } }
+.setup-brand__mark.is-landing{ animation: fxLand 1.2s ease-out; }
+.setup-brand__mark.is-landing span{ animation: fxLandAccent 1.2s ease-out; }
+@keyframes fxLand{ 0%{ text-shadow: 0 0 22px rgba(255,255,255,.45); } 100%{ text-shadow: 0 0 0 transparent; } }
+@keyframes fxLandAccent{ 0%{ text-shadow: 0 0 26px rgba(77,149,234,.9); } 100%{ text-shadow: 0 0 0 transparent; } }
