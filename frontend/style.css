@@ -2296,7 +2296,7 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 @keyframes menuDriftB{ to{ transform: translate(-12vw, -12vh) scale(1.1); } }
 
 /* Появление «лесенкой»: из лёгкого размытия и снизу. */
-.stage-loading .rise{ animation: menuRise .6s cubic-bezier(.2,.7,.3,1) both; animation-delay: calc(var(--d, 0) * 55ms); }
+.stage-loading .rise{ animation: menuRise .6s cubic-bezier(.2,.7,.3,1) backwards; animation-delay: calc(var(--d, 0) * 55ms); }
 @keyframes menuRise{
     from{ opacity: 0; transform: translateY(16px) scale(.985); filter: blur(4px); }
     to  { opacity: 1; transform: none; filter: none; }
@@ -2383,3 +2383,18 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 .menu-row:hover{ border-color: rgba(var(--glow-rgb, 120,170,255), .30); }
 .stage-loading .option-card:hover{ border-color: rgba(var(--glow-rgb, 120,170,255), .30); }
 .menu-tool:hover{ border-color: rgba(var(--glow-rgb, 120,170,255), .22); }
+
+/* --- Наведение: карточка плавно чуть увеличивается, при уходе мыши —
+   так же плавно возвращается (transition стоит на самой карточке). --- */
+.stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut{
+    transition: transform .3s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease, box-shadow .3s ease;
+    will-change: transform;
+}
+.stage-loading .option-card:hover, .menu-row:hover{ transform: scale(1.025); z-index: 2; }
+.menu-tool:hover{ transform: scale(1.045); z-index: 2; }
+.menu-recent__item:hover{ transform: scale(1.02); z-index: 2; }
+.menu-cut:hover{ transform: scale(1.015); z-index: 2; }
+.stage-loading .option-card:active, .menu-row:active, .menu-tool:active, .menu-recent__item:active{ transform: scale(.985); transition-duration: .1s; }
+@media (prefers-reduced-motion: reduce){
+    .stage-loading .option-card:hover, .menu-row:hover, .menu-tool:hover, .menu-recent__item:hover, .menu-cut:hover{ transform: none; }
+}
