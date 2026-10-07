@@ -641,8 +641,13 @@ class ProjectMixin:
         duplicates_list = [{"filename": f, "count": len(paths), "paths": paths}
                             for f, paths in found_files.items() if len(paths) > 1]
 
+        # Для выгрузки «таблицы недостающих» (audit_export_missing).
+        self._audit_last = {"category": category, "missing": {m["text"] for m in missing_list}}
+        template = getattr(self, 'var_template_path', None)
+
         return {
             "category": category,
+            "can_export": bool(missing_list and template and os.path.exists(template)),
             "category_label": self._category_label(category),
             "scan_dir": scan_dir,
             "total_excel": len(values),
@@ -652,6 +657,66 @@ class ProjectMixin:
             "missing": missing_list,
             "duplicates": duplicates_list
         }
+
+    def audit_export_missing(self):
+        """Таблица в том же формате, что загруженный словарь (та же шапка,
+        те же колонки и оформление), но только со строками, где значение
+        проверенной категории не нашлось в папке — её сразу можно
+        загрузить как словарь и записывать только недостающее."""
+        last = getattr(self, '_audit_last', None)
+        template = getattr(self, 'var_template_path', None)
+        if not last or not last.get("missing"):
+            return {"error": "Сначала запустите аудит по категории — выгружать пока нечего."}
+        if not template or not os.path.exists(template):
+            return {"error": "Не нашёл исходную таблицу-словарь — загрузите её заново."}
+
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(template)
+        except Exception as e:
+            return {"error": f"Не удалось открыть исходную таблицу: {e}"}
+        ws = wb.active
+
+        # Колонка категории — по шапке <тег>, как при загрузке словаря.
+        col_idx = None
+        for col in getattr(self, 'var_template_columns', None) or []:
+            if col['key'] == last["category"] and col['type'] != 'connector':
+                col_idx = col['col_idx'] + 1
+                break
+        if col_idx is None:
+            return {"error": "В таблице нет колонки этой категории."}
+
+        missing = last["missing"]
+        drop = []
+        for r in range(2, ws.max_row + 1):
+            v = ws.cell(row=r, column=col_idx).value
+            if v in (None, '') or str(v).strip() not in missing:
+                drop.append(r)
+        # Удаляем подряд идущие блоки снизу вверх — быстро и без сдвига номеров.
+        kept = ws.max_row - 1 - len(drop)
+        while drop:
+            end = drop.pop()
+            start = end
+            while drop and drop[-1] == start - 1:
+                start = drop.pop()
+            ws.delete_rows(start, end - start + 1)
+
+        stem = os.path.splitext(os.path.basename(template))[0]
+        label = self._category_label(last["category"])
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.SAVE, directory=os.path.dirname(template),
+            save_filename=f'{stem} — недостающие ({label}).xlsx',
+            file_types=('Excel files (*.xlsx)',))
+        if not picked:
+            return {"error": "cancel"}
+        path = picked if isinstance(picked, str) else picked[0]
+        if not path.lower().endswith('.xlsx'):
+            path += '.xlsx'
+        try:
+            wb.save(path)
+        except Exception as e:
+            return {"error": f"Не удалось сохранить таблицу (может, она открыта в Excel?): {e}"}
+        return {"saved": path, "rows": kept}
 
     def _sync_audacity_selection(self):
         """Синхронизирует выделение текущего дубля (чанка) в Audacity и приближает его."""

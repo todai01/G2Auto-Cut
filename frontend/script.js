@@ -4524,6 +4524,18 @@ let isProcessing = false;
             }
 
             document.getElementById('auditDetails').innerHTML = detailsHtml;
+            document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
+        }
+
+        // Таблица в формате словаря, только с недостающими строками.
+        async function exportAuditMissing() {
+            let res;
+            try { res = await pywebview.api.audit_export_missing(); } catch (e) { res = { error: String(e) }; }
+            if (!res || res.error) {
+                if (res && res.error !== 'cancel') showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${escapeHtml(res.error)}`);
+                return;
+            }
+            showBeautifulAlert(`✅ <b>Таблица недостающих сохранена</b><br><br>Строк: <b>${res.rows}</b><br><span style="word-break:break-all">${escapeHtml(res.saved)}</span><br><br>Загрузите её как таблицу-словарь — и в работе будут только недостающие значения.`);
         }
 
         // НОВОВВЕДЕНИЕ: Функция копирования отчета

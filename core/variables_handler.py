@@ -1825,6 +1825,7 @@ class VariablesMixin:
         self.var_extra_tag_values = extra_tag_values
         self.var_connectors = connectors
         self.var_template_rows = template_rows
+        self.var_template_path = picked[0]
         self.sum_stage2_row_idx = 0
 
         transcripts = {}

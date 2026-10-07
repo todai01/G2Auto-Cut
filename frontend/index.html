@@ -554,6 +554,7 @@
 
             <div class="modal-actions">
                 <button class="custom-alert-btn btn-secondary" onclick="copyAuditReport()">Скопировать отчёт</button>
+                <button class="custom-alert-btn btn-secondary" id="auditExportBtn" style="display:none" onclick="exportAuditMissing()" title="Та же таблица-словарь (шапка, колонки, оформление), но только строки с недостающими значениями — загрузите её как словарь и пишите только их">Таблица недостающих (.xlsx)</button>
                 <button class="custom-alert-btn" onclick="closeAudit()">Закрыть</button>
             </div>
         </div>
