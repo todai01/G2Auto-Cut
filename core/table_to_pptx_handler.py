@@ -34,6 +34,7 @@ _TIER_TAG_KEYS = {
     'tenge': {'tenge', 'tl', 'lira'},
 }
 _LANG_SUFFIX_RE = re.compile(r'_(tr|ru|kz|kg|uz)$')
+_ZERO_CURRENCY_RE = re.compile(r'(?<![\w])(sıfır|sifir|ноль|нуль|zero|0)\s*(tl|lira|тенге|теңге|тг|₸|₺)(?![\w])')
 
 # Слово-«единица» для яруса, когда ячейка хранит голое число (как в листе
 # <num_sum_...> — там, в отличие от <text_sum_...>, суммы не записаны
@@ -212,7 +213,12 @@ class TableToPptxMixin:
                 if i in no_fill:
                     continue
                 if row[i]:
-                    last_seen[i] = row[i]
+                    # Пометку «sıfır tl» вниз не протягиваем — это метка
+                    # одной строки, а не значение «то же, что выше».
+                    if _ZERO_CURRENCY_RE.search(row[i].lower()):
+                        last_seen.pop(i, None)
+                    else:
+                        last_seen[i] = row[i]
                 elif i in last_seen:
                     row[i] = last_seen[i]
 
@@ -373,10 +379,13 @@ class TableToPptxMixin:
         «Миллионы» и «Тенге» там держатся на значении из первой строки
         таблицы, а «Сотни тысяч» идут по колонке до её конца."""
         idx = tier_cols.get('tenge')
-        if idx is None:
-            return None
         for i, row in enumerate(rows):
-            if idx < len(row) and self._table_pptx_is_zero_tenge(row[idx]):
+            if idx is not None and idx < len(row) and self._table_pptx_is_zero_tenge(row[idx]):
+                return i
+            # Метка может стоять и в отдельной колонке (например <ext_tr>) —
+            # там требуем ноль вместе со словом валюты, чтобы не ловить
+            # случайные «0» в других колонках.
+            if any(_ZERO_CURRENCY_RE.search((cell or '').lower()) for cell in row):
                 return i
         return None
 
@@ -396,6 +405,11 @@ class TableToPptxMixin:
         tenge_idx = tier_cols.get('tenge')
         fixed_millions = rows[0][millions_idx] if rows and millions_idx is not None and millions_idx < len(rows[0]) else None
         fixed_tenge = rows[0][tenge_idx] if rows and tenge_idx is not None and tenge_idx < len(rows[0]) else None
+        # Голые цифры («1») — со словом единицы, как и на обычных слайдах.
+        if fixed_millions:
+            fixed_millions = self._table_pptx_format_tier_value('millions', fixed_millions, tier_lang)
+        if fixed_tenge:
+            fixed_tenge = self._table_pptx_format_tier_value('tenge', fixed_tenge, tier_lang)
         return {
             "cycle": self._table_pptx_collect_hundred_thousands_cycle(rows, tier_cols, tier_lang),
             "cycle_pos": 0,
@@ -434,15 +448,43 @@ class TableToPptxMixin:
 
         pause_label = PAUSE_LABELS.get(lang, PAUSE_LABELS['ru'])
 
+        # Таблица без колонки марки (как турецкая «Суммы»): после строки с
+        # «нулём» вставляем по слайду на каждое значение «Сотен тысяч» —
+        # start + Миллионы (первое значение) + Сотни тысяч + Тенге (первое
+        # значение) + остальные колонки той же строки, — не зависимо от
+        # того, сколько строк в таблице идёт после нуля. Таблицы с маркой
+        # (RU) работают по-старому: «Сотни тысяч» подставляются в следующие
+        # строки таблицы.
+        trigger = logic2_ctx['trigger_idx']
+        insert_cycle = brand_idx is None and trigger is not None and bool(logic2_ctx['cycle'])
+        plain_ctx = {**logic2_ctx, "trigger_idx": None}
+
+        slides = 0
         try:
             for row_idx, row in enumerate(rows):
+                if not insert_cycle:
+                    self._table_pptx_build_slide(prs, blank_layout, row, row_idx, brand_idx, transcript_idx, tier_cols,
+                                                  logic2_ctx, tier_lang, blank_idxs, pause_label)
+                    slides += 1
+                    continue
                 self._table_pptx_build_slide(prs, blank_layout, row, row_idx, brand_idx, transcript_idx, tier_cols,
-                                              logic2_ctx, tier_lang, blank_idxs, pause_label)
+                                              dict(plain_ctx), tier_lang, blank_idxs, pause_label)
+                slides += 1
+                if row_idx == trigger:
+                    # Сама метка «sıfır tl» в отдельной колонке на эти слайды не идёт.
+                    tier_set = set(tier_cols.values())
+                    base = [('' if i not in tier_set and _ZERO_CURRENCY_RE.search((c or '').lower()) else c)
+                            for i, c in enumerate(row)]
+                    for ht in logic2_ctx['cycle']:
+                        one = {**logic2_ctx, "cycle": [ht], "cycle_pos": 0, "triggered": False, "exhausted": False}
+                        self._table_pptx_build_slide(prs, blank_layout, base, row_idx + 1, brand_idx, transcript_idx,
+                                                      tier_cols, one, tier_lang, blank_idxs, pause_label)
+                        slides += 1
             prs.save(path)
         except Exception as e:
             return {"error": f"Не удалось собрать презентацию.\n\n{e}"}
 
-        return {"status": "ok", "path": path, "slides": len(rows)}
+        return {"status": "ok", "path": path, "slides": slides}
 
     @staticmethod
     def _text_width_emu(text, font_pt):
