@@ -346,22 +346,44 @@ let isProcessing = false;
                 ], { duration: 900, delay: 60, easing: 'cubic-bezier(.77,0,.18,1)', fill: 'forwards' }).finished);
             }
 
-            // Буквы: каждая по своей дуге, с небольшой задержкой друг за другом.
-            from.forEach((L, i) => {
+            // Сначала «Vox» по дуге собирается в шапке; «G» ждёт на месте.
+            let gJob = null, gOrigin = null;
+            const place = L => ({
+                tx: wordB.left + (L.rect.left - wordA.left) * k - L.rect.left,
+                ty: wordB.top + (L.rect.top - wordA.top) * k - L.rect.top
+            });
+            const spawn = L => {
                 let el = document.createElement('span');
                 el.className = 'fx-letter' + (L.accent ? ' is-accent' : '');
                 el.textContent = L.ch;
                 Object.assign(el.style, { left: L.rect.left + 'px', top: L.rect.top + 'px', fontSize: fontSize + 'px', lineHeight: L.rect.height + 'px' });
                 layer.appendChild(el);
-                let tx = wordB.left + (L.rect.left - wordA.left) * k - L.rect.left;
-                let ty = wordB.top + (L.rect.top - wordA.top) * k - L.rect.top;
-                let lift = 34 + i * 2;  // общая дуга с лёгкой «волной» — слово держит форму
+                return el;
+            };
+            let vox = from.filter(L => L.accent), g = from.filter(L => !L.accent);
+            vox.forEach((L, i) => {
+                let el = spawn(L), { tx, ty } = place(L);
+                let lift = 34 + i * 3;
                 jobs.push(el.animate([
                     { transform: 'translate(0,0) scale(1)', filter: 'blur(0)', offset: 0 },
                     { transform: `translate(${tx * .18}px, ${ty * .1 - lift}px) scale(${1 - (1 - k) * .25})`, filter: 'blur(.6px)', offset: .28 },
                     { transform: `translate(${tx * .78}px, ${ty * .82}px) scale(${k + (1 - k) * .12})`, filter: 'blur(1.4px)', offset: .72 },
                     { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
-                ], { duration: 900, delay: 40 + i * 28, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
+                ], { duration: 820, delay: 40 + i * 50, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
+            });
+            // «G» — последняя: короткий замах, резкий бросок и защёлкивание.
+            // Её посадка и запускает волну.
+            g.forEach(L => {
+                let el = spawn(L), { tx, ty } = place(L);
+                el.classList.add('is-g');
+                gOrigin = { x: L.rect.left + tx + L.rect.width * k / 2, y: L.rect.top + ty + L.rect.height * k / 2 };
+                gJob = el.animate([
+                    { transform: 'translate(0,0) scale(1)', filter: 'blur(0)', easing: 'cubic-bezier(.3,0,.5,1)' },
+                    { transform: 'translate(10px, 6px) scale(1.06)', filter: 'blur(0)', offset: .18, easing: 'cubic-bezier(.8,0,.25,1)' },
+                    { transform: `translate(${tx - 4}px, ${ty}px) scale(${k * 1.04})`, filter: 'blur(2px)', offset: .86, easing: 'ease-out' },
+                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)' }
+                ], { duration: 520, delay: 700, fill: 'forwards' }).finished;
+                jobs.push(gJob);
             });
 
             await Promise.all(jobs).catch(() => {});
@@ -369,7 +391,8 @@ let isProcessing = false;
             target.classList.add('is-landing');
             layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished
                 .catch(() => {}).then(() => layer.remove());
-            revealMenuFromLogo(menu, target);
+            let lr = target.getBoundingClientRect();
+            revealMenuFromLogo(menu, gOrigin || { x: lr.left + lr.width / 2, y: lr.top + lr.height / 2 });
             setTimeout(() => target.classList.remove('is-landing'), 1400);
             stageAnimating = false;
         }
@@ -377,39 +400,62 @@ let isProcessing = false;
         // Посадка логотипа «включает» меню: от логотипа расходится световая
         // волна, и каждый элемент проявляется, когда она до него доходит —
         // ближние раньше, дальние позже, чуть «вытягиваясь» со стороны логотипа.
-        function revealMenuFromLogo(menu, logo) {
-            let lr = logo.getBoundingClientRect();
-            let ox = lr.left + lr.width / 2, oy = lr.top + lr.height / 2;
+        function revealMenuFromLogo(menu, origin) {
+            let ox = origin.x, oy = origin.y;
             let items = Array.from(menu.querySelectorAll(
                 '.setup-brand__sub, .setup-header__right, .section-label, .rise'))
                 .filter(el => el.offsetParent !== null);
-            let maxD = Math.hypot(innerWidth, innerHeight);
-            const WAVE_MS = 900;   // столько волна идёт до дальнего угла окна
+            let R = Math.hypot(Math.max(ox, innerWidth - ox), Math.max(oy, innerHeight - oy));
+            const WAVE_MS = 700;   // волна быстро стартует и замедляется к краям (easeOutCubic)
+            const EASE = 'cubic-bezier(.33,1,.68,1)';
+            // Момент, когда кольцо (easeOutCubic) доходит до расстояния d.
+            const reach = d => WAVE_MS * (1 - Math.cbrt(1 - Math.min(1, d / R)));
 
-            // Волна света из логотипа.
-            let wave = document.createElement('div');
-            wave.className = 'fx-wave';
-            Object.assign(wave.style, { left: ox + 'px', top: oy + 'px' });
-            document.body.appendChild(wave);
-            wave.animate([
-                { width: '0px', height: '0px', opacity: .9 },
-                { width: maxD * 2 + 'px', height: maxD * 2 + 'px', opacity: 0 }
-            ], { duration: WAVE_MS * 1.15, easing: 'cubic-bezier(.25,.6,.3,1)' }).finished
-                .catch(() => {}).then(() => wave.remove());
+            // Вспышка в точке посадки «G».
+            let flash = document.createElement('div');
+            flash.className = 'fx-flash';
+            Object.assign(flash.style, { left: ox + 'px', top: oy + 'px' });
+            document.body.appendChild(flash);
+            flash.animate([
+                { transform: 'translate(-50%,-50%) scale(.2)', opacity: 1 },
+                { transform: 'translate(-50%,-50%) scale(1.6)', opacity: 0 }
+            ], { duration: 420, easing: 'cubic-bezier(.2,.8,.3,1)' }).finished.catch(() => {}).then(() => flash.remove());
 
-            // Сначала заводим анимации (fill: backwards держит элементы скрытыми
-            // до их очереди), потом снимаем скрытие — без единого «мигания».
+            // Два кольца: яркое ведущее и мягкое следом.
+            [{ cls: 'fx-wave', delay: 0, dur: WAVE_MS, op: 1 },
+             { cls: 'fx-wave fx-wave--soft', delay: 110, dur: WAVE_MS * 1.25, op: .7 }].forEach(w => {
+                let el = document.createElement('div');
+                el.className = w.cls;
+                Object.assign(el.style, { left: ox + 'px', top: oy + 'px' });
+                document.body.appendChild(el);
+                el.animate([
+                    { width: '0px', height: '0px', opacity: w.op },
+                    { width: R * 2 + 'px', height: R * 2 + 'px', opacity: w.op * .8, offset: .7 },
+                    { width: R * 2.1 + 'px', height: R * 2.1 + 'px', opacity: 0 }
+                ], { duration: w.dur, delay: w.delay, easing: EASE, fill: 'backwards' }).finished
+                    .catch(() => {}).then(() => el.remove());
+            });
+
+            // Каждый элемент включается, когда его касается кольцо: с пружинкой
+            // и короткой вспышкой рамки. fill: backwards держит их скрытыми до очереди.
             items.forEach(el => {
                 let r = el.getBoundingClientRect();
                 let cx = Math.max(r.left, Math.min(ox, r.right));
                 let cy = Math.max(r.top, Math.min(oy, r.bottom));
                 let dx = cx - ox, dy = cy - oy;
-                let d = Math.hypot(dx, dy);
-                let n = d || 1;
+                let n = Math.hypot(dx, dy) || 1;
+                let delay = reach(n);
                 el.animate([
-                    { opacity: 0, transform: `translate(${-dx / n * 18}px, ${-dy / n * 18}px) scale(.965)`, filter: 'blur(5px)' },
+                    { opacity: 0, transform: `translate(${-dx / n * 22}px, ${-dy / n * 22}px) scale(.94)`, filter: 'blur(6px)' },
+                    { opacity: 1, transform: `translate(${dx / n * 2}px, ${dy / n * 2}px) scale(1.012)`, filter: 'blur(0)', offset: .62 },
                     { opacity: 1, transform: 'none', filter: 'blur(0)' }
-                ], { duration: 620, delay: d / maxD * WAVE_MS, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'backwards' });
+                ], { duration: 520, delay, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
+                if (el.matches('.option-card, .menu-row, .menu-tool, .menu-cut')) {
+                    el.animate([
+                        { boxShadow: '0 0 0 1px rgba(110,170,255,.75), 0 0 26px rgba(77,149,234,.45)' },
+                        { boxShadow: '0 0 0 1px rgba(110,170,255,0), 0 0 0 rgba(77,149,234,0)' }
+                    ], { duration: 650, delay: delay + 60, easing: 'ease-out' });
+                }
             });
             menu.classList.add('menu-fx');
             menu.classList.remove('menu-entering');

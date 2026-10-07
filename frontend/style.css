@@ -2512,3 +2512,12 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 .setup-brand__mark.is-landing span{ animation: fxLandAccent 1.2s ease-out; }
 @keyframes fxLand{ 0%{ text-shadow: 0 0 22px rgba(255,255,255,.45); } 100%{ text-shadow: 0 0 0 transparent; } }
 @keyframes fxLandAccent{ 0%{ text-shadow: 0 0 26px rgba(77,149,234,.9); } 100%{ text-shadow: 0 0 0 transparent; } }
+
+/* Волна посильнее: яркое ведущее кольцо + мягкое; вспышка в точке «G» */
+.fx-wave{ border-width: 2px; border-color: rgba(110,170,255,.8); box-shadow: 0 0 34px rgba(77,149,234,.45), inset 0 0 34px rgba(77,149,234,.28); }
+.fx-wave--soft{ border-width: 1px; border-color: rgba(77,149,234,.35); box-shadow: 0 0 60px rgba(77,149,234,.18), inset 0 0 60px rgba(77,149,234,.12); }
+.fx-flash{
+    position: fixed; z-index: 9998; pointer-events: none; width: 140px; height: 140px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(170,205,255,.75), rgba(77,149,234,.25) 40%, transparent 70%);
+}
+.fx-letter.is-g{ text-shadow: 0 0 16px rgba(255,255,255,.25); }
