@@ -2368,7 +2368,6 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
    так же плавно возвращается (transition стоит на самой карточке). --- */
 .stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut{
     transition: transform .3s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease, box-shadow .3s ease;
-    will-change: transform;
 }
 .stage-loading .option-card:hover, .menu-row:hover{ transform: scale(1.025); z-index: 2; }
 .menu-tool:hover{ transform: scale(1.045); z-index: 2; }
@@ -2549,3 +2548,6 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
     background: radial-gradient(ellipse at 70% 50%, rgba(190,220,255,.95), rgba(77,149,234,.45) 35%, transparent 70%);
     filter: blur(.5px);
 }
+/* Граница шапки скрыта, пока её не «прорисует» линия от «G» */
+.stage-loading .setup-header{ transition: border-color .4s ease; }
+.stage-loading.menu-line-pending .setup-header{ border-bottom-color: transparent; }

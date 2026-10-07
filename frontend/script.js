@@ -427,6 +427,7 @@ let isProcessing = false;
             let menu = document.getElementById('stage1-loading');
             menu.classList.add('menu-entering');
             showMenuNow();
+            menu.classList.add('menu-line-pending');
             splash.classList.remove('is-leaving');
             splash.getAnimations({ subtree: true }).forEach(an => an.cancel());
             if (tagline) tagline.style.visibility = '';
@@ -437,26 +438,6 @@ let isProcessing = false;
             let headB = finalRect(header, el => el.getBoundingClientRect());
             let k = wordB.height / wordA.height;
             target.style.visibility = 'hidden';
-
-            // Граница шапки рисуется слева направо, по ней бежит яркая «головка».
-            {
-                let y = headB.bottom - 1;
-                let ln = document.createElement('div');
-                ln.className = 'fx-line fx-line--draw';
-                Object.assign(ln.style, { left: headB.left + 'px', top: y + 'px', width: headB.width + 'px' });
-                let head = document.createElement('div');
-                head.className = 'fx-head';
-                Object.assign(head.style, { left: headB.left + 'px', top: y + 'px' });
-                layer.append(ln, head);
-                const opts = { duration: 760, delay: 420, easing: 'cubic-bezier(.6,0,.25,1)', fill: 'both' };
-                ln.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], opts);
-                head.animate([
-                    { transform: 'translate(-50%,-50%) translateX(0)', opacity: 0 },
-                    { opacity: 1, offset: .1 },
-                    { opacity: 1, offset: .85 },
-                    { transform: `translate(-50%,-50%) translateX(${headB.width}px)`, opacity: 0 }
-                ], opts);
-            }
 
             // Сначала «Vox» по дуге собирается в шапке; «G» ждёт на месте.
             let gJob = null, gOrigin = null;
@@ -483,45 +464,31 @@ let isProcessing = false;
                     { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
                 ], { duration: 820, delay: 40 + i * 50, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
             });
-            // «G» — бумеранг: вылетает вправо, крутясь уходит по широкой дуге,
-            // разворачивается и возвращается точно на своё место в шапке.
-            // Момент «поимки» запускает волну.
+            // «G» — рогатка: пока «Vox» летит, она натягивается назад (от цели),
+            // копит свечение и дрожит от напряжения — и выстреливает в шапку.
+            // Её посадка запускает волну.
             g.forEach(L => {
-                let el = spawn(L);
+                let el = spawn(L), { tx, ty } = place(L);
                 el.classList.add('is-g');
-                el.style.transformOrigin = '50% 50%';
-                let sx = L.rect.left + L.rect.width / 2, sy = L.rect.top + L.rect.height / 2;
-                let { tx, ty } = place(L);
-                let ex = L.rect.left + tx + L.rect.width * k / 2, ey = L.rect.top + ty + L.rect.height * k / 2;
-                gOrigin = { x: ex, y: ey };
-                let W = innerWidth, H = innerHeight;
-                // Кубическая кривая: вправо-вниз, широкий разворот справа, назад вдоль верха.
-                let P = [[sx, sy], [sx + W * .62, sy + H * .22], [ex + W * .78, ey - H * .02], [ex, ey]];
-                const bez = t => {
-                    let u = 1 - t;
-                    return [0, 1].map(j => u*u*u*P[0][j] + 3*u*u*t*P[1][j] + 3*u*t*t*P[2][j] + t*t*t*P[3][j]);
-                };
-                const DUR = 1500, N = 36, TURNS = 3;
-                // Время по кривой: резкий бросок, плавный разворот, мягкая «поимка».
-                const ease = u => u + .05 * Math.sin(2 * Math.PI * u);   // быстрее на броске и возврате, медленнее в развороте
-                let frames = [];
-                for (let i = 0; i <= N; i++) {
-                    let u = i / N;
-                    let t = Math.min(1, Math.max(0, ease(u)));
-                    let [x, y] = bez(t);
-                    let spin = TURNS * 360 * (1 - Math.pow(1 - u, 1.6));   // крутится быстро, к поимке затихает
-                    let far = Math.sin(Math.PI * t);                         // вдали — чуть меньше (перспектива)
-                    let sc = (1 + (k - 1) * t) * (1 - .18 * far);
-                    frames.push({
-                        transform: `translate(${(x - sx).toFixed(1)}px, ${(y - sy).toFixed(1)}px) rotate(${(i === N ? TURNS * 360 : spin).toFixed(1)}deg) scale(${(i === N ? k : sc).toFixed(4)})`,
-                        textShadow: `0 0 ${(6 + far * 18).toFixed(1)}px rgba(120,175,255,${(.2 + far * .45).toFixed(2)})`,
-                        offset: u
-                    });
-                }
-                gJob = el.animate(frames, { duration: DUR, delay: 80, easing: 'linear', fill: 'forwards' }).finished;
+                gOrigin = { x: L.rect.left + tx + L.rect.width * k / 2, y: L.rect.top + ty + L.rect.height * k / 2 };
+                let n = Math.hypot(tx, ty) || 1, ux = tx / n, uy = ty / n;
+                const back = d => `translate(${-ux * d}px, ${-uy * d}px)`;
+                const glow = a => `0 0 ${8 + a * 26}px rgba(120,175,255,${(.15 + a * .6).toFixed(2)})`;
+                gJob = el.animate([
+                    { transform: 'translate(0,0) scale(1)', textShadow: glow(0), filter: 'blur(0)', easing: 'cubic-bezier(.4,0,.6,1)' },
+                    { transform: `${back(34)} scale(1.07, .95)`, textShadow: glow(.8), offset: .6, easing: 'linear' },
+                    { transform: `translate(${-ux * 35 + 1.6}px, ${-uy * 35 - 1.2}px) scale(1.08, .94)`, textShadow: glow(.9), offset: .64, easing: 'linear' },
+                    { transform: `translate(${-ux * 36 - 1.6}px, ${-uy * 36 + 1.2}px) scale(1.08, .94)`, textShadow: glow(.95), offset: .68, easing: 'linear' },
+                    { transform: `${back(38)} scale(1.09, .93)`, textShadow: glow(1), filter: 'blur(0)', offset: .72, easing: 'cubic-bezier(.9,0,.35,1)' },
+                    { transform: `translate(${tx + ux * 6}px, ${ty + uy * 6}px) scale(${k * 1.06}, ${k * .96})`, textShadow: glow(.6), filter: 'blur(2.5px)', offset: .93, easing: 'cubic-bezier(.2,.8,.3,1)' },
+                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, textShadow: glow(0), filter: 'blur(0)' }
+                ], { duration: 1320, delay: 0, fill: 'forwards' }).finished;
                 jobs.push(gJob);
-                // Волна — ровно в момент поимки.
-                setTimeout(() => revealMenuFromLogo(menu, gOrigin), 80 + DUR);
+                // Волна стартует ровно в момент касания (93% полёта «G»), не дожидаясь усадки.
+                setTimeout(() => {
+                    revealMenuFromLogo(menu, gOrigin);
+                    drawHeaderLine(menu, headB, gOrigin.x);
+                }, Math.round(1320 * .93));
             });
 
             await Promise.all(jobs).catch(() => {});
@@ -573,6 +540,34 @@ let isProcessing = false;
             });
             menu.classList.add('menu-fx');
             menu.classList.remove('menu-entering');
+        }
+
+        // Граница шапки прорисовывается, когда «G» встала на место: линия
+        // растёт от «G» вправо, по ней бежит яркая «головка».
+        function drawHeaderLine(menu, headB, fromX) {
+            let y = headB.bottom - 1;
+            let x0 = Math.max(headB.left, Math.min(fromX, headB.right));
+            let left = document.createElement('div'), right = document.createElement('div');
+            let head = document.createElement('div');
+            left.className = right.className = 'fx-line fx-line--draw';
+            head.className = 'fx-head';
+            // Левый короткий кусок (до края шапки) и правый — от «G» до правого края.
+            Object.assign(left.style, { left: headB.left + 'px', top: y + 'px', width: (x0 - headB.left) + 'px', transformOrigin: '100% 50%' });
+            Object.assign(right.style, { left: x0 + 'px', top: y + 'px', width: (headB.right - x0) + 'px' });
+            Object.assign(head.style, { left: x0 + 'px', top: y + 'px' });
+            document.body.append(left, right, head);
+            const D = 820, E = 'cubic-bezier(.5,0,.2,1)';
+            left.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 260, easing: 'ease-out', fill: 'both' });
+            right.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: D, easing: E, fill: 'both' });
+            head.animate([
+                { transform: 'translate(-50%,-50%) translateX(0)', opacity: 1 },
+                { opacity: 1, offset: .85 },
+                { transform: `translate(-50%,-50%) translateX(${headB.right - x0}px)`, opacity: 0 }
+            ], { duration: D, easing: E, fill: 'both' });
+            // Нарисованная линия гаснет — под ней проявляется настоящая граница шапки.
+            setTimeout(() => menu.classList.remove('menu-line-pending'), D);
+            [left, right, head].forEach(el => el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, delay: D, fill: 'forwards' })
+                .finished.catch(() => {}).then(() => el.remove()));
         }
 
         // Волна на холсте: вспышка в точке «G» и два кольца с мягким свечением
@@ -770,7 +765,7 @@ let isProcessing = false;
 
         function showMenuNow() {
             // Следы прошлого входа из заставки: обычные анимации меню — снова как есть.
-            document.getElementById('stage1-loading').classList.remove('menu-fx');
+            document.getElementById('stage1-loading').classList.remove('menu-fx', 'menu-line-pending');
             detachEmbeddedAudacity(true);
             embedAreaId = 'audacityEmbedArea';
             embedBtnId = 'btnEmbedAudacity';
