@@ -400,6 +400,33 @@ let isProcessing = false;
             box.style.display = 'block';
         }
 
+        // Очистить список недавних: первый клик спрашивает, второй — очищает.
+        let menuRecentClearTimer = null;
+        async function clearMenuRecent() {
+            let btn = document.getElementById('menuRecentClear');
+            if (!btn.classList.contains('is-confirm')) {
+                btn.classList.add('is-confirm');
+                btn.textContent = 'Точно очистить?';
+                clearTimeout(menuRecentClearTimer);
+                menuRecentClearTimer = setTimeout(() => { btn.classList.remove('is-confirm'); btn.textContent = 'Очистить'; }, 3000);
+                return;
+            }
+            clearTimeout(menuRecentClearTimer);
+            btn.classList.remove('is-confirm');
+            btn.textContent = 'Очистить';
+            try { await pywebview.api.clear_recent_projects(); } catch (e) {}
+            let box = document.getElementById('menuRecent');
+            if (box && box.animate) {
+                await box.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(6px)' }],
+                                  { duration: 220, easing: 'ease-in' }).finished.catch(() => {});
+            }
+            recentProjectsCache = [];
+            if (box) box.style.display = 'none';
+            let splashPanel = document.getElementById('recentProjectsPanel');
+            if (splashPanel) splashPanel.style.display = 'none';
+            showToast('Список недавних проектов очищен');
+        }
+
         // Плавное раскрытие «Настроек нарезки» (у <details> анимации нет).
         function toggleMenuCut(e) {
             let det = e.currentTarget.parentElement;

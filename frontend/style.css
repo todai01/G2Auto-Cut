@@ -2336,3 +2336,13 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
     .menu-tool{ grid-column: span 2; }
     .menu-tool:nth-child(-n+2){ grid-column: span 3; }
 }
+
+/* Кнопка «Очистить» у недавних проектов — справа от линии */
+.menu-recent .section-label::after{ order: 1; }
+.menu-recent__clear{
+    order: 2; flex: none; padding: 2px 8px; border-radius: 6px; cursor: pointer;
+    background: transparent; border: 1px solid transparent; color: var(--text-faint);
+    font-family: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none;
+}
+.menu-recent__clear:hover{ color: var(--accent-trash); border-color: rgba(239,91,80,.35); background: var(--tint-trash); }
+.menu-recent__clear.is-confirm{ color: var(--accent-trash); border-color: var(--accent-trash); background: var(--tint-trash); }

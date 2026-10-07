@@ -372,6 +372,11 @@ class ProjectMixin:
         """Список недавних проектов для стартового экрана."""
         return recent_projects.list_recent()
 
+    def clear_recent_projects(self):
+        """Очистить список недавних проектов — только список, папки целы."""
+        recent_projects.clear()
+        return {"status": "ok"}
+
     def open_recent_project(self, path):
         """Быстрое продолжение недавнего проекта в один клик: без диалогов
         про Audacity — просто восстанавливаем состояние и открываем список
