@@ -63,7 +63,14 @@ let isProcessing = false;
 
             let pad = parseInt(document.getElementById('inpPad').value);
             document.getElementById('valPad').innerText = `${padWord(pad)} · ${pad} мс`;
+
+            // Свёрнутые настройки в меню: коротко, что сейчас стоит.
+            let sum = document.getElementById('cutSummary');
+            if (sum) sum.innerText = `${p} мс · ${String(s).replace('-', '−')} дБ · ${pad} мс`;
         }
+
+        function openMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'flex'; }
+        function closeMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'none'; }
 
         // ===== РУЧНОЙ ВВОД НАСТРОЕК НАРЕЗКИ =====
 
@@ -3772,6 +3779,12 @@ let isProcessing = false;
                     e.preventDefault();
                     closeCustomAlert(false);
                 }
+                return;
+            }
+
+            let helpOverlay = document.getElementById('menuHelpOverlay');
+            if (helpOverlay && helpOverlay.style.display === 'flex') {
+                if (e.code === 'Escape' || e.code === 'Enter') { e.preventDefault(); closeMenuHelp(); }
                 return;
             }
 

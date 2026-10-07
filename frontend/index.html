@@ -517,6 +517,55 @@
         </div>
     </div>
 
+    <!-- Справка главного меню: порядок работы, папки, горячие клавиши -->
+    <div id="menuHelpOverlay" class="custom-alert-overlay" onclick="if (event.target === this) closeMenuHelp()">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Справка</h3>
+                <button class="modal-close" onclick="closeMenuHelp()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="help-section">
+                <div class="help-section__title">Порядок работы</div>
+                <ol class="help-flow">
+                    <li><b>Нарезка</b> — программа режет длинный WAV по паузам на отдельные дубли.</li>
+                    <li><b>Отбор</b> — клавиши Z, C и X раскладывают дубли по папкам.</li>
+                    <li><b>Монтаж</b> — до пяти частей склеиваются в один файл через Audacity.</li>
+                    <li><b>Сдача</b> — готовое уходит в «Проверенные» под именем из Excel.</li>
+                </ol>
+            </div>
+
+            <div class="help-section">
+                <div class="help-section__title">Куда попадают файлы</div>
+                <ul class="folder-map">
+                    <li><span class="folder-map__name folder-map__name--raw">Chunks</span><span class="folder-map__desc">Черновые куски сразу после нарезки</span></li>
+                    <li><span class="folder-map__name folder-map__name--var">Переменные</span><span class="folder-map__desc">Куски с датой, именем или суммой</span></li>
+                    <li><span class="folder-map__name folder-map__name--checked">Проверенные</span><span class="folder-map__desc">Финальные файлы, готовые к сдаче</span></li>
+                </ul>
+            </div>
+
+            <div class="help-section">
+                <div class="help-section__title">Горячие клавиши</div>
+                <div class="hotkey-list">
+                    <span class="hotkey"><kbd>Space</kbd> Воспроизвести</span>
+                    <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
+                    <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
+                    <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
+                    <span class="hotkey"><kbd>Z</kbd> В проверенные</span>
+                    <span class="hotkey"><kbd>C</kbd> В переменные</span>
+                    <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
+                    <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
+                    <span class="hotkey"><kbd>F</kbd> Поиск</span>
+                    <span class="hotkey"><kbd>Esc</kbd> Основной режим</span>
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="custom-alert-btn" onclick="closeMenuHelp()">Понятно</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Аудит по категории: чанки уже готовы или сначала нарезать? -->
     <div id="auditChunksOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">
@@ -782,57 +831,65 @@
                     &#8592;&nbsp; Вернуться к работе
                 </button>
                 <div class="setup-status" id="setupStatus">Шаг 1 · Подключите таблицу с текстом</div>
+                <button class="btn-help" onclick="openMenuHelp()" title="Порядок работы, папки проекта, горячие клавиши">? Справка</button>
             </div>
         </header>
 
-        <div class="setup-grid">
+        <div class="setup-grid menu-grid">
 
-            <!-- ЛЕВАЯ КОЛОНКА: источник материала -->
-            <section class="setup-col setup-col--source">
-                <div class="section-label"><span>Источник материала</span></div>
+            <!-- ЛЕВАЯ КОЛОНКА: с чего начать -->
+            <section class="setup-col">
+                <div class="section-label"><span>Новый проект</span></div>
 
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
                     <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
                 </button>
 
-                <button class="option-card option-card--attached rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
+                <button class="option-card rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
                     <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
                 </button>
 
-                <div class="settings-panel rise" style="--d: 3">
-                    <div class="settings-head">
-                        <div class="settings-title">Настройки нарезки</div>
-                        <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
+                <!-- Настройки нарезки подбираются сами — ползунки свёрнуты -->
+                <details class="menu-cut rise" style="--d: 3">
+                    <summary class="menu-cut__summary">
+                        <span class="menu-cut__title">Настройки нарезки</span>
+                        <span class="menu-cut__values" id="cutSummary">500 мс · −35 дБ · 250 мс</span>
+                    </summary>
+                    <div class="settings-panel menu-cut__body">
+                        <div class="settings-head">
+                            <span class="menu-cut__note">Обычно подбираются автоматически под запись</span>
+                            <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
+                        </div>
+
+                        <label class="slider-field">
+                            <div class="slider-head">
+                                <span class="slider-name">Длина паузы для разреза<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
+                                <span id="valPause" class="slider-value">Нормальная</span>
+                            </div>
+                            <input type="range" id="inpPause" min="50" max="3000" step="10" value="500" oninput="updateSettingsText()">
+                        </label>
+
+                        <label class="slider-field">
+                            <div class="slider-head">
+                                <span class="slider-name">Чувствительность к тихим звукам<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
+                                <span id="valSens" class="slider-value">Оптимальная</span>
+                            </div>
+                            <input type="range" id="inpSens" min="-80" max="-10" step="1" value="-35" oninput="updateSettingsText()">
+                        </label>
+
+                        <label class="slider-field">
+                            <div class="slider-head">
+                                <span class="slider-name">Запас звука по краям<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
+                                <span id="valPad" class="slider-value">Безопасный</span>
+                            </div>
+                            <input type="range" id="inpPad" min="0" max="1000" step="10" value="250" oninput="updateSettingsText()">
+                        </label>
                     </div>
+                </details>
 
-                    <label class="slider-field">
-                        <div class="slider-head">
-                            <span class="slider-name">Длина паузы для разреза<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
-                            <span id="valPause" class="slider-value">Нормальная</span>
-                        </div>
-                        <input type="range" id="inpPause" min="50" max="3000" step="10" value="500" oninput="updateSettingsText()">
-                    </label>
-
-                    <label class="slider-field">
-                        <div class="slider-head">
-                            <span class="slider-name">Чувствительность к тихим звукам<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
-                            <span id="valSens" class="slider-value">Оптимальная</span>
-                        </div>
-                        <input type="range" id="inpSens" min="-80" max="-10" step="1" value="-35" oninput="updateSettingsText()">
-                    </label>
-
-                    <label class="slider-field">
-                        <div class="slider-head">
-                            <span class="slider-name">Запас звука по краям<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
-                            <span id="valPad" class="slider-value">Безопасный</span>
-                        </div>
-                        <input type="range" id="inpPad" min="0" max="1000" step="10" value="250" oninput="updateSettingsText()">
-                    </label>
-                </div>
-
-                <button class="option-card option-card--alt rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
+                <button class="option-card rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                     <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
                 </button>
@@ -841,144 +898,79 @@
                     <div id="progressText" class="progress-text">Анализ...</div>
                     <progress id="progressBar" max="100"></progress>
                 </div>
-
-                <div class="info-panel rise" style="--d: 5">
-                    <div class="info-panel__title">Куда попадают файлы</div>
-                    <ul class="folder-map">
-                        <li><span class="folder-map__name folder-map__name--raw">Chunks</span><span class="folder-map__desc">Черновые куски сразу после нарезки</span></li>
-                        <li><span class="folder-map__name folder-map__name--var">Переменные</span><span class="folder-map__desc">Куски с датой, именем или суммой</span></li>
-                        <li><span class="folder-map__name folder-map__name--checked">Проверенные</span><span class="folder-map__desc">Финальные файлы, готовые к сдаче</span></li>
-                    </ul>
-                </div>
             </section>
 
-            <!-- ПРАВАЯ КОЛОНКА: режимы работы -->
-            <section class="setup-col setup-col--modes">
-                <div class="section-label"><span>Режимы работы с переменными</span></div>
+            <!-- ПРАВАЯ КОЛОНКА: режимы и утилиты -->
+            <section class="setup-col">
+                <div class="section-label"><span>Режимы переменных</span></div>
 
-                <div class="mode-grid">
-                    <button class="mode-card mode-card--var rise" style="--d: 3" onclick="initVarBatch()">
-                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-refresh-cw"></use></svg></span>
-                        <span class="mode-card__title">Пакетная сборка переменных</span>
-                        <span class="mode-card__desc">Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity.</span>
-                        <span class="mode-card__go">Запустить &#8594;</span>
+                <div class="menu-list">
+                    <button class="menu-row menu-row--var rise" style="--d: 2" onclick="initVarBatch()"
+                            title="Автоматическая сортировка сумм и подгонка длительности под эталон прямо в Audacity">
+                        <span class="menu-row__icon"><svg class="icon"><use href="#icon-refresh-cw"></use></svg></span>
+                        <span class="menu-row__text">
+                            <span class="menu-row__title">Пакетная сборка</span>
+                            <span class="menu-row__desc">Суммы по эталону в Audacity</span>
+                        </span>
+                        <span class="menu-row__go">&#8594;</span>
                     </button>
-
-                    <button class="mode-card mode-card--good rise" style="--d: 4" onclick="showPremadeVarTypeChoice()">
-                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
-                        <span class="mode-card__title">Готовая папка с переменными</span>
-                        <span class="mode-card__desc">Раскидать дубли по категориям и сразу собирать эталон, без start/end.</span>
-                        <span class="mode-card__go">Выбрать папку &#8594;</span>
+                    <button class="menu-row menu-row--good rise" style="--d: 3" onclick="showPremadeVarTypeChoice()"
+                            title="Раскидать дубли по категориям и сразу собирать эталон, без start/end">
+                        <span class="menu-row__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
+                        <span class="menu-row__text">
+                            <span class="menu-row__title">Готовая папка с переменными</span>
+                            <span class="menu-row__desc">Разложить дубли и собрать эталон</span>
+                        </span>
+                        <span class="menu-row__go">&#8594;</span>
                     </button>
-
-                    <button class="mode-card mode-card--info rise" style="--d: 5" onclick="startConstructor()">
-                        <span class="mode-card__icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
-                        <span class="mode-card__title">Конструктор переменных</span>
-                        <span class="mode-card__desc">Рулетками листаете уже сохранённые суммы, собираете любую комбинацию и правите точечно.</span>
-                        <span class="mode-card__go">Открыть &#8594;</span>
+                    <button class="menu-row menu-row--info rise" style="--d: 4" onclick="startConstructor()"
+                            title="Рулетками листаете уже сохранённые суммы, собираете любую комбинацию и правите точечно">
+                        <span class="menu-row__icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
+                        <span class="menu-row__text">
+                            <span class="menu-row__title">Конструктор</span>
+                            <span class="menu-row__desc">Любая комбинация из сохранённых сумм</span>
+                        </span>
+                        <span class="menu-row__go">&#8594;</span>
                     </button>
                 </div>
 
-                <div class="mode-options rise" style="--d: 5">
-                    <span class="mode-options__label">Параметры режима</span>
-
-                    <label class="opt-chip">
-                        <input type="checkbox" id="simpleExportCheck">
-                        <span class="opt-chip__box" aria-hidden="true"></span>
-                        <span class="opt-chip__text">
-                            Простой экспорт
-                            <small>без start/end и подгонки</small>
-                        </span>
+                <div class="menu-opts rise" style="--d: 5">
+                    <span class="menu-opts__label">Для пакетной сборки:</span>
+                    <label class="menu-opt" title="Без start/end и подгонки длительности">
+                        <input type="checkbox" id="simpleExportCheck"> Простой экспорт
                     </label>
-
-                    <label class="opt-chip">
-                        <input type="checkbox" id="sortByNameCheck">
-                        <span class="opt-chip__box" aria-hidden="true"></span>
-                        <span class="opt-chip__text">
-                            Сортировка по цифрам
-                            <small>названия клипов и метки</small>
-                        </span>
+                    <label class="menu-opt" title="Сортировать названия клипов и метки по цифрам">
+                        <input type="checkbox" id="sortByNameCheck"> Сортировка по цифрам
                     </label>
                 </div>
 
                 <div class="section-label section-label--spaced"><span>Утилиты</span></div>
 
-                <div class="util-grid">
-                    <button class="util-tile util-tile--var rise" style="--d: 6" onclick="stripFilenames()">
-                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-type"></use></svg></span>
-                        <span class="util-tile__title">Очистить названия файлов</span>
-                        <span class="util-tile__desc">Убрать слова «миллион», «тысяч» — оставить цифры</span>
+                <div class="menu-tools">
+                    <button class="menu-tool rise" style="--d: 5" onclick="runProjectAudit()" title="Сверить таблицу (Excel или словарь переменных) с аудиозаписями: что записано, чего не хватает">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-check-circle"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Аудит проекта</span><span class="menu-row__desc">Чего не хватает</span></span>
                     </button>
-
-                    <button class="util-tile util-tile--good rise" style="--d: 7" onclick="openConverter()">
-                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-film"></use></svg></span>
-                        <span class="util-tile__title">Конвертер MP4</span>
-                        <span class="util-tile__desc">Перевести MP4 в MP3 или WAV с нужной герцовкой</span>
+                    <button class="menu-tool rise" style="--d: 6" onclick="openRenameMatch()" title="Найти короткие имена файлов в Excel и разложить по языкам ru/kz">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-link-2"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Названия по Excel</span><span class="menu-row__desc">Разложить по ru/kz</span></span>
                     </button>
-
-                    <button class="util-tile util-tile--info rise" style="--d: 8" onclick="openRenameMatch()">
-                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-link-2"></use></svg></span>
-                        <span class="util-tile__title">Сопоставить названия по Excel</span>
-                        <span class="util-tile__desc">Найти короткие имена файлов в Excel и разложить по языкам ru/kz</span>
+                    <button class="menu-tool rise" style="--d: 6" onclick="openTablePptx()" title="Каждая строка Excel — отдельный слайд с паузами между колонками">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-monitor"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Таблица → PowerPoint</span><span class="menu-row__desc">Строка = слайд</span></span>
                     </button>
-
-                    <button class="util-tile util-tile--mode rise" style="--d: 9" onclick="openTablePptx()">
-                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-monitor"></use></svg></span>
-                        <span class="util-tile__title">Таблица → PowerPoint</span>
-                        <span class="util-tile__desc">Каждая строка Excel — отдельный слайд с паузами между колонками</span>
+                    <button class="menu-tool rise" style="--d: 7" onclick="openConverter()" title="Перевести MP4 в MP3 или WAV с нужной герцовкой">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-film"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Конвертер MP4</span><span class="menu-row__desc">В MP3 / WAV</span></span>
                     </button>
-
-                    <button class="util-tile util-tile--var rise" style="--d: 10" onclick="runProjectAudit()">
-                        <span class="util-tile__icon"><svg class="icon"><use href="#icon-check-circle"></use></svg></span>
-                        <span class="util-tile__title">Аудит проекта</span>
-                        <span class="util-tile__desc">Сверить таблицу (Excel или словарь переменных) с аудиозаписями в папке</span>
+                    <button class="menu-tool rise" style="--d: 7" onclick="stripFilenames()" title="Убрать из имён файлов слова «миллион», «тысяч» — оставить цифры">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-type"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Очистить названия</span><span class="menu-row__desc">Оставить цифры</span></span>
                     </button>
-                </div>
-
-                <div class="info-panel info-panel--flow rise" style="--d: 8">
-                    <div class="info-panel__title">Порядок работы</div>
-                    <ol class="flow-steps">
-                        <li>
-                            <span class="flow-steps__num">1</span>
-                            <span class="flow-steps__title">Нарезка</span>
-                            <span class="flow-steps__desc">Программа режет длинный WAV по паузам на отдельные дубли.</span>
-                        </li>
-                        <li>
-                            <span class="flow-steps__num">2</span>
-                            <span class="flow-steps__title">Отбор</span>
-                            <span class="flow-steps__desc">Клавиши Z, C и X раскладывают дубли по папкам.</span>
-                        </li>
-                        <li>
-                            <span class="flow-steps__num">3</span>
-                            <span class="flow-steps__title">Монтаж</span>
-                            <span class="flow-steps__desc">До пяти частей склеиваются в один файл через Audacity.</span>
-                        </li>
-                        <li>
-                            <span class="flow-steps__num">4</span>
-                            <span class="flow-steps__title">Сдача</span>
-                            <span class="flow-steps__desc">Готовое уходит в «Проверенные» под именем из Excel.</span>
-                        </li>
-                    </ol>
                 </div>
             </section>
 
         </div>
-
-        <footer class="setup-footer rise" style="--d: 8">
-            <span class="setup-footer__label">Горячие клавиши</span>
-            <div class="hotkey-list">
-                <span class="hotkey"><kbd>Space</kbd> Воспроизвести</span>
-                <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
-                <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
-                <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
-                <span class="hotkey"><kbd>Z</kbd> В проверенные</span>
-                <span class="hotkey"><kbd>C</kbd> В переменные</span>
-                <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
-                <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
-                <span class="hotkey"><kbd>F</kbd> Поиск</span>
-                <span class="hotkey"><kbd>Esc</kbd> Основной режим</span>
-            </div>
-        </footer>
     </div>
 
     <div id="stage2-workspace" class="stage stage-workspace" style="display: none;">
