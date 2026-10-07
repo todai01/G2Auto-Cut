@@ -1066,12 +1066,13 @@
                                         <span class="sum-editor__time" id="sumEditorTime"></span>
                                     </div>
                                     <canvas class="sum-editor__canvas" id="sumEditorCanvas"
-                                            title="Тяните цветные ручки — начало и конец значения. Клик по волне — слушать с этого места"></canvas>
+                                            title="Тяните цветные ручки — начало и конец значения. Клик по волне — слушать с этого места. Сюда можно перетащить дубль из ленты или запись из категории"></canvas>
+                                    <div class="sum-editor__gains" id="sumEditorGains"></div>
                                     <div class="sum-editor__msg" id="sumEditorMsg"></div>
                                     <div class="sum-editor__actions">
                                         <button type="button" class="btn-tile btn-tile--primary" id="sumEditorPlayBtn" onclick="sumEditorTogglePlay()">Прослушать <kbd>P</kbd></button>
                                         <button type="button" class="btn-tile btn-tile--solid-var" onclick="sumEditorSave()">Сохранить эталон</button>
-                                        <button type="button" class="btn-tile btn-tile--sub sum-editor__reset" onclick="sumEditorReset()" title="Вернуть края как были">Сбросить</button>
+                                        <button type="button" class="btn-tile btn-tile--sub sum-editor__reset" onclick="sumEditorReset()" title="Вернуть края, громкость и подставленные записи как было">Сбросить</button>
                                     </div>
                                 </div>
 

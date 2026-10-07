@@ -1746,7 +1746,14 @@ let isProcessing = false;
                 for (let i = items.length - 1; i >= 0; i--) {
                     let chip = sumEl('span', 'sum-rec' + (i === browse && tIdx === sumStage1SelectedIdx ? ' is-browsed' : ''));
                     chip.dataset.idx = i;
-                    chip.title = 'Клик — прослушать';
+                    chip.title = 'Клик — прослушать. Перетащите на дорожку «Сборки», чтобы поставить в сборку';
+                    chip.draggable = true;
+                    chip.addEventListener('dragstart', e => {
+                        e.dataTransfer.setData(SUM_REC_TYPE, JSON.stringify({ tier, path: (info.paths || [])[i] }));
+                        e.dataTransfer.effectAllowed = 'copy';
+                        document.body.classList.add('sum-dragging');
+                    });
+                    chip.addEventListener('dragend', () => document.body.classList.remove('sum-dragging'));
                     chip.appendChild(sumEl('span', 'sum-rec__name', sumRecordedLabel(tier, items[i])));
                     let x = sumEl('button', 'sum-rec__x', '×');
                     x.type = 'button';
@@ -2137,8 +2144,10 @@ let isProcessing = false;
         // Тянете ручку — после отпускания звучит стык; клик по волне —
         // слушать с этого места. «Сохранить эталон» пишет обрезанные значения
         // в «Проверенные» и переходит к следующей строке.
-        let sumEd = { segs: [], trims: [], bucket: 10, sig: null, drag: null, play: null, loading: false };
+        let sumEd = { segs: [], trims: [], gains: [], bucket: 10, sig: null, drag: null, play: null, loading: false };
         const ED_PAD = 6, ED_LABEL_H = 20, ED_HANDLE_HIT = 7;
+        const ED_MISSING_MS = 900;   // ширина пустого слота на дорожке (записи ещё нет)
+        const SUM_REC_TYPE = 'application/x-gvox-rec';   // перетаскивание записанного чипа
 
         function sumEditorSignature(reels) {
             let parts = [reels.row_idx, reels.rows_total];
@@ -2163,21 +2172,26 @@ let isProcessing = false;
             try { res = await pywebview.api.sum_editor_load(sumStage2Indices()); }
             catch (e) { res = { error: String(e) }; }
             finally { sumEd.loading = false; }
+            sumEditorApplyLoad(res);
+        }
+        function sumEditorApplyLoad(res) {
             sumEditorStopPlayhead();
             let msg = document.getElementById('sumEditorMsg');
             if (res && res.error) {
-                sumEd.segs = []; sumEd.trims = [];
+                sumEd.segs = []; sumEd.trims = []; sumEd.gains = [];
                 if (msg) msg.innerText = res.error;
             } else {
                 sumEd.segs = (res && res.segments) || [];
                 sumEd.bucket = (res && res.bucket_ms) || 10;
                 sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
+                sumEd.gains = sumEd.segs.map(() => 0);
                 let missing = (res && res.missing) || [];
                 if (msg) msg.innerText = !sumEd.segs.length
-                    ? 'Для этой строки ещё нет записей — перетащите дубли в категории'
-                    : (missing.length ? `Нет записи: ${missing.join(', ')} — эта часть в сборку не попадёт` : '');
+                    ? 'Для этой строки ещё нет записей — перетащите сюда дубль или запись из категории'
+                    : (missing.length ? `Нет записи: ${missing.join(', ')} — перетащите на пустой слот дубль из ленты или запись из категории` : '');
             }
             sumEditorRenderRow();
+            sumEditorRenderGains();
             sumEditorDraw();
         }
         function sumEditorRenderRow() {
@@ -2191,15 +2205,24 @@ let isProcessing = false;
         }
 
         // --- геометрия ---
-        function edTotal() { return sumEd.segs.reduce((a, s) => a + s.duration_ms, 0); }
-        function edSegStart(i) { let t = 0; for (let j = 0; j < i; j++) t += sumEd.segs[j].duration_ms; return t; }
+        function edDur(i) { let s = sumEd.segs[i]; return s.missing ? ED_MISSING_MS : s.duration_ms; }
+        function edTotal() { let t = 0; for (let j = 0; j < sumEd.segs.length; j++) t += edDur(j); return t; }
+        function edSegStart(i) { let t = 0; for (let j = 0; j < i; j++) t += edDur(j); return t; }
+        function edSlotAt(canvas, x) {
+            let ms = edMsAt(canvas, x);
+            for (let j = 0; j < sumEd.segs.length; j++) {
+                let s0 = edSegStart(j);
+                if (ms >= s0 && ms < s0 + edDur(j)) return j;
+            }
+            return -1;
+        }
         function edX(canvas, ms) { let w = canvas.clientWidth - 2 * ED_PAD; return ED_PAD + (edTotal() ? ms / edTotal() * w : 0); }
         function edMsAt(canvas, x) { let w = canvas.clientWidth - 2 * ED_PAD; return Math.max(0, Math.min(edTotal(), (x - ED_PAD) / w * edTotal())); }
         function edOutLen(j) { return sumEd.trims[j][1] - sumEd.trims[j][0]; }
         function edOrigToOut(ms) {
             let acc = 0, start = 0;
             for (let j = 0; j < sumEd.segs.length; j++) {
-                let d = sumEd.segs[j].duration_ms;
+                let d = edDur(j);
                 if (ms < start + d) {
                     let [a, b] = sumEd.trims[j];
                     return acc + Math.max(0, Math.min(ms - start, b) - a);
@@ -2213,7 +2236,7 @@ let isProcessing = false;
             for (let j = 0; j < sumEd.segs.length; j++) {
                 let len = edOutLen(j);
                 if (out < len) return start + sumEd.trims[j][0] + out;
-                out -= len; start += sumEd.segs[j].duration_ms;
+                out -= len; start += edDur(j);
             }
             return edTotal();
         }
@@ -2246,17 +2269,34 @@ let isProcessing = false;
             ctx.font = '600 11px system-ui, sans-serif';
             ctx.textBaseline = 'middle';
             sumEd.segs.forEach((seg, i) => {
-                let s0 = edSegStart(i), x0 = edX(canvas, s0), x1 = edX(canvas, s0 + seg.duration_ms);
+                let s0 = edSegStart(i), x0 = edX(canvas, s0), x1 = edX(canvas, s0 + edDur(i));
                 let color = seg.connector ? edAccent(seg) : edTierColor(seg);
+                if (seg.missing) {
+                    // Пустой слот: записи для этого значения ещё нет — сюда бросают.
+                    ctx.save();
+                    ctx.setLineDash([5, 4]); ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+                    ctx.strokeRect(x0 + 2, top + 2, x1 - x0 - 4, h - 4);
+                    ctx.restore();
+                    ctx.save();
+                    ctx.beginPath(); ctx.rect(x0 + 2, 0, Math.max(0, x1 - x0 - 4), H); ctx.clip();
+                    ctx.fillStyle = color;
+                    ctx.fillText(`${seg.label}: ${seg.value || ''}`, x0 + 4, ED_LABEL_H / 2);
+                    ctx.fillStyle = 'rgba(200,205,215,0.7)';
+                    ctx.fillText('перетащите', x0 + 8, mid - 7);
+                    ctx.fillText('запись сюда', x0 + 8, mid + 8);
+                    ctx.restore();
+                    return;
+                }
                 ctx.fillStyle = seg.connector ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.06)';
                 ctx.fillRect(x0, top, x1 - x0, h);
+                let gainK = Math.pow(10, (sumEd.gains[i] || 0) / 20);
 
                 ctx.strokeStyle = color; ctx.lineWidth = 1;
                 ctx.beginPath();
                 let n = seg.peaks.length;
                 for (let k = 0; k < n; k++) {
                     let x = edX(canvas, s0 + k * sumEd.bucket);
-                    let amp = Math.max(0.5, seg.peaks[k] * (h / 2 - 2));
+                    let amp = Math.max(0.5, Math.min(1, seg.peaks[k] * gainK) * (h / 2 - 2));
                     ctx.moveTo(x, mid - amp); ctx.lineTo(x, mid + amp);
                 }
                 ctx.stroke();
@@ -2269,7 +2309,9 @@ let isProcessing = false;
                 ctx.fillStyle = 'rgba(255,255,255,0.18)';
                 ctx.fillRect(x1 - 0.5, top, 1, h);
 
-                let label = seg.connector ? seg.label : `${seg.label}: ${seg.value || ''}`;
+                let g = sumEd.gains[i] || 0;
+                let label = seg.connector ? seg.label
+                    : `${seg.label}: ${seg.value || ''}${seg.source ? ' ← ' + seg.source : ''}${g ? ` (${g > 0 ? '+' : ''}${g} дБ)` : ''}`;
                 ctx.save();
                 ctx.beginPath(); ctx.rect(x0 + 2, 0, Math.max(0, x1 - x0 - 4), ED_LABEL_H); ctx.clip();
                 ctx.fillStyle = seg.connector ? 'rgba(160,170,190,0.8)' : color;
@@ -2303,7 +2345,7 @@ let isProcessing = false;
         function edHit(canvas, x) {
             let best = null;
             sumEd.segs.forEach((seg, i) => {
-                if (seg.connector) return;
+                if (seg.connector || seg.missing) return;
                 let s0 = edSegStart(i);
                 sumEd.trims[i].forEach((ms, side) => {
                     let d = Math.abs(edX(canvas, s0 + ms) - x);
@@ -2352,6 +2394,35 @@ let isProcessing = false;
             };
             canvas.addEventListener('pointerup', end);
             canvas.addEventListener('pointercancel', end);
+
+            // Перетаскивание на дорожку: дубль из ленты или запись из категории.
+            let box = document.getElementById('sumEditor');
+            box.addEventListener('dragover', e => {
+                let t = e.dataTransfer.types;
+                if (!t.includes(SUM_DND_TYPE) && !t.includes(SUM_REC_TYPE)) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                box.classList.add('is-over');
+            });
+            box.addEventListener('dragleave', e => { if (!box.contains(e.relatedTarget)) box.classList.remove('is-over'); });
+            box.addEventListener('drop', e => {
+                box.classList.remove('is-over');
+                document.body.classList.remove('sum-dragging');
+                let rec = e.dataTransfer.getData(SUM_REC_TYPE);
+                let dubs = e.dataTransfer.getData(SUM_DND_TYPE);
+                if (!rec && !dubs) return;
+                e.preventDefault();
+                let rect = canvas.getBoundingClientRect();
+                let over = (e.clientY >= rect.top && e.clientY <= rect.bottom) ? edSlotAt(canvas, e.clientX - rect.left) : -1;
+                if (rec) {
+                    let r = JSON.parse(rec);
+                    sumEditorDropToSlot(r.tier, { path: r.path });
+                } else {
+                    let indices = JSON.parse(dubs);
+                    if (indices.length > 1) showToast('В слот ставится одна запись — беру первый выделенный дубль');
+                    sumEditorDropToSlot(sumEditorPickSlot(over), { dub: indices[0] });
+                }
+            });
             window.addEventListener('resize', () => sumEditorDraw());
             // Волна могла загрузиться, пока экран был скрыт (размер 0) —
             // перерисовываем, как только у холста появился/сменился размер.
@@ -2369,6 +2440,71 @@ let isProcessing = false;
             });
             return out;
         }
+        function sumEditorGainsPayload() {
+            let out = {};
+            sumEd.gains.forEach((g, i) => { if (g) out[i] = g; });
+            return out;
+        }
+        // Громкость каждой переменной: ▼/▲ по 1 дБ, сразу слышно.
+        function sumEditorRenderGains() {
+            let box = document.getElementById('sumEditorGains');
+            if (!box) return;
+            box.innerHTML = '';
+            sumEd.segs.forEach((seg, i) => {
+                if (seg.connector || seg.missing) return;
+                let row = sumEl('span', 'sum-gain');
+                row.style.setProperty('--tier-accent', sumTierAccent(seg.key));
+                row.appendChild(sumEl('span', 'sum-gain__name', seg.label));
+                if (seg.source) row.appendChild(sumEl('span', 'sum-gain__src', `← ${seg.source}`));
+                let down = sumEl('button', 'sum-gain__btn', '▼');
+                let val = sumEl('span', 'sum-gain__val', '');
+                let up = sumEl('button', 'sum-gain__btn', '▲');
+                down.type = up.type = 'button';
+                down.title = 'Тише на 1 дБ'; up.title = 'Громче на 1 дБ';
+                const paint = () => {
+                    let g = sumEd.gains[i] || 0;
+                    val.textContent = g ? `${g > 0 ? '+' : ''}${g} дБ` : '0 дБ';
+                    val.classList.toggle('is-changed', !!g);
+                };
+                const bump = d => {
+                    sumEd.gains[i] = Math.max(-20, Math.min(20, (sumEd.gains[i] || 0) + d));
+                    paint(); sumEditorDraw();
+                    sumEditorPlay(Math.max(0, edOrigToOut(edSegStart(i) + sumEd.trims[i][0]) - 400));
+                };
+                down.addEventListener('click', () => bump(-1));
+                up.addEventListener('click', () => bump(1));
+                paint();
+                row.append(down, val, up);
+                box.appendChild(row);
+            });
+        }
+        // Куда ставить брошенный дубль: слот под курсором, иначе пустой
+        // слот, иначе слот выбранной категории, иначе первый.
+        function sumEditorPickSlot(over) {
+            let segs = sumEd.segs;
+            if (over >= 0 && !segs[over].connector) return segs[over].key;
+            let empty = segs.find(s => s.missing);
+            if (empty) return empty.key;
+            let sel = sumStage1Tiers[sumStage1SelectedIdx];
+            if (sel && segs.some(s => s.key === sel.key && !s.connector)) return sel.key;
+            let first = segs.find(s => !s.connector);
+            return first ? first.key : null;
+        }
+        async function sumEditorDropToSlot(key, src) {
+            if (!key || !sumEd.segs.some(s => s.key === key && !s.connector)) {
+                showToast('В сборке этой строки нет такого слота');
+                return;
+            }
+            let res;
+            try {
+                res = await pywebview.api.sum_editor_set_slot(key, src.path || null,
+                    src.dub !== undefined ? src.dub : null, sumStage2Indices());
+            } catch (e) { res = { error: String(e) }; }
+            if (res && res.error) { showBeautifulAlert(`❌ <b>Сборка</b><br><br>${escapeHtml(res.error)}`); return; }
+            sumEditorApplyLoad(res);
+            let i = sumEd.segs.findIndex(s => s.key === key);
+            if (i >= 0) sumEditorPlay(Math.max(0, edOrigToOut(edSegStart(i)) - 600));
+        }
         function sumEditorStopPlayhead() {
             if (sumEd.play) cancelAnimationFrame(sumEd.play.raf);
             sumEd.play = null;
@@ -2382,7 +2518,7 @@ let isProcessing = false;
         async function sumEditorPlay(fromOut) {
             if (!sumEd.segs.length) return;
             let res;
-            try { res = await pywebview.api.sum_editor_play(sumEditorTrimsPayload(), Math.round(fromOut || 0)); }
+            try { res = await pywebview.api.sum_editor_play(sumEditorTrimsPayload(), Math.round(fromOut || 0), sumEditorGainsPayload()); }
             catch (e) { return; }
             if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
             if (sumEd.play) cancelAnimationFrame(sumEd.play.raf);
@@ -2401,15 +2537,21 @@ let isProcessing = false;
         function sumEditorTogglePlay() {
             if (sumEd.play) sumEditorStop(); else sumEditorPlay(0);
         }
-        function sumEditorReset() {
+        async function sumEditorReset() {
+            // Края, громкость и подставленные вручную записи — как было.
+            let res;
+            try { res = await pywebview.api.sum_editor_clear_slots(sumStage2Indices()); } catch (e) { res = null; }
+            if (res && !res.error) { sumEditorApplyLoad(res); return; }
             sumEd.trims = sumEd.segs.map(s => [0, s.duration_ms]);
+            sumEd.gains = sumEd.segs.map(() => 0);
+            sumEditorRenderGains();
             sumEditorDraw();
         }
         async function sumEditorSave() {
             if (!sumEd.segs.length) { showToast('Нечего сохранять — для строки нет записей'); return; }
             await sumEditorStop();
             sumEd.sig = null;
-            await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload()), false);
+            await sumApply(() => pywebview.api.sum_editor_save(sumEditorTrimsPayload(), sumEditorGainsPayload()), false);
         }
 
         function sumStage2Indices() {
