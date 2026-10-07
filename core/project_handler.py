@@ -107,22 +107,10 @@ class ProjectMixin:
         idx = min(len(sorted_values) - 1, max(0, int(len(sorted_values) * share)))
         return sorted_values[idx]
 
-    def analyze_picked_audio(self):
-        """Шаг 2: замеряем фон и речь, подбираем настройки под число фраз из Excel."""
-        path = getattr(self, 'pending_raw_path', None)
-        if not path or not os.path.exists(path):
-            return {"error": "Файл не выбран. Нажмите «Резать сырой WAV» ещё раз."}
-
-        try:
-            audio = AudioSegment.from_file(path)
-        except Exception as e:
-            return {"error": f"Не удалось открыть аудиофайл.\n\n{os.path.basename(path)}\n\nПодробности: {e}"}
-
-        levels = self._frame_levels(audio)
-        if not levels:
-            return {"error": "Запись пустая или слишком короткая для анализа."}
-
-        self.pending_levels = levels
+    def _suggest_cut_settings(self, levels, target):
+        """Замеряем фон и речь и подбираем порог + паузу так, чтобы число
+        кусков было ближе всего к target (0 — просто осмысленное дробление).
+        Возвращает (фон, речь, разброс, порог, пауза, ожидаемое число кусков)."""
         ordered = sorted(levels)
 
         noise_db = round(self._percentile(ordered, 0.10), 1)   # уровень фона
@@ -133,8 +121,6 @@ class ProjectMixin:
         raw_thresh = noise_db + max(3.0, min(12.0, spread * 0.25))
         low_limit, high_limit = -70, -12
         base_thresh = int(round(max(low_limit, min(high_limit, min(raw_thresh, speech_db - 8)))))
-
-        target = len(self.phrases_data) if getattr(self, 'phrases_data', None) else 0
 
         # Перебираем пары «порог + пауза» и ищем ближайшую к числу фраз из Excel
         thresh_options = sorted({int(round(max(low_limit, min(high_limit, base_thresh + d))))
@@ -157,6 +143,26 @@ class ProjectMixin:
             sug_thresh, sug_pause, predicted = base_thresh, 400, 1
         else:
             _, sug_thresh, sug_pause, predicted = best
+        return noise_db, speech_db, spread, sug_thresh, sug_pause, predicted
+
+    def analyze_picked_audio(self):
+        """Шаг 2: замеряем фон и речь, подбираем настройки под число фраз из Excel."""
+        path = getattr(self, 'pending_raw_path', None)
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не выбран. Нажмите «Резать сырой WAV» ещё раз."}
+
+        try:
+            audio = AudioSegment.from_file(path)
+        except Exception as e:
+            return {"error": f"Не удалось открыть аудиофайл.\n\n{os.path.basename(path)}\n\nПодробности: {e}"}
+
+        levels = self._frame_levels(audio)
+        if not levels:
+            return {"error": "Запись пустая или слишком короткая для анализа."}
+
+        self.pending_levels = levels
+        target = len(self.phrases_data) if getattr(self, 'phrases_data', None) else 0
+        noise_db, speech_db, spread, sug_thresh, sug_pause, predicted = self._suggest_cut_settings(levels, target)
 
         sug_pad = 150 if sug_pause < 300 else 200
 

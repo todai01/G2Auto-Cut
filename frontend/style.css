@@ -2166,3 +2166,6 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 }
 .sum-pieces__btn:hover{ border-color: var(--tier-accent, var(--accent-primary)); }
 .sum-pieces__btn.is-on{ background: var(--tier-accent, var(--accent-primary)); border-color: transparent; color: #111; }
+
+.audit-choice-desc{ display: block; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--text-dim); }
+.audit-asr-bar{ width: 100%; height: 10px; accent-color: var(--accent-primary); margin: 4px 0 12px; }

@@ -517,6 +517,36 @@
         </div>
     </div>
 
+    <!-- Аудит по категории: чанки уже готовы или сначала нарезать? -->
+    <div id="auditChunksOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title" id="auditChunksTitle">Есть уже готовые чанки?</h3>
+                <button class="modal-close" onclick="closeAuditChunks()" title="Закрыть">&times;</button>
+            </div>
+            <p class="modal-hint">От ответа зависит, как искать недостающее. В конце можно выгрузить таблицу недостающих — в том же формате, что ваш словарь.</p>
+            <div class="audit-category-list">
+                <button type="button" class="audit-category-item" onclick="auditChunksAnswer('named')">Да, файлы уже названы по значениям <span class="audit-choice-desc">«AUDI 80.wav» — сверю имена файлов в папке с таблицей</span></button>
+                <button type="button" class="audit-category-item" onclick="auditChunksAnswer('folder')">Да, нарезаны, но без названий <span class="audit-choice-desc">0001.wav, фраза_0001.wav… — распознаю голосом, что в каждом чанке</span></button>
+                <button type="button" class="audit-category-item" onclick="auditChunksAnswer('cut')">Нет, сначала нарезать <span class="audit-choice-desc">выберите запись — нарежу её на чанки (рядом, в папку «…_Chunks»), потом распознаю голосом</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Аудит по голосу: прогресс -->
+    <div id="auditAsrOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Аудит по голосу</h3>
+            </div>
+            <p class="modal-hint" id="auditAsrText">…</p>
+            <progress id="auditAsrBar" class="audit-asr-bar" max="100" value="0"></progress>
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="stopAuditVoice()">Остановить</button>
+            </div>
+        </div>
+    </div>
+
     <!-- НОВОВВЕДЕНИЕ: Модальное окно Аудита -->
     <div id="auditOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">

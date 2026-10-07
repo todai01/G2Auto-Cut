@@ -4424,7 +4424,7 @@ let isProcessing = false;
                 btn.textContent = label;
                 btn.onclick = () => {
                     closeAuditCategoryPicker();
-                    runProjectAudit(key);
+                    if (key === 'excel') runProjectAudit(key); else askAuditChunks(key, label);
                 };
                 list.appendChild(btn);
             };
@@ -4433,6 +4433,51 @@ let isProcessing = false;
             res.categories.forEach(c => addOption(c.key, c.label));
 
             document.getElementById('auditCategoryOverlay').style.display = 'flex';
+        }
+
+        // Перед аудитом категории: чанки уже готовы или запись ещё не нарезана?
+        let auditChunksCategory = null;
+        function askAuditChunks(key, label) {
+            auditChunksCategory = key;
+            document.getElementById('auditChunksTitle').textContent = `Аудит: ${label}. Есть уже готовые чанки?`;
+            document.getElementById('auditChunksOverlay').style.display = 'flex';
+        }
+        function closeAuditChunks() {
+            document.getElementById('auditChunksOverlay').style.display = 'none';
+        }
+        function auditChunksAnswer(kind) {
+            closeAuditChunks();
+            let key = auditChunksCategory;
+            if (!key) return;
+            if (kind === 'named') runProjectAudit(key);
+            else runAuditVoice(key, kind === 'cut' ? 'cut' : 'folder');
+        }
+
+        // Аудит по голосу: нарезать (если нужно), распознать, сверить с таблицей.
+        async function runAuditVoice(category, source) {
+            if (isProcessing) return; isProcessing = true;
+            auditAsrProgress({ stage: 'pick', done: 0, total: 0 });
+            let res;
+            try { res = await pywebview.api.audit_recognize(category, source); }
+            catch (e) { res = { error: String(e) }; }
+            finally { isProcessing = false; document.getElementById('auditAsrOverlay').style.display = 'none'; }
+            if (res && res.error === 'cancel') return;
+            if (res && res.need_model) { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
+            if (!res || res.error) { showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${escapeHtml(res ? res.error : 'нет ответа')}`); return; }
+            renderAuditResult(res);
+        }
+        function auditAsrProgress(p) {
+            let box = document.getElementById('auditAsrOverlay');
+            box.style.display = 'flex';
+            let text = { pick: 'Выберите запись или папку с чанками…', model: 'Загружаю модель распознавания…',
+                         cut: `Нарезаю запись: ${p.done} из ${p.total}`,
+                         asr: `Распознаю чанки: ${p.done} из ${p.total}` }[p.stage] || '';
+            document.getElementById('auditAsrText').textContent = text;
+            document.getElementById('auditAsrBar').value = p.total ? Math.round(p.done / p.total * 100) : 0;
+        }
+        async function stopAuditVoice() {
+            document.getElementById('auditAsrText').textContent = 'Останавливаю… покажу то, что успели распознать';
+            try { await pywebview.api.sum_auto_check_stop(); } catch (e) {}
         }
 
         // Функция плавной анимации цифр
@@ -4469,19 +4514,28 @@ let isProcessing = false;
                 alert(res?.error || "Сначала загрузите Excel-файл с текстом!");
                 return;
             }
+            renderAuditResult(res);
+        }
 
+        function renderAuditResult(res) {
             // Показываем красивое модальное окно
+            let voice = !!res.by_voice;
+            let unknown = res.unknown || [];
             let categoryNote = res.category ? ` — категория «${res.category_label}»` : '';
+            if (voice) categoryNote += ` — по голосу, чанков: ${res.chunks_total}${res.stopped ? ' (остановлено, проверены не все)' : ''}`;
             document.getElementById('auditOverlay').style.display = 'flex';
-            document.getElementById('auditPath').innerHTML = iconHTML('folder') + " Директория сканирования: " + escapeHtml(res.scan_dir) + escapeHtml(categoryNote);
+            document.getElementById('auditPath').innerHTML = iconHTML('folder') + (voice ? " Чанки: " : " Директория сканирования: ") + escapeHtml(res.scan_dir) + escapeHtml(categoryNote);
             document.querySelector('#auditOverlay .stat-card--total .stat-card__label').textContent =
                 res.category ? 'Всего в словаре' : 'Всего в Excel';
+            document.querySelector('#auditOverlay .stat-card--found .stat-card__label').textContent = voice ? 'Услышано' : 'Найдено';
+            document.querySelector('#auditOverlay .stat-card--lost .stat-card__label').textContent = voice ? 'Не хватает' : 'Потеряно';
+            document.querySelector('#auditOverlay .stat-card--dups .stat-card__label').textContent = voice ? 'Не распознано' : 'Дубликаты';
 
             // Запускаем анимацию счетчиков (на 1200 миллисекунд)
             animateValue(document.getElementById('auditTotalExcel'), 0, res.total_excel, 1200);
             animateValue(document.getElementById('auditTotalDisk'), 0, res.total_disk, 1200);
             animateValue(document.getElementById('auditMissing'), 0, res.missing_count, 1200);
-            animateValue(document.getElementById('auditDups'), 0, res.duplicates_count, 1200);
+            animateValue(document.getElementById('auditDups'), 0, voice ? unknown.length : res.duplicates_count, 1200);
 
             // Генерируем детальные списки и чистый текст для копирования
             let detailsHtml = '';
@@ -4494,7 +4548,11 @@ let isProcessing = false;
                 window.lastAuditReportText += `ОТСУТСТВУЮТ (${res.missing_count}):\n`;
 
                 res.missing.forEach(m => {
-                    detailsHtml += `
+                    detailsHtml += voice ? `
+                    <div class="audit-row">
+                        <span class="audit-row__name audit-row__name--lost">${escapeHtml(m.text)}</span>
+                        <div class="audit-row__meta">Строка ${m.index}: не услышано ни в одном чанке</div>
+                    </div>` : `
                     <div class="audit-row">
                         <span class="audit-row__name audit-row__name--lost">${m.filename}</span>
                         <div class="audit-row__meta">Строка ${m.index}: ${m.text}</div>
@@ -4504,6 +4562,26 @@ let isProcessing = false;
                 window.lastAuditReportText += `\n`;
             } else {
                 detailsHtml += `<div class="audit-ok">Все файлы по списку Excel на месте</div>`;
+            }
+
+            // По голосу: чанки, где речь есть, но марку уверенно не узнали —
+            // их стоит послушать: возможно, там как раз «недостающее».
+            if (voice) {
+                if (unknown.length) {
+                    detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Не распознано уверенно — ${unknown.length} (послушайте)</h4>`;
+                    window.lastAuditReportText += `НЕ РАСПОЗНАНО (${unknown.length}):\n`;
+                    unknown.forEach(u => {
+                        detailsHtml += `
+                        <div class="audit-row">
+                            <span class="audit-row__name audit-row__name--dups">${escapeHtml(u.filename)}</span>
+                            <div class="audit-row__meta">Услышано: «${escapeHtml(u.heard)}» · похоже на ${escapeHtml(u.guess)} (${Math.round(u.score * 100)}%)</div>
+                        </div>`;
+                        window.lastAuditReportText += `- ${u.filename}: «${u.heard}» ~ ${u.guess} (${Math.round(u.score * 100)}%)\n`;
+                    });
+                }
+                document.getElementById('auditDetails').innerHTML = detailsHtml;
+                document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
+                return;
             }
 
             // Блок дубликатов
