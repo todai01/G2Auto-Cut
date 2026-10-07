@@ -686,7 +686,7 @@ let isProcessing = false;
 
             let items = [];
             try { items = await pywebview.api.get_recent_projects(); recentsLoaded = true; } catch (e) { items = []; }
-            recentProjectsCache = items || [];
+            recentProjectsCache = Array.isArray(items) ? items : [];
 
             if (!recentProjectsCache.length) {
                 panel.style.display = 'none';
@@ -733,7 +733,7 @@ let isProcessing = false;
             if (!recentsLoaded) {
                 let items = [];
                 try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
-                recentProjectsCache = items || [];
+                recentProjectsCache = Array.isArray(items) ? items : [];
                 recentsLoaded = true;
             }
 
@@ -793,7 +793,7 @@ let isProcessing = false;
             if (recentsLoaded) renderMenuRecent();
             let items;
             try { items = await pywebview.api.get_recent_projects(); } catch (e) { return; }
-            recentProjectsCache = items || [];
+            recentProjectsCache = Array.isArray(items) ? items : [];
             recentsLoaded = true;
             if (!stageAnimating) renderMenuRecent();
         }
@@ -2509,9 +2509,10 @@ let isProcessing = false;
             }
             if (!sumStage1Tiers.length) return;
             let tier = sumStage1Tiers[sumStage1SelectedIdx];
-            // Выделены дубли — проверяем их; иначе все неразобранные и ещё не
-            // проверенные во всём списке (не только в видимой ленте).
-            let indices = sumDubSel.size ? [...sumDubSel].sort((a, b) => a - b) : null;
+            // Выделено НЕСКОЛЬКО дублей (Ctrl/Shift) — проверяем их; иначе все
+            // неразобранные и ещё не проверенные во всём списке. Обычный клик
+            // «послушать» выделяет один дубль — он автопроверку не ограничивает.
+            let indices = sumDubSel.size > 1 ? [...sumDubSel].sort((a, b) => a - b) : null;
             let lang = (document.getElementById('sumAsrLang') || {}).value || 'ru';
             sumAsrRunning = true;
             sumAsrStats = { ok: 0, low: 0, noise: 0 };
@@ -2524,7 +2525,7 @@ let isProcessing = false;
             catch (e) { res = { error: String(e) }; }
             sumAsrRunning = false;
             btn.classList.remove('is-running');
-            btn.textContent = 'Автопроверка';
+            sumAsrBtnLabel();
             if (res && res.need_model) { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
             if (res && res.error) { showBeautifulAlert(`❌ <b>Автопроверка</b><br><br>${escapeHtml(res.error).replace(/\n/g, '<br>')}`); return; }
             showToast(`${res.stopped ? 'Остановлено' : 'Готово'}: проверено ${res.done} — уверенно ${sumAsrStats.ok}, на прослушку ${sumAsrStats.low}, шум ${sumAsrStats.noise}`, 6000);
@@ -2554,6 +2555,17 @@ let isProcessing = false;
             bar.style.display = n > 1 ? 'flex' : 'none';
             let cnt = document.getElementById('sumDubsSelCount');
             if (cnt) cnt.innerText = `Выбрано: ${n}`;
+            sumAsrBtnLabel();
+        }
+        // На кнопке видно, что проверится: все неразобранные или выделенные.
+        function sumAsrBtnLabel() {
+            let btn = document.getElementById('sumAsrBtn');
+            if (!btn || sumAsrRunning) return;
+            let n = sumDubSel.size;
+            btn.textContent = n > 1 ? `Автопроверка · ${n}` : 'Автопроверка';
+            btn.title = n > 1
+                ? `Распознать ${n} выделенных дублей и сверить с выбранной категорией. Снять выделение — проверятся все неразобранные`
+                : 'Распознать все неразобранные дубли во всём списке и сверить с выбранной категорией. Чтобы проверить только некоторые — выделите их через Ctrl/Shift. Идёт в фоне';
         }
         function sumClearDubSelection() {
             sumDubSel.clear();
