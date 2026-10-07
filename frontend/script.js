@@ -379,6 +379,47 @@ let isProcessing = false;
                 void el.offsetWidth;
                 el.style.animation = '';
             });
+            loadMenuRecent();
+        }
+
+        // Недавние проекты прямо в меню — открыть в один клик.
+        async function loadMenuRecent() {
+            let box = document.getElementById('menuRecent');
+            let list = document.getElementById('menuRecentList');
+            if (!box || !list) return;
+            let items = [];
+            try { items = await pywebview.api.get_recent_projects(); } catch (e) { items = []; }
+            recentProjectsCache = items || [];
+            if (!recentProjectsCache.length) { box.style.display = 'none'; return; }
+            list.innerHTML = recentProjectsCache.slice(0, 4).map((it, idx) => `
+                <button class="menu-recent__item rise" style="--d: ${6 + idx}" onclick="openRecentProject(${idx})" title="${escapeHtml(it.path || '')}">
+                    <span class="menu-recent__icon">${iconHTML('folder')}</span>
+                    <span class="menu-recent__name">${escapeHtml(it.name)}</span>
+                    <span class="menu-recent__time">${formatRecentTime(it.updated_at)}</span>
+                </button>`).join('');
+            box.style.display = 'block';
+        }
+
+        // Плавное раскрытие «Настроек нарезки» (у <details> анимации нет).
+        function toggleMenuCut(e) {
+            let det = e.currentTarget.parentElement;
+            let body = document.getElementById('menuCutBody');
+            if (!body || !body.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            e.preventDefault();
+            if (det.dataset.anim) return;
+            det.dataset.anim = '1';
+            const done = () => { delete det.dataset.anim; body.style.overflow = ''; };
+            body.style.overflow = 'hidden';
+            if (!det.open) {
+                det.open = true;
+                let h = body.scrollHeight;
+                body.animate([{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }],
+                             { duration: 260, easing: 'cubic-bezier(.2,.7,.3,1)' }).onfinish = done;
+            } else {
+                let h = body.scrollHeight;
+                body.animate([{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }],
+                             { duration: 200, easing: 'ease-in' }).onfinish = () => { det.open = false; done(); };
+            }
         }
 
         function showWorkspace() {

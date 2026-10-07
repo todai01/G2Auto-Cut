@@ -853,11 +853,11 @@
 
                 <!-- Настройки нарезки подбираются сами — ползунки свёрнуты -->
                 <details class="menu-cut rise" style="--d: 3">
-                    <summary class="menu-cut__summary">
+                    <summary class="menu-cut__summary" onclick="toggleMenuCut(event)">
                         <span class="menu-cut__title">Настройки нарезки</span>
                         <span class="menu-cut__values" id="cutSummary">500 мс · −35 дБ · 250 мс</span>
                     </summary>
-                    <div class="settings-panel menu-cut__body">
+                    <div class="settings-panel menu-cut__body" id="menuCutBody">
                         <div class="settings-head">
                             <span class="menu-cut__note">Обычно подбираются автоматически под запись</span>
                             <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
@@ -897,6 +897,11 @@
                 <div id="progressContainer" class="progress-panel">
                     <div id="progressText" class="progress-text">Анализ...</div>
                     <progress id="progressBar" max="100"></progress>
+                </div>
+
+                <div id="menuRecent" class="menu-recent" style="display:none;">
+                    <div class="section-label section-label--spaced"><span>Недавние проекты</span></div>
+                    <div id="menuRecentList" class="menu-recent__list"></div>
                 </div>
             </section>
 

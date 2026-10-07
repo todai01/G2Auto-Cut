@@ -2252,6 +2252,87 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 .help-flow{ margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-sm); color: var(--text-dim); }
 .help-flow b{ color: var(--text); }
 .menu-opt input{ color-scheme: dark; }
-@media (min-width: 1000px) and (min-height: 700px){
-    .stage-loading .menu-grid{ margin-top: clamp(0px, 4vh, 40px); }
+
+/* --- Меню: по центру окна и крупнее на больших экранах --- */
+.stage-loading{ position: relative; }
+.stage-loading .menu-grid{ margin-block: auto; width: 100%; }
+@media (min-width: 1000px){
+    .stage-loading .menu-grid{ padding-bottom: 4vh; }
+}
+@media (min-width: 1500px) and (min-height: 820px){ .stage-loading .menu-grid{ zoom: 1.12; } }
+@media (min-width: 1800px) and (min-height: 950px){ .stage-loading .menu-grid{ zoom: 1.32; } }
+
+/* Недавние проекты в меню */
+.menu-recent__list{ display: flex; flex-direction: column; gap: 4px; }
+.menu-recent__item{
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer;
+    border: 1px solid transparent; background: transparent; color: var(--text);
+}
+.menu-recent__item:hover{ background: var(--panel); border-color: var(--border-soft); transform: translateX(3px); }
+.menu-recent__icon{ flex: none; display: inline-flex; color: var(--text-faint); font-size: 14px; }
+.menu-recent__item:hover .menu-recent__icon{ color: var(--accent-good); }
+.menu-recent__name{ font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-recent__time{ margin-left: auto; font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+
+/* --- Плавные анимации меню --- */
+/* Мягкий «живой» фон: два размытых пятна медленно плывут. */
+.stage-loading::before, .stage-loading::after{
+    content: ""; position: fixed; z-index: 0; pointer-events: none; border-radius: 50%;
+    filter: blur(90px); opacity: .16; will-change: transform;
+}
+.stage-loading::before{
+    width: 46vw; height: 46vw; left: -12vw; top: 8vh;
+    background: radial-gradient(circle, var(--accent-primary), transparent 65%);
+    animation: menuDriftA 26s ease-in-out infinite alternate;
+}
+.stage-loading::after{
+    width: 40vw; height: 40vw; right: -10vw; bottom: -8vh;
+    background: radial-gradient(circle, var(--accent-mode), transparent 65%);
+    animation: menuDriftB 32s ease-in-out infinite alternate;
+}
+.stage-loading > *{ position: relative; z-index: 1; }
+@keyframes menuDriftA{ to{ transform: translate(14vw, 10vh) scale(1.15); } }
+@keyframes menuDriftB{ to{ transform: translate(-12vw, -12vh) scale(1.1); } }
+
+/* Появление «лесенкой»: из лёгкого размытия и снизу. */
+.stage-loading .rise{ animation: menuRise .6s cubic-bezier(.2,.7,.3,1) both; animation-delay: calc(var(--d, 0) * 55ms); }
+@keyframes menuRise{
+    from{ opacity: 0; transform: translateY(16px) scale(.985); filter: blur(4px); }
+    to  { opacity: 1; transform: none; filter: none; }
+}
+
+/* Наведение и нажатие — мягко, с подсветкой цветом режима. */
+.stage-loading .option-card,
+.menu-row, .menu-tool, .menu-cut{
+    transition: transform .25s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease, box-shadow .25s ease;
+}
+.stage-loading .option-card:hover{ transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.35), 0 0 0 1px rgba(77,149,234,.15); }
+.menu-row:hover{ transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,.38), 0 0 22px -6px var(--row-accent, var(--accent-primary)); }
+.menu-row__icon, .menu-tool__icon, .stage-loading .option-icon{ transition: transform .3s cubic-bezier(.3,1.6,.5,1), color .2s ease; }
+.menu-row:hover .menu-row__icon{ transform: scale(1.1) rotate(-6deg); }
+.menu-tool:hover{ transform: translateY(-2px); box-shadow: 0 8px 18px rgba(0,0,0,.3); }
+.menu-tool:hover .menu-tool__icon{ transform: scale(1.15); }
+.stage-loading .option-card:hover .option-icon{ transform: scale(1.08); }
+.stage-loading .option-card:active, .menu-row:active, .menu-tool:active, .menu-recent__item:active{ transform: scale(.98); transition-duration: .08s; }
+.menu-cut:hover{ border-color: var(--border); }
+.menu-cut__values{ transition: color .2s ease; }
+.menu-cut[open] .menu-cut__values{ color: var(--accent-primary); }
+.menu-cut__summary::before{ transition: transform .25s cubic-bezier(.2,.7,.3,1); }
+
+/* Окно справки — мягко «выплывает». */
+#menuHelpOverlay[style*="flex"] .custom-alert-box{ animation: menuPop .32s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes menuPop{ from{ opacity: 0; transform: translateY(10px) scale(.97); } to{ opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce){
+    .stage-loading::before, .stage-loading::after{ animation: none; }
+    .stage-loading .rise, #menuHelpOverlay .custom-alert-box{ animation: none; }
+    .menu-row:hover, .menu-tool:hover, .stage-loading .option-card:hover{ transform: none; }
+}
+
+/* Утилиты: 2 + 3 плитки, без пустого места в ряду */
+@media (min-width: 1000px){
+    .menu-tools{ grid-template-columns: repeat(6, 1fr); }
+    .menu-tool{ grid-column: span 2; }
+    .menu-tool:nth-child(-n+2){ grid-column: span 3; }
 }
