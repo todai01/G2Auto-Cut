@@ -2551,3 +2551,33 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 /* Граница шапки скрыта, пока её не «прорисует» линия от «G» */
 .stage-loading .setup-header{ transition: border-color .4s ease; }
 .stage-loading.menu-line-pending .setup-header{ border-bottom-color: transparent; }
+
+/* --- Шапка меню: статус и «Справка» в общей спокойной стилистике --- */
+.stage-loading .setup-status{
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-ui); font-size: var(--fs-sm); font-weight: 500;
+    letter-spacing: 0; text-transform: none; color: var(--text-dim);
+    background: none; border: none; padding: 0;
+}
+.stage-loading .setup-status::before{
+    content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--accent-primary); box-shadow: 0 0 0 3px rgba(77,149,234,.15);
+}
+.stage-loading .setup-status--ready{ color: var(--text-dim); background: none; border: none; }
+.stage-loading .setup-status--ready::before{ background: var(--accent-good); box-shadow: 0 0 0 3px rgba(47,191,125,.15); }
+.stage-loading .setup-header__right{ gap: var(--space-4); }
+
+.btn-help{
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 32px; padding: 0 12px 0 8px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-soft); background: transparent; color: var(--text-dim);
+    font-size: var(--fs-sm); font-weight: 600;
+    transition: border-color .2s ease, background .2s ease, color .2s ease;
+}
+.btn-help:hover{ border-color: var(--border); background: var(--panel); color: var(--text); }
+.btn-help__icon{
+    width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); font-size: 11px; font-weight: 700; color: var(--text-faint);
+    transition: border-color .2s ease, color .2s ease;
+}
+.btn-help:hover .btn-help__icon{ border-color: var(--accent-primary); color: var(--accent-primary); }
