@@ -125,3 +125,26 @@ def export_like(segment, dst, like_path=None, kind=None):
     block = ch * bits // 8
     fmt = struct.pack('<HHIIHH', tag, ch, rate, rate * block, block, bits) + extra
     _write_wav(dst, fmt, data)
+
+
+def wav_concat(src, dst, ranges_ms):
+    """Склеивает куски исходника [(начало_мс, конец_мс), …] в один WAV —
+    байт в байт, без перекодирования (вырезы внутри фразы)."""
+    lay = wav_layout(src)
+    if not lay:
+        return False
+    fmt, data_pos, data_size, block, rate = lay
+    if block <= 0 or rate <= 0:
+        return False
+    out = []
+    with open(src, 'rb') as f:
+        for s, e in ranges_ms:
+            a = max(0, int(s * rate / 1000)) * block
+            b = min(data_size // block, int(e * rate / 1000)) * block
+            if b > a:
+                f.seek(data_pos + a)
+                out.append(f.read(b - a))
+    if not out:
+        return False
+    _write_wav(dst, fmt, b''.join(out))
+    return True

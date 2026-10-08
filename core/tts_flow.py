@@ -36,7 +36,7 @@ from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
                              similarity)
 from core.ui_dialogs import ui_confirm
-from utils.wav_io import wav_slice
+from utils.wav_io import export_like, wav_concat, wav_layout, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
 TTS_STATE_VERSION = 3     # 3: фразы ищутся в сплошном потоке слов, а не по паузам
@@ -49,6 +49,8 @@ TTS_OK_SCORE = 0.80       # дубль «зелёный» — совпал с т
 TTS_OK_MARGIN = 0.10      # …и заметно лучше второго варианта
 TTS_TIE = 0.03            # почти равные варианты — решает порядок записи
 TTS_LISTEN_SHARE = 0.8    # «прослушан» = отыграл хотя бы 80% длины
+EDIT_CONTEXT_MS = 1500    # запас записи вокруг дубля в «Сборке» — край можно вытянуть
+EDIT_BUCKET_MS = 10       # шаг волны
 
 FLAG_COLS = ('start', 'start_2', 'end')
 BAD_NAME = re.compile(r'[\\/:*?"<>|\r\n\t]+')
@@ -527,7 +529,7 @@ class TtsFlowMixin:
             # Копия байт из исходника — без перекодирования, качество не трогаем.
             if not wav_slice(raw_path, os.path.join(chunks_dir, name), lo, hi):
                 audio[lo:hi].export(os.path.join(chunks_dir, name), format="wav")
-            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo,
+            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo, "orig": [lo, hi],
                           "heard": ''.join(w[0] for w in stream[i:j]).strip(), "listened": False,
                           "chunk": n + 1, **info})
             if n % 20 == 0:
@@ -803,3 +805,154 @@ class TtsFlowMixin:
         except Exception as e:
             return {"error": str(e)}
         return {"status": "ok"}
+
+    # ---------------- «Сборка»: монтаж дубля прямо в программе ----------------
+    # Дубль показывается вместе с запасом записи вокруг (EDIT_CONTEXT_MS):
+    # если автонарезка срезала слово, край можно просто вытянуть наружу.
+    # Все правки собираются из исходной записи байт в байт.
+
+    @staticmethod
+    def _tts_orig(t):
+        """Границы дубля, как его нарезала программа (до правок)."""
+        if not t.get("orig"):
+            t["orig"] = [t["start_ms"], t["start_ms"] + t["ms"]]
+        return t["orig"]
+
+    def _tts_take_ranges(self, t, a=None, b=None, cuts=None):
+        """Абсолютные куски исходника (мс), из которых состоит дубль."""
+        ed = t.get("edit") or {}
+        orig = self._tts_orig(t)
+        a = ed.get("a", orig[0]) if a is None else a
+        b = ed.get("b", orig[1]) if b is None else b
+        cuts = ed.get("cuts", []) if cuts is None else cuts
+        ranges, cur = [], a
+        for c0, c1 in sorted((max(a, c0), min(b, c1)) for c0, c1 in cuts):
+            if c1 <= c0:
+                continue
+            if c0 > cur:
+                ranges.append((cur, c0))
+            cur = max(cur, c1)
+        if b > cur:
+            ranges.append((cur, b))
+        return ranges
+
+    def tts_editor_load(self, i):
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])) or not st.get("raw_path") or not os.path.exists(st["raw_path"]):
+            return {"error": "Нет исходной записи для этого дубля."}
+        t = st["takes"][i]
+        ed = t.get("edit") or {}
+        orig = self._tts_orig(t)
+        a, b = ed.get("a", orig[0]), ed.get("b", orig[1])
+        total = getattr(self, '_tts_raw_len', None)
+        if not total or total[0] != st["raw_path"]:
+            lay = wav_layout(st["raw_path"])
+            length = int(lay[2] / lay[3] * 1000 / lay[4]) if lay else len(AudioSegment.from_file(st["raw_path"]))
+            total = self._tts_raw_len = (st["raw_path"], length)
+        lo, hi = max(0, a - EDIT_CONTEXT_MS), min(total[1], b + EDIT_CONTEXT_MS)
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_ctx_{os.getpid()}.wav")
+        if wav_slice(st["raw_path"], tmp, lo, hi):
+            seg = AudioSegment.from_file(tmp)
+        else:
+            seg = AudioSegment.from_file(st["raw_path"])[lo:hi]
+        seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        samples = seg.get_array_of_samples()
+        per = 16000 * EDIT_BUCKET_MS // 1000
+        peaks = [round(max(abs(min(samples[k:k + per])), max(samples[k:k + per])) / 32768, 3)
+                 for k in range(0, len(samples), per)]
+        return {"i": i, "lo": lo, "hi": hi, "a": a, "b": b, "cuts": ed.get("cuts", []),
+                "orig": orig, "audacity": bool(t.get("audacity")), "peaks": peaks, "bucket": EDIT_BUCKET_MS}
+
+    def tts_editor_apply(self, i, a, b, cuts):
+        """Записать правку в файл дубля (из исходника, байт в байт). Правленый
+        дубль нужно прослушать заново — только потом его можно сохранить."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        t = st["takes"][i]
+        self._tts_orig(t)
+        a, b = int(a), int(b)
+        cuts = [[int(c0), int(c1)] for c0, c1 in (cuts or []) if int(c1) > int(c0)]
+        if b - a < 100:
+            return {"error": "Слишком короткий кусок."}
+        ranges = self._tts_take_ranges(t, a, b, cuts)
+        dst = os.path.join(st["work_dir"], t["file"])
+        if not wav_concat(st["raw_path"], dst, ranges):
+            src = AudioSegment.from_file(st["raw_path"])
+            out = sum((src[s:e] for s, e in ranges[1:]), src[ranges[0][0]:ranges[0][1]])
+            out.export(dst, format="wav")
+        t["edit"] = {"a": a, "b": b, "cuts": cuts}
+        t["ms"] = sum(e - s for s, e in ranges)
+        t["listened"] = False
+        t.pop("audacity", None)
+        self._tts_save()
+        return self.tts_state()
+
+    def tts_editor_reset(self, i):
+        """Вернуть дубль как его нарезала программа."""
+        st = self._tts()
+        if 0 <= i < len(st["takes"]):
+            return self._tts_reset_file(i)
+        return self.tts_state()
+
+    def _tts_reset_file(self, i):
+        st = self._tts()
+        t = st["takes"][i]
+        orig = self._tts_orig(t)
+        wav_slice(st["raw_path"], os.path.join(st["work_dir"], t["file"]), orig[0], orig[1])
+        t["ms"] = orig[1] - orig[0]
+        t["listened"] = False
+        t.pop("edit", None)
+        t.pop("audacity", None)
+        self._tts_save()
+        return self.tts_state()
+
+    # ---------------- Audacity ----------------
+
+    def tts_send_to_audacity(self, i):
+        """Дубль — в Audacity (чистый проект, один трек, масштаб по дублю)."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        if not self._ensure_audacity_ready():
+            return {"error": "Audacity не отвечает. Откройте его вручную и нажмите ещё раз."}
+        path = os.path.abspath(os.path.join(st["work_dir"], st["takes"][i]["file"])).replace('\\', '/')
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('RemoveTracks:')
+        self.audacity.send_command(f'Import2: Filename="{path}"')
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('ZoomSel:')
+        self.audacity.send_command('SelectNone:')
+        self._tts_audacity_take = i
+        return {"status": "ok"}
+
+    def tts_take_from_audacity(self, i):
+        """Забрать правку из Audacity в файл дубля — в формате исходной записи."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        if getattr(self, '_tts_audacity_take', None) != i:
+            return {"error": "В Audacity сейчас другой дубль — сначала отправьте этот."}
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_aud_{os.getpid()}.wav").replace('\\', '/')
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command(f'Export2: Filename="{tmp}" NumChannels=1')
+        for _ in range(30):
+            if os.path.exists(tmp) and os.path.getsize(tmp) > 44:
+                break
+            time.sleep(0.1)
+        else:
+            return {"error": "Audacity не сохранил файл."}
+        time.sleep(0.2)
+        t = st["takes"][i]
+        dst = os.path.join(st["work_dir"], t["file"])
+        seg = AudioSegment.from_file(tmp)
+        export_like(seg, dst, st["raw_path"])
+        t["ms"] = len(seg)
+        t["listened"] = False
+        t["audacity"] = True
+        self._tts_save()
+        return self.tts_state()

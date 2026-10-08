@@ -5991,6 +5991,12 @@ let isProcessing = false;
             ttsRenderRail();
             ttsRenderCurrent();
             ttsRenderAssembly();
+            // Audacity встроен — текущий дубль сам уезжает туда.
+            let cur = ttsCurTake();
+            if (audacityEmbedded && cur && ttsAudacitySent !== cur.i) {
+                ttsAudacitySent = cur.i;
+                ttsSendToAudacity(true);
+            }
         }
 
         function ttsTakeClass(t) {
@@ -6085,7 +6091,227 @@ let isProcessing = false;
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
                     ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span></div>
-                <div class="tts-blocks">${blocks}</div>`;
+                <div class="tts-blocks">${blocks}</div>
+                <div class="tts-ed">
+                    <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
+                    <div class="tts-ed__bar">
+                        <span class="tts-ed__time" id="ttsEdTime"></span>
+                        <button class="btn-ghost btn-ghost--compact" id="ttsEdCutBtn" onclick="ttsEditorCut()" disabled title="Вырезать выделенное (выделите мышью на волне)">Вырезать <kbd>X</kbd></button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа">Сбросить</button>
+                        <span class="tts-ed__spacer"></span>
+                        <button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsSendToAudacity()" title="Открыть дубль в Audacity">В Audacity</button>
+                        <button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsTakeFromAudacity()" title="Забрать правку из Audacity в этот дубль">Забрать из Audacity</button>
+                    </div>
+                </div>`;
+            ttsEditorLoad();
+        }
+
+        // ----- редактор дубля (как в Audacity, но прямо здесь) -----
+        // Волна дубля с запасом записи вокруг: края тянутся за ручки (в том
+        // числе наружу — если нарезка срезала слово), выделение мышью + X —
+        // вырез, клик по вырезу — вернуть. Каждая правка сразу пишется в
+        // файл дубля из исходника (без перекодирования) и требует повторной
+        // прослушки перед сохранением.
+        let ttsEd = null;
+        const TTS_ED_HIT = 7;
+
+        async function ttsEditorLoad(force) {
+            let t = ttsCurTake();
+            if (!t) { ttsEd = null; return; }
+            if (ttsEd && ttsEd.i === t.i && !force) { ttsEditorBind(); ttsEditorDraw(); return; }
+            let want = t.i;
+            let r = await pywebview.api.tts_editor_load(t.i);
+            if (!tts || tts.index !== want) return;
+            if (!r || r.error) { ttsEd = null; let c = document.getElementById('ttsEdTime'); if (c) c.innerText = r && r.error || ''; return; }
+            ttsEd = { ...r, sel: null, drag: null, play: null };
+            ttsEditorBind();
+            ttsEditorDraw();
+        }
+
+        const ttsEdX = (W, ms) => (ms - ttsEd.lo) / (ttsEd.hi - ttsEd.lo) * W;
+        const ttsEdMs = (W, x) => Math.round(ttsEd.lo + Math.max(0, Math.min(W, x)) / W * (ttsEd.hi - ttsEd.lo));
+
+        // Куски, которые реально звучат: [a, b] без вырезов.
+        function ttsEdRanges() {
+            let out = [], cur = ttsEd.a;
+            [...ttsEd.cuts].sort((p, q) => p[0] - q[0]).forEach(([c0, c1]) => {
+                c0 = Math.max(ttsEd.a, c0); c1 = Math.min(ttsEd.b, c1);
+                if (c1 <= c0) return;
+                if (c0 > cur) out.push([cur, c0]);
+                cur = Math.max(cur, c1);
+            });
+            if (ttsEd.b > cur) out.push([cur, ttsEd.b]);
+            return out;
+        }
+
+        function ttsEditorDraw() {
+            let canvas = document.getElementById('ttsEdCanvas');
+            if (!canvas || !ttsEd) return;
+            let dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+            if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
+                canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+            }
+            let ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, W, H);
+            let mid = H / 2, xa = ttsEdX(W, ttsEd.a), xb = ttsEdX(W, ttsEd.b);
+            ctx.fillStyle = 'rgba(255,255,255,0.045)';
+            ctx.fillRect(xa, 0, xb - xa, H);
+
+            let n = ttsEd.peaks.length;
+            ctx.lineWidth = 1;
+            for (let k = 0; k < n; k++) {
+                let ms = ttsEd.lo + k * ttsEd.bucket;
+                let x = ttsEdX(W, ms), amp = Math.max(0.5, Math.min(1, ttsEd.peaks[k]) * (mid - 4));
+                let inside = ms >= ttsEd.a && ms < ttsEd.b && !ttsEd.cuts.some(([c0, c1]) => ms >= c0 && ms < c1);
+                ctx.strokeStyle = inside ? '#4d95ea' : 'rgba(146,154,171,0.35)';
+                ctx.beginPath(); ctx.moveTo(x, mid - amp); ctx.lineTo(x, mid + amp); ctx.stroke();
+            }
+            // Где дубль был по нарезке программы — тонкий пунктир.
+            ctx.save(); ctx.setLineDash([3, 4]); ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+            ttsEd.orig.forEach(ms => { let x = ttsEdX(W, ms); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); });
+            ctx.restore();
+
+            ttsEd.cuts.forEach(([c0, c1]) => {
+                let x0 = ttsEdX(W, c0), x1 = ttsEdX(W, c1);
+                ctx.fillStyle = 'rgba(8,10,14,0.75)'; ctx.fillRect(x0, 0, x1 - x0, H);
+                ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, H); ctx.clip();
+                ctx.strokeStyle = 'rgba(239,91,80,0.55)';
+                for (let hx = x0 - H; hx < x1; hx += 7) { ctx.beginPath(); ctx.moveTo(hx, H); ctx.lineTo(hx + H, 0); ctx.stroke(); }
+                ctx.restore();
+                ctx.fillStyle = 'rgba(239,91,80,0.9)'; ctx.fillRect(x0, 0, 1, H); ctx.fillRect(x1 - 1, 0, 1, H);
+            });
+            if (ttsEd.sel) {
+                let x0 = ttsEdX(W, Math.min(ttsEd.sel[0], ttsEd.sel[1])), x1 = ttsEdX(W, Math.max(ttsEd.sel[0], ttsEd.sel[1]));
+                ctx.fillStyle = 'rgba(122,162,255,0.25)'; ctx.fillRect(x0, 0, x1 - x0, H);
+            }
+            [xa, xb].forEach((x, side) => {
+                ctx.fillStyle = '#eef1f6';
+                ctx.fillRect(x - 1, 0, 2, H);
+                ctx.fillRect(side ? x - 8 : x, 0, 8, 14);
+            });
+            if (ttsEd.play != null) {
+                let x = ttsEdX(W, ttsEd.play);
+                ctx.fillStyle = '#2fbf7d'; ctx.fillRect(x - 1, 0, 2, H);
+            }
+            let time = document.getElementById('ttsEdTime');
+            if (time) {
+                let len = ttsEdRanges().reduce((acc, [p, q]) => acc + q - p, 0);
+                time.innerText = `${(len / 1000).toFixed(2)} с${ttsEd.cuts.length ? ` · вырезов ${ttsEd.cuts.length}` : ''}${ttsEd.audacity ? ' · правлен в Audacity' : ''}`;
+            }
+            let cut = document.getElementById('ttsEdCutBtn');
+            if (cut) cut.disabled = !ttsEd.sel;
+        }
+
+        function ttsEdPos(e) {
+            let canvas = document.getElementById('ttsEdCanvas');
+            let r = canvas.getBoundingClientRect();
+            return { x: e.clientX - r.left, W: r.width };
+        }
+
+        // Мышь вне холста (тянем ручку за край) — слушаем окно, один раз на всю программу.
+        window.addEventListener('mousemove', e => {
+            if (!ttsEd || !ttsEd.drag || !document.getElementById('ttsEdCanvas')) return;
+            let { x, W } = ttsEdPos(e), ms = ttsEdMs(W, x);
+            if (ttsEd.drag.side === 'a') ttsEd.a = Math.min(ms, ttsEd.b - 100);
+            else if (ttsEd.drag.side === 'b') ttsEd.b = Math.max(ms, ttsEd.a + 100);
+            else { ttsEd.drag.moved = true; ttsEd.sel = [ttsEd.drag.from, ms]; }
+            ttsEditorDraw();
+        });
+        window.addEventListener('mouseup', () => {
+            if (!ttsEd || !ttsEd.drag) return;
+            let d = ttsEd.drag; ttsEd.drag = null;
+            if (d.side) { ttsEditorApply(); return; }
+            if (!d.moved || !ttsEd.sel || Math.abs(ttsEd.sel[1] - ttsEd.sel[0]) < 15) ttsEd.sel = null;
+            ttsEditorDraw();
+        });
+
+        function ttsEditorBind() {
+            let canvas = document.getElementById('ttsEdCanvas');
+            if (!canvas || canvas.dataset.bound) return;
+            canvas.dataset.bound = '1';
+            canvas.addEventListener('mousedown', e => {
+                if (!ttsEd) return;
+                let { x, W } = ttsEdPos(e), ms = ttsEdMs(W, x);
+                let da = Math.abs(ttsEdX(W, ttsEd.a) - x), db = Math.abs(ttsEdX(W, ttsEd.b) - x);
+                if (Math.min(da, db) <= TTS_ED_HIT) { ttsEd.drag = { side: da <= db ? 'a' : 'b' }; return; }
+                let hit = ttsEd.cuts.findIndex(([c0, c1]) => ms >= c0 && ms <= c1);
+                if (hit >= 0) { ttsEd.cuts.splice(hit, 1); ttsEditorApply(); return; }
+                ttsEd.drag = { sel: true, from: ms, moved: false };
+                ttsEd.sel = null;
+            });
+            canvas.addEventListener('mousemove', e => {
+                if (!ttsEd || ttsEd.drag) return;
+                let { x, W } = ttsEdPos(e), m = ttsEdMs(W, x);
+                let near = Math.min(Math.abs(ttsEdX(W, ttsEd.a) - x), Math.abs(ttsEdX(W, ttsEd.b) - x)) <= TTS_ED_HIT;
+                let onCut = ttsEd.cuts.some(([c0, c1]) => m >= c0 && m <= c1);
+                canvas.style.cursor = near ? 'ew-resize' : (onCut ? 'pointer' : 'text');
+            });
+        }
+
+        function ttsEditorCut() {
+            if (!ttsEd || !ttsEd.sel) return;
+            let c0 = Math.max(ttsEd.a, Math.min(...ttsEd.sel)), c1 = Math.min(ttsEd.b, Math.max(...ttsEd.sel));
+            ttsEd.sel = null;
+            if (c1 - c0 < 15) { ttsEditorDraw(); return; }
+            ttsEd.cuts.push([c0, c1]);
+            ttsEditorApply();
+        }
+
+        async function ttsEditorApply() {
+            if (!ttsEd) return;
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_editor_apply(ttsEd.i, ttsEd.a, ttsEd.b, ttsEd.cuts);
+            if (res && res.error) { showToast(res.error); ttsEditorLoad(true); return; }
+            tts = res;
+            ttsEd.audacity = false;
+            ttsRenderRail(); ttsRenderCurrent();
+            ttsEditorDraw();
+        }
+
+        async function ttsEditorReset() {
+            if (!ttsEd) return;
+            await ttsStopPlay();
+            tts = await pywebview.api.tts_editor_reset(ttsEd.i);
+            ttsEd = null;
+            ttsRender();
+        }
+
+        // Бегунок по волне во время прослушки (с учётом вырезов).
+        function ttsEditorPlayhead(duration) {
+            if (!ttsEd) return;
+            let ranges = ttsEdRanges(), t0 = performance.now(), i = ttsEd.i;
+            let step = () => {
+                if (!ttsEd || ttsEd.i !== i || ttsPlayingIdx !== i) { if (ttsEd) { ttsEd.play = null; ttsEditorDraw(); } return; }
+                let out = performance.now() - t0, pos = null;
+                for (let [p, q] of ranges) { if (out <= q - p) { pos = p + out; break; } out -= q - p; }
+                ttsEd.play = pos;
+                ttsEditorDraw();
+                if (pos != null) requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        }
+
+        // ----- Audacity: дубль туда и правка обратно -----
+        let ttsAudacitySent = -1;
+        async function ttsSendToAudacity(silent) {
+            let t = ttsCurTake();
+            if (!t) return;
+            let res = await pywebview.api.tts_send_to_audacity(t.i);
+            if (res && res.error) { if (!silent) showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
+            ttsAudacitySent = t.i;
+        }
+
+        async function ttsTakeFromAudacity() {
+            let t = ttsCurTake();
+            if (!t) return;
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_take_from_audacity(t.i);
+            if (res && res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
+            tts = res;
+            ttsEd = null;
+            ttsRender();
+            showToast('Правка из Audacity — в дубле. Прослушайте и сохраните');
         }
 
         async function ttsSelect(i) {
@@ -6114,6 +6340,7 @@ let isProcessing = false;
             if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
             ttsPlayingIdx = t.i;
             ttsRenderRail(); ttsRenderCurrent();
+            ttsEditorPlayhead(res.duration);
             ttsPlayTimer = setTimeout(() => {
                 // Отыграл до конца — считаем прослушанным (бэкенд сверит по времени).
                 ttsPlayingIdx = -1;
@@ -6265,6 +6492,7 @@ let isProcessing = false;
             else if (e.code === 'ArrowLeft' || e.code === 'KeyA') { e.preventDefault(); ttsStep(-1); }
             else if (e.code === 'Delete' || e.code === 'Backspace') { e.preventDefault(); ttsReject(); }
             else if (e.code === 'KeyF') { e.preventDefault(); ttsOpenUnits('assign'); }
+            else if (e.code === 'KeyX') { e.preventDefault(); ttsEditorCut(); }
             return true;
         }
 
