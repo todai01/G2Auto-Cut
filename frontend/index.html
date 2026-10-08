@@ -842,11 +842,13 @@
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
                     <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
+                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'excel')">&times;</span>
                 </button>
 
                 <button class="option-card rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
                     <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
+                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'project')">&times;</span>
                 </button>
 
                 <!-- Настройки нарезки подбираются сами — ползунки свёрнуты -->
@@ -890,6 +892,7 @@
                 <button class="option-card rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
                     <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
+                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'project')">&times;</span>
                 </button>
 
                 <div id="progressContainer" class="progress-panel">

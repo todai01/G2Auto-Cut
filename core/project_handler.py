@@ -792,6 +792,31 @@ class ProjectMixin:
             return {"error": f"Не удалось сохранить таблицу (может, она открыта в Excel?): {e}"}
         return {"saved": path, "rows": kept}
 
+    def clear_loaded(self, what):
+        """«×» на карточке главного меню: сбросить загруженное, чтобы
+        загрузить заново. what='excel' — таблицу с текстом; иначе — проект
+        (нарезку/папку чанков). Прогресс проекта перед этим сохраняется."""
+        if what == 'excel':
+            self.phrases_data = []
+            self.excel_name = None
+            self.excel_path = None
+            self.excel_cols = None
+            self.phrase_index = 0
+            if getattr(self, 'work_dir', ''):
+                project_state.save(self)
+        else:
+            if getattr(self, 'work_dir', ''):
+                project_state.save(self)
+            self.work_dir = ""
+            self.project_name = ""
+            self.chunks_data = []
+            self.chunk_index = 0
+            self.raw_audio_full = None
+            self.pending_raw_path = None
+            self.current_mode = 'Chunks'
+            self.sum_manual_active = False
+        return {"status": "ok"}
+
     def _sync_audacity_selection(self):
         """Синхронизирует выделение текущего дубля (чанка) в Audacity и приближает его."""
         try:

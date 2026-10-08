@@ -2620,3 +2620,13 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 /* Какая зона слушается по Space */
 .sum-dubs, .sum-editor{ transition: box-shadow .2s ease; }
 .sum-dubs.is-space-zone, .sum-editor.is-space-zone{ box-shadow: inset 0 0 0 1px rgba(77,149,234,.35); border-radius: var(--radius-md); }
+
+/* «×» на загруженной карточке меню — сбросить и загрузить заново */
+.option-clear{
+    display: none; position: absolute; top: 8px; right: 8px; z-index: 4;
+    width: 22px; height: 22px; border-radius: 50%; align-items: center; justify-content: center;
+    border: 1px solid rgba(47,191,125,.35); color: var(--accent-good); background: rgba(0,0,0,.25);
+    font-size: 14px; line-height: 1; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.option-card.loaded .option-clear{ display: inline-flex; }
+.option-clear:hover{ color: var(--accent-trash); border-color: var(--accent-trash); background: var(--tint-trash); }

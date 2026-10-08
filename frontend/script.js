@@ -1086,6 +1086,33 @@ let isProcessing = false;
             setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
         }
 
+        // «×» на загруженной карточке: сбросить и загрузить заново.
+        async function clearLoaded(e, what) {
+            e.stopPropagation(); e.preventDefault();
+            let label = what === 'excel' ? 'таблицу с текстом' : 'проект (нарезку и чанки)';
+            let ok = await showBeautifulConfirm(`ℹ️ <b>Сбросить ${label}?</b><br><br>`
+                + (what === 'excel' ? 'Фразы из таблицы будут выгружены — можно загрузить другую.'
+                                    : 'Проект закроется (файлы на диске не трогаются, прогресс сохранён) — можно нарезать или открыть заново.'),
+                'Сбросить', 'Отмена');
+            if (!ok) return;
+            try { await pywebview.api.clear_loaded(what); } catch (_) {}
+            if (what === 'excel') {
+                excelIsLoaded = false;
+                document.getElementById('btnLoadExcel').classList.remove('loaded');
+                document.getElementById('descExcel').innerText = 'Таблица не выбрана';
+            } else {
+                ['btnLoadAudio', 'btnLoadFolder'].forEach(id => document.getElementById(id).classList.remove('loaded'));
+                document.getElementById('descAudio').innerText = 'Новый проект';
+                document.getElementById('descFolder').innerText = 'Продолжить работу';
+                workspaceReady = false;
+                let br = document.getElementById('btnResume');
+                if (br) br.style.display = 'none';
+            }
+            setSetupStatus(excelIsLoaded ? 'Шаг 2 · Таблица подключена — выберите аудио или режим'
+                                         : 'Шаг 1 · Подключите таблицу с текстом', excelIsLoaded);
+            showToast(what === 'excel' ? 'Таблица сброшена' : 'Проект сброшен');
+        }
+
         // ===== ЧТЕНИЕ ТАБЛИЦЫ: ВЫБОР КОЛОНОК =====
 
         let excelInfo = null;
