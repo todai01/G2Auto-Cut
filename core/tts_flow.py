@@ -266,6 +266,59 @@ def align_stream(words, units):
     return found
 
 
+def _wav_layout(path):
+    """Где в WAV лежат формат и звук: (байты fmt, начало data, размер data,
+    байт на сэмпл-кадр, частота). None — не WAV / не разобрать."""
+    import struct
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(12)
+            if len(head) < 12 or head[:4] != b'RIFF' or head[8:12] != b'WAVE':
+                return None
+            fmt, pos = None, 12
+            size_total = os.path.getsize(path)
+            while pos + 8 <= size_total:
+                f.seek(pos)
+                cid, size = struct.unpack('<4sI', f.read(8))
+                if cid == b'fmt ':
+                    fmt = f.read(size)
+                elif cid == b'data':
+                    if fmt is None or len(fmt) < 16:
+                        return None
+                    block = struct.unpack('<H', fmt[12:14])[0]
+                    rate = struct.unpack('<I', fmt[4:8])[0]
+                    size = min(size, size_total - pos - 8)
+                    return fmt, pos + 8, size, block, rate
+                pos += 8 + size + (size & 1)
+    except (OSError, struct.error):
+        return None
+    return None
+
+
+def wav_slice(src, dst, start_ms, end_ms):
+    """Вырезает кусок WAV без перекодирования: те же байты, та же частота,
+    разрядность и каналы, что в исходнике. False — если исходник не WAV."""
+    import struct
+    lay = _wav_layout(src)
+    if not lay:
+        return False
+    fmt, data_pos, data_size, block, rate = lay
+    if block <= 0 or rate <= 0:
+        return False
+    a = max(0, int(start_ms * rate / 1000)) * block
+    b = min(data_size // block, int(end_ms * rate / 1000)) * block
+    if b <= a:
+        return False
+    with open(src, 'rb') as f:
+        f.seek(data_pos + a)
+        data = f.read(b - a)
+    fmt_chunk = b'fmt ' + struct.pack('<I', len(fmt)) + fmt + (b'\0' if len(fmt) & 1 else b'')
+    body = b'WAVE' + fmt_chunk + b'data' + struct.pack('<I', len(data)) + data + (b'\0' if len(data) & 1 else b'')
+    with open(dst, 'wb') as f:
+        f.write(b'RIFF' + struct.pack('<I', len(body)) + body)
+    return True
+
+
 class TtsFlowMixin:
 
     # ---------------- состояние ----------------
@@ -476,13 +529,13 @@ class TtsFlowMixin:
             return {"error": err}
 
         heards, words = self._tts_transcribe([p[1] for p in pieces], 'kk' if st["lang"] == 'kz' else 'ru', model)
-        takes = self._tts_build_takes(audio, pieces, words, st["units"], chunks_dir)
+        takes = self._tts_build_takes(audio, pieces, words, st["units"], chunks_dir, path)
         st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": takes})
         st["index"] = self._tts_next(-1)
         self._tts_save()
         return {"status": "ok"}
 
-    def _tts_build_takes(self, audio, pieces, words, units, chunks_dir):
+    def _tts_build_takes(self, audio, pieces, words, units, chunks_dir, raw_path):
         """Сплошной поток слов всей записи → фразы таблицы → по файлу на
         каждую найденную фразу (разрез — в тишине между словами)."""
         stream = []
@@ -522,10 +575,11 @@ class TtsFlowMixin:
             hi = self._tts_quiet_point(audio, *self._tts_edge_window(last_e - 0.03, min(next_s, last_e + LEAD_S)))
             if hi - lo < 150:
                 lo, hi = int(first_s * 1000), int(last_e * 1000) + 60
-            part = audio[lo:hi]
             name = f"{n + 1:04d}.wav"
-            part.export(os.path.join(chunks_dir, name), format="wav")
-            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": len(part),
+            # Копия байт из исходника — без перекодирования, качество не трогаем.
+            if not wav_slice(raw_path, os.path.join(chunks_dir, name), lo, hi):
+                audio[lo:hi].export(os.path.join(chunks_dir, name), format="wav")
+            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo,
                           "heard": ''.join(w[0] for w in stream[i:j]).strip(), "listened": False,
                           "chunk": n + 1, **info})
             if n % 20 == 0:
