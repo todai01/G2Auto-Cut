@@ -792,6 +792,42 @@ class ProjectMixin:
             return {"error": f"Не удалось сохранить таблицу (может, она открыта в Excel?): {e}"}
         return {"saved": path, "rows": kept}
 
+    def split_files_by_digits(self):
+        """Утилита: файлы папки раскладываются в подпапки «С цифрами» (в
+        названии есть хоть одна цифра) и «Без цифр». Перед переносом —
+        вопрос с количеством."""
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked if isinstance(picked, str) else picked[0]
+        names = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+        if not names:
+            return {"error": "В этой папке нет файлов."}
+        with_d = [f for f in names if re.search(r'\d', os.path.splitext(f)[0])]
+        without = [f for f in names if f not in set(with_d)]
+        if not ui_confirm(f'ℹ️ <b>Разделить {len(names)} файлов?</b><br><br>'
+                          f'С цифрами в названии: <b>{len(with_d)}</b> → папка «С цифрами»<br>'
+                          f'Без цифр: <b>{len(without)}</b> → папка «Без цифр»',
+                          ok='Разделить', cancel='Отмена'):
+            return {"error": "cancel"}
+        moved = 0
+        for group, sub in ((with_d, 'С цифрами'), (without, 'Без цифр')):
+            if not group:
+                continue
+            dest_dir = os.path.join(folder, sub)
+            os.makedirs(dest_dir, exist_ok=True)
+            for f in group:
+                dest = os.path.join(dest_dir, f)
+                if os.path.exists(dest):
+                    stem, ext = os.path.splitext(f)
+                    dest = os.path.join(dest_dir, f"{stem}_{int(time.time() * 1000) % 100000}{ext}")
+                try:
+                    os.replace(os.path.join(folder, f), dest)
+                    moved += 1
+                except OSError:
+                    pass
+        return {"folder": folder, "with_digits": len(with_d), "without": len(without), "moved": moved}
+
     def _sync_audacity_selection(self):
         """Синхронизирует выделение текущего дубля (чанка) в Audacity и приближает его."""
         try:

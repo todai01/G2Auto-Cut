@@ -69,6 +69,15 @@ let isProcessing = false;
             if (sum) sum.innerText = `${p} мс · ${String(s).replace('-', '−')} дБ · ${pad} мс`;
         }
 
+        async function splitFilesByDigits() {
+            let res;
+            try { res = await pywebview.api.split_files_by_digits(); } catch (e) { res = { error: String(e) }; }
+            if (!res || res.error === 'cancel') return;
+            if (res.error) { showBeautifulAlert(`❌ <b>Разделение</b><br><br>${escapeHtml(res.error)}`); return; }
+            showBeautifulAlert(`✅ <b>Готово — перенесено ${res.moved}</b><br><br>С цифрами: <b>${res.with_digits}</b> · Без цифр: <b>${res.without}</b>`
+                + `<br><span style="word-break:break-all">${escapeHtml(res.folder)}</span>`);
+        }
+
         function openMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'flex'; }
         function closeMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'none'; }
 
