@@ -2914,3 +2914,61 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-recbar.is-paused .tts-prompter{ opacity: .35; }
 .tts-prompter__pause{ padding: 8px 12px; border-radius: var(--radius-sm); background: var(--tint-var); color: var(--accent-var); font-size: var(--fs-md); }
 .tts-prompter__pause b{ color: var(--text); }
+
+/* Отклик во время записи */
+.tts-prompter{ position: relative; }
+.tts-live{
+    position: absolute; top: 0; right: 0; max-width: 60%; display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px; border-radius: 999px; font-size: var(--fs-sm); font-weight: 650;
+    background: var(--screen); border: 1px solid var(--border); color: var(--text-dim);
+    transition: background .2s, border-color .2s, color .2s;
+}
+.tts-live > span:last-child{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-live b{ color: inherit; font-family: var(--font-mono); font-weight: 700; }
+.tts-live.lv-pop{ animation: lvPop .35s var(--ease); }
+@keyframes lvPop{ from{ transform: scale(.92); opacity: .4; } }
+.tts-live.is-ok{ color: var(--accent-good); border-color: rgba(47,191,125,0.5); background: var(--tint-good); }
+.tts-live.is-cmd{ color: var(--accent-info); border-color: rgba(43,192,207,0.5); background: var(--tint-info); }
+.tts-live.is-miss{ color: var(--accent-trash); border-color: rgba(239,91,80,0.55); background: var(--tint-trash); }
+.tts-live.is-miss.lv-pop{ animation: lvShake .45s var(--ease); }
+@keyframes lvShake{ 20%{ transform: translateX(-5px); } 40%{ transform: translateX(5px); } 60%{ transform: translateX(-3px); } 80%{ transform: translateX(2px); } }
+.tts-live.is-busy{ color: var(--accent-primary); border-color: rgba(77,149,234,0.5); }
+.tts-live.is-hearing{ color: var(--text); border-color: rgba(47,191,125,0.4); }
+.tts-live.is-wait{ color: var(--accent-var); border-color: rgba(238,172,62,0.45); }
+.tts-live.is-paused{ color: var(--accent-var); }
+.lv-ico{ font-size: 12px; line-height: 1; }
+
+/* «Слушаю» — спокойная пульсация */
+.lv-dot{ position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-good); }
+.lv-dot::after{ content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--accent-good); animation: lvRing 1.6s ease-out infinite; }
+@keyframes lvRing{ from{ transform: scale(.5); opacity: .8; } to{ transform: scale(1.6); opacity: 0; } }
+
+/* «Слышу речь» — эквалайзер, высота — от громкости */
+.lv-eq{ display: inline-flex; align-items: center; gap: 2px; height: 16px; }
+.lv-eq i{ display: block; width: 3px; height: 100%; border-radius: 2px; background: var(--accent-good);
+    transform-origin: center; animation: lvEq .7s ease-in-out infinite; transform: scaleY(calc(var(--lv, .4) * .9)); }
+.lv-eq i:nth-child(2){ animation-delay: -.15s; } .lv-eq i:nth-child(3){ animation-delay: -.35s; }
+.lv-eq i:nth-child(4){ animation-delay: -.5s; } .lv-eq i:nth-child(5){ animation-delay: -.25s; }
+@keyframes lvEq{ 0%, 100%{ transform: scaleY(calc(var(--lv, .4) * .25)); } 50%{ transform: scaleY(var(--lv, .4)); } }
+
+/* «Распознаю…» — спиннер + блик по тексту суфлёра */
+.lv-spin{ width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(77,149,234,0.25); border-top-color: var(--accent-primary); animation: lvSpin .7s linear infinite; }
+@keyframes lvSpin{ to{ transform: rotate(360deg); } }
+.tts-prompter__text.is-busy{
+    background: linear-gradient(100deg, var(--text) 40%, #9cc4f5 50%, var(--text) 60%) 0 0 / 250% 100%;
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    animation: lvShimmer 1.2s linear infinite;
+}
+.tts-prompter__text.is-busy .tts-var{ -webkit-text-fill-color: var(--accent-var); }
+@keyframes lvShimmer{ from{ background-position: 100% 0; } to{ background-position: -50% 0; } }
+
+/* «Дочитайте» — три точки */
+.lv-dots{ display: inline-flex; gap: 3px; }
+.lv-dots i{ width: 5px; height: 5px; border-radius: 50%; background: var(--accent-var); animation: lvDots 1s ease-in-out infinite; }
+.lv-dots i:nth-child(2){ animation-delay: .15s; } .lv-dots i:nth-child(3){ animation-delay: .3s; }
+@keyframes lvDots{ 0%, 80%, 100%{ opacity: .25; transform: translateY(0); } 40%{ opacity: 1; transform: translateY(-3px); } }
+
+@media (prefers-reduced-motion: reduce){
+    .lv-dot::after, .lv-eq i, .lv-spin, .lv-dots i, .tts-prompter__text.is-busy, .tts-live.lv-pop{ animation: none; }
+}
+.tts-prompter__meta{ padding-right: min(46%, 520px); min-height: 26px; display: flex; align-items: center; }

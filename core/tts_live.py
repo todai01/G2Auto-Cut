@@ -217,6 +217,7 @@ class TtsLiveMixin:
                 "pending_s": round(max(0, rec.ana_ms - live.get("done_ms", 0)) / 1000, 1),
                 "added": live.get("added", 0), "restarts": live.get("restarts", 0),
                 "waiting": live.get("waiting", False), "paused": bool(live.get("paused")),
+                "hearing": bool(live.get("hearing")),
                 "error": rec.error, "prompt": self.tts_prompt_info()}
 
     # ---------------- разбор в паузах ----------------
@@ -230,6 +231,7 @@ class TtsLiveMixin:
                 cut = total if stopping else self._tts_live_cut(rec, live["done_ms"], total)
                 if cut and cut - live["done_ms"] >= (1 if stopping else LIVE_MIN_REGION_MS):
                     live["busy"] = True
+                    self._tts_push({"stage": "live_busy", "busy": True})
                     try:
                         # Разбираем с from_ms: недочитанная фраза ждёт продолжения
                         # и разбирается заново вместе с ним.
@@ -239,6 +241,8 @@ class TtsLiveMixin:
                         self._tts_push({"stage": "live_error", "error": f"Не удалось разобрать кусок записи: {e}"})
                     live["done_ms"] = cut
                     live["busy"] = False
+                    live["hearing"] = False
+                    self._tts_push({"stage": "live_busy", "busy": False, "waiting": live.get("waiting", False)})
                 if stopping:
                     break
                 time.sleep(0.15)
@@ -387,6 +391,10 @@ class TtsLiveMixin:
         hist = self._tts_live_levels(rec.ana_segment(max(0, total_ms - 60000), total_ms))
         floor = float(np.percentile(hist, 10)) if len(hist) else -70.0
         quiet = lv < floor + LIVE_NOISE_ABOVE_DB
+        # «Слышу речь»: в ещё не разобранном куске есть голос.
+        live = getattr(self, '_tts_live', None)
+        if live is not None:
+            live["hearing"] = bool((~quiet).any())
         if not (~quiet).any():
             # Одна тишина — разбирать нечего, но и копить незачем.
             return total_ms - 300 if total_ms - done_ms > 3000 else None
@@ -451,25 +459,38 @@ class TtsLiveMixin:
             parts.append(("words", start, len(stream)))
 
         result = b_ms
+        missed, done_any = [], False
+        say = lambda a, b: ''.join(w[0] for w in stream[a:b]).strip()
         for n, part in enumerate(parts):
             last = n == len(parts) - 1
             if part[0] == "cmd":
                 name, k = part[1], part[2]
                 if live.get("paused") and name != "resume":
+                    missed.append(stream[k][0].strip())
                     continue
+                done_any = True
                 prev_partial = n > 0 and parts[n - 1][0] == "words" and live.pop("_partial", False)
                 self._tts_live_command(name, rec, partial_before=prev_partial, at_ms=int(stream[k][2] * 1000))
                 continue
-            if live.get("paused"):
-                continue
             i, j = part[1], part[2]
+            if live.get("paused"):
+                missed.append(say(i, j))
+                continue
             state = self._tts_live_words(rec, seg, a_ms, stream, i, j, final=final or not last)
             if state == "partial":
                 if last:
                     live["waiting"] = True
                     return max(a_ms, int(stream[i][1] * 1000) - 150)   # ждём, пока дочитают
                 live["_partial"] = True                                 # недочитанная фраза перед командой
+            elif state == "none":
+                missed.append(say(i, j))
+            else:
+                done_any = True
         live["waiting"] = False
+        # Отклик: сказанное не стало ни фразой, ни командой.
+        heard = ' '.join(x for x in missed if x)
+        if heard and not done_any:
+            self._tts_push({"stage": "live_miss", "heard": heard, "paused": bool(live.get("paused"))})
         return result
 
     def _tts_live_words(self, rec, seg, a_ms, stream, i0, j0, final):
@@ -484,14 +505,14 @@ class TtsLiveMixin:
         spans = self._tts_prompt_match(sub, ids) if ids else None
         advanced = False
         if spans:
-            spans = self._tts_spans_with_rest(sub, spans)   # мусор вокруг фразы (≥4 слов) — тоже дубль
             advanced = True
         elif ids and not final and self._tts_prompt_partial(sub, ids):
             return "partial"
         else:
             # Прочитали не ту фразу — ищем по всей таблице.
             found = align_stream(sub, st["units"], live["expected"])
-            spans = self._tts_spans(sub, found)
+            # Непонятная речь при записи с суфлёром — не дубль, а отклик «Не понял».
+            spans = [sp for sp in self._tts_spans(sub, found) if sp[2]["unit"] is not None]
             advanced = bool(ids and any(f["unit"] in ids for f in found))
             if ids and not spans and self._tts_prompt_partial(sub, ids):
                 return "partial"

@@ -5989,11 +5989,19 @@ let isProcessing = false;
             } else if (p.stage === 'live') {
                 ttsLiveUpdate(p.state, p.added);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
+                if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
+            } else if (p.stage === 'live_busy') {
+                ttsLiveSt.busy = p.busy;
+                if (!p.busy) ttsLiveSt.waiting = !!p.waiting;
+                ttsLiveRender();
+            } else if (p.stage === 'live_miss') {
+                ttsLiveFlash(p.paused ? 'pause-miss' : 'miss', p.heard);
             } else if (p.stage === 'live_cmd') {
                 if (p.state) ttsLiveUpdate(p.state, 0);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.cmd === 'redo' ? 'restart' : null);
                 ttsSetPaused(p.paused);
-                if (p.message) showToast(p.message);
+                ttsLiveSt.paused = !!p.paused;
+                ttsLiveFlash('cmd-' + p.cmd, p.message);
             } else if (p.stage === 'live_restart') {
                 if (p.prompt) ttsRenderPrompt(p.prompt, 'restart');
             } else if (p.stage === 'live_done') {
@@ -6769,6 +6777,10 @@ let isProcessing = false;
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
             ttsSetPaused(s.paused);
+            Object.assign(ttsLiveSt, { hearing: s.hearing, paused: s.paused, waiting: s.waiting, busy: !!s.busy });
+            let live = document.getElementById('ttsLive');
+            if (live) live.style.setProperty('--lv', Math.max(0.15, Math.min(1, (s.level_db + 50) / 40)).toFixed(2));
+            ttsLiveRender();
         }
 
         // «Стоп» голосом — пауза: слушаю только «Запись».
@@ -6804,7 +6816,7 @@ let isProcessing = false;
             }
             let names = pr.current.map(p => p.name).join(' · ');
             meta.innerHTML = `Фраза ${pr.pos + 1} из ${pr.total} · осталось ${pr.left} · <span class="tts-prompter__name">${escapeHtml(names)}</span>`
-                + (waiting ? ' · <span class="tts-prompter__wait">дочитайте…</span>' : '');
+;
             next.innerHTML = pr.next ? `Дальше: ${line(pr.next)}` : '';
             if (flash === 'restart') {
                 let box = document.getElementById('ttsPrompter');
@@ -6853,4 +6865,56 @@ let isProcessing = false;
                 let rail = document.getElementById('ttsRail');
                 rail.querySelectorAll('.tts-take').forEach((el, k) => { if (k >= tts.takes.length - added) el.classList.add('is-new'); });
             }
+        }
+
+
+        // ===== Отклик во время записи: слушаю / слышу / распознаю / итог =====
+        let ttsLiveSt = { busy: false, hearing: false, waiting: false, paused: false, flash: null, flashT: null };
+
+        const TTS_LIVE_CMD = {
+            'cmd-redo': ['↺', 'Заново'], 'cmd-pause': ['❚❚', 'Стоп'], 'cmd-resume': ['●', 'Запись'], 'cmd-play': ['▶', 'Играй'],
+        };
+
+        // Итог разбора держится на экране ~2,5 с, потом — снова текущее состояние.
+        function ttsLiveFlash(kind, text) {
+            clearTimeout(ttsLiveSt.flashT);
+            ttsLiveSt.flash = { kind, text: text || '', id: Date.now() };
+            ttsLiveRender();
+            ttsLiveSt.flashT = setTimeout(() => { ttsLiveSt.flash = null; ttsLiveRender(); }, kind.includes('miss') ? 3500 : 2500);
+        }
+
+        let ttsLiveKey = null;
+        function ttsLiveRender() {
+            let el = document.getElementById('ttsLive');
+            if (!el) return;
+            let f = ttsLiveSt.flash, cls, html;
+            if (f && f.kind === 'ok') {
+                cls = 'is-ok'; html = `<span class="lv-ico">✓</span><span>Записано: <b>${escapeHtml(f.text)}</b></span>`;
+            } else if (f && f.kind === 'miss') {
+                cls = 'is-miss'; html = `<span class="lv-ico">✕</span><span>Не понял: «${escapeHtml(f.text)}»</span>`;
+            } else if (f && f.kind === 'pause-miss') {
+                cls = 'is-miss'; html = `<span class="lv-ico">❚❚</span><span>Пауза — «${escapeHtml(f.text)}» не фиксирую. Скажите «Запись»</span>`;
+            } else if (f && TTS_LIVE_CMD[f.kind]) {
+                let [ico, name] = TTS_LIVE_CMD[f.kind];
+                cls = 'is-cmd'; html = `<span class="lv-ico">${ico}</span><span>Команда «${name}»${f.text ? ' — ' + escapeHtml(f.text.replace(/^«?[^»]*»?\s*—\s*/, '')) : ''}</span>`;
+            } else if (ttsLiveSt.busy) {
+                cls = 'is-busy'; html = '<span class="lv-spin"></span><span>Распознаю…</span>';
+            } else if (ttsLiveSt.paused) {
+                cls = 'is-paused'; html = '<span class="lv-ico">❚❚</span><span>Пауза</span>';
+            } else if (ttsLiveSt.hearing) {
+                cls = 'is-hearing'; html = '<span class="lv-eq"><i></i><i></i><i></i><i></i><i></i></span><span>Слышу речь</span>';
+            } else if (ttsLiveSt.waiting) {
+                cls = 'is-wait'; html = '<span class="lv-dots"><i></i><i></i><i></i></span><span>Дочитайте фразу</span>';
+            } else {
+                cls = 'is-idle'; html = '<span class="lv-dot"></span><span>Слушаю</span>';
+            }
+            let key = cls + '|' + html + '|' + (f ? f.id : '');
+            if (key === ttsLiveKey) return;
+            let changed = !ttsLiveKey || ttsLiveKey.split('|')[0] !== cls || (f && !ttsLiveKey.endsWith('|' + f.id));
+            ttsLiveKey = key;
+            el.className = 'tts-live ' + cls;
+            el.innerHTML = html;
+            if (changed && motionOK()) { el.classList.remove('lv-pop'); void el.offsetWidth; el.classList.add('lv-pop'); }
+            let text = document.getElementById('ttsPromptText');
+            if (text) text.classList.toggle('is-busy', cls === 'is-busy');
         }
