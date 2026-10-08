@@ -5968,6 +5968,9 @@ let isProcessing = false;
                 showBeautifulAlert('⚠️ ' + escapeHtml(p.error));
             } else if (p.stage === 'live') {
                 ttsLiveUpdate(p.state, p.added);
+                if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
+            } else if (p.stage === 'live_restart') {
+                if (p.prompt) ttsRenderPrompt(p.prompt, 'restart');
             } else if (p.stage === 'live_done') {
                 ttsRecStopped(p.state, p.error);
             } else if (p.stage === 'live_error') {
@@ -6637,6 +6640,8 @@ let isProcessing = false;
             else if (e.code === 'KeyF') { e.preventDefault(); ttsOpenUnits('assign'); }
             else if (e.code === 'KeyX') { e.preventDefault(); ttsEditorCut(); }
             else if (e.code === 'KeyR') { e.preventDefault(); ttsToggleRec(); }
+            else if (e.code === 'ArrowDown' && ttsRec.on) { e.preventDefault(); ttsPromptMove(1); }
+            else if (e.code === 'ArrowUp' && ttsRec.on) { e.preventDefault(); ttsPromptMove(-1); }
             return true;
         }
 
@@ -6680,6 +6685,9 @@ let isProcessing = false;
             ttsRec.on = true;
             ttsRec.device = res.device;
             ttsSetRecUi(true);
+            ttsPromptKey = null;
+            let pr = await pywebview.api.tts_prompt_info();
+            if (pr) ttsRenderPrompt(pr, 'next');
             clearInterval(ttsRec.timer);
             ttsRec.timer = setInterval(ttsRecPoll, 200);
         }
@@ -6725,9 +6733,50 @@ let isProcessing = false;
             let lvl = document.getElementById('ttsRecLevel');
             lvl.style.width = pct + '%';
             lvl.classList.toggle('is-hot', s.level_db > -3);
-            document.getElementById('ttsRecInfo').innerText = `${s.device} · найдено фраз: ${s.added}`
+            document.getElementById('ttsRecInfo').innerText = `${s.device} · записано: ${s.added}`
+                + (s.restarts ? ` · «заново»: ${s.restarts}` : ' · запнулись — скажите «заново»')
                 + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
             if (s.error) showToast('Запись остановилась: ' + s.error);
+            if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
+        }
+
+        // ----- суфлёр: какую фразу читать сейчас -----
+        let ttsPromptKey = null;
+        function ttsRenderPrompt(pr, flash, waiting) {
+            let text = document.getElementById('ttsPromptText');
+            let meta = document.getElementById('ttsPromptMeta');
+            let next = document.getElementById('ttsPromptNext');
+            if (pr.done) {
+                text.innerHTML = 'Все фразы прочитаны 🎉';
+                meta.innerText = `${pr.total} из ${pr.total}`;
+                next.innerText = 'Остановите запись (R) и сдавайте дубли';
+                ttsPromptKey = 'done';
+                return;
+            }
+            let pill = v => v ? ` <span class="tts-var">${escapeHtml(ttsVarLabel(v))}: любое значение</span> ` : '';
+            let line = parts => parts.map(p => pill(p.var_before) + escapeHtml(p.text) + pill(p.var_after)).join(' ');
+            let key = JSON.stringify(pr.current) + '|' + pr.pos;
+            if (key !== ttsPromptKey) {
+                ttsPromptKey = key;
+                text.innerHTML = line(pr.current);
+                if (flash === 'next' && motionOK()) {
+                    text.classList.remove('is-in'); void text.offsetWidth; text.classList.add('is-in');
+                }
+            }
+            let names = pr.current.map(p => p.name).join(' · ');
+            meta.innerHTML = `Фраза ${pr.pos + 1} из ${pr.total} · осталось ${pr.left} · <span class="tts-prompter__name">${escapeHtml(names)}</span>`
+                + (waiting ? ' · <span class="tts-prompter__wait">дочитайте…</span>' : '');
+            next.innerHTML = pr.next ? `Дальше: ${line(pr.next)}` : '';
+            if (flash === 'restart') {
+                let box = document.getElementById('ttsPrompter');
+                box.classList.remove('is-restart'); void box.offsetWidth; box.classList.add('is-restart');
+                showToast('«Заново» — пишу фразу с начала');
+            }
+        }
+
+        async function ttsPromptMove(step) {
+            let pr = await pywebview.api.tts_prompt_move(step);
+            if (pr) ttsRenderPrompt(pr, 'next');
         }
 
         async function ttsRecStop() {

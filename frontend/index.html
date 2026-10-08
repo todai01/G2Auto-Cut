@@ -1366,12 +1366,21 @@
         </header>
 
         <div class="tts-recbar" id="ttsRecBar" style="display:none">
-            <span class="tts-recbar__dot"></span>
-            <span class="tts-recbar__time" id="ttsRecTime">00:00</span>
-            <span class="tts-recbar__meter"><span id="ttsRecLevel"></span></span>
-            <span class="tts-recbar__info" id="ttsRecInfo"></span>
-            <span class="tts-ed__spacer"></span>
-            <button class="btn-ghost btn-ghost--compact" onclick="ttsToggleRec()">Стоп <kbd>R</kbd></button>
+            <div class="tts-recbar__row">
+                <span class="tts-recbar__dot"></span>
+                <span class="tts-recbar__time" id="ttsRecTime">00:00</span>
+                <span class="tts-recbar__meter"><span id="ttsRecLevel"></span></span>
+                <span class="tts-recbar__info" id="ttsRecInfo"></span>
+                <span class="tts-ed__spacer"></span>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsPromptMove(-1)" title="Вернуться к предыдущей фразе (например, перечитать)">&#8593; Назад</button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsPromptMove(1)" title="Пропустить фразу — вернётся в конце">Пропустить &#8595;</button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsToggleRec()">Стоп <kbd>R</kbd></button>
+            </div>
+            <div class="tts-prompter" id="ttsPrompter">
+                <div class="tts-prompter__meta" id="ttsPromptMeta"></div>
+                <div class="tts-prompter__text" id="ttsPromptText"></div>
+                <div class="tts-prompter__next" id="ttsPromptNext"></div>
+            </div>
         </div>
 
         <div class="tts-rail-wrap">
