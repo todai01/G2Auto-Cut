@@ -7,11 +7,12 @@
   • листы переменных с тем же именем, что колонка (<sum_ru>, <date_ru>):
     каждая колонка листа — категория значений (<million_ru>, <day_ru>…).
 
-Строки с флагами складываются в «цепочку» — одна произнесённая фраза,
-разрезанная переменными: start → [сумма] → start_2 → [дата] → end. Такую
-фразу диктор читает целиком (с примером значения), поэтому для сверки и
-сохранения она — один «юнит». Готовый дубль цепочки уходит в
-«Фразы_Переменные», обычной фразы — в «Проверенные». Сохраняем только
+Строки с флагами — кусочки одной фразы, разрезанной переменными:
+start → [сумма] → start_2 → [дата] → end. Каждый кусочек сохраняется
+отдельным файлом под своим именем в «Фразы_Переменные», обычная фраза —
+в «Проверенные». Если цепочка прочитана целиком (с примером значения),
+дубль режется на кусочки по словам; если кусочек прочитан вместе со
+значением — значение отрезается. Сохраняем только
 после того, как дубль прослушан: автопроверка ошибается."""
 
 import json
@@ -29,10 +30,12 @@ from pydub.silence import detect_nonsilent
 
 from core import recent_projects
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
-                             SPEECH_MIN_SCORE, similarity)
+                             SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
+                             similarity)
 from core.ui_dialogs import ui_confirm
 
 TTS_STATE_FILE = 'tts_project.json'
+TTS_STATE_VERSION = 2     # 2: каждая строка — свой файл, цепочки режутся на кусочки
 TTS_CHUNKS_DIR = 'Чанки'
 TTS_DONE_DIR = 'Проверенные'
 TTS_VAR_DIR = 'Фразы_Переменные'
@@ -156,92 +159,147 @@ def _parse_phrase_sheet(title, rows, head_idx):
             continue
         lines.append({"row": i, "text": text, "name": name or f"фраза_{i:04d}", "role": role, "vars": vars_})
 
-    # Юниты: обычная фраза или цепочка start [start_2…] [end].
-    units, chain = [], None
+    # Юнит — каждая строка: сохраняется отдельным файлом под своим именем.
+    # Строки с флагами связываем в «цепочку» start → start_2 → end — это
+    # кусочки одной фразы. Цепочка нужна для «Сборки» и для разрезки
+    # дубля, где фраза прочитана целиком (с примером значения внутри).
+    units, chains, cur = [], [], None
 
     def close():
-        nonlocal chain
-        if chain:
-            units.append(_make_chain(chain, len(units)))
-        chain = None
+        nonlocal cur
+        if cur:
+            chains.append(cur)
+        cur = None
 
     for ln in lines:
-        if ln["role"] == 'start':
+        uid = len(units)
+        units.append({"id": uid, "kind": "piece" if ln["role"] else "phrase", "name": ln["name"],
+                      "text": ln["text"] or ln["name"], "role": ln["role"], "row": ln["row"],
+                      "var_before": None, "var_after": None, "chain": None, "_vars": ln["vars"]})
+        if ln["role"] == 'start' or (ln["role"] and cur is None):
             close()
-            chain = [ln]
-        elif ln["role"] in ('start_2', 'end') and chain:
-            chain.append(ln)
-            if ln["role"] == 'end':
-                close()
-        elif ln["role"] in ('start_2', 'end'):
-            chain = [ln]          # цепочка без start — всё равно фраза с переменной
-            if ln["role"] == 'end':
-                close()
+            cur = {"id": len(chains), "parts": [uid]}
+        elif ln["role"]:
+            cur["parts"].append(uid)
         else:
             close()
-            units.append({"id": len(units), "kind": "phrase", "name": ln["name"], "text": ln["text"],
-                          "parts": [ln], "rows": [ln["row"]]})
+        if ln["role"] == 'end':
+            close()
     close()
+
+    # У start/start_2 отмеченная переменная идёт после кусочка, у end — перед ним.
+    for ch in chains:
+        parts = [units[i] for i in ch["parts"]]
+        for k, u in enumerate(parts):
+            u["chain"] = ch["id"]
+            if u["role"] in ('start', 'start_2'):
+                nxt = parts[k + 1] if k + 1 < len(parts) else None
+                var = u["_vars"][0] if u["_vars"] else (nxt["_vars"][0] if nxt and nxt["_vars"] else None)
+                u["var_after"] = var
+                if nxt:
+                    nxt["var_before"] = var
+            elif u["role"] == 'end' and not u["var_before"] and u["_vars"]:
+                u["var_before"] = u["_vars"][0]
+        ch["name"] = _common_name([u["name"] for u in parts])
+        ch["vars"] = [u["var_after"] for u in parts if u["var_after"]]
     for u in units:
-        if not u["text"]:
-            u["text"] = u["name"]
-    return {"title": title, "lang": _lang_of(title), "units": units,
+        u.pop("_vars", None)
+    return {"title": title, "lang": _lang_of(title), "units": units, "chains": chains,
             "var_keys": [t for t, _ in var_cols]}
 
 
-def _make_chain(parts, uid):
-    """Слоты: текст и переменная после него. У start/start_2 переменная —
-    следующая; у end отмеченная колонка — та, что перед ним (уже учтена)."""
-    slots = []
-    for k, p in enumerate(parts):
-        var = None
-        if p["role"] in ('start', 'start_2'):
-            var = p["vars"][0] if p["vars"] else None
-            if var is None and k + 1 < len(parts) and parts[k + 1]["vars"]:
-                var = parts[k + 1]["vars"][0]
-        slots.append({"row": p["row"], "name": p["name"], "role": p["role"], "text": p["text"], "var": var})
-    display = []
-    for s in slots:
-        if s["text"]:
-            display.append(s["text"])
-        if s["var"]:
-            display.append(f"[{var_label(s['var'])}]")
-    return {"id": uid, "kind": "chain", "name": _common_name([p["name"] for p in parts]),
-            "text": ' '.join(display), "parts": slots, "rows": [p["row"] for p in parts],
-            "vars": [s["var"] for s in slots if s["var"]]}
+SPLIT_PART_SCORE = 0.70   # кусочек цепочки «услышан» в дубле
+WORD_EDGE_S = 0.08        # окно поиска тихой точки вокруг границы слова
 
 
-def unit_score(heard, unit):
-    """Цепочку читают с примером значения внутри — сверяем каждую текстовую
-    часть отдельно (она — «окно» в услышанном) и берём среднее."""
-    if unit["kind"] == "phrase":
-        return similarity(heard, unit["text"])
-    parts = [p["text"] for p in unit["parts"] if p["text"]]
-    if not parts:
-        return 0.0
-    return sum(similarity(heard, t) for t in parts) / len(parts)
+def _words_norm(words):
+    return [_norm(w[0]) for w in words]
 
 
-def match_takes(heards, units):
-    """Каждому дублю — лучший юнит. Почти равные варианты (одинаковые
-    тексты) решаем порядком: диктор читает таблицу сверху вниз."""
+def _best_window(wn, text, start):
+    """Окно слов [i, j) от start, больше всего похожее на text."""
+    t = _lat_to_cyr(_norm(text))
+    n = max(1, len(t.split()))
+    best = (0.0, None, None)
+    for i in range(start, len(wn)):
+        for size in range(max(1, n - 2), n + 3):
+            j = i + size
+            if j > len(wn):
+                break
+            # Строго всё окно целиком (similarity сама ищет подокна — и
+            # окно с «лишним» словом значения тоже набрало бы 100%).
+            sc = _ratio(_lat_to_cyr(' '.join(wn[i:j])), t)
+            if sc > best[0] + 1e-9:
+                best = (sc, i, j)
+    return best
+
+
+def _window_cut(words, i, j):
+    """Границы кусочка в секундах по словам (None — край дубля)."""
+    a = None if i == 0 else (words[i - 1][2], words[i][1])
+    b = None if j >= len(words) else (words[j - 1][2], words[j][1])
+    return {"after": a, "before": b}
+
+
+def match_takes(heards, words_list, units, chains):
+    """Для каждого дубля — список кусков [{unit, score, status, cut}].
+    cut=None — дубль целиком; иначе границы для вырезания по словам.
+    • в дубле прочитана цепочка целиком (≥2 её кусочков) — режем на кусочки;
+    • в дубле кусочек + пример значения — отрезаем значение;
+    • обычная фраза — дубль целиком.
+    Почти равные варианты (одинаковые тексты) решаем порядком чтения."""
     out, expected = [], 0
-    for heard in heards:
+    for heard, words in zip(heards, words_list):
         if not heard:
-            out.append({"unit": None, "score": 0.0, "status": "noise"})
+            out.append([{"unit": None, "score": 0.0, "status": "noise", "cut": None}])
             continue
-        scored = sorted(((unit_score(heard, u), u["id"]) for u in units), reverse=True)
+        words = words or []
+        wn = _words_norm(words)
+
+        # 1) Цепочка целиком?
+        best_chain = None
+        if len(wn) >= 3:
+            for ch in chains:
+                if len(ch["parts"]) < 2:
+                    continue
+                scores = [similarity(heard, units[i]["text"]) for i in ch["parts"]]
+                hit = sum(1 for x in scores if x >= SPLIT_PART_SCORE)
+                if hit >= 2:
+                    avg = sum(scores) / len(scores)
+                    key = (avg, -abs(ch["parts"][0] - expected))
+                    if best_chain is None or key > best_chain[0]:
+                        best_chain = (key, ch)
+        if best_chain:
+            segs, cursor = [], 0
+            for uid in best_chain[1]["parts"]:
+                sc, i, j = _best_window(wn, units[uid]["text"], cursor)
+                if i is None or sc < SPEECH_MIN_SCORE:
+                    continue
+                segs.append({"unit": uid, "score": round(sc, 3), "cut": _window_cut(words, i, j),
+                             "status": "ok" if sc >= TTS_OK_SCORE else "doubt"})
+                cursor = j
+            if len(segs) >= 2:
+                out.append(segs)
+                expected = segs[-1]["unit"] + 1
+                continue
+
+        # 2) Одна фраза / один кусочек.
+        scored = sorted(((similarity(heard, u["text"]), u["id"]) for u in units), reverse=True)
         best = scored[0][0]
-        close_ = [uid for s, uid in scored if best - s <= TTS_TIE]
-        uid = min(close_, key=lambda x: (x < expected, abs(x - expected)))
-        # Второй вариант — с другим текстом (дубли одной фразы не мешают уверенности).
-        text = units[uid]["text"]
-        second = next((s for s, i in scored if units[i]["text"] != text), 0.0)
         if best < SPEECH_MIN_SCORE:
-            out.append({"unit": None, "score": round(best, 3), "status": "none"})
+            out.append([{"unit": None, "score": round(best, 3), "status": "none", "cut": None}])
             continue
+        close_ = [uid for s_, uid in scored if best - s_ <= TTS_TIE]
+        uid = min(close_, key=lambda x: (x < expected, abs(x - expected)))
+        text = units[uid]["text"]
+        second = next((s_ for s_, i in scored if units[i]["text"] != text), 0.0)
         ok = best >= TTS_OK_SCORE and best - second >= TTS_OK_MARGIN
-        out.append({"unit": uid, "score": round(best, 3), "status": "ok" if ok else "doubt"})
+        cut = None
+        if units[uid]["kind"] == "piece" and wn:
+            sc, i, j = _best_window(wn, text, 0)
+            if i is not None and (i > 0 or j < len(wn)) and len(wn) - (j - i) >= 1:
+                cut = _window_cut(words, i, j)
+        out.append([{"unit": uid, "score": round(best, 3), "status": "ok" if ok else "doubt", "cut": cut}])
         expected = uid + 1
     return out
 
@@ -253,7 +311,8 @@ class TtsFlowMixin:
     def _tts(self):
         st = getattr(self, 'tts', None)
         if st is None:
-            st = self.tts = {"excel_path": None, "sheet": None, "lang": "ru", "units": [], "var_sheets": {},
+            st = self.tts = {"v": TTS_STATE_VERSION, "excel_path": None, "sheet": None, "lang": "ru",
+                             "units": [], "chains": [], "var_sheets": {},
                              "work_dir": None, "raw_path": None, "takes": [], "index": 0}
         return st
 
@@ -276,7 +335,7 @@ class TtsFlowMixin:
             pass
 
     def _tts_target(self, unit):
-        folder = TTS_VAR_DIR if unit["kind"] == "chain" else TTS_DONE_DIR
+        folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         return os.path.join(self._tts()["work_dir"], folder, f"{unit['name']}.wav")
 
     def tts_state(self):
@@ -295,19 +354,21 @@ class TtsFlowMixin:
             takes.append({**t, "i": i, "name": u["name"] if u else None, "kind": u["kind"] if u else None,
                           "unit_saved": saved.get(t.get("unit"), False),
                           "take_no": same.index(i) + 1 if i in same else 0, "take_total": len(same)})
-        chains = [u for u in units if u["kind"] == "chain"]
+        pieces = [u for u in units if u["kind"] == "piece"]
         return {
             "loaded": bool(units), "has_takes": bool(st["takes"]),
             "excel_name": os.path.basename(st["excel_path"] or ''), "sheet": st.get("sheet"),
             "lang": st.get("lang", "ru"), "project": os.path.basename(wd) if wd else '',
             "units": [{**u, "saved": saved[u["id"]], "takes": takes_by_unit.get(u["id"], [])} for u in units],
+            "chains": st.get("chains", []),
             "takes": takes, "index": min(st.get("index", 0), max(0, len(takes) - 1)),
             "var_sheets": {k: {"label": v["label"],
                                "categories": [{"key": c["key"], "label": c["label"], "count": len(c["values"])}
                                               for c in v["categories"]]}
                            for k, v in st["var_sheets"].items()},
             "stats": {"units": len(units), "saved": sum(saved.values()),
-                      "chains": len(chains), "chains_saved": sum(1 for u in chains if saved[u["id"]]),
+                      "pieces": len(pieces), "pieces_saved": sum(1 for u in pieces if saved[u["id"]]),
+                      "chains": len(st.get("chains", [])),
                       "missing": sum(1 for u in units if not saved[u["id"]] and u["id"] not in takes_by_unit),
                       "doubt": sum(1 for t in st["takes"] if t.get("status") == "doubt"
                                    and not saved.get(t.get("unit"), False))},
@@ -340,7 +401,7 @@ class TtsFlowMixin:
         if st["takes"] and st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
             st["takes"] = []      # другая таблица — старая привязка дублей неверна
         st.update({"excel_path": path, "sheet": chosen["title"], "lang": chosen["lang"],
-                   "units": chosen["units"],
+                   "units": chosen["units"], "chains": chosen["chains"], "v": TTS_STATE_VERSION,
                    "var_sheets": {k: v for k, v in parsed["var_sheets"].items()
                                   if k in chosen["var_keys"] or not chosen["var_keys"]}})
         st["index"] = 0
@@ -362,8 +423,19 @@ class TtsFlowMixin:
             return {"error": "Не нашёл сохранённый TTS-проект в этой папке."}
         self.tts = None
         st = self._tts()
+        old = data.get("v") != TTS_STATE_VERSION
         st.update(data)
         st["work_dir"] = path
+        if old:
+            # Проект старого формата (цепочка = один файл): перечитываем
+            # таблицу, а дубли нужно нарезать заново — привязка другая.
+            st["takes"], st["index"] = [], 0
+            if st.get("excel_path") and os.path.exists(st["excel_path"]):
+                res = self.tts_load_excel(st["excel_path"], st.get("sheet"))
+                if res.get("error"):
+                    return res
+            st["v"] = TTS_STATE_VERSION
+            self._tts_save()
         return self.tts_state()
 
     @staticmethod
@@ -422,7 +494,7 @@ class TtsFlowMixin:
         chunks_dir = os.path.join(work_dir, TTS_CHUNKS_DIR)
         os.makedirs(chunks_dir, exist_ok=True)
         for f in os.listdir(chunks_dir):
-            if re.fullmatch(r'\d{4}\.wav', f):
+            if re.fullmatch(r'\d{4}(_\d+)?\.wav', f):
                 try:
                     os.remove(os.path.join(chunks_dir, f))
                 except OSError:
@@ -443,25 +515,109 @@ class TtsFlowMixin:
         if err:
             return {"error": err}
 
-        heards = self._tts_transcribe([p[1] for p in pieces], 'kk' if st["lang"] == 'kz' else 'ru', model)
-        matches = match_takes(heards, st["units"])
-        st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": [
-            {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a, "ms": len(piece),
-             "heard": heards[k], "listened": False, **matches[k]}
-            for k, (name, piece, a) in enumerate(pieces)]})
+        heards, words = self._tts_transcribe([p[1] for p in pieces], 'kk' if st["lang"] == 'kz' else 'ru', model)
+        matches = match_takes(heards, words, st["units"], st.get("chains", []))
+        takes = []
+        for k, (name, piece, a) in enumerate(pieces):
+            segs = matches[k]
+            for n, seg in enumerate(segs):
+                take = {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a, "ms": len(piece),
+                        "heard": heards[k], "listened": False, "chunk": k + 1,
+                        "unit": seg["unit"], "score": seg["score"], "status": seg["status"]}
+                if seg.get("cut"):
+                    lo, hi = self._tts_cut_bounds(piece, seg["cut"])
+                    part = piece[lo:hi]
+                    sub = f"{name[:-4]}_{n + 1}.wav"
+                    part.export(os.path.join(chunks_dir, sub), format="wav")
+                    take.update({"file": os.path.join(TTS_CHUNKS_DIR, sub), "start_ms": a + lo, "ms": len(part),
+                                 "heard": self._tts_words_text(words[k], seg["cut"], lo, hi), "split": True})
+                takes.append(take)
+        st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": takes})
         st["index"] = self._tts_next(-1)
         self._tts_save()
         return {"status": "ok"}
 
+    @staticmethod
+    def _tts_quiet_point(seg, lo_s, hi_s):
+        """Самое тихое место (мс) в окне — туда и ставим разрез."""
+        lo, hi = max(0, int(lo_s * 1000)), min(len(seg), int(hi_s * 1000))
+        if hi - lo < 20:
+            return max(0, min(len(seg), int((lo_s + hi_s) * 500)))
+        frames = [(t, seg[t:t + 10].rms) for t in range(lo, hi - 10 + 1, 5)]
+        floor = min(r for _, r in frames)
+        quiet = floor * 1.5 + 30
+        # Середина самой длинной тихой полосы — не край паузы, а её центр.
+        best, run = (0, frames[0][0]), None
+        for t, r in frames:
+            if r <= quiet:
+                run = run or t
+                if t - run >= best[0]:
+                    best = (t - run, run)
+            else:
+                run = None
+        return best[1] + (best[0] + 10) // 2
+
+    def _tts_cut_bounds(self, seg, cut):
+        lo, hi = 0, len(seg)
+        if cut.get("after"):
+            a, b = cut["after"]
+            lo = self._tts_quiet_point(seg, min(a, b) - WORD_EDGE_S, max(a, b) + WORD_EDGE_S)
+        if cut.get("before"):
+            a, b = cut["before"]
+            hi = self._tts_quiet_point(seg, min(a, b) - WORD_EDGE_S, max(a, b) + WORD_EDGE_S)
+        if hi - lo < 150:
+            lo, hi = 0, len(seg)
+        return lo, hi
+
+    @staticmethod
+    def _tts_words_text(words, cut, lo, hi):
+        """Что услышано внутри вырезанного кусочка."""
+        inside = [w for w in words if lo / 1000 - 0.05 <= (w[1] + w[2]) / 2 <= hi / 1000 + 0.05]
+        return ''.join(w[0] for w in inside).strip()
+
+    def _tts_transcribe_pack(self, model, pack, language):
+        """Как _asr_transcribe_pack, но со временем слов внутри каждого дубля:
+        [(слово, начало_с, конец_с)] — по ним режем цепочку на кусочки."""
+        import numpy as np
+        gap = np.zeros(int(PACK_GAP_SEC * ASR_RATE), dtype=np.float32)
+        parts, spans, t = [], [], 0.0
+        for k, it in enumerate(pack):
+            if k:
+                parts.append(gap)
+                t += PACK_GAP_SEC
+            parts.append(it['audio'])
+            d = len(it['audio']) / ASR_RATE
+            spans.append((t, t + d))
+            t += d
+        audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
+        segments, _info = model.transcribe(
+            audio, language=None if language == 'auto' else language,
+            beam_size=1, best_of=1, word_timestamps=True, vad_filter=True,
+            condition_on_previous_text=False)
+        words = [[] for _ in pack]
+        for seg in segments:
+            if getattr(seg, 'no_speech_prob', 0) > 0.6 and getattr(seg, 'avg_logprob', 0) < -0.7:
+                continue
+            for w in (seg.words or []):
+                mid = (w.start + w.end) / 2
+                for k, (a, b) in enumerate(spans):
+                    if a - 0.3 <= mid <= b + 0.3:
+                        words[k].append((w.word, max(0.0, w.start - a), max(0.0, w.end - a)))
+                        break
+        return words
+
     def _tts_transcribe(self, segs, language, model):
+        """[текст дубля], [[(слово, начало, конец)]]."""
         total = len(segs)
         heard = [''] * total
+        words_out = [[] for _ in range(total)]
         state = {"done": 0}
         lock = threading.Lock()
 
-        def finish(k, text):
+        def finish(k, text, words=None):
             with lock:
                 heard[k] = text
+                words_out[k] = words or []
                 state["done"] += 1
                 d = state["done"]
             if d % 5 == 0 or d == total:
@@ -479,15 +635,19 @@ class TtsFlowMixin:
             if getattr(self, '_auto_check_stop', False):
                 return
             try:
-                out = self._asr_transcribe_pack(model, pack, language)
+                out = self._tts_transcribe_pack(model, pack, language)
             except Exception:
-                out = [''] * len(pack)
-            for it, h in zip(pack, out):
-                finish(it['index'], '' if self._asr_is_noise(h) else h)
+                out = [[] for _ in pack]
+            for it, ws in zip(pack, out):
+                h = ''.join(w[0] for w in ws).strip()
+                if self._asr_is_noise(h):
+                    finish(it['index'], '')
+                else:
+                    finish(it['index'], h, ws)
 
         with ThreadPoolExecutor(max_workers=getattr(self, '_asr_workers', 1)) as ex:
             list(ex.map(run, self._asr_packs(items)))
-        return heard
+        return heard, words_out
 
     def tts_stop(self):
         self._auto_check_stop = True
@@ -605,7 +765,7 @@ class TtsFlowMixin:
             if unit_id is None or unit_id < 0:
                 t.update({"unit": None, "status": "none", "score": 0.0})
             elif unit_id < len(st["units"]):
-                score = unit_score(t.get("heard") or '', st["units"][unit_id]) if t.get("heard") else 0.0
+                score = similarity(t.get("heard") or '', st["units"][unit_id]["text"]) if t.get("heard") else 0.0
                 t.update({"unit": unit_id, "score": round(score, 3), "status": "manual"})
             t["approved"] = False
             self._tts_save()

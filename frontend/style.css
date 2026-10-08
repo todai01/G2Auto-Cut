@@ -2817,3 +2817,8 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-varsheets{ display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--tint-var); font-size: var(--fs-sm); margin-bottom: 6px; }
 .tts-varsheet b{ color: var(--accent-var); margin-right: 6px; }
 #ttsList .audit-category-item{ display: flex; flex-direction: column; gap: 3px; }
+.tts-take__cut{ margin-left: 5px; color: var(--accent-var); font-size: 10px; }
+.tts-block.is-current{ border-color: var(--accent-primary); box-shadow: 0 0 0 1px var(--accent-primary); }
+.tts-block.is-saved{ cursor: pointer; }
+.tts-block.is-saved .tts-block__role{ color: var(--accent-good); }
+.tts-block.is-saved:hover{ border-color: var(--accent-good); }

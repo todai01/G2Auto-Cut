@@ -5892,8 +5892,8 @@ let isProcessing = false;
             }
             openTtsScreen(st);
             if (!st.has_takes) {
-                let ok = await showBeautifulConfirm(`<b>Таблица загружена</b><br><br>${st.stats.units} фраз, из них `
-                    + `${st.stats.chains} с переменными.<br><br>Теперь выберите сырую запись — нарежу её на дубли `
+                let ok = await showBeautifulConfirm(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
+                    + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>Теперь выберите сырую запись — нарежу её на дубли `
                     + `и сверю каждый с таблицей.`, 'Выбрать запись', 'Позже');
                 if (ok) ttsLoadRecording();
             }
@@ -5984,7 +5984,7 @@ let isProcessing = false;
             document.getElementById('ttsStatUnits').innerText = s.units;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
             document.getElementById('ttsStatMissing').innerText = s.missing;
-            document.getElementById('ttsVarCount').innerText = `${s.chains_saved} / ${s.chains}`;
+            document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;
             let cats = Object.values(tts.var_sheets || {}).map(v => v.label).join(', ');
             document.getElementById('ttsVarDesc').innerText = cats ? `Фразы с переменными · ${cats}` : 'Фразы с переменными';
             ttsRenderRail();
@@ -6007,9 +6007,9 @@ let isProcessing = false;
                 return;
             }
             rail.innerHTML = tts.takes.map(t => `
-                <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'chain' ? 'is-chain' : ''}"
+                <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'piece' ? 'is-chain' : ''}"
                         data-i="${t.i}" onclick="ttsSelect(${t.i})" title="${escapeHtml(t.heard || 'тишина / шум')}">
-                    <span class="tts-take__num">${String(t.i + 1).padStart(3, '0')}</span>
+                    <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
                     <span class="tts-take__meta">${t.unit !== null ? Math.round(t.score * 100) + '%' : ''}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
@@ -6033,7 +6033,7 @@ let isProcessing = false;
             let u = ttsUnit(t.unit);
             let [label, tone] = t.rejected ? ['Плохой дубль — пропущен', 'trash'] : (TTS_STATUS[t.status] || TTS_STATUS.none);
             if (t.unit_saved && !t.rejected) [label, tone] = t.approved ? ['Сохранён этот дубль', 'good'] : ['Фраза уже сохранена другим дублем', 'good'];
-            let where = u ? (u.kind === 'chain' ? 'Фразы_Переменные' : 'Проверенные') : '';
+            let where = u ? (u.kind === 'piece' ? 'Фразы_Переменные' : 'Проверенные') : '';
             el.innerHTML = `
                 <div class="tts-current__head">
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
@@ -6042,7 +6042,7 @@ let isProcessing = false;
                 </div>
                 <div class="tts-current__text">${u ? ttsUnitTextHTML(u) : '<span class="tts-dim">Фраза не определена</span>'}</div>
                 <div class="tts-current__heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
-                <div class="tts-current__file">${u ? `${escapeHtml(u.name)}.wav → ${where}` : ''}</div>
+                <div class="tts-current__file">${u ? `${escapeHtml(u.name)}.wav → ${where}` : ''}${t.split ? ` · вырезан из дубля ${String(t.chunk).padStart(3, '0')}` : ''}</div>
                 <div class="tts-current__actions">
                     <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
                     <button class="btn-tile btn-tile--good" onclick="ttsApprove()" ${u ? '' : 'disabled'}>Сохранить <kbd>Enter</kbd></button>
@@ -6053,9 +6053,9 @@ let isProcessing = false;
         }
 
         function ttsUnitTextHTML(u) {
-            if (u.kind !== 'chain') return escapeHtml(u.text);
-            return u.parts.map(p => (p.text ? escapeHtml(p.text) : '')
-                + (p.var ? ` <span class="tts-var">${escapeHtml(ttsVarLabel(p.var))}</span>` : '')).join(' ');
+            let pill = v => v ? `<span class="tts-var">${escapeHtml(ttsVarLabel(v))}</span>` : '';
+            if (u.kind !== 'piece') return escapeHtml(u.text);
+            return [pill(u.var_before), escapeHtml(u.text), pill(u.var_after)].filter(Boolean).join(' ');
         }
 
         function ttsVarLabel(key) {
@@ -6063,21 +6063,28 @@ let isProcessing = false;
             return v ? v.label : key;
         }
 
-        // «Сборка»: из каких частей состоит текущая фраза и что уже готово.
+        // «Сборка»: вся фраза из кусочков — что уже сохранено, где текущий.
         function ttsRenderAssembly() {
             let el = document.getElementById('ttsAssembly');
             let t = ttsCurTake();
             let u = t ? ttsUnit(t.unit) : null;
             if (!u) { el.innerHTML = '<div class="tts-assembly__title">Сборка</div><div class="tts-dim">Выберите дубль на ленте</div>'; return; }
-            let blocks = u.kind === 'chain'
-                ? u.parts.map(p => `<div class="tts-block"><span class="tts-block__role">${p.role || ''}</span>
-                        <span class="tts-block__name">${escapeHtml(p.name)}</span><span class="tts-block__text">${escapeHtml(p.text || '')}</span></div>`
-                    + (p.var ? `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
-                        <span class="tts-block__name">${escapeHtml(ttsVarLabel(p.var))}</span></div>` : '')).join('')
-                : `<div class="tts-block"><span class="tts-block__name">${escapeHtml(u.name)}</span><span class="tts-block__text">${escapeHtml(u.text)}</span></div>`;
-            el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${u.kind === 'chain' ? 'фраза с переменными' : 'обычная фраза'}</span></div>
-                <div class="tts-blocks">${blocks}</div>
-                ${u.saved ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsPlayUnit(${u.id})">Слушать сохранённое</button>` : ''}`;
+            let chain = u.chain !== null && u.chain !== undefined ? (tts.chains || [])[u.chain] : null;
+            let block = p => `<div class="tts-block ${p.id === u.id ? 'is-current' : ''} ${p.saved ? 'is-saved' : ''}"
+                    ${p.saved ? `onclick="ttsPlayUnit(${p.id})" title="Слушать сохранённое"` : ''}>
+                    <span class="tts-block__role">${p.role || 'фраза'}${p.saved ? ' ✓' : ''}</span>
+                    <span class="tts-block__name">${escapeHtml(p.name)}</span>
+                    <span class="tts-block__text">${escapeHtml(p.text)}</span></div>`;
+            let varBlock = v => `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
+                    <span class="tts-block__name">${escapeHtml(ttsVarLabel(v))}</span></div>`;
+            let blocks = chain
+                ? chain.parts.map(id => tts.units[id]).map((p, k) =>
+                    (k === 0 && p.var_before ? varBlock(p.var_before) : '') + block(p) + (p.var_after ? varBlock(p.var_after) : '')).join('')
+                : block(u);
+            let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
+            el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span></div>
+                <div class="tts-blocks">${blocks}</div>`;
         }
 
         async function ttsSelect(i) {
@@ -6130,7 +6137,7 @@ let isProcessing = false;
                 if (res && res.need_listen) { showToast('Сначала прослушайте дубль'); ttsTogglePlay(); return; }
                 if (res && res.error) { showToast(res.error); return; }
                 tts = res;
-                if (res.saved_kind === 'chain') ttsDropToVars(t.i);
+                if (res.saved_kind === 'piece') ttsDropToVars(t.i);
                 else showToast(`Сохранено: ${res.saved_name}.wav`);
                 ttsRender();
                 if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
@@ -6202,7 +6209,7 @@ let isProcessing = false;
             let q = document.getElementById('ttsListSearch').value.trim().toLowerCase();
             let units = tts.units.filter(u =>
                 (ttsListMode !== 'missing' || (!u.saved && !u.takes.length)) &&
-                (ttsListMode !== 'vars' || u.kind === 'chain') &&
+                (ttsListMode !== 'vars' || u.kind === 'piece') &&
                 (!q || u.text.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)));
             let cur = ttsCurTake();
             let html = units.map(u => {
