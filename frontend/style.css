@@ -2670,3 +2670,150 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 @media (prefers-reduced-motion: reduce){
     .progress-spinner, .stage-loading .progress-panel progress::-webkit-progress-value{ animation: none; }
 }
+
+/* ===== TTS-проект: единый экран ===== */
+.option-card--tts .option-icon{ color: var(--accent-primary); border-color: rgba(77,149,234,0.35); }
+
+.stage-tts{ max-width: none; height: calc(100vh - 80px); box-sizing: border-box; overflow: hidden; }
+.stage-tts{ flex-direction: column; }
+.tts-header{ margin-bottom: 12px; }
+.tts-title{ display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.tts-title__main{ font-weight: 800; font-size: var(--fs-lg); letter-spacing: .04em; }
+.tts-title__sub{ font-size: var(--fs-xs); color: var(--text-dim); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.tts-dim{ color: var(--text-faint); }
+
+/* Лента дублей */
+.tts-rail-wrap{
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 8px; box-shadow: var(--shadow-panel); flex: none;
+}
+.tts-rail{ display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
+.tts-rail__empty{ padding: 18px; color: var(--text-faint); font-size: var(--fs-sm); }
+.tts-take{
+    position: relative; flex: 0 0 auto; width: 112px; padding: 8px 9px 7px; border-radius: 10px;
+    background: var(--screen); border: 1px solid var(--border-soft); color: var(--text); cursor: pointer;
+    display: flex; flex-direction: column; gap: 3px; text-align: left; font: inherit;
+    transition: border-color .14s, transform .14s, opacity .14s;
+}
+.tts-take::before{ content: ''; position: absolute; left: 9px; right: 9px; top: 0; height: 2px; border-radius: 0 0 2px 2px; background: var(--tk, var(--border)); }
+.tts-take:hover{ border-color: var(--text-faint); transform: translateY(-1px); }
+.tts-take__num{ font-family: var(--font-mono); font-weight: 700; font-size: 12px; color: var(--text-dim); }
+.tts-take__name{ font-size: 11.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-take__meta{ font-family: var(--font-mono); font-size: 10.5px; color: var(--tk, var(--text-faint)); min-height: 13px; }
+.tts-take.is-ok{ --tk: var(--accent-good); }
+.tts-take.is-doubt{ --tk: var(--accent-var); }
+.tts-take.is-manual{ --tk: var(--accent-info); }
+.tts-take.is-none, .tts-take.is-noise{ --tk: var(--accent-trash); opacity: .6; }
+.tts-take.is-saved{ --tk: var(--accent-good); background: var(--tint-good); }
+.tts-take.is-done, .tts-take.is-rejected{ opacity: .38; }
+.tts-take.is-rejected .tts-take__name{ text-decoration: line-through; }
+.tts-take.is-chain .tts-take__name::after{ content: ' ⋯'; color: var(--accent-var); }
+.tts-take.is-current{ opacity: 1; border-color: var(--accent-primary); box-shadow: 0 0 0 2px var(--accent-primary); }
+.tts-rail.is-playing .tts-take.is-current{ border-color: var(--accent-good); box-shadow: 0 0 0 2px var(--accent-good); animation: sumDubPlaying 1.1s ease-in-out infinite; }
+.tts-take--ghost{ position: fixed; z-index: 9000; margin: 0; pointer-events: none; box-shadow: 0 0 0 2px var(--accent-var), var(--shadow-pop); }
+
+/* Тело: слева текущий дубль и «Переменные», справа сборка и Audacity */
+.tts-body{ flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.15fr); gap: 12px; margin-top: 12px; }
+.tts-left, .tts-right{ min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+
+.tts-current{
+    flex: 1; min-height: 0; overflow: auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 18px 20px; box-shadow: var(--shadow-panel);
+    display: flex; flex-direction: column; gap: 12px;
+}
+.tts-current__empty{ margin: auto; color: var(--text-faint); }
+.tts-current__head{ display: flex; align-items: center; gap: 10px; }
+.tts-current__score{ font-family: var(--font-mono); font-weight: 700; color: var(--text-dim); }
+.tts-current__num{ margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); }
+.tts-current__text{ font-size: 22px; line-height: 1.4; font-weight: 650; letter-spacing: -0.01em; }
+.tts-current__heard{ font-size: var(--fs-md); color: var(--text-dim); line-height: 1.45; }
+.tts-current__file{ font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); }
+.tts-current__actions{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; }
+.tts-current__actions .btn-tile[disabled]{ opacity: .4; pointer-events: none; }
+.tts-current__actions .btn-tile.is-active{ border-color: var(--accent-good); color: var(--accent-good); }
+.tts-current__hint{ font-size: var(--fs-xs); color: var(--text-faint); text-align: center; }
+.tts-var{
+    display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .62em; vertical-align: middle; white-space: nowrap;
+    color: var(--accent-var); border: 1px solid rgba(238,172,62,0.5); background: var(--tint-var);
+}
+.tts-pill{ display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.tts-pill--good{ color: var(--accent-good); background: var(--tint-good); }
+.tts-pill--var{ color: var(--accent-var); background: var(--tint-var); }
+.tts-pill--info{ color: var(--accent-info); background: var(--tint-info); }
+.tts-pill--trash{ color: var(--accent-trash); background: var(--tint-trash); }
+.tts-busy{ margin: auto; width: min(420px, 100%); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.tts-busy progress{ width: 100%; }
+.tts-busy .btn-ghost{ align-self: center; }
+
+/* Карточка-папка «Переменные» */
+.tts-varcard{
+    flex: none; display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; font: inherit; color: var(--text);
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 14px 16px; cursor: pointer; box-shadow: var(--shadow-panel);
+    transition: border-color .15s, transform .15s, background .15s;
+}
+.tts-varcard:hover{ border-color: var(--accent-var); transform: translateY(-1px); }
+.tts-varcard__icon{
+    flex: none; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-sm); background: var(--tint-var); color: var(--accent-var); border: 1px solid rgba(238,172,62,0.35);
+}
+.tts-varcard__text{ display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.tts-varcard__title{ font-weight: 700; }
+.tts-varcard__desc{ font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-varcard__count{ font-family: var(--font-mono); font-weight: 700; color: var(--accent-var); }
+.tts-varcard.is-bump{ animation: ttsBump .45s var(--ease); }
+@keyframes ttsBump{ 40%{ transform: scale(1.03); border-color: var(--accent-var); background: var(--tint-var); } }
+
+/* Сборка (справа сверху) */
+.tts-assembly{
+    flex: none; max-height: 42%; overflow: auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 14px 16px; box-shadow: var(--shadow-panel);
+    display: flex; flex-direction: column; gap: 10px;
+}
+.tts-assembly__title{ font-weight: 700; font-size: var(--fs-md); display: flex; gap: 8px; align-items: baseline; }
+.tts-assembly__title .tts-dim{ font-weight: 500; font-size: var(--fs-xs); }
+.tts-blocks{ display: flex; flex-wrap: wrap; gap: 6px; }
+.tts-block{
+    display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 9px; min-width: 0; max-width: 100%;
+    background: var(--screen); border: 1px solid var(--border-soft);
+}
+.tts-block--var{ border-style: dashed; border-color: rgba(238,172,62,0.5); background: var(--tint-var); }
+.tts-block__role{ font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
+.tts-block__name{ font-family: var(--font-mono); font-size: 11.5px; font-weight: 700; color: var(--text-dim); }
+.tts-block--var .tts-block__name{ color: var(--accent-var); }
+.tts-block__text{ font-size: var(--fs-sm); }
+.tts-assembly .btn-ghost{ align-self: flex-start; }
+
+/* Audacity (справа снизу) */
+.tts-embed{ flex: 1; min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.tts-embed .audacity-embed-area__label{ position: static; transform: none; }
+
+.tts-keys{ flex: none; display: flex; justify-content: center; flex-wrap: wrap; gap: 16px; padding-top: 10px; font-size: var(--fs-xs); color: var(--text-faint); }
+.tts-keys kbd{ margin-right: 3px; }
+
+/* Список фраз */
+.custom-alert-box.tts-list-box{ width: min(780px, 92vw); max-width: none; max-height: 82vh; overflow: hidden; display: flex; flex-direction: column; gap: 10px; text-align: left; padding: 24px; }
+.tts-list-box .modal-head{ margin-bottom: 0; }
+.tts-list-search{
+    flex: none; width: 100%; box-sizing: border-box; height: 38px; font-size: var(--fs-md); padding: 0 12px; border-radius: var(--radius-sm);
+    background: var(--screen); border: 1px solid var(--border); color: var(--text); font: inherit;
+}
+.tts-list-search:focus{ outline: none; border-color: var(--accent-primary); }
+.tts-list-tabs{ display: flex; gap: 4px; }
+.tts-list-tabs:empty{ display: none; }
+.tts-list{ overflow: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.tts-list__empty{ padding: 16px; text-align: center; }
+.tts-unit{
+    display: grid; grid-template-columns: 150px 1fr auto auto; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-soft); background: var(--panel);
+}
+.tts-unit[onclick]{ cursor: pointer; }
+.tts-unit[onclick]:hover{ border-color: var(--accent-primary); }
+.tts-unit.is-current{ border-color: var(--accent-primary); background: var(--tint-primary); }
+.tts-unit__name{ font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tts-unit__text{ font-size: var(--fs-sm); line-height: 1.4; }
+.tts-unit__x{ border: none; background: none; color: var(--text-faint); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.tts-unit__x:hover{ color: var(--accent-trash); }
+.tts-varsheets{ display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--tint-var); font-size: var(--fs-sm); margin-bottom: 6px; }
+.tts-varsheet b{ color: var(--accent-var); margin-right: 6px; }
+#ttsList .audit-category-item{ display: flex; flex-direction: column; gap: 3px; }

@@ -839,6 +839,11 @@
             <section class="setup-col">
                 <div class="section-label"><span>Новый проект</span></div>
 
+                <button class="option-card option-card--tts rise" style="--d: 1" id="btnTts" onclick="openTts()">
+                    <span class="option-icon"><svg class="icon"><use href="#icon-mic"></use></svg></span>
+                    <div><span class="option-title">TTS-проект</span><span class="option-desc" id="descTts">Таблица + запись → автопроверка → апрув</span></div>
+                </button>
+
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
                     <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
@@ -1337,6 +1342,73 @@
             <div class="audacity-embed-area" id="constructorEmbedArea" style="display: none;">
                 <div class="audacity-embed-area__label">Здесь окно Audacity — двигайте и правьте прямо тут</div>
             </div>
+        </div>
+    </div>
+
+    <div id="stage4-tts" class="stage stage-tts" style="display: none;">
+        <header class="workspace-header tts-header">
+            <div class="header-actions">
+                <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
+                <button class="btn-ghost btn-ghost--info" onclick="ttsLoadExcel()" title="Таблица с фразами (лист с колонкой &lt;phrase&gt;) и листами переменных">Таблица</button>
+                <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Сырой WAV: нарежу на дубли и сверю каждый с таблицей">Запись</button>
+                <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
+            </div>
+            <div class="tts-title">
+                <span class="tts-title__main">TTS</span>
+                <span class="tts-title__sub" id="ttsMeta">Таблица не загружена</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-good">Сохранено: <span id="ttsStatSaved">0</span> / <span id="ttsStatUnits">0</span></span>
+                <span class="stat-var">Сомнительных: <span id="ttsStatDoubt">0</span></span>
+                <button class="btn-ghost btn-alert btn-ghost--compact" onclick="ttsOpenUnits('missing')">Не найдено: <span id="ttsStatMissing">0</span></button>
+            </div>
+        </header>
+
+        <div class="tts-rail-wrap">
+            <div class="tts-rail" id="ttsRail"></div>
+        </div>
+
+        <div class="tts-body">
+            <div class="tts-left">
+                <section class="tts-current" id="ttsCurrent"></section>
+
+                <button class="tts-varcard" id="ttsVarCard" onclick="ttsOpenVars()" title="Фразы с переменными: сохраняются в «Фразы_Переменные», дальше из них режутся start/end">
+                    <span class="tts-varcard__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
+                    <span class="tts-varcard__text">
+                        <span class="tts-varcard__title">Переменные</span>
+                        <span class="tts-varcard__desc" id="ttsVarDesc">Фразы с переменными</span>
+                    </span>
+                    <span class="tts-varcard__count" id="ttsVarCount">0 / 0</span>
+                </button>
+            </div>
+
+            <div class="tts-right">
+                <section class="tts-assembly" id="ttsAssembly"></section>
+                <div class="audacity-embed-area tts-embed" id="ttsEmbedArea">
+                    <div class="audacity-embed-area__label">Здесь окно Audacity</div>
+                    <button class="btn-ghost btn-ghost--info tts-embed__btn" id="ttsEmbedBtn" onclick="toggleEmbedAudacity()">Прикрепить Audacity</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="tts-keys">
+            <span><kbd>Space</kbd> слушать</span>
+            <span><kbd>Enter</kbd> сохранить</span>
+            <span><kbd>&#8592;</kbd><kbd>&#8594;</kbd> дубли</span>
+            <span><kbd>Del</kbd> плохой дубль</span>
+            <span><kbd>F</kbd> привязать к фразе</span>
+        </div>
+    </div>
+
+    <div id="ttsListOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsCloseList()">
+        <div class="custom-alert-box tts-list-box">
+            <div class="modal-head">
+                <h3 class="modal-title" id="ttsListTitle">Фразы</h3>
+                <button class="modal-close" onclick="ttsCloseList()" title="Закрыть">&times;</button>
+            </div>
+            <input type="text" class="tts-list-search" id="ttsListSearch" placeholder="Поиск по тексту или имени…" oninput="ttsRenderList()" onkeydown="ttsListSearchKey(event)">
+            <div class="tts-list-tabs" id="ttsListTabs"></div>
+            <div class="tts-list" id="ttsList"></div>
         </div>
     </div>
 

@@ -270,7 +270,8 @@ let isProcessing = false;
             'stage0-splash':      'flex',
             'stage1-loading':     'flex',
             'stage2-workspace':   'block',
-            'stage3-constructor': 'block'
+            'stage3-constructor': 'block',
+            'stage4-tts':         'flex'
         };
 
         function showStage(activeId) {
@@ -719,6 +720,7 @@ let isProcessing = false;
                 return;
             }
 
+            if (state && state.tts) { openTtsScreen(state); return; }
             updateUI(state);
             showWorkspace();
         }
@@ -2068,7 +2070,7 @@ let isProcessing = false;
                 grid.classList.toggle('workspace-grid--sum', sumModeActive);
                 document.body.classList.toggle('sum-mode', sumModeActive);
                 if (sumModeActive || !audacityEmbedded) {
-                    area.style.display = sumModeActive ? 'block' : 'none';
+                    area.style.display = sumModeActive ? 'block' : (embedAreaId === 'ttsEmbedArea' ? 'flex' : 'none');
                 }
             }
 
@@ -3664,7 +3666,7 @@ let isProcessing = false;
 
             if (result && result.error) {
                 if (silent) return;
-                area.style.display = sumModeActive ? 'block' : 'none';
+                area.style.display = sumModeActive ? 'block' : (embedAreaId === 'ttsEmbedArea' ? 'flex' : 'none');
                 showBeautifulAlert('⚠️ ' + result.error);
                 return;
             }
@@ -3702,7 +3704,7 @@ let isProcessing = false;
                     audacityEmbedded = false;
                     stopEmbedWatchdog();
                     let btn = document.getElementById(embedBtnId);
-                    if (btn) btn.innerText = embedBtnId === 'sumEmbedAudacityBtn' ? 'Прикрепить Audacity' : 'Встроить окно Audacity сюда';
+                    if (btn) btn.innerText = ['sumEmbedAudacityBtn', 'ttsEmbedBtn'].includes(embedBtnId) ? 'Прикрепить Audacity' : 'Встроить окно Audacity сюда';
                 }
             }, 500);
         }
@@ -3788,8 +3790,8 @@ let isProcessing = false;
             const btn = document.getElementById(embedBtnId);
             // В режиме «Суммы» рамка остаётся на экране: место под окно
             // Audacity закреплено за ней, даже когда окно отсоединено.
-            if (area) area.style.display = sumModeActive ? 'block' : 'none';
-            if (btn) btn.innerText = embedBtnId === 'sumEmbedAudacityBtn' ? 'Прикрепить Audacity' : 'Встроить окно Audacity сюда';
+            if (area) area.style.display = sumModeActive ? 'block' : (embedAreaId === 'ttsEmbedArea' ? 'flex' : 'none');
+            if (btn) btn.innerText = ['sumEmbedAudacityBtn', 'ttsEmbedBtn'].includes(embedBtnId) ? 'Прикрепить Audacity' : 'Встроить окно Audacity сюда';
             try {
                 // При возврате в главное меню окно не просто отсоединяем
                 // (это возвращает его на передний план поверх всего) —
@@ -4496,6 +4498,9 @@ let isProcessing = false;
                 }
                 return;
             }
+
+            // TTS-проект: свои клавиши (Space / Enter / стрелки / Del / F).
+            if (isShown('stage4-tts')) { ttsHandleKey(e); return; }
 
             // Конструктор переменных — свой мини-режим со своим плеером:
             // Space играет/останавливает собранную сумму, остальные горячие
@@ -5861,5 +5866,407 @@ let isProcessing = false;
                 showBeautifulAlert(`<b>Ошибка</b><br><br>${res.error}`);
             } else if (res) {
                 showToast(`Сохранено кусков: ${res.saved}`);
+            }
+        }
+
+        // ===== TTS-ПРОЕКТ =====
+        // Таблица (фразы + флаги start/start_2/end + листы переменных) и одна
+        // сырая запись. Программа режет запись на дубли, распознаёт каждый и
+        // привязывает к фразе. От пользователя — только прослушать и Enter.
+        // Сохраняется дубль лишь после прослушивания: автопроверка ошибается.
+        let tts = null;              // состояние с бэкенда (tts_state)
+        let ttsPlayTimer = null;
+        let ttsPlayingIdx = -1;
+        let ttsListMode = 'all';
+
+        async function openTts() {
+            let st = await pywebview.api.tts_state();
+            if (!st || !st.loaded) {
+                let ok = await showBeautifulConfirm('<b>TTS-проект</b><br><br>Загрузите таблицу: лист фраз с колонками '
+                    + '<code>&lt;phrase&gt;</code>, <code>&lt;name_phrase&gt;</code>, флаги <code>&lt;start&gt;</code> / '
+                    + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных (суммы, даты).',
+                    'Выбрать таблицу', 'Отмена');
+                if (!ok) return;
+                st = await ttsPickExcelFlow();
+                if (!st) return;
+            }
+            openTtsScreen(st);
+            if (!st.has_takes) {
+                let ok = await showBeautifulConfirm(`<b>Таблица загружена</b><br><br>${st.stats.units} фраз, из них `
+                    + `${st.stats.chains} с переменными.<br><br>Теперь выберите сырую запись — нарежу её на дубли `
+                    + `и сверю каждый с таблицей.`, 'Выбрать запись', 'Позже');
+                if (ok) ttsLoadRecording();
+            }
+        }
+
+        async function ttsPickExcelFlow() {
+            let st = await pywebview.api.tts_pick_excel();
+            if (st && st.choose_sheet) {
+                let title = await ttsChooseSheet(st.choose_sheet);
+                if (!title) return null;
+                st = await pywebview.api.tts_choose_sheet(title);
+            }
+            if (!st || st.error === 'cancel') return null;
+            if (st.error) { showBeautifulAlert('⚠️ ' + escapeHtml(st.error)); return null; }
+            return st;
+        }
+
+        function ttsChooseSheet(sheets) {
+            return new Promise(resolve => {
+                ttsOpenListOverlay('Какой лист фраз?', false);
+                document.getElementById('ttsList').innerHTML = sheets.map((s, i) =>
+                    `<button type="button" class="audit-category-item" data-i="${i}">${escapeHtml(s.title)}
+                        <span class="audit-choice-desc">${s.lang.toUpperCase()} · ${s.units} фраз</span></button>`).join('');
+                document.querySelectorAll('#ttsList [data-i]').forEach(b => b.onclick = () => {
+                    ttsCloseList(); resolve(sheets[+b.dataset.i].title);
+                });
+                ttsListOnClose = () => resolve(null);
+            });
+        }
+
+        function openTtsScreen(st) {
+            tts = st;
+            embedAreaId = 'ttsEmbedArea';
+            embedBtnId = 'ttsEmbedBtn';
+            showStage('stage4-tts');
+            ttsRender();
+        }
+
+        async function ttsLoadExcel() {
+            let st = await ttsPickExcelFlow();
+            if (st) { tts = st; ttsRender(); }
+        }
+
+        async function ttsLoadRecording() {
+            let res = await pywebview.api.tts_pick_recording();
+            if (!res || res.error === 'cancel') return;
+            if (res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
+            ttsShowBusy('Режу запись на дубли…', 0);
+        }
+
+        function ttsShowBusy(text, pct) {
+            let cur = document.getElementById('ttsCurrent');
+            cur.innerHTML = `<div class="tts-busy">
+                <div class="progress-head"><span class="progress-spinner" aria-hidden="true"></span>
+                <div class="progress-text">${escapeHtml(text)}</div><span class="progress-pct">${pct ? pct + '%' : ''}</span></div>
+                <progress max="100" value="${pct || 0}"></progress>
+                <button class="btn-ghost btn-ghost--compact" onclick="pywebview.api.tts_stop()">Остановить</button></div>`;
+        }
+
+        // Python шлёт сюда ход нарезки и распознавания.
+        function ttsProgress(p) {
+            if (!p) return;
+            if (p.stage === 'cut') ttsShowBusy(p.total ? `Режу запись: ${p.done} / ${p.total}` : 'Режу запись на дубли…',
+                                               p.total ? Math.round(p.done / p.total * 100) : 0);
+            else if (p.stage === 'model') ttsShowBusy('Загружаю модель распознавания…', 0);
+            else if (p.stage === 'asr') ttsShowBusy(`Слушаю дубли: ${p.done} / ${p.total}`, Math.round(p.done / p.total * 100));
+            else if (p.stage === 'error') {
+                ttsRender();
+                if (p.error === 'need_model') { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
+                showBeautifulAlert('⚠️ ' + escapeHtml(p.error));
+            } else if (p.stage === 'done') {
+                tts = p.state;
+                ttsRender();
+                let s = tts.stats;
+                showToast(`Готово: ${tts.takes.length} дублей. Сомнительных — ${s.doubt}, не найдено фраз — ${s.missing}`);
+            }
+        }
+
+        const ttsCurTake = () => tts && tts.takes.length ? tts.takes[tts.index] : null;
+        const ttsUnit = id => (id === null || id === undefined || !tts) ? null : tts.units[id];
+
+        function ttsRender() {
+            if (!tts) return;
+            let s = tts.stats;
+            document.getElementById('ttsMeta').innerText = tts.loaded
+                ? `${tts.excel_name} · ${tts.lang.toUpperCase()}${tts.project ? ' · ' + tts.project : ''}` : 'Таблица не загружена';
+            document.getElementById('ttsStatSaved').innerText = s.saved;
+            document.getElementById('ttsStatUnits').innerText = s.units;
+            document.getElementById('ttsStatDoubt').innerText = s.doubt;
+            document.getElementById('ttsStatMissing').innerText = s.missing;
+            document.getElementById('ttsVarCount').innerText = `${s.chains_saved} / ${s.chains}`;
+            let cats = Object.values(tts.var_sheets || {}).map(v => v.label).join(', ');
+            document.getElementById('ttsVarDesc').innerText = cats ? `Фразы с переменными · ${cats}` : 'Фразы с переменными';
+            ttsRenderRail();
+            ttsRenderCurrent();
+            ttsRenderAssembly();
+        }
+
+        function ttsTakeClass(t) {
+            if (t.rejected) return 'is-rejected';
+            if (t.approved && t.unit_saved) return 'is-saved';
+            if (t.unit_saved) return 'is-done';
+            if (t.unit === null) return t.status === 'noise' ? 'is-noise' : 'is-none';
+            return t.status === 'ok' ? 'is-ok' : (t.status === 'manual' ? 'is-manual' : 'is-doubt');
+        }
+
+        function ttsRenderRail() {
+            let rail = document.getElementById('ttsRail');
+            if (!tts.takes.length) {
+                rail.innerHTML = `<div class="tts-rail__empty">${tts.loaded ? 'Загрузите запись — здесь появятся дубли' : 'Загрузите таблицу и запись'}</div>`;
+                return;
+            }
+            rail.innerHTML = tts.takes.map(t => `
+                <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'chain' ? 'is-chain' : ''}"
+                        data-i="${t.i}" onclick="ttsSelect(${t.i})" title="${escapeHtml(t.heard || 'тишина / шум')}">
+                    <span class="tts-take__num">${String(t.i + 1).padStart(3, '0')}</span>
+                    <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
+                    <span class="tts-take__meta">${t.unit !== null ? Math.round(t.score * 100) + '%' : ''}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
+                </button>`).join('');
+            rail.classList.toggle('is-playing', ttsPlayingIdx === tts.index);
+            let cur = rail.querySelector('.is-current');
+            if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: motionOK() ? 'smooth' : 'auto' });
+        }
+
+        const TTS_STATUS = {
+            ok: ['Совпало', 'good'], doubt: ['Сомнительно — проверьте на слух', 'var'],
+            manual: ['Привязан вручную', 'info'], none: ['Не похоже ни на одну фразу', 'trash'], noise: ['Тишина / шум', 'trash']
+        };
+
+        function ttsRenderCurrent() {
+            let el = document.getElementById('ttsCurrent');
+            let t = ttsCurTake();
+            if (!t) {
+                el.innerHTML = `<div class="tts-current__empty">${tts.loaded ? 'Загрузите запись' : 'Загрузите таблицу'}</div>`;
+                return;
+            }
+            let u = ttsUnit(t.unit);
+            let [label, tone] = t.rejected ? ['Плохой дубль — пропущен', 'trash'] : (TTS_STATUS[t.status] || TTS_STATUS.none);
+            if (t.unit_saved && !t.rejected) [label, tone] = t.approved ? ['Сохранён этот дубль', 'good'] : ['Фраза уже сохранена другим дублем', 'good'];
+            let where = u ? (u.kind === 'chain' ? 'Фразы_Переменные' : 'Проверенные') : '';
+            el.innerHTML = `
+                <div class="tts-current__head">
+                    <span class="tts-pill tts-pill--${tone}">${label}</span>
+                    <span class="tts-current__score">${u ? Math.round(t.score * 100) + '%' : ''}</span>
+                    <span class="tts-current__num">дубль ${t.i + 1} / ${tts.takes.length}</span>
+                </div>
+                <div class="tts-current__text">${u ? ttsUnitTextHTML(u) : '<span class="tts-dim">Фраза не определена</span>'}</div>
+                <div class="tts-current__heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
+                <div class="tts-current__file">${u ? `${escapeHtml(u.name)}.wav → ${where}` : ''}</div>
+                <div class="tts-current__actions">
+                    <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
+                    <button class="btn-tile btn-tile--good" onclick="ttsApprove()" ${u ? '' : 'disabled'}>Сохранить <kbd>Enter</kbd></button>
+                    <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
+                    <button class="btn-tile btn-tile--sub" onclick="ttsReject()">${t.rejected ? 'Вернуть дубль' : 'Плохой дубль'} <kbd>Del</kbd></button>
+                </div>
+                ${t.listened ? '' : '<div class="tts-current__hint">Сохранить можно после прослушивания</div>'}`;
+        }
+
+        function ttsUnitTextHTML(u) {
+            if (u.kind !== 'chain') return escapeHtml(u.text);
+            return u.parts.map(p => (p.text ? escapeHtml(p.text) : '')
+                + (p.var ? ` <span class="tts-var">${escapeHtml(ttsVarLabel(p.var))}</span>` : '')).join(' ');
+        }
+
+        function ttsVarLabel(key) {
+            let v = (tts.var_sheets || {})[key];
+            return v ? v.label : key;
+        }
+
+        // «Сборка»: из каких частей состоит текущая фраза и что уже готово.
+        function ttsRenderAssembly() {
+            let el = document.getElementById('ttsAssembly');
+            let t = ttsCurTake();
+            let u = t ? ttsUnit(t.unit) : null;
+            if (!u) { el.innerHTML = '<div class="tts-assembly__title">Сборка</div><div class="tts-dim">Выберите дубль на ленте</div>'; return; }
+            let blocks = u.kind === 'chain'
+                ? u.parts.map(p => `<div class="tts-block"><span class="tts-block__role">${p.role || ''}</span>
+                        <span class="tts-block__name">${escapeHtml(p.name)}</span><span class="tts-block__text">${escapeHtml(p.text || '')}</span></div>`
+                    + (p.var ? `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
+                        <span class="tts-block__name">${escapeHtml(ttsVarLabel(p.var))}</span></div>` : '')).join('')
+                : `<div class="tts-block"><span class="tts-block__name">${escapeHtml(u.name)}</span><span class="tts-block__text">${escapeHtml(u.text)}</span></div>`;
+            el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${u.kind === 'chain' ? 'фраза с переменными' : 'обычная фраза'}</span></div>
+                <div class="tts-blocks">${blocks}</div>
+                ${u.saved ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsPlayUnit(${u.id})">Слушать сохранённое</button>` : ''}`;
+        }
+
+        async function ttsSelect(i) {
+            await ttsStopPlay();
+            tts = await pywebview.api.tts_select(i);
+            ttsRender();
+        }
+
+        async function ttsStep(dir) {
+            if (!tts || !tts.takes.length) return;
+            let i = Math.max(0, Math.min(tts.takes.length - 1, tts.index + dir));
+            if (i !== tts.index) { await ttsSelect(i); ttsTogglePlay(); }
+        }
+
+        async function ttsStopPlay() {
+            clearTimeout(ttsPlayTimer);
+            if (ttsPlayingIdx >= 0) { ttsPlayingIdx = -1; await pywebview.api.tts_stop_audio(); }
+        }
+
+        async function ttsTogglePlay() {
+            let t = ttsCurTake();
+            if (!t) return;
+            if (ttsPlayingIdx === t.i) { await ttsStopPlay(); ttsRender(); return; }
+            clearTimeout(ttsPlayTimer);
+            let res = await pywebview.api.tts_play(t.i);
+            if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
+            ttsPlayingIdx = t.i;
+            ttsRenderRail(); ttsRenderCurrent();
+            ttsPlayTimer = setTimeout(() => {
+                // Отыграл до конца — считаем прослушанным (бэкенд сверит по времени).
+                ttsPlayingIdx = -1;
+                pywebview.api.tts_select(t.i).then(st => { tts = st; ttsRender(); });
+            }, res.duration * 1000 + 120);
+        }
+
+        async function ttsPlayUnit(id) {
+            await ttsStopPlay();
+            await pywebview.api.tts_play_unit(id);
+        }
+
+        let ttsApproving = false;
+        async function ttsApprove() {
+            let t = ttsCurTake();
+            if (!t || ttsApproving) return;
+            if (t.unit === null) { ttsOpenUnits('assign'); return; }
+            if (ttsPlayingIdx === t.i) { showToast('Дослушайте дубль до конца'); return; }
+            ttsApproving = true;
+            try {
+                let res = await pywebview.api.tts_approve(t.i);
+                if (res && res.need_listen) { showToast('Сначала прослушайте дубль'); ttsTogglePlay(); return; }
+                if (res && res.error) { showToast(res.error); return; }
+                tts = res;
+                if (res.saved_kind === 'chain') ttsDropToVars(t.i);
+                else showToast(`Сохранено: ${res.saved_name}.wav`);
+                ttsRender();
+                if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
+            } finally { ttsApproving = false; }
+        }
+
+        // Фраза с переменной «падает» с ленты в карточку «Переменные».
+        function ttsDropToVars(i) {
+            let card = document.getElementById('ttsVarCard');
+            let from = document.querySelector(`#ttsRail [data-i="${i}"]`);
+            card.classList.remove('is-bump'); void card.offsetWidth; card.classList.add('is-bump');
+            if (!from || !motionOK()) return;
+            let a = from.getBoundingClientRect(), b = card.getBoundingClientRect();
+            let ghost = from.cloneNode(true);
+            ghost.className = 'tts-take is-chain tts-take--ghost';
+            Object.assign(ghost.style, { left: a.left + 'px', top: a.top + 'px', width: a.width + 'px', height: a.height + 'px' });
+            document.body.appendChild(ghost);
+            let dx = b.left + b.width / 2 - (a.left + a.width / 2), dy = b.top + b.height / 2 - (a.top + a.height / 2);
+            ghost.animate([
+                { transform: 'translate(0,0) scale(1)', opacity: 1 },
+                { transform: `translate(${dx * .5}px, ${dy * .35}px) scale(.9)`, opacity: 1, offset: .5 },
+                { transform: `translate(${dx}px, ${dy}px) scale(.35)`, opacity: 0 }
+            ], { duration: 520, easing: 'cubic-bezier(.4,0,.2,1)' }).onfinish = () => ghost.remove();
+        }
+
+        async function ttsReject() {
+            let t = ttsCurTake();
+            if (!t) return;
+            await ttsStopPlay();
+            tts = await pywebview.api.tts_reject(t.i);
+            ttsRender();
+        }
+
+        // ----- список фраз: все / не найдено / привязка дубля / переменные -----
+        let ttsListOnClose = null;
+
+        function ttsOpenListOverlay(title, withSearch) {
+            document.getElementById('ttsListTitle').innerText = title;
+            let search = document.getElementById('ttsListSearch');
+            search.style.display = withSearch ? '' : 'none';
+            search.value = '';
+            document.getElementById('ttsListTabs').innerHTML = '';
+            document.getElementById('ttsListOverlay').style.display = 'flex';
+            if (withSearch) setTimeout(() => search.focus(), 30);
+        }
+
+        function ttsCloseList() {
+            document.getElementById('ttsListOverlay').style.display = 'none';
+            let cb = ttsListOnClose; ttsListOnClose = null;
+            if (cb) cb();
+        }
+
+        function ttsOpenUnits(mode) {
+            if (!tts || !tts.loaded) return;
+            ttsListMode = mode || 'all';
+            let titles = { all: 'Все фразы', missing: 'Не найдено в записи', assign: 'К какой фразе относится дубль?', vars: 'Фразы с переменными' };
+            ttsOpenListOverlay(titles[ttsListMode] || 'Фразы', true);
+            if (ttsListMode !== 'assign') {
+                let tabs = [['all', 'Все'], ['missing', 'Не найдено'], ['vars', 'С переменными']];
+                document.getElementById('ttsListTabs').innerHTML = tabs.map(([k, l]) =>
+                    `<button type="button" class="chip ${k === ttsListMode ? 'chip-mode--active' : ''}" onclick="ttsListMode='${k}'; ttsOpenUnits('${k}')">${l}</button>`).join('');
+            }
+            ttsRenderList();
+        }
+
+        function ttsOpenVars() { ttsOpenUnits('vars'); }
+
+        function ttsRenderList() {
+            let q = document.getElementById('ttsListSearch').value.trim().toLowerCase();
+            let units = tts.units.filter(u =>
+                (ttsListMode !== 'missing' || (!u.saved && !u.takes.length)) &&
+                (ttsListMode !== 'vars' || u.kind === 'chain') &&
+                (!q || u.text.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)));
+            let cur = ttsCurTake();
+            let html = units.map(u => {
+                let state = u.saved ? '<span class="tts-pill tts-pill--good">сохранено</span>'
+                    : (u.takes.length ? `<span class="tts-pill tts-pill--info">дублей: ${u.takes.length}</span>` : '<span class="tts-pill tts-pill--trash">нет в записи</span>');
+                let act = ttsListMode === 'assign'
+                    ? `onclick="ttsAssign(${u.id})"`
+                    : (u.takes.length ? `onclick="ttsCloseList(); ttsSelect(${u.takes[0]})"` : '');
+                return `<div class="tts-unit ${cur && cur.unit === u.id ? 'is-current' : ''}" ${act}>
+                    <span class="tts-unit__name">${escapeHtml(u.name)}</span>
+                    <span class="tts-unit__text">${ttsUnitTextHTML(u)}</span>
+                    ${state}
+                    ${u.saved && ttsListMode !== 'assign' ? `<button class="tts-unit__x" title="Убрать из сохранённых (в «_Корзина»)" onclick="event.stopPropagation(); ttsUnapprove(${u.id})">&times;</button>` : ''}
+                </div>`;
+            }).join('');
+            if (ttsListMode === 'assign') html = `<div class="tts-unit" onclick="ttsAssign(-1)"><span class="tts-unit__text tts-dim">Не фраза (шум, оговорка)</span></div>` + html;
+            if (ttsListMode === 'vars') {
+                let cats = Object.values(tts.var_sheets || {}).map(v =>
+                    `<div class="tts-varsheet"><b>${escapeHtml(v.label)}</b> ${v.categories.map(c => `${escapeHtml(c.label)} · ${c.count}`).join(' &nbsp;|&nbsp; ')}</div>`).join('');
+                html = (cats ? `<div class="tts-varsheets">${cats}<div class="tts-dim">Синтез значений через сервис — следующий этап.</div></div>` : '') + html;
+            }
+            document.getElementById('ttsList').innerHTML = html || '<div class="tts-dim tts-list__empty">Ничего нет</div>';
+        }
+
+        async function ttsAssign(unitId) {
+            let t = ttsCurTake();
+            if (!t) return;
+            tts = await pywebview.api.tts_assign(t.i, unitId);
+            ttsCloseList();
+            ttsRender();
+        }
+
+        async function ttsUnapprove(unitId) {
+            let u = tts.units[unitId];
+            if (!(await showBeautifulConfirm(`Убрать <b>${escapeHtml(u.name)}.wav</b> из сохранённых?<br><br>Файл уйдёт в «_Корзина».`, 'Убрать', 'Отмена'))) return;
+            tts = await pywebview.api.tts_unapprove(unitId);
+            ttsRender();
+            ttsRenderList();
+        }
+
+        function ttsHandleKey(e) {
+            let list = document.getElementById('ttsListOverlay');
+            if (list.style.display === 'flex') {
+                if (e.code === 'Escape') { e.preventDefault(); ttsCloseList(); }
+                return true;
+            }
+            if (e.repeat && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') { e.preventDefault(); return true; }
+            if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
+            if (e.code === 'Space') { e.preventDefault(); ttsTogglePlay(); }
+            else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); ttsApprove(); }
+            else if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); ttsStep(1); }
+            else if (e.code === 'ArrowLeft' || e.code === 'KeyA') { e.preventDefault(); ttsStep(-1); }
+            else if (e.code === 'Delete' || e.code === 'Backspace') { e.preventDefault(); ttsReject(); }
+            else if (e.code === 'KeyF') { e.preventDefault(); ttsOpenUnits('assign'); }
+            return true;
+        }
+
+        function ttsListSearchKey(e) {
+            if (e.key === 'Escape') { e.preventDefault(); ttsCloseList(); }
+            else if (e.key === 'Enter') {
+                e.preventDefault();
+                // В привязке первая строка — «Не фраза», берём первую настоящую.
+                let rows = [...document.querySelectorAll('#ttsList .tts-unit[onclick]')];
+                let first = ttsListMode === 'assign' ? rows[1] : rows[0];
+                if (first) first.click();
             }
         }

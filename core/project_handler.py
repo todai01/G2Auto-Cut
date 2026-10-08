@@ -385,6 +385,9 @@ class ProjectMixin:
         if not path or not os.path.isdir(path):
             return {"error": "Папка проекта больше не найдена на диске."}
 
+        if self.tts_is_project(path):
+            return {**self.tts_open_project(path), "tts": True}
+
         self.work_dir = path
         self.project_name = os.path.basename(path)
         project_state.apply(self, project_state.load(path))
