@@ -14,6 +14,8 @@ import time
 
 from pydub import AudioSegment
 
+from utils.wav_io import export_like
+
 EDITOR_RATE = 8000          # как SetProject: Rate=8000 в сборке через Audacity
 PEAK_BUCKET_MS = 10
 MIN_KEEP_MS = 40
@@ -393,7 +395,11 @@ class TimingEditorMixin:
                 target, name = path, os.path.basename(path)
             ext = os.path.splitext(target)[1].lstrip('.').lower() or 'wav'
             try:
-                audio.export(target, format=ext)
+                if ext == 'wav':
+                    # Та же разрядность/тип, что у исходной записи значения.
+                    export_like(audio, target, seg["path"])
+                else:
+                    audio.export(target, format=ext)
             except Exception as e:
                 return {"error": f"Не удалось сохранить «{name}»: {e}"}
 

@@ -36,6 +36,7 @@ from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
                              similarity)
 from core.ui_dialogs import ui_confirm
+from utils.wav_io import wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
 TTS_STATE_VERSION = 3     # 3: фразы ищутся в сплошном потоке слов, а не по паузам
@@ -264,59 +265,6 @@ def align_stream(words, units):
         expected = uid + 1
         i = j
     return found
-
-
-def _wav_layout(path):
-    """Где в WAV лежат формат и звук: (байты fmt, начало data, размер data,
-    байт на сэмпл-кадр, частота). None — не WAV / не разобрать."""
-    import struct
-    try:
-        with open(path, 'rb') as f:
-            head = f.read(12)
-            if len(head) < 12 or head[:4] != b'RIFF' or head[8:12] != b'WAVE':
-                return None
-            fmt, pos = None, 12
-            size_total = os.path.getsize(path)
-            while pos + 8 <= size_total:
-                f.seek(pos)
-                cid, size = struct.unpack('<4sI', f.read(8))
-                if cid == b'fmt ':
-                    fmt = f.read(size)
-                elif cid == b'data':
-                    if fmt is None or len(fmt) < 16:
-                        return None
-                    block = struct.unpack('<H', fmt[12:14])[0]
-                    rate = struct.unpack('<I', fmt[4:8])[0]
-                    size = min(size, size_total - pos - 8)
-                    return fmt, pos + 8, size, block, rate
-                pos += 8 + size + (size & 1)
-    except (OSError, struct.error):
-        return None
-    return None
-
-
-def wav_slice(src, dst, start_ms, end_ms):
-    """Вырезает кусок WAV без перекодирования: те же байты, та же частота,
-    разрядность и каналы, что в исходнике. False — если исходник не WAV."""
-    import struct
-    lay = _wav_layout(src)
-    if not lay:
-        return False
-    fmt, data_pos, data_size, block, rate = lay
-    if block <= 0 or rate <= 0:
-        return False
-    a = max(0, int(start_ms * rate / 1000)) * block
-    b = min(data_size // block, int(end_ms * rate / 1000)) * block
-    if b <= a:
-        return False
-    with open(src, 'rb') as f:
-        f.seek(data_pos + a)
-        data = f.read(b - a)
-    fmt_chunk = b'fmt ' + struct.pack('<I', len(fmt)) + fmt + (b'\0' if len(fmt) & 1 else b'')
-    body = b'WAVE' + fmt_chunk + b'data' + struct.pack('<I', len(data)) + data + (b'\0' if len(data) & 1 else b'')
-    with open(dst, 'wb') as f:
-        f.write(b'RIFF' + struct.pack('<I', len(body)) + body)
-    return True
 
 
 class TtsFlowMixin:

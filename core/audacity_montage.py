@@ -7,6 +7,7 @@ import webview
 from core.ui_dialogs import ui_alert, ui_toast
 from pydub import AudioSegment
 from utils.file_utils import FileUtils
+from utils.wav_io import export_like
 
 class MontageMixin:
     """Модуль работы с монтажным столом Audacity, склейкой и экспортом аудио."""
@@ -513,7 +514,7 @@ class MontageMixin:
                 try:
                     audio = AudioSegment.from_file(target_path).set_frame_rate(8000)
                     audio += AudioSegment.silent(duration=450, frame_rate=8000)
-                    audio.export(target_path, format="wav")
+                    export_like(audio, target_path, target_path)
                 except:
                     pass
 
@@ -556,7 +557,7 @@ class MontageMixin:
             try:
                 audio = AudioSegment.from_file(target_path).set_frame_rate(8000)
                 audio += AudioSegment.silent(duration=450, frame_rate=8000)
-                audio.export(target_path, format="wav")
+                export_like(audio, target_path, target_path)
             except:
                 pass
         return True
@@ -608,7 +609,7 @@ class MontageMixin:
             else:
                 target_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, 'Переменные'), save_name)
 
-            final_audio.export(target_path, format="wav")
+            export_like(final_audio, target_path, source_path)
 
             if self.phrases_data:
                 self.phrase_index += 1

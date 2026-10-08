@@ -6,6 +6,7 @@ import re
 import ctypes
 import webview
 from utils.file_utils import FileUtils
+from utils.wav_io import export_like
 from pydub import AudioSegment, silence
 from core import project_state
 
@@ -283,7 +284,7 @@ class VariablesMixin:
                     normalized_audio = chunk_audio.apply_gain(change_in_dbfs)
 
                     # Перезаписываем исходный файл новой, нормализованной версией
-                    normalized_audio.export(filepath, format="wav")
+                    export_like(normalized_audio, filepath, filepath)
 
                 if i % 5 == 0:
                     pct = int((i / total) * 100)
@@ -3686,7 +3687,7 @@ class VariablesMixin:
         try:
             merged = AudioSegment.from_file(path_a).set_frame_rate(8000) + \
                      AudioSegment.from_file(path_b).set_frame_rate(8000)
-            merged.export(path_a, format="wav")
+            export_like(merged, path_a, path_a)
         except Exception as e:
             return {"error": f"Не удалось склеить файлы: {e}"}
 

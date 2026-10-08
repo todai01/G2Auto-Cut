@@ -20,6 +20,7 @@ import webview
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
+from utils.wav_io import slice_or_export
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, score_candidates)
 
@@ -65,9 +66,10 @@ class AuditAsrMixin:
         for i, (a, b) in enumerate(ranges):
             if self._auto_check_stop:
                 break
-            piece = audio[max(0, a - AUDIT_CUT_PAD_MS):min(len(audio), b + AUDIT_CUT_PAD_MS)]
+            lo, hi = max(0, a - AUDIT_CUT_PAD_MS), min(len(audio), b + AUDIT_CUT_PAD_MS)
+            piece = audio[lo:hi]
             name = f"фраза_{i + 1:04d}.wav"
-            piece.export(os.path.join(out_dir, name), format="wav")
+            slice_or_export(path, os.path.join(out_dir, name), lo, hi, audio)
             chunks.append((name, piece))
             if i % 20 == 0:
                 self._audit_asr_push({"stage": "cut", "done": i + 1, "total": len(ranges)})

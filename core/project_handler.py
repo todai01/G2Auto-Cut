@@ -9,6 +9,7 @@ from pydub.silence import detect_nonsilent
 
 from core import project_state, recent_projects
 from core.ui_dialogs import ui_confirm, ui_toast
+from utils.wav_io import slice_or_export
 from core.variables_handler import SUM_TIER_ORDER
 
 try:
@@ -293,8 +294,9 @@ class ProjectMixin:
                 start_sec, end_sec = start_adjusted / 1000.0, end_adjusted / 1000.0
                 chunk_name_no_ext = f"фраза_{i + 1:04d}"
                 label_file.write(f"{start_sec}\t{end_sec}\t{chunk_name_no_ext}\n")
-                audio[start_adjusted:end_adjusted].export(os.path.join(chunks_dir, f"{chunk_name_no_ext}.wav"),
-                                                          format="wav")
+                # Байт в байт из исходника — без перекодирования.
+                slice_or_export(raw_filepath, os.path.join(chunks_dir, f"{chunk_name_no_ext}.wav"),
+                                start_adjusted, end_adjusted, audio)
 
                 percent = int(((i + 1) / len(nonsilent_ranges)) * 100)
                 try:
