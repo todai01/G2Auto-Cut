@@ -4432,6 +4432,9 @@ let isProcessing = false;
                 } else if (e.code === 'Escape') {
                     e.preventDefault();
                     closeCustomAlert(false);
+                } else {
+                    let alt = document.getElementById('customAlertAlt');
+                    if (alt && alt.style.display !== 'none' && e.code === alt.dataset.key) { e.preventDefault(); closeCustomAlert('alt'); }
                 }
                 return;
             }
@@ -4644,6 +4647,17 @@ let isProcessing = false;
 
         // Вопрос с двумя кнопками в том же окне: resolve(true) — «ok»,
         // resolve(false) — «cancel», крестик или Escape.
+        // Три варианта: → 'ok' (Enter), 'alt' (клавиша altKey), false (Esc / крестик).
+        async function showBeautifulChoice(message, okText, altText, altKey, cancelText = 'Отмена') {
+            let alt = document.getElementById('customAlertAlt');
+            alt.innerHTML = `${escapeHtml(altText)} <kbd>${altKey}</kbd>`;
+            alt.dataset.key = 'Key' + altKey.toUpperCase();
+            alt.style.display = '';
+            document.querySelector('#customAlertOverlay .custom-alert-box').classList.add('custom-alert-box--wide');
+            let r = await showBeautifulConfirm(message, okText, cancelText);
+            return r === 'alt' ? 'alt' : (r ? 'ok' : false);
+        }
+
         function showBeautifulConfirm(message, okText = 'ОК', cancelText = 'Отмена') {
             let ok = document.getElementById('customAlertOk');
             let cancel = document.getElementById('customAlertCancel');
@@ -4662,6 +4676,9 @@ let isProcessing = false;
             // Окно снова обычное «сообщение с ОК» для следующего раза.
             let cancel = document.getElementById('customAlertCancel');
             if (cancel) cancel.style.display = 'none';
+            let alt = document.getElementById('customAlertAlt');
+            if (alt) alt.style.display = 'none';
+            document.querySelector('#customAlertOverlay .custom-alert-box').classList.remove('custom-alert-box--wide');
             let ok = document.getElementById('customAlertOk');
             if (ok) ok.innerHTML = 'ОК <kbd>Enter</kbd>';
             // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
@@ -5892,10 +5909,13 @@ let isProcessing = false;
             }
             openTtsScreen(st);
             if (!st.has_takes) {
-                let ok = await showBeautifulConfirm(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
-                    + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>Теперь выберите сырую запись — нарежу её на дубли `
-                    + `и сверю каждый с таблицей.`, 'Выбрать запись', 'Позже');
-                if (ok) ttsLoadRecording();
+                let how = await showBeautifulChoice(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
+                    + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>`
+                    + `<b>Записать с микрофона</b> — покажу фразы по очереди, готовые сразу появятся на ленте.<br>`
+                    + `<b>Выбрать файл</b> — уже записанный сырой WAV: нарежу и сверю с таблицей.`,
+                    'Записать с микрофона', 'Выбрать файл', 'F', 'Позже');
+                if (how === 'ok') ttsToggleRec();
+                else if (how === 'alt') ttsLoadRecording();
             }
         }
 

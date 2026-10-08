@@ -2904,3 +2904,6 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-prompter.is-restart{ animation: ttsRestart .6s var(--ease); }
 @keyframes ttsRestart{ 30%{ background: var(--tint-var); box-shadow: 0 0 0 1px rgba(238,172,62,0.5); } }
 @media (prefers-reduced-motion: reduce){ .tts-prompter__text.is-in, .tts-prompter.is-restart{ animation: none; } }
+
+/* Окно с тремя вариантами */
+.custom-alert-box.custom-alert-box--wide{ max-width: 560px; }
