@@ -896,7 +896,11 @@
                 </button>
 
                 <div id="progressContainer" class="progress-panel">
-                    <div id="progressText" class="progress-text">Анализ...</div>
+                    <div class="progress-head">
+                        <span class="progress-spinner" aria-hidden="true"></span>
+                        <div id="progressText" class="progress-text">Анализ...</div>
+                        <span id="progressPct" class="progress-pct"></span>
+                    </div>
                     <progress id="progressBar" max="100"></progress>
                 </div>
 

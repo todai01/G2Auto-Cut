@@ -2630,3 +2630,43 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 }
 .option-card.loaded .option-clear{ display: inline-flex; }
 .option-clear:hover{ color: var(--accent-trash); border-color: var(--accent-trash); background: var(--tint-trash); }
+
+/* --- Окно загрузки в меню — в стиле карточек --- */
+.stage-loading .progress-panel{
+    margin-top: var(--space-2); padding: 14px 16px;
+    background: var(--panel); border: 1px solid var(--border-soft); border-left: 1px solid var(--border-soft);
+    border-radius: var(--radius-md); box-shadow: none;
+    animation: menuRise .4s cubic-bezier(.2,.7,.3,1) backwards;
+}
+.progress-head{ display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.stage-loading .progress-text{
+    flex: 1; min-width: 0; margin: 0; font-family: var(--font-ui); font-size: var(--fs-sm); font-weight: 600;
+    letter-spacing: 0; text-transform: none; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.progress-pct{ font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
+.progress-spinner{
+    flex: none; width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid rgba(77,149,234,.25); border-top-color: var(--accent-primary);
+    animation: progSpin .8s linear infinite;
+}
+@keyframes progSpin{ to{ transform: rotate(360deg); } }
+.stage-loading .progress-panel progress{
+    display: block; width: 100%; height: 4px; border: 0; border-radius: 999px; overflow: hidden;
+    background: rgba(255,255,255,.05);
+}
+.stage-loading .progress-panel progress::-webkit-progress-bar{ background: rgba(255,255,255,.05); border-radius: 999px; }
+.stage-loading .progress-panel progress::-webkit-progress-value{
+    border-radius: 999px; transition: width .3s ease;
+    background: linear-gradient(90deg, var(--accent-primary) 0%, #8bbcf5 50%, var(--accent-primary) 100%) 0 0 / 200% 100%;
+    animation: progShine 1.6s linear infinite;
+}
+/* Пока процента нет — «бегущая» полоса */
+.stage-loading .progress-panel progress:indeterminate::-webkit-progress-bar{
+    background: linear-gradient(90deg, transparent, rgba(77,149,234,.6), transparent) 0 0 / 40% 100% no-repeat, rgba(255,255,255,.05);
+    animation: progSlide 1.2s ease-in-out infinite;
+}
+@keyframes progShine{ to{ background-position: -200% 0; } }
+@keyframes progSlide{ from{ background-position: -40% 0, 0 0; } to{ background-position: 140% 0, 0 0; } }
+@media (prefers-reduced-motion: reduce){
+    .progress-spinner, .stage-loading .progress-panel progress::-webkit-progress-value{ animation: none; }
+}

@@ -257,6 +257,8 @@ let isProcessing = false;
             document.getElementById('progressContainer').style.display = 'block';
             document.getElementById('progressBar').value = p;
             document.getElementById('progressText').innerText = t;
+            let pct = document.getElementById('progressPct');
+            if (pct) pct.innerText = (p > 0 && p <= 100) ? `${Math.round(p)}%` : '';
         }
 
         // ===== ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ =====
