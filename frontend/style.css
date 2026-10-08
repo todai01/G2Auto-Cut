@@ -2869,3 +2869,22 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-vval__text.is-custom{ color: var(--accent-info); }
 .tts-vval__play{ border: none; background: none; color: var(--accent-good); cursor: pointer; font-size: 12px; padding: 0; }
 .tts-vval__dot{ width: 7px; height: 7px; border-radius: 50%; background: var(--border); justify-self: center; }
+
+/* Живая запись */
+.btn-ghost--rec{ color: var(--accent-trash); border-color: rgba(239,91,80,0.4); }
+.btn-ghost--rec:hover{ border-color: var(--accent-trash); background: var(--tint-trash); }
+.btn-ghost--rec.is-recording{ background: var(--accent-trash); color: #fff; border-color: var(--accent-trash); }
+.tts-recbar{
+    flex: none; display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 14px;
+    background: var(--panel); border: 1px solid rgba(239,91,80,0.45); border-radius: var(--radius-md); box-shadow: var(--shadow-panel);
+}
+.tts-recbar__dot{ width: 10px; height: 10px; border-radius: 50%; background: var(--accent-trash); box-shadow: 0 0 8px var(--accent-trash); animation: ttsRecPulse 1.2s ease-in-out infinite; }
+@keyframes ttsRecPulse{ 50%{ opacity: .35; } }
+.tts-recbar__time{ font-family: var(--font-mono); font-weight: 700; font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
+.tts-recbar__meter{ width: 160px; height: 6px; border-radius: 3px; background: var(--screen); overflow: hidden; }
+.tts-recbar__meter span{ display: block; height: 100%; width: 0; background: var(--accent-good); transition: width .12s linear; }
+.tts-recbar__meter span.is-hot{ background: var(--accent-trash); }
+.tts-recbar__info{ font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-take.is-new{ animation: ttsTakeIn .5s var(--ease); }
+@keyframes ttsTakeIn{ from{ opacity: 0; transform: translateY(-6px) scale(.96); } }
+@media (prefers-reduced-motion: reduce){ .tts-recbar__dot, .tts-take.is-new{ animation: none; } }

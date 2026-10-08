@@ -37,7 +37,7 @@ from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              similarity)
 from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
-from utils.wav_io import export_like, wav_concat, wav_layout, wav_slice
+from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
 TTS_STATE_VERSION = 3     # 3: фразы ищутся в сплошном потоке слов, а не по паузам
@@ -226,7 +226,7 @@ def _first_word_ok(word, first):
     return bool(word) and bool(first) and (word[:3] == first[:3] or _ratio(word, first) >= 0.6)
 
 
-def align_stream(words, units):
+def align_stream(words, units, expected=0):
     """Ищет фразы таблицы в сплошном потоке распознанных слов — не важно,
     как запись разрезалась по паузам (фразы часто слипаются в один кусок).
     words: [(слово, начало_с, конец_с)] по всей записи.
@@ -238,7 +238,7 @@ def align_stream(words, units):
         t = _lat_to_cyr(_norm(u["text"]))
         if t:
             targets.append((u["id"], t, len(t.split()), t.split()[0]))
-    found, i, expected = [], 0, 0
+    found, i = [], 0
     while i < len(wn):
         cands = []
         for uid, t, n, first in targets:
@@ -393,6 +393,10 @@ class TtsFlowMixin:
         old = data.get("v") != TTS_STATE_VERSION
         st.update(data)
         st["work_dir"] = path
+        # Запись могла оборваться (закрыли программу во время записи).
+        for raw in {t.get("raw") for t in st["takes"]} | {st.get("raw_path")}:
+            if raw and os.path.exists(raw):
+                fix_wav_header(raw)
         if old:
             # Проект старого формата (цепочка = один файл): перечитываем
             # таблицу, а дубли нужно нарезать заново — привязка другая.
@@ -418,6 +422,8 @@ class TtsFlowMixin:
         if not picked:
             return {"error": "cancel"}
         path = picked if isinstance(picked, str) else picked[0]
+        if getattr(self, '_tts_rec', None):
+            return {"error": "Сейчас идёт запись с микрофона — сначала остановите её."}
         if st["takes"] and not ui_confirm("Запись уже нарезана и проверена. Нарезать заново?<br><br>"
                                           "Сохранённые фразы останутся на месте.", "Нарезать заново", "Отмена"):
             return {"error": "cancel"}
@@ -494,17 +500,20 @@ class TtsFlowMixin:
         for k, (name, piece, a) in enumerate(pieces):
             off = max(0, a - TTS_CUT_PAD_MS) / 1000.0
             stream += [(w, off + ws, off + we, k) for w, ws, we in words[k]]
-        found = align_stream(stream, units)
+        spans = self._tts_spans(stream, align_stream(stream, units))
+        return self._tts_cut_spans(audio, 0, stream, spans, raw_path, chunks_dir, 1)
 
-        spans = []   # (начало_мс, конец_мс, данные дубля)
+    @staticmethod
+    def _tts_spans(stream, found):
+        """Найденные фразы + неопознанная речь (≥4 слов подряд — вдруг это
+        фраза, которую распознавание исказило; привяжете вручную)."""
+        spans = []
         used = [False] * len(stream)
         for f in found:
             i, j = f["i"], f["j"]
             for x in range(i, j):
                 used[x] = True
             spans.append((i, j, {"unit": f["unit"], "score": f["score"], "status": f["status"]}))
-        # Речь, не похожая ни на одну фразу (≥4 слов подряд), — тоже дубль:
-        # вдруг это фраза, которую распознавание исказило. Привяжете вручную.
         x = 0
         while x < len(stream):
             if used[x]:
@@ -517,24 +526,33 @@ class TtsFlowMixin:
                 spans.append((x, y, {"unit": None, "score": 0.0, "status": "none"}))
             x = y
         spans.sort(key=lambda sp: sp[0])
+        return spans
 
+    def _tts_cut_spans(self, audio, offset_ms, stream, spans, raw_path, chunks_dir, first_n, push=True):
+        """Вырезает каждую фразу из исходника байт в байт. audio — анализный
+        звук, начинающийся с offset_ms записи (для поиска тишины); время слов
+        в stream — от начала записи."""
         takes = []
+        end_s = (offset_ms + len(audio)) / 1000.0
+        rel = lambda sec: sec - offset_ms / 1000.0
         for n, (i, j, info) in enumerate(spans):
             first_s, last_e = stream[i][1], stream[j - 1][2]
-            prev_e = stream[i - 1][2] if i > 0 else 0.0
-            next_s = stream[j][1] if j < len(stream) else len(audio) / 1000.0
-            lo = self._tts_quiet_point(audio, *self._tts_edge_window(max(prev_e, first_s - LEAD_S), first_s + 0.03))
-            hi = self._tts_quiet_point(audio, *self._tts_edge_window(last_e - 0.03, min(next_s, last_e + LEAD_S)))
+            prev_e = stream[i - 1][2] if i > 0 else offset_ms / 1000.0
+            next_s = stream[j][1] if j < len(stream) else end_s
+            lo = offset_ms + self._tts_quiet_point(audio, *self._tts_edge_window(
+                rel(max(prev_e, first_s - LEAD_S)), rel(first_s + 0.03)))
+            hi = offset_ms + self._tts_quiet_point(audio, *self._tts_edge_window(
+                rel(last_e - 0.03), rel(min(next_s, last_e + LEAD_S))))
             if hi - lo < 150:
                 lo, hi = int(first_s * 1000), int(last_e * 1000) + 60
-            name = f"{n + 1:04d}.wav"
+            name = f"{first_n + n:04d}.wav"
             # Копия байт из исходника — без перекодирования, качество не трогаем.
             if not wav_slice(raw_path, os.path.join(chunks_dir, name), lo, hi):
-                audio[lo:hi].export(os.path.join(chunks_dir, name), format="wav")
+                audio[lo - offset_ms:hi - offset_ms].export(os.path.join(chunks_dir, name), format="wav")
             takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo, "orig": [lo, hi],
-                          "heard": ''.join(w[0] for w in stream[i:j]).strip(), "listened": False,
-                          "chunk": n + 1, **info})
-            if n % 20 == 0:
+                          "raw": raw_path, "heard": ''.join(w[0] for w in stream[i:j]).strip(), "listened": False,
+                          "chunk": first_n + n, **info})
+            if push and n % 20 == 0:
                 self._tts_push({"stage": "save", "done": n + 1, "total": len(spans)})
         return takes
 
@@ -813,6 +831,10 @@ class TtsFlowMixin:
     # если автонарезка срезала слово, край можно просто вытянуть наружу.
     # Все правки собираются из исходной записи байт в байт.
 
+    def _tts_raw(self, t):
+        """Исходная запись дубля (у живой записи их может быть несколько)."""
+        return (t or {}).get("raw") or self._tts().get("raw_path")
+
     @staticmethod
     def _tts_orig(t):
         """Границы дубля, как его нарезала программа (до правок)."""
@@ -840,24 +862,25 @@ class TtsFlowMixin:
 
     def tts_editor_load(self, i):
         st = self._tts()
-        if not (0 <= i < len(st["takes"])) or not st.get("raw_path") or not os.path.exists(st["raw_path"]):
+        t = st["takes"][i] if 0 <= i < len(st["takes"]) else None
+        raw = self._tts_raw(t) if t else None
+        if not raw or not os.path.exists(raw):
             return {"error": "Нет исходной записи для этого дубля."}
-        t = st["takes"][i]
         ed = t.get("edit") or {}
         orig = self._tts_orig(t)
         a, b = ed.get("a", orig[0]), ed.get("b", orig[1])
         total = getattr(self, '_tts_raw_len', None)
-        if not total or total[0] != st["raw_path"]:
-            lay = wav_layout(st["raw_path"])
-            length = int(lay[2] / lay[3] * 1000 / lay[4]) if lay else len(AudioSegment.from_file(st["raw_path"]))
-            total = self._tts_raw_len = (st["raw_path"], length)
+        if not total or total[0] != raw or getattr(self, '_tts_rec', None):
+            lay = wav_layout(raw)
+            length = int(lay[2] / lay[3] * 1000 / lay[4]) if lay else len(AudioSegment.from_file(raw))
+            total = self._tts_raw_len = (raw, length)
         lo, hi = max(0, a - EDIT_CONTEXT_MS), min(total[1], b + EDIT_CONTEXT_MS)
         import tempfile
         tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_ctx_{os.getpid()}.wav")
-        if wav_slice(st["raw_path"], tmp, lo, hi):
+        if wav_slice(raw, tmp, lo, hi):
             seg = AudioSegment.from_file(tmp)
         else:
-            seg = AudioSegment.from_file(st["raw_path"])[lo:hi]
+            seg = AudioSegment.from_file(raw)[lo:hi]
         seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
         samples = seg.get_array_of_samples()
         per = 16000 * EDIT_BUCKET_MS // 1000
@@ -880,8 +903,8 @@ class TtsFlowMixin:
             return {"error": "Слишком короткий кусок."}
         ranges = self._tts_take_ranges(t, a, b, cuts)
         dst = os.path.join(st["work_dir"], t["file"])
-        if not wav_concat(st["raw_path"], dst, ranges):
-            src = AudioSegment.from_file(st["raw_path"])
+        if not wav_concat(self._tts_raw(t), dst, ranges):
+            src = AudioSegment.from_file(self._tts_raw(t))
             out = sum((src[s:e] for s, e in ranges[1:]), src[ranges[0][0]:ranges[0][1]])
             out.export(dst, format="wav")
         t["edit"] = {"a": a, "b": b, "cuts": cuts}
@@ -902,7 +925,7 @@ class TtsFlowMixin:
         st = self._tts()
         t = st["takes"][i]
         orig = self._tts_orig(t)
-        wav_slice(st["raw_path"], os.path.join(st["work_dir"], t["file"]), orig[0], orig[1])
+        wav_slice(self._tts_raw(t), os.path.join(st["work_dir"], t["file"]), orig[0], orig[1])
         t["ms"] = orig[1] - orig[0]
         t["listened"] = False
         t.pop("edit", None)
@@ -952,7 +975,7 @@ class TtsFlowMixin:
         t = st["takes"][i]
         dst = os.path.join(st["work_dir"], t["file"])
         seg = AudioSegment.from_file(tmp)
-        export_like(seg, dst, st["raw_path"])
+        export_like(seg, dst, self._tts_raw(t))
         t["ms"] = len(seg)
         t["listened"] = False
         t["audacity"] = True

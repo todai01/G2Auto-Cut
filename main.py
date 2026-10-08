@@ -17,6 +17,7 @@ from core.timing_editor import TimingEditorMixin
 from core.auto_check import AutoCheckMixin
 from core.audit_asr import AuditAsrMixin
 from core.tts_flow import TtsFlowMixin
+from core.tts_live import TtsLiveMixin
 from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
@@ -30,7 +31,7 @@ from utils.ffmpeg_setup import ensure_ffmpeg
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin):
     def __init__(self):
         super().__init__()
 

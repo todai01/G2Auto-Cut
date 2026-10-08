@@ -148,3 +148,22 @@ def wav_concat(src, dst, ranges_ms):
         return False
     _write_wav(dst, fmt, b''.join(out))
     return True
+
+
+def fix_wav_header(path):
+    """Запись оборвалась (программу закрыли во время записи) — в шапке
+    осталось «до конца файла». Проставляем настоящий размер."""
+    try:
+        with open(path, 'r+b') as f:
+            head = f.read(44)
+            if len(head) < 44 or head[:4] != b'RIFF' or head[36:40] != b'data':
+                return
+            size = struct.unpack('<I', head[40:44])[0]
+            real = os.path.getsize(path) - 44
+            if size != real and size >= 0xFFFFFFFF - 64:
+                block = struct.unpack('<H', head[32:34])[0] or 1
+                real -= real % block
+                f.seek(4); f.write(struct.pack('<I', 36 + real))
+                f.seek(40); f.write(struct.pack('<I', real))
+    except OSError:
+        pass

@@ -5918,6 +5918,7 @@ let isProcessing = false;
                     `<button type="button" class="audit-category-item" data-i="${i}">${escapeHtml(s.title)}
                         <span class="audit-choice-desc">${s.lang.toUpperCase()} · ${s.units} фраз</span></button>`).join('');
                 document.querySelectorAll('#ttsList [data-i]').forEach(b => b.onclick = () => {
+                    ttsListOnClose = null;
                     ttsCloseList(); resolve(sheets[+b.dataset.i].title);
                 });
                 ttsListOnClose = () => resolve(null);
@@ -5965,6 +5966,12 @@ let isProcessing = false;
                 ttsRender();
                 if (p.error === 'need_model') { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
                 showBeautifulAlert('⚠️ ' + escapeHtml(p.error));
+            } else if (p.stage === 'live') {
+                ttsLiveUpdate(p.state, p.added);
+            } else if (p.stage === 'live_done') {
+                ttsRecStopped(p.state, p.error);
+            } else if (p.stage === 'live_error') {
+                showToast(p.error);
             } else if (p.stage === 'done') {
                 tts = p.state;
                 ttsRender();
@@ -6629,6 +6636,7 @@ let isProcessing = false;
             else if (e.code === 'Delete' || e.code === 'Backspace') { e.preventDefault(); ttsReject(); }
             else if (e.code === 'KeyF') { e.preventDefault(); ttsOpenUnits('assign'); }
             else if (e.code === 'KeyX') { e.preventDefault(); ttsEditorCut(); }
+            else if (e.code === 'KeyR') { e.preventDefault(); ttsToggleRec(); }
             return true;
         }
 
@@ -6640,5 +6648,120 @@ let isProcessing = false;
                 let rows = [...document.querySelectorAll('#ttsList .tts-unit[onclick]')];
                 let first = ttsListMode === 'assign' ? rows[1] : rows[0];
                 if (first) first.click();
+            }
+        }
+
+
+        // ===== TTS: живая запись с микрофона =====
+        // Читаете фразы — в паузах программа распознаёт сказанное, находит
+        // фразы таблицы и выкладывает готовые дубли на ленту. Сдавать (Space,
+        // Enter) можно прямо во время записи — лучше в наушниках.
+        let ttsRec = { on: false, starting: false, timer: null };
+        const TTS_MIC_KEY = 'gvox_tts_mic';
+
+        async function ttsToggleRec() {
+            if (ttsRec.starting) return;
+            if (ttsRec.on) { ttsRecStop(); return; }
+            if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
+            let list = await pywebview.api.tts_rec_devices();
+            if (list && list.error) { showBeautifulAlert('⚠️ ' + escapeHtml(list.error).replace(/\n/g, '<br>')); return; }
+            let device = await ttsPickMic(list.devices);
+            if (device === null) return;
+            ttsRec.starting = true;
+            ttsSetRecUi(true, 'Включаю микрофон и распознавание…');
+            let res;
+            try { res = await pywebview.api.tts_rec_start(device); } finally { ttsRec.starting = false; }
+            if (!res || res.error) {
+                ttsSetRecUi(false);
+                if (res && res.error === 'need_model') { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
+                if (res && res.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(res.error));
+                return;
+            }
+            ttsRec.on = true;
+            ttsRec.device = res.device;
+            ttsSetRecUi(true);
+            clearInterval(ttsRec.timer);
+            ttsRec.timer = setInterval(ttsRecPoll, 200);
+        }
+
+        // Микрофон: один — сразу он; несколько — выбор, последний выбранный запоминаем.
+        function ttsPickMic(devices) {
+            let saved = null;
+            try { saved = localStorage.getItem(TTS_MIC_KEY); } catch (e) {}
+            if (devices.length === 1) return Promise.resolve(devices[0].id);
+            let known = devices.find(d => String(d.id) === saved);
+            if (known && ttsRec.askedOnce) return Promise.resolve(known.id);
+            return new Promise(resolve => {
+                ttsOpenListOverlay('Какой микрофон?', false);
+                let order = [...devices].sort((a, b) => (String(b.id) === saved) - (String(a.id) === saved) || b.default - a.default);
+                document.getElementById('ttsList').innerHTML = order.map((d, i) =>
+                    `<button type="button" class="audit-category-item ${i === 0 ? 'is-first' : ''}" data-id="${d.id}">${escapeHtml(d.name)}
+                        <span class="audit-choice-desc">${String(d.id) === saved ? 'выбран в прошлый раз' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`).join('');
+                document.querySelectorAll('#ttsList [data-id]').forEach(b => b.onclick = () => {
+                    try { localStorage.setItem(TTS_MIC_KEY, b.dataset.id); } catch (e) {}
+                    ttsRec.askedOnce = true;
+                    ttsListOnClose = null;
+                    ttsCloseList(); resolve(+b.dataset.id);
+                });
+                ttsListOnClose = () => resolve(null);
+            });
+        }
+
+        function ttsSetRecUi(on, info) {
+            document.getElementById('ttsRecBar').style.display = on ? 'flex' : 'none';
+            let btn = document.getElementById('ttsRecBtn');
+            btn.classList.toggle('is-recording', on);
+            btn.innerHTML = on ? '■ Стоп <kbd>R</kbd>' : '● Записывать <kbd>R</kbd>';
+            if (info !== undefined) document.getElementById('ttsRecInfo').innerText = info;
+        }
+
+        async function ttsRecPoll() {
+            let s = await pywebview.api.tts_rec_status();
+            if (!s || !s.recording) return;
+            let sec = Math.floor(s.seconds);
+            document.getElementById('ttsRecTime').innerText = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+            // −60…0 дБ → 0…100%; выше −3 дБ — красный (перегруз).
+            let pct = Math.max(0, Math.min(100, (s.level_db + 60) / 60 * 100));
+            let lvl = document.getElementById('ttsRecLevel');
+            lvl.style.width = pct + '%';
+            lvl.classList.toggle('is-hot', s.level_db > -3);
+            document.getElementById('ttsRecInfo').innerText = `${s.device} · найдено фраз: ${s.added}`
+                + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
+            if (s.error) showToast('Запись остановилась: ' + s.error);
+        }
+
+        async function ttsRecStop() {
+            clearInterval(ttsRec.timer);
+            ttsRec.on = false;
+            document.getElementById('ttsRecInfo').innerText = 'Останавливаю — дораспознаю последний кусок…';
+            document.getElementById('ttsRecBtn').innerHTML = '… <kbd>R</kbd>';
+            await pywebview.api.tts_rec_stop();
+        }
+
+        function ttsRecStopped(state, error) {
+            clearInterval(ttsRec.timer);
+            ttsRec.on = false;
+            ttsSetRecUi(false);
+            if (state) ttsLiveUpdate(state, 0);
+            if (error) showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error));
+            else showToast('Запись сохранена в папку «Записи»');
+        }
+
+        // Новые дубли во время записи: не сбиваем то, что сейчас слушаете.
+        function ttsLiveUpdate(state, added) {
+            let keep = tts && tts.takes.length ? tts.index : null;
+            let busy = ttsPlayingIdx >= 0 || (keep !== null && tts.takes[keep] && !tts.takes[keep].unit_saved && !tts.takes[keep].rejected);
+            tts = state;
+            if (busy && keep !== null && keep < tts.takes.length) tts.index = keep;
+            ttsRenderRail();
+            if (!busy) { ttsRenderCurrent(); ttsRenderAssembly(); }
+            else {
+                document.getElementById('ttsStatSaved').innerText = tts.stats.saved;
+                let num = document.querySelector('#ttsCurrent .tts-current__num');
+                if (num) num.innerText = `дубль ${tts.index + 1} / ${tts.takes.length}`;
+            }
+            if (added) {
+                let rail = document.getElementById('ttsRail');
+                rail.querySelectorAll('.tts-take').forEach((el, k) => { if (k >= tts.takes.length - added) el.classList.add('is-new'); });
             }
         }

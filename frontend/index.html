@@ -1350,7 +1350,8 @@
             <div class="header-actions">
                 <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadExcel()" title="Таблица с фразами (лист с колонкой &lt;phrase&gt;) и листами переменных">Таблица</button>
-                <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Сырой WAV: нарежу на дубли и сверю каждый с таблицей">Запись</button>
+                <button class="btn-ghost btn-ghost--rec" id="ttsRecBtn" onclick="ttsToggleRec()" title="Записывать с микрофона: готовые фразы появляются на ленте прямо во время записи">● Записывать <kbd>R</kbd></button>
+                <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
             </div>
             <div class="tts-title">
@@ -1363,6 +1364,15 @@
                 <button class="btn-ghost btn-alert btn-ghost--compact" onclick="ttsOpenUnits('missing')">Не найдено: <span id="ttsStatMissing">0</span></button>
             </div>
         </header>
+
+        <div class="tts-recbar" id="ttsRecBar" style="display:none">
+            <span class="tts-recbar__dot"></span>
+            <span class="tts-recbar__time" id="ttsRecTime">00:00</span>
+            <span class="tts-recbar__meter"><span id="ttsRecLevel"></span></span>
+            <span class="tts-recbar__info" id="ttsRecInfo"></span>
+            <span class="tts-ed__spacer"></span>
+            <button class="btn-ghost btn-ghost--compact" onclick="ttsToggleRec()">Стоп <kbd>R</kbd></button>
+        </div>
 
         <div class="tts-rail-wrap">
             <div class="tts-rail" id="ttsRail"></div>
@@ -1392,6 +1402,7 @@
         </div>
 
         <div class="tts-keys">
+            <span><kbd>R</kbd> запись</span>
             <span><kbd>Space</kbd> слушать</span>
             <span><kbd>Enter</kbd> сохранить</span>
             <span><kbd>&#8592;</kbd><kbd>&#8594;</kbd> дубли</span>
