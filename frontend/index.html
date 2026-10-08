@@ -1070,6 +1070,7 @@
                                                 <option value="tr">TR</option>
                                                 <option value="auto">Авто</option>
                                             </select>
+                                            <label class="sum-asr__nav" title="Ожидаемое значение нашлось автопроверкой — сразу перейти к этому дублю"><input type="checkbox" id="sumAutoNav" checked> Автонавигация</label>
                                             <button type="button" class="sum-asr__btn" id="sumAsrBtn" onclick="sumAutoCheckToggle()"
                                                     title="Распознать выделенные дубли (или все неразобранные во всём списке) и сверить с выбранной категорией. Идёт в фоне">Автопроверка</button>
                                         </span>
@@ -1117,7 +1118,7 @@
                                     </div>
                                 </details>
 
-                                <div class="action-note">Мышью: перетащите дубль в категорию · клик — слушать · Ctrl/Shift — несколько · × на записи — убрать брак · в сборке тяните ручки краёв, протяните по волне и Del — вырезать середину.<br>Клавиши: <kbd>&uarr;</kbd><kbd>&darr;</kbd> категория · <kbd>Z</kbd> текущий дубль в неё · <kbd>X</kbd> отменить · <kbd>Del</kbd> убрать запись / вырезать выделенное · <kbd>P</kbd> слушать сборку · <kbd>Enter</kbd> сохранить эталон</div>
+                                <button type="button" class="sum-help-btn" onclick="sumShowHelp()" title="Мышь и клавиши режима «Суммы»"><span class="btn-help__icon">?</span>Подсказки по управлению</button>
                             </div>
                         </div>
 

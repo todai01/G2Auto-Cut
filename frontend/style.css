@@ -2585,3 +2585,38 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
 .custom-alert-actions{ display: flex; gap: var(--space-2); }
 .custom-alert-actions .custom-alert-btn{ flex: 1; }
 .custom-alert-actions .custom-alert-btn{ white-space: nowrap; padding-left: 12px; padding-right: 12px; }
+
+/* --- «Суммы»: лишнее снизу скрыто (навигация есть в ленте сверху) --- */
+body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ display: none; }
+.sum-help-btn{
+    display: inline-flex; align-items: center; gap: 8px; margin: 10px auto 0; padding: 6px 12px 6px 8px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-soft); background: transparent;
+    color: var(--text-dim); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+}
+.sum-help-btn:hover{ border-color: var(--border); background: var(--panel); color: var(--text); }
+.sum-help-btn:hover .btn-help__icon{ border-color: var(--accent-primary); color: var(--accent-primary); }
+
+/* «×» на метке значения у карточки дубля */
+.sum-dub__tag{ position: relative; }
+.sum-dub__tag-x{
+    display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+    width: 15px; height: 15px; margin-left: 5px; padding: 0; border-radius: 50%;
+    border: 1px solid currentColor; background: transparent; color: inherit; opacity: .6;
+    font-size: 11px; line-height: 1; cursor: pointer;
+}
+.sum-dub__tag-x:hover{ opacity: 1; color: var(--accent-trash); border-color: var(--accent-trash); background: var(--tint-trash); }
+
+/* Автонавигация: чип «где услышано» в карточке категории */
+.sum-cat__asr-match{
+    align-self: flex-start; margin-top: 6px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid rgba(238,172,62,.45); background: var(--tint-var); color: var(--accent-var);
+    font-family: var(--font-mono); font-size: 11.5px; font-weight: 700;
+}
+.sum-cat__asr-match.is-sure{ border-color: rgba(47,191,125,.5); background: var(--tint-good); color: var(--accent-good); }
+.sum-cat__asr-match:hover{ filter: brightness(1.15); }
+.sum-asr__nav{ display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim); cursor: pointer; margin-right: 8px; }
+.sum-asr__nav input{ margin: 0; accent-color: var(--accent-primary); color-scheme: dark; }
+
+/* Какая зона слушается по Space */
+.sum-dubs, .sum-editor{ transition: box-shadow .2s ease; }
+.sum-dubs.is-space-zone, .sum-editor.is-space-zone{ box-shadow: inset 0 0 0 1px rgba(77,149,234,.35); border-radius: var(--radius-md); }

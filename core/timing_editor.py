@@ -400,12 +400,17 @@ class TimingEditorMixin:
             if seg["saveable"]:
                 tier_raw = raw_files.get(tier, [])
                 if path in tier_raw:
-                    # Сырая запись использована — убираем из категории.
+                    # Сырая запись использована — убираем из категории; метка
+                    # на исходном дубле теперь указывает на эталон.
+                    src = (getattr(self, 'sum_raw_sources', None) or {}).get(path)
                     try:
                         os.remove(path)
                     except OSError:
                         pass
                     tier_raw.remove(path)
+                    if src:
+                        self._sum_forget_source(path)
+                        self._sum_remember_source(target, src['source'], tier)
                 elif seg.get("override"):
                     # Дубль из ленты — сам файл не трогаем, но помечаем
                     # его разобранным, чтобы было видно на карточке.

@@ -2055,6 +2055,7 @@ let isProcessing = false;
         // от прежнего разделения на «этапы» — см. variables_handler.py).
         let lastSumState = null;
         function renderSumPanel(sumState) {
+            if (!document.querySelector('.is-space-zone')) setTimeout(() => sumSetSpaceZone(sumSpaceZone), 0);
             if (!sumState) return;
             lastSumState = sumState;
             let logic1Btn = document.getElementById('sumLogic1Btn');
@@ -2268,6 +2269,18 @@ let isProcessing = false;
                 expectBox.appendChild(select);
                 tile.appendChild(expectBox);
 
+                // Автонавигация: дубль, где автопроверка услышала ожидаемое.
+                let am = info.asr_match;
+                if (am) {
+                    let chip = sumEl('button', 'sum-cat__asr-match' + (am.confident ? ' is-sure' : ''),
+                        `◎ ${(am.name.match(/(\d+)\s*$/) || [, am.name])[1]} · ${Math.round(am.score * 100)}%`);
+                    chip.type = 'button';
+                    chip.title = `Автопроверка услышала «${info.expected_next}» в дубле ${am.name}. Клик — перейти к нему и послушать`;
+                    chip.addEventListener('click', e => { e.stopPropagation(); sumFocusDub(am.index); });
+                    tile.appendChild(chip);
+                    sumAutoNavigate(tier, info.expected_next, am);
+                }
+
                 // Записанное — чипы: клик слушать, × убрать (брак).
                 let recs = sumEl('div', 'sum-cat__recs');
                 if (!items.length) recs.appendChild(sumEl('span', 'sum-cat__empty', 'перетащите дубль сюда'));
@@ -2361,9 +2374,21 @@ let isProcessing = false;
                 (it.tier_keys || []).forEach((k, n) => {
                     // Видно, какое значение получил дубль, а не только категорию.
                     let value = (it.values || [])[n];
+                    let rec = (it.assigned || [])[n];
                     let tag = sumEl('span', 'sum-dub__tag', value || it.tiers[n]);
-                    tag.title = `${it.tiers[n]}${value ? ': ' + value : ''}`;
+                    tag.title = `${it.tiers[n]}${value ? ': ' + value : ''}${rec && rec.checked ? ' — эталон в «Проверенных»' : ''}`;
                     tag.style.setProperty('--tier-accent', sumTierAccent(k));
+                    if (rec && rec.path) {
+                        // Ошиблись — «×» отменяет запись: сырую убирает как брак,
+                        // эталон из «Проверенных» уносит в _Корзина проекта.
+                        let x = sumEl('button', 'sum-dub__tag-x', '×');
+                        x.type = 'button';
+                        x.title = rec.checked ? 'Убрать этот эталон из «Проверенных» (в _Корзина) — значение снова будет ожидаться'
+                                              : 'Убрать эту запись из категории (брак) — значение снова будет ожидаться';
+                        x.addEventListener('click', e => { e.stopPropagation(); sumUnassign(rec.tier, rec.path, value); });
+                        x.addEventListener('dblclick', e => e.stopPropagation());
+                        tag.appendChild(x);
+                    }
                     tags.appendChild(tag);
                 });
                 card.appendChild(tags);
@@ -2599,6 +2624,70 @@ let isProcessing = false;
         async function sumSelectedToAudacity() {
             if (!sumDubSel.size) return;
             await sumDubsToAudacity([...sumDubSel].sort((a, b) => a - b));
+        }
+        function sumShowHelp() {
+            showBeautifulAlert('ℹ️ <b>Управление в «Суммах»</b><br><br>'
+                + '<b>Мышью:</b> перетащите дубль в категорию · клик — слушать · Ctrl/Shift — несколько · '
+                + '× на записи — убрать брак · × на метке дубля — отменить записанное (и эталон) · '
+                + 'в сборке тяните ручки краёв, протяните по волне и Del — вырезать середину.<br><br>'
+                + '<b>Клавиши:</b> ↑↓ категория · Z текущий дубль в неё · X отменить · Del убрать запись / вырезать выделенное · '
+                + 'Space — слушать: после клика по дублям — дубль, после клика по «Сборке» — сборку с начала · '
+                + 'P слушать сборку · Enter сохранить эталон.');
+        }
+        let sumSpaceZone = 'dubs';
+        function sumSetSpaceZone(zone) {
+            sumSpaceZone = zone;
+            let ed = document.getElementById('sumEditor');
+            if (ed) ed.classList.toggle('is-space-zone', zone === 'editor');
+            let dubs = document.querySelector('.sum-dubs');
+            if (dubs) dubs.classList.toggle('is-space-zone', zone === 'dubs');
+        }
+        document.addEventListener('pointerdown', e => {
+            if (!sumModeActive || !e.target.closest) return;
+            if (e.target.closest('#sumEditor')) sumSetSpaceZone('editor');
+            else if (e.target.closest('.sum-dubs, #sumCats')) sumSetSpaceZone('dubs');
+        }, true);
+        // Space: в зоне «Сборка» — слушать сборку с начала (start → переменная → end),
+        // в зоне дублей — только выбранный кликом (или текущий) дубль. Повторно — стоп.
+        async function sumSpace() {
+            if (sumSpaceZone === 'editor') {
+                stopSumTierHighlight();
+                sumEditorTogglePlay();
+                return;
+            }
+            if (typeof sumEd !== 'undefined' && sumEd.play) await sumEditorStop();
+            if (document.querySelector('.sum-dub.is-playing, .sum-rec.is-playing')) {
+                stopSumTierHighlight();
+                try { await pywebview.api.stop_audio(); } catch (_) {}
+                return;
+            }
+            let dubs = lastSumState && lastSumState.dubs;
+            let idx = sumDubSel.size === 1 ? [...sumDubSel][0] : (dubs ? dubs.current : null);
+            let it = dubs && (dubs.items || []).find(x => x.index === idx);
+            let card = document.querySelector(`#sumDubsRail .sum-dub[data-index="${idx}"]`);
+            if (it) sumPlayPath(it.path, card); else playAudio(true);
+        }
+        async function sumUnassign(tier, path, value) {
+            let ok = await showBeautifulConfirm(`ℹ️ <b>Отменить «${escapeHtml(value || '')}»?</b><br><br>`
+                + 'Запись уберётся (эталон — в папку <b>_Корзина</b> проекта), значение снова будет ожидаться, '
+                + 'а сборка перейдёт на его строку.', 'Отменить запись', 'Оставить');
+            if (!ok) return;
+            if (typeof sumEd !== 'undefined') sumEd.sig = null;
+            await sumApply(() => pywebview.api.sum_unassign(tier, path), false);
+        }
+        // Ожидаемое значение сменилось и автопроверка его где-то услышала —
+        // сразу переходим к этому дублю (один раз на значение). Отключается
+        // галочкой «Автонавигация».
+        let sumAutoNavSeen = {};
+        function sumAutoNavigate(tier, value, match) {
+            let key = tier + '|' + value;
+            if (sumAutoNavSeen[tier] === key) return;
+            sumAutoNavSeen[tier] = key;
+            let cb = document.getElementById('sumAutoNav');
+            if (cb && !cb.checked) return;
+            if (lastSumState && lastSumState.dubs && lastSumState.dubs.current === match.index) return;
+            // Без звука: сборка в это время может сама проигрываться.
+            setTimeout(() => sumApply(() => pywebview.api.sum_focus_dub(match.index), false), 0);
         }
         async function sumFocusDub(index) {
             await sumApply(() => pywebview.api.sum_focus_dub(index), true);
@@ -4417,7 +4506,7 @@ let isProcessing = false;
                 }
 
                 // ВНИМАНИЕ: Здесь Q и E крутят текст, а A и D крутят аудио!
-                if (e.code === 'Space') { e.preventDefault(); playAudio(true); }
+                if (e.code === 'Space') { e.preventDefault(); if (sumModeActive) sumSpace(); else playAudio(true); }
                 else if (e.code === 'KeyQ') { e.preventDefault(); navPhrase(-1); }
                 else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
                 else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
@@ -4441,7 +4530,7 @@ let isProcessing = false;
             }
 
             // === СТАНДАРТНАЯ ЛОГИКА ДЛЯ ОСТАЛЬНЫХ РЕЖИМОВ ===
-            if (e.code === 'Space') { e.preventDefault(); playAudio(true); }
+            if (e.code === 'Space') { e.preventDefault(); if (sumModeActive) sumSpace(); else playAudio(true); }
             else if (e.code === 'KeyQ') { e.preventDefault(); navPhrase(-1); }
             else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }

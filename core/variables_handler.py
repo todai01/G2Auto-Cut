@@ -2217,6 +2217,66 @@ class VariablesMixin:
         webview.windows[0].evaluate_js(f"showToast('{msg_js}');")
         return self.get_ui_state()
 
+    def sum_unassign(self, tier, path):
+        """«×» на метке дубля: отменить то, что из него записано. Сырое —
+        как «брак» (sum_remove_raw). Эталон в Проверенных — файл уходит в
+        «_Корзина» проекта (можно вернуть руками), значение снова ожидается,
+        а сборка переходит на строку с этим значением, чтобы переделать."""
+        files = (getattr(self, 'constructor_tier_files', None) or {}).get(tier, [])
+        if path in files:
+            return self.sum_remove_raw(tier, path)
+        if not path or not os.path.exists(path):
+            # Метка ссылается на уже удалённый сырой файл — ищем его эталон.
+            found, saveable = self._sum_stage2_resolve_value(tier, self._sum_raw_value_from_path(path or ''))
+            self._sum_forget_source(path)
+            if not found or saveable:
+                return self.get_ui_state()
+            path = found
+        trash = os.path.join(self.work_dir, '_Корзина')
+        os.makedirs(trash, exist_ok=True)
+        stem, ext = os.path.splitext(os.path.basename(path))
+        dest = os.path.join(trash, f"{stem}_{int(time.time())}{ext}")
+        try:
+            shutil.move(path, dest)
+        except OSError as e:
+            return {"error": f"Не удалось убрать эталон: {e}"}
+        self._sum_forget_source(path)
+        counts = getattr(self, 'sum_stage2_counts', None) or {}
+        if counts.get(tier):
+            counts[tier] -= 1
+        if (getattr(self, 'sum_manual_last_file', None) or {}).get(tier) == path:
+            self.sum_manual_last_file.pop(tier, None)
+        self._var_rewind_cursor_to(tier, path)
+        value = self._sum_raw_value_from_path(path)
+        for i, r in enumerate(getattr(self, 'var_template_rows', None) or []):
+            if self._var_safe_value(str(r.get(tier) or '')) == value:
+                self.sum_stage2_row_idx = i
+                self._sum_row_pinned = i
+                break
+        msg = f"🗑 Эталон «{value}» убран из Проверенных (лежит в _Корзина) — жду его заново"
+        webview.windows[0].evaluate_js(f"showToast({json.dumps(msg, ensure_ascii=False)});")
+        return self.get_ui_state()
+
+    def _sum_asr_match(self, tier, value):
+        """Автонавигация: дубль, в котором автопроверка услышала именно это
+        значение (ещё не разобранный), — лучший по совпадению."""
+        if not value:
+            return None
+        results = getattr(self, 'sum_asr_results', None) or {}
+        if not results:
+            return None
+        files, _ = self._sum_source_files()
+        pos = {p: i for i, p in enumerate(files)}
+        assigned = self._sum_assigned_sources()
+        best = None
+        for p, r in results.items():
+            if not r or r.get('tier') != tier or r.get('best') != value or p not in pos or p in assigned:
+                continue
+            if best is None or (r.get('score') or 0) > best['score']:
+                best = {"index": pos[p], "name": os.path.splitext(os.path.basename(p))[0],
+                        "score": r.get('score') or 0, "confident": bool(r.get('confident'))}
+        return best
+
     def _sum_tier_excluded(self, tier, counts=None):
         """Ярус пропускаем при сборке звучания суммы (и при поиске «соседа»
         для подрезки) ровно в одном случае — если он не входит в выбранную
@@ -2744,9 +2804,14 @@ class VariablesMixin:
         if not files:
             return None
         assigned = self._sum_assigned_sources()
-        assigned_values = {}
+        assigned_values, assigned_recs = {}, {}
+        checked_root = os.path.normcase(os.path.abspath(self._sum_manual_tier_root())) if getattr(self, 'work_dir', None) else None
         for raw, info in (getattr(self, 'sum_raw_sources', None) or {}).items():
-            assigned_values.setdefault(info['source'], []).append(self._sum_raw_value_from_path(raw))
+            value = self._sum_raw_value_from_path(raw)
+            assigned_values.setdefault(info['source'], []).append(value)
+            is_checked = bool(checked_root) and os.path.normcase(os.path.abspath(raw)).startswith(checked_root)
+            assigned_recs.setdefault(info['source'], []).append(
+                {"value": value, "path": raw, "tier": info['tier'], "checked": is_checked})
         view = getattr(self, '_sum_dub_view', None)
         if view and view.get('ptr') == ptr:
             start = view['start']
@@ -2767,6 +2832,8 @@ class VariablesMixin:
                 "tiers": [self._category_label(t) for t in tiers],
                 "tier_keys": tiers,
                 "values": assigned_values.get(path, []),
+                # Что из дубля уже записано (сырое или эталон) — с путём для «×».
+                "assigned": assigned_recs.get(path, []),
                 "asr": (getattr(self, 'sum_asr_results', None) or {}).get(path),
             })
         return {"items": items, "total": len(files), "current": ptr, "from": start}
@@ -3201,6 +3268,7 @@ class VariablesMixin:
                 "row_ready": path is not None,
                 "expected_next": expected_next,
                 "expected_idx": expected_idx,
+                "asr_match": self._sum_asr_match(t, expected_next),
                 "values_total": len(values_all),
                 "last_send_path": last_send.get('raw_path') if last_send.get('tier') == t else None,
             }
