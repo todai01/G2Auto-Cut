@@ -6733,8 +6733,13 @@ let isProcessing = false;
             let lvl = document.getElementById('ttsRecLevel');
             lvl.style.width = pct + '%';
             lvl.classList.toggle('is-hot', s.level_db > -3);
+            // Тихий микрофон: пики за последние ~5 с ниже −30 дБ (но звук есть).
+            ttsRec.peaks = (ttsRec.peaks || []).concat(s.level_db).slice(-25);
+            let top = Math.max(...ttsRec.peaks);
+            let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
             document.getElementById('ttsRecInfo').innerText = `${s.device} · записано: ${s.added}`
                 + (s.restarts ? ` · «заново»: ${s.restarts}` : ' · запнулись — скажите «заново»')
+                + (quiet ? ' · микрофон тихий — громкость выровняется при сохранении' : '')
                 + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);

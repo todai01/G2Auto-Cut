@@ -51,6 +51,10 @@ TTS_OK_SCORE = 0.80       # дубль «зелёный» — совпал с т
 TTS_OK_MARGIN = 0.10      # …и заметно лучше второго варианта
 TTS_TIE = 0.03            # почти равные варианты — решает порядок записи
 TTS_LISTEN_SHARE = 0.8    # «прослушан» = отыграл хотя бы 80% длины
+OUT_RATE = 8000           # готовые файлы — 8 кГц, 16 бит, моно (формат IVR)
+OUT_SPEECH_DB = -18.0     # уровень речи готовых файлов: одинаковый у всех, «не тихо и не громко»
+OUT_PEAK_DB = -1.0        # пики не выше — без перегруза
+OUT_GAIN_LIMIT_DB = 30.0  # больше не поднимаем (если это тишина/шум)
 EDIT_CONTEXT_MS = 1500    # запас записи вокруг дубля в «Сборке» — край можно вытянуть
 EDIT_BUCKET_MS = 10       # шаг волны
 
@@ -600,6 +604,10 @@ class TtsFlowMixin:
             spans.append((t, t + d))
             t += d
         audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
+        # Тихая запись (некоторые гарнитуры) распознаётся хуже — поднимаем.
+        peak = float(np.abs(audio).max()) if len(audio) else 0.0
+        if 1e-4 < peak < 0.5:
+            audio = audio * min(30.0, 0.7 / peak)
         segments, _info = model.transcribe(
             audio, language=None if language == 'auto' else language,
             beam_size=1, best_of=1, word_timestamps=True, vad_filter=True,
@@ -685,6 +693,11 @@ class TtsFlowMixin:
             return {"playing": False, "error": "Файл дубля пропал с диска."}
         st["index"] = i
         dur = st["takes"][i].get("ms", 0) / 1000.0
+        # Слушаете ровно то, что сохранится: громкость выровнена, 8 кГц.
+        try:
+            path = self._tts_preview(path)
+        except Exception:
+            pass
         self.player.play(path)
         self._tts_playing = (i, time.time(), dur)
         return {"playing": True, "duration": dur}
@@ -740,7 +753,7 @@ class TtsFlowMixin:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         if os.path.exists(target):
             self._tts_trash(target)
-        shutil.copy2(os.path.join(st["work_dir"], t["file"]), target)
+        self._tts_render_final(os.path.join(st["work_dir"], t["file"]), target)
         for other in st["takes"]:
             if other.get("unit") == t["unit"]:
                 other["approved"] = False
@@ -884,8 +897,12 @@ class TtsFlowMixin:
         seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
         samples = seg.get_array_of_samples()
         per = 16000 * EDIT_BUCKET_MS // 1000
-        peaks = [round(max(abs(min(samples[k:k + per])), max(samples[k:k + per])) / 32768, 3)
+        peaks = [max(abs(min(samples[k:k + per])), max(samples[k:k + per])) / 32768
                  for k in range(0, len(samples), per)]
+        # Волна в масштабе (тихая запись не должна выглядеть плоской линией).
+        top = max(peaks) if peaks else 0
+        k_ = min(40.0, 0.9 / top) if top > 1e-4 else 1.0
+        peaks = [round(min(1.0, x * k_), 3) for x in peaks]
         return {"i": i, "lo": lo, "hi": hi, "a": a, "b": b, "cuts": ed.get("cuts", []),
                 "orig": orig, "audacity": bool(t.get("audacity")), "peaks": peaks, "bucket": EDIT_BUCKET_MS}
 
@@ -1106,6 +1123,44 @@ class TtsFlowMixin:
         if not levels:
             return None
         return round(levels[int(len(levels) * 0.9) - 1 if len(levels) > 1 else 0], 1)
+
+    @classmethod
+    def _tts_normalized(cls, seg):
+        """Выровнять громкость: речь — на OUT_SPEECH_DB, пики — не выше OUT_PEAK_DB."""
+        seg = seg.set_channels(1)
+        level = cls._tts_speech_db(seg)
+        if level is None or seg.max_dBFS == float('-inf'):
+            return seg
+        gain = OUT_SPEECH_DB - level
+        gain = min(gain, OUT_PEAK_DB - seg.max_dBFS, OUT_GAIN_LIMIT_DB)
+        return seg.apply_gain(gain) if abs(gain) > 0.1 else seg
+
+    @staticmethod
+    def _tts_export_8k(seg, dst):
+        """WAV 8 кГц / 16 бит / моно. Частоту пересчитывает ffmpeg (с фильтром,
+        без призвуков); нет ffmpeg — запасной путь pydub."""
+        try:
+            seg.export(dst, format="wav", parameters=["-ar", str(OUT_RATE), "-ac", "1", "-acodec", "pcm_s16le"])
+            if os.path.exists(dst) and os.path.getsize(dst) > 44:
+                return
+        except Exception:
+            pass
+        seg.set_frame_rate(OUT_RATE).set_sample_width(2).set_channels(1).export(dst, format="wav")
+
+    def _tts_render_final(self, src, dst):
+        """Дубль → готовый файл: громкость выровнена, 8 кГц."""
+        self._tts_export_8k(self._tts_normalized(AudioSegment.from_file(src)), dst)
+
+    def _tts_preview(self, src):
+        """Готовая к сохранению версия дубля для прослушки (кэш во временной папке)."""
+        import hashlib
+        import tempfile
+        st_ = os.stat(src)
+        key = hashlib.md5(f"{os.path.abspath(src)}|{st_.st_mtime_ns}|{st_.st_size}".encode()).hexdigest()[:16]
+        dst = os.path.join(tempfile.gettempdir(), f"gvox_tts_prev_{key}.wav")
+        if not os.path.exists(dst):
+            self._tts_render_final(src, dst)
+        return dst
 
     def _tts_sample_files(self, var_key):
         """Пример значения переменной для прослушки сборки: первые готовые
