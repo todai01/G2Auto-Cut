@@ -2313,7 +2313,8 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 /* Утилиты: 2 + 3 плитки, без пустого места в ряду */
 @media (min-width: 1000px){
     .menu-tools{ grid-template-columns: repeat(6, 1fr); }
-    .menu-tool{ grid-column: span 2; }   /* 6 утилит — ровно 3 + 3 */
+    .menu-tool{ grid-column: span 2; }
+    .menu-tool:nth-child(-n+2){ grid-column: span 3; }
 }
 
 /* Кнопка «Очистить» у недавних проектов — справа от линии */
