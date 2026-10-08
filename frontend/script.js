@@ -5959,6 +5959,7 @@ let isProcessing = false;
             if (p.stage === 'cut') ttsShowBusy(p.total ? `Режу запись: ${p.done} / ${p.total}` : 'Режу запись на дубли…',
                                                p.total ? Math.round(p.done / p.total * 100) : 0);
             else if (p.stage === 'model') ttsShowBusy('Загружаю модель распознавания…', 0);
+            else if (p.stage === 'save') ttsShowBusy(`Раскладываю фразы: ${p.done} / ${p.total}`, Math.round(p.done / p.total * 100));
             else if (p.stage === 'asr') ttsShowBusy(`Слушаю дубли: ${p.done} / ${p.total}`, Math.round(p.done / p.total * 100));
             else if (p.stage === 'error') {
                 ttsRender();

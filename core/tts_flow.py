@@ -10,9 +10,12 @@
 Строки с флагами — кусочки одной фразы, разрезанной переменными:
 start → [сумма] → start_2 → [дата] → end. Каждый кусочек сохраняется
 отдельным файлом под своим именем в «Фразы_Переменные», обычная фраза —
-в «Проверенные». Если цепочка прочитана целиком (с примером значения),
-дубль режется на кусочки по словам; если кусочек прочитан вместе со
-значением — значение отрезается. Сохраняем только
+в «Проверенные».
+
+Запись не обязана резаться по паузам: фразы часто слипаются. Поэтому
+распознанные слова всей записи идут сплошным потоком, и фразы таблицы
+ищутся в нём по тексту; оговорки, повторы и значения переменных между
+ними пропускаются. Разрез — в тишине между словами. Сохраняем только
 после того, как дубль прослушан: автопроверка ошибается."""
 
 import json
@@ -35,7 +38,7 @@ from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
 from core.ui_dialogs import ui_confirm
 
 TTS_STATE_FILE = 'tts_project.json'
-TTS_STATE_VERSION = 2     # 2: каждая строка — свой файл, цепочки режутся на кусочки
+TTS_STATE_VERSION = 3     # 3: фразы ищутся в сплошном потоке слов, а не по паузам
 TTS_CHUNKS_DIR = 'Чанки'
 TTS_DONE_DIR = 'Проверенные'
 TTS_VAR_DIR = 'Фразы_Переменные'
@@ -208,100 +211,59 @@ def _parse_phrase_sheet(title, rows, head_idx):
             "var_keys": [t for t, _ in var_cols]}
 
 
-SPLIT_PART_SCORE = 0.70   # кусочек цепочки «услышан» в дубле
-WORD_EDGE_S = 0.08        # окно поиска тихой точки вокруг границы слова
+FIND_SCORE = 0.75         # окно слов засчитываем как фразу из таблицы
+FIND_SCORE_SHORT = 0.90   # …а для фраз из 1–2 слов — только почти дословно
+LONGER_TIE = 0.05         # почти равные окна — берём то, что длиннее (целая фраза, а не её начало)
+LEAD_S = 0.40             # сколько тишины оставлять перед/после фразы (макс.)
 
 
-def _words_norm(words):
-    return [_norm(w[0]) for w in words]
+def _first_word_ok(word, first):
+    return bool(word) and bool(first) and (word[:3] == first[:3] or _ratio(word, first) >= 0.6)
 
 
-def _best_window(wn, text, start):
-    """Окно слов [i, j) от start, больше всего похожее на text."""
-    t = _lat_to_cyr(_norm(text))
-    n = max(1, len(t.split()))
-    best = (0.0, None, None)
-    for i in range(start, len(wn)):
-        for size in range(max(1, n - 2), n + 3):
-            j = i + size
-            if j > len(wn):
-                break
-            # Строго всё окно целиком (similarity сама ищет подокна — и
-            # окно с «лишним» словом значения тоже набрало бы 100%).
-            sc = _ratio(_lat_to_cyr(' '.join(wn[i:j])), t)
-            if sc > best[0] + 1e-9:
-                best = (sc, i, j)
-    return best
-
-
-def _window_cut(words, i, j):
-    """Границы кусочка в секундах по словам (None — край дубля)."""
-    a = None if i == 0 else (words[i - 1][2], words[i][1])
-    b = None if j >= len(words) else (words[j - 1][2], words[j][1])
-    return {"after": a, "before": b}
-
-
-def match_takes(heards, words_list, units, chains):
-    """Для каждого дубля — список кусков [{unit, score, status, cut}].
-    cut=None — дубль целиком; иначе границы для вырезания по словам.
-    • в дубле прочитана цепочка целиком (≥2 её кусочков) — режем на кусочки;
-    • в дубле кусочек + пример значения — отрезаем значение;
-    • обычная фраза — дубль целиком.
-    Почти равные варианты (одинаковые тексты) решаем порядком чтения."""
-    out, expected = [], 0
-    for heard, words in zip(heards, words_list):
-        if not heard:
-            out.append([{"unit": None, "score": 0.0, "status": "noise", "cut": None}])
-            continue
-        words = words or []
-        wn = _words_norm(words)
-
-        # 1) Цепочка целиком?
-        best_chain = None
-        if len(wn) >= 3:
-            for ch in chains:
-                if len(ch["parts"]) < 2:
-                    continue
-                scores = [similarity(heard, units[i]["text"]) for i in ch["parts"]]
-                hit = sum(1 for x in scores if x >= SPLIT_PART_SCORE)
-                if hit >= 2:
-                    avg = sum(scores) / len(scores)
-                    key = (avg, -abs(ch["parts"][0] - expected))
-                    if best_chain is None or key > best_chain[0]:
-                        best_chain = (key, ch)
-        if best_chain:
-            segs, cursor = [], 0
-            for uid in best_chain[1]["parts"]:
-                sc, i, j = _best_window(wn, units[uid]["text"], cursor)
-                if i is None or sc < SPEECH_MIN_SCORE:
-                    continue
-                segs.append({"unit": uid, "score": round(sc, 3), "cut": _window_cut(words, i, j),
-                             "status": "ok" if sc >= TTS_OK_SCORE else "doubt"})
-                cursor = j
-            if len(segs) >= 2:
-                out.append(segs)
-                expected = segs[-1]["unit"] + 1
+def align_stream(words, units):
+    """Ищет фразы таблицы в сплошном потоке распознанных слов — не важно,
+    как запись разрезалась по паузам (фразы часто слипаются в один кусок).
+    words: [(слово, начало_с, конец_с)] по всей записи.
+    → [{unit, score, status, i, j}] по порядку: слова [i, j) — эта фраза.
+    Слова между находками (оговорки, «нет», значения переменных) пропускаются."""
+    wn = [_lat_to_cyr(_norm(w[0])) for w in words]
+    targets = []
+    for u in units:
+        t = _lat_to_cyr(_norm(u["text"]))
+        if t:
+            targets.append((u["id"], t, len(t.split()), t.split()[0]))
+    found, i, expected = [], 0, 0
+    while i < len(wn):
+        cands = []
+        for uid, t, n, first in targets:
+            if not _first_word_ok(wn[i], first):
                 continue
-
-        # 2) Одна фраза / один кусочек.
-        scored = sorted(((similarity(heard, u["text"]), u["id"]) for u in units), reverse=True)
-        best = scored[0][0]
-        if best < SPEECH_MIN_SCORE:
-            out.append([{"unit": None, "score": round(best, 3), "status": "none", "cut": None}])
+            best = (0.0, i + 1)
+            for size in range(max(1, n - 2), n + 3):
+                j = i + size
+                if j > len(wn):
+                    break
+                sc = _ratio(' '.join(wn[i:j]), t)
+                if sc > best[0] + 1e-9:
+                    best = (sc, j)
+            need = FIND_SCORE_SHORT if n <= 2 else FIND_SCORE
+            if best[0] >= need:
+                cands.append((best[0], best[1], uid, n))
+        if not cands:
+            i += 1
             continue
-        close_ = [uid for s_, uid in scored if best - s_ <= TTS_TIE]
-        uid = min(close_, key=lambda x: (x < expected, abs(x - expected)))
-        text = units[uid]["text"]
-        second = next((s_ for s_, i in scored if units[i]["text"] != text), 0.0)
-        ok = best >= TTS_OK_SCORE and best - second >= TTS_OK_MARGIN
-        cut = None
-        if units[uid]["kind"] == "piece" and wn:
-            sc, i, j = _best_window(wn, text, 0)
-            if i is not None and (i > 0 or j < len(wn)) and len(wn) - (j - i) >= 1:
-                cut = _window_cut(words, i, j)
-        out.append([{"unit": uid, "score": round(best, 3), "status": "ok" if ok else "doubt", "cut": cut}])
+        top = max(c[0] for c in cands)
+        near = [c for c in cands if top - c[0] <= LONGER_TIE]
+        longest = max(c[3] for c in near)
+        near = [c for c in near if c[3] == longest]
+        # Одинаковые тексты в разных строках — решает порядок чтения таблицы.
+        sc, j, uid, _ = min(near, key=lambda c: (-round(c[0], 2), c[2] < expected, abs(c[2] - expected)))
+        found.append({"unit": uid, "score": round(sc, 3), "i": i, "j": j,
+                      "status": "ok" if sc >= 0.85 else "doubt"})
         expected = uid + 1
-    return out
+        i = j
+    return found
 
 
 class TtsFlowMixin:
@@ -502,9 +464,7 @@ class TtsFlowMixin:
         pieces = []
         for i, (a, b) in enumerate(ranges):
             piece = audio[max(0, a - TTS_CUT_PAD_MS):min(len(audio), b + TTS_CUT_PAD_MS)]
-            name = f"{i + 1:04d}.wav"
-            piece.export(os.path.join(chunks_dir, name), format="wav")
-            pieces.append((name, piece, a))
+            pieces.append((f"{i + 1:04d}", piece, a))
             if i % 20 == 0:
                 self._tts_push({"stage": "cut", "done": i + 1, "total": len(ranges)})
 
@@ -516,26 +476,70 @@ class TtsFlowMixin:
             return {"error": err}
 
         heards, words = self._tts_transcribe([p[1] for p in pieces], 'kk' if st["lang"] == 'kz' else 'ru', model)
-        matches = match_takes(heards, words, st["units"], st.get("chains", []))
-        takes = []
-        for k, (name, piece, a) in enumerate(pieces):
-            segs = matches[k]
-            for n, seg in enumerate(segs):
-                take = {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a, "ms": len(piece),
-                        "heard": heards[k], "listened": False, "chunk": k + 1,
-                        "unit": seg["unit"], "score": seg["score"], "status": seg["status"]}
-                if seg.get("cut"):
-                    lo, hi = self._tts_cut_bounds(piece, seg["cut"])
-                    part = piece[lo:hi]
-                    sub = f"{name[:-4]}_{n + 1}.wav"
-                    part.export(os.path.join(chunks_dir, sub), format="wav")
-                    take.update({"file": os.path.join(TTS_CHUNKS_DIR, sub), "start_ms": a + lo, "ms": len(part),
-                                 "heard": self._tts_words_text(words[k], seg["cut"], lo, hi), "split": True})
-                takes.append(take)
+        takes = self._tts_build_takes(audio, pieces, words, st["units"], chunks_dir)
         st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": takes})
         st["index"] = self._tts_next(-1)
         self._tts_save()
         return {"status": "ok"}
+
+    def _tts_build_takes(self, audio, pieces, words, units, chunks_dir):
+        """Сплошной поток слов всей записи → фразы таблицы → по файлу на
+        каждую найденную фразу (разрез — в тишине между словами)."""
+        stream = []
+        for k, (name, piece, a) in enumerate(pieces):
+            off = max(0, a - TTS_CUT_PAD_MS) / 1000.0
+            stream += [(w, off + ws, off + we, k) for w, ws, we in words[k]]
+        found = align_stream(stream, units)
+
+        spans = []   # (начало_мс, конец_мс, данные дубля)
+        used = [False] * len(stream)
+        for f in found:
+            i, j = f["i"], f["j"]
+            for x in range(i, j):
+                used[x] = True
+            spans.append((i, j, {"unit": f["unit"], "score": f["score"], "status": f["status"]}))
+        # Речь, не похожая ни на одну фразу (≥4 слов подряд), — тоже дубль:
+        # вдруг это фраза, которую распознавание исказило. Привяжете вручную.
+        x = 0
+        while x < len(stream):
+            if used[x]:
+                x += 1
+                continue
+            y = x
+            while y < len(stream) and not used[y] and stream[y][3] == stream[x][3]:
+                y += 1
+            if y - x >= 4:
+                spans.append((x, y, {"unit": None, "score": 0.0, "status": "none"}))
+            x = y
+        spans.sort(key=lambda sp: sp[0])
+
+        takes = []
+        for n, (i, j, info) in enumerate(spans):
+            first_s, last_e = stream[i][1], stream[j - 1][2]
+            prev_e = stream[i - 1][2] if i > 0 else 0.0
+            next_s = stream[j][1] if j < len(stream) else len(audio) / 1000.0
+            lo = self._tts_quiet_point(audio, *self._tts_edge_window(max(prev_e, first_s - LEAD_S), first_s + 0.03))
+            hi = self._tts_quiet_point(audio, *self._tts_edge_window(last_e - 0.03, min(next_s, last_e + LEAD_S)))
+            if hi - lo < 150:
+                lo, hi = int(first_s * 1000), int(last_e * 1000) + 60
+            part = audio[lo:hi]
+            name = f"{n + 1:04d}.wav"
+            part.export(os.path.join(chunks_dir, name), format="wav")
+            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": len(part),
+                          "heard": ''.join(w[0] for w in stream[i:j]).strip(), "listened": False,
+                          "chunk": n + 1, **info})
+            if n % 20 == 0:
+                self._tts_push({"stage": "save", "done": n + 1, "total": len(spans)})
+        return takes
+
+    @staticmethod
+    def _tts_edge_window(a, b):
+        """Время слов у распознавания неточное (±50 мс): паузу между словами
+        в 50–100 мс оно может «съесть». Узкое окно расширяем вокруг середины."""
+        if b - a < 0.16:
+            c = (a + b) / 2
+            return c - 0.10, c + 0.10
+        return a, b
 
     @staticmethod
     def _tts_quiet_point(seg, lo_s, hi_s):
@@ -556,24 +560,6 @@ class TtsFlowMixin:
             else:
                 run = None
         return best[1] + (best[0] + 10) // 2
-
-    def _tts_cut_bounds(self, seg, cut):
-        lo, hi = 0, len(seg)
-        if cut.get("after"):
-            a, b = cut["after"]
-            lo = self._tts_quiet_point(seg, min(a, b) - WORD_EDGE_S, max(a, b) + WORD_EDGE_S)
-        if cut.get("before"):
-            a, b = cut["before"]
-            hi = self._tts_quiet_point(seg, min(a, b) - WORD_EDGE_S, max(a, b) + WORD_EDGE_S)
-        if hi - lo < 150:
-            lo, hi = 0, len(seg)
-        return lo, hi
-
-    @staticmethod
-    def _tts_words_text(words, cut, lo, hi):
-        """Что услышано внутри вырезанного кусочка."""
-        inside = [w for w in words if lo / 1000 - 0.05 <= (w[1] + w[2]) / 2 <= hi / 1000 + 0.05]
-        return ''.join(w[0] for w in inside).strip()
 
     def _tts_transcribe_pack(self, model, pack, language):
         """Как _asr_transcribe_pack, но со временем слов внутри каждого дубля:
@@ -693,15 +679,21 @@ class TtsFlowMixin:
 
     def _tts_next(self, after):
         """Следующий дубль, который ещё нужно прослушать: привязан к фразе,
-        а фраза не сохранена. Сначала — вперёд по записи, потом с начала."""
+        а фраза не сохранена. Сначала — вперёд по записи, потом с начала.
+        Из повторов одной фразы предлагаем последний (диктор переговаривает
+        после ошибки); забракуете его — следующим пойдёт предыдущий."""
         st = self._tts()
         takes = st["takes"]
         n = len(takes)
+        last = {}
+        for k, t in enumerate(takes):
+            if t.get("unit") is not None and not t.get("rejected"):
+                last[t["unit"]] = k
         saved = {}
         for k in list(range(after + 1, n)) + list(range(0, after + 1)):
             t = takes[k]
             uid = t.get("unit")
-            if uid is None or t.get("rejected"):
+            if uid is None or t.get("rejected") or last.get(uid) != k:
                 continue
             if uid not in saved:
                 saved[uid] = os.path.exists(self._tts_target(st["units"][uid])) if st.get("work_dir") else False
@@ -740,7 +732,11 @@ class TtsFlowMixin:
         if 0 <= i < len(st["takes"]):
             st["takes"][i]["rejected"] = not st["takes"][i].get("rejected")
             if st["takes"][i]["rejected"]:
-                st["index"] = self._tts_next(i)
+                # Забраковали попытку — сразу предлагаем предыдущую попытку той же фразы.
+                uid = st["takes"][i].get("unit")
+                prev = [k for k in range(i) if uid is not None and st["takes"][k].get("unit") == uid
+                        and not st["takes"][k].get("rejected")]
+                st["index"] = prev[-1] if prev else self._tts_next(i)
             self._tts_save()
         return self.tts_state()
 
