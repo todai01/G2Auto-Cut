@@ -1401,6 +1401,17 @@
         </div>
     </div>
 
+    <div id="ttsVarsOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsCloseVars()">
+        <div class="custom-alert-box tts-vars-box">
+            <div class="modal-head">
+                <h3 class="modal-title">Переменные</h3>
+                <button class="modal-close" onclick="ttsCloseVars()" title="Закрыть">&times;</button>
+            </div>
+            <div class="tts-list-tabs" id="ttsVarsTabs"></div>
+            <div class="tts-vars-body" id="ttsVarsBody"></div>
+        </div>
+    </div>
+
     <div id="ttsListOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsCloseList()">
         <div class="custom-alert-box tts-list-box">
             <div class="modal-head">

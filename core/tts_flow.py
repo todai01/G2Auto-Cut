@@ -35,6 +35,7 @@ from core import recent_projects
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
                              similarity)
+from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
 from utils.wav_io import export_like, wav_concat, wav_layout, wav_slice
 
@@ -44,6 +45,7 @@ TTS_CHUNKS_DIR = 'Чанки'
 TTS_DONE_DIR = 'Проверенные'
 TTS_VAR_DIR = 'Фразы_Переменные'
 TTS_TRASH_DIR = '_Корзина'
+TTS_VALUES_DIR = 'Значения'   # готовые значения переменных: Значения/<лист>/<категория>/<значение>.wav
 TTS_CUT_PAD_MS = 150
 TTS_OK_SCORE = 0.80       # дубль «зелёный» — совпал с текстом
 TTS_OK_MARGIN = 0.10      # …и заметно лучше второго варианта
@@ -956,3 +958,200 @@ class TtsFlowMixin:
         t["audacity"] = True
         self._tts_save()
         return self.tts_state()
+
+    # ---------------- экран «Переменные» ----------------
+    # Значения переменных лежат в «Значения/<лист>/<категория>/<значение>.wav»
+    # (лист — <sum_ru>, категория — <million_ru> и т.д.). У каждого значения —
+    # текст для синтеза («пять миллионов»), его можно поправить руками.
+
+    def _tts_value_dir(self, sheet, cat):
+        return os.path.join(self._tts()["work_dir"] or '', TTS_VALUES_DIR, sheet, cat)
+
+    def _tts_value_file(self, sheet, cat, value):
+        return os.path.join(self._tts_value_dir(sheet, cat), f"{clean_name(value)}.wav")
+
+    def _tts_value_text(self, sheet, cat, value):
+        custom = (self._tts().get("var_texts") or {}).get(f"{sheet}|{cat}|{value}")
+        return custom or synth_text(cat, value), bool(custom)
+
+    def tts_vars_state(self):
+        st = self._tts()
+        has_dir = bool(st.get("work_dir"))
+        sheets = []
+        for key, sh in st["var_sheets"].items():
+            cats = []
+            for c in sh["categories"]:
+                values = []
+                for v in c["values"]:
+                    text, custom = self._tts_value_text(key, c["key"], v)
+                    values.append({"value": v, "text": text, "custom": custom,
+                                   "ready": has_dir and os.path.exists(self._tts_value_file(key, c["key"], v))})
+                cats.append({"key": c["key"], "label": c["label"], "values": values,
+                             "ready": sum(1 for x in values if x["ready"])})
+            sheets.append({"key": key, "label": sh["label"], "categories": cats})
+        chains = []
+        for ch in st.get("chains", []):
+            parts = [st["units"][i] for i in ch["parts"]]
+            chains.append({"id": ch["id"], "name": ch["name"], "vars": ch.get("vars", []),
+                           "parts": [{"id": u["id"], "name": u["name"], "role": u["role"], "text": u["text"],
+                                      "var_after": u.get("var_after"), "var_before": u.get("var_before"),
+                                      "saved": has_dir and os.path.exists(self._tts_target(u))} for u in parts]})
+        return {"sheets": sheets, "chains": chains, "has_project": has_dir}
+
+    def tts_var_set_text(self, sheet, cat, value, text):
+        st = self._tts()
+        texts = st.setdefault("var_texts", {})
+        key = f"{sheet}|{cat}|{value}"
+        text = (text or '').strip()
+        if text and text != synth_text(cat, value):
+            texts[key] = text
+        else:
+            texts.pop(key, None)
+        self._tts_save()
+        return {"text": self._tts_value_text(sheet, cat, value)[0]}
+
+    def tts_var_play(self, sheet, cat, value):
+        path = self._tts_value_file(sheet, cat, value)
+        if not os.path.exists(path):
+            return {"playing": False}
+        self._tts_mark_listened()
+        self.player.play(path)
+        return {"playing": True, "duration": len(AudioSegment.from_file(path)) / 1000.0}
+
+    def tts_var_open_folder(self, sheet, cat):
+        if not self._tts().get("work_dir"):
+            return {"error": "Сначала загрузите запись — от неё зависит папка проекта."}
+        folder = self._tts_value_dir(sheet, cat)
+        os.makedirs(folder, exist_ok=True)
+        try:
+            os.startfile(folder)
+        except Exception as e:
+            return {"error": str(e)}
+        return {"status": "ok"}
+
+    @staticmethod
+    def _tts_norm_value(text):
+        return re.sub(r'\s+', ' ', str(text).lower().replace('ё', 'е')).strip()
+
+    def tts_var_import(self, sheet, cat):
+        """Разложить уже готовые файлы значений: имя файла — само значение
+        («5.wav»), его текст («пять миллионов.wav») или содержит число
+        («million_5.wav»). Копируем байт в байт."""
+        st = self._tts()
+        if not st.get("work_dir"):
+            return {"error": "Сначала загрузите запись — от неё зависит папка проекта."}
+        sh = st["var_sheets"].get(sheet)
+        c = next((c for c in (sh or {}).get("categories", []) if c["key"] == cat), None)
+        if not c:
+            return {"error": "Нет такой категории."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked if isinstance(picked, str) else picked[0]
+        by_name = {}
+        for v in c["values"]:
+            by_name.setdefault(self._tts_norm_value(v), v)
+            by_name.setdefault(self._tts_norm_value(self._tts_value_text(sheet, cat, v)[0]), v)
+        digits = {re.sub(r'\D', '', v): v for v in c["values"] if re.fullmatch(r'\d+', v)}
+        matched, unknown = 0, []
+        os.makedirs(self._tts_value_dir(sheet, cat), exist_ok=True)
+        for f in sorted(os.listdir(folder)):
+            stem, ext = os.path.splitext(f)
+            if ext.lower() not in ('.wav', '.mp3'):
+                continue
+            v = by_name.get(self._tts_norm_value(stem))
+            if v is None:
+                nums = re.findall(r'\d+', stem)
+                v = digits.get(nums[-1].lstrip('0') or '0') if len(nums) == 1 else None
+            if v is None:
+                unknown.append(f)
+                continue
+            src = os.path.join(folder, f)
+            if ext.lower() == '.wav':
+                shutil.copy2(src, self._tts_value_file(sheet, cat, v))
+            else:
+                AudioSegment.from_file(src).export(self._tts_value_file(sheet, cat, v), format="wav")
+            matched += 1
+        return {"matched": matched, "unknown": unknown[:30], "unknown_count": len(unknown),
+                "state": self.tts_vars_state()}
+
+    @staticmethod
+    def _tts_speech_db(seg):
+        """Громкость речи: 90-й перцентиль громкости 50-мс окон (тишина не в счёт)."""
+        levels = sorted(seg[k:k + 50].dBFS for k in range(0, max(1, len(seg) - 50), 50)
+                        if seg[k:k + 50].rms > 0)
+        if not levels:
+            return None
+        return round(levels[int(len(levels) * 0.9) - 1 if len(levels) > 1 else 0], 1)
+
+    def _tts_sample_files(self, var_key):
+        """Пример значения переменной для прослушки сборки: первые готовые
+        значения двух последних категорий листа (сумма — тысячи + тенге,
+        дата — день + месяц)."""
+        sh = self._tts()["var_sheets"].get(var_key)
+        if not sh:
+            return []
+        files = []
+        for c in sh["categories"]:
+            f = next((self._tts_value_file(var_key, c["key"], v) for v in c["values"]
+                      if os.path.exists(self._tts_value_file(var_key, c["key"], v))), None)
+            if f:
+                files.append(f)
+        return files[-2:]
+
+    def tts_chain_info(self, chain_id):
+        """Кусочки цепочки с громкостью речи — чтобы на слух и на глаз было
+        видно, что они из одной записи и стыкуются со значениями."""
+        st = self._tts()
+        ch = next((c for c in st.get("chains", []) if c["id"] == chain_id), None)
+        if not ch:
+            return {"error": "Нет такой фразы."}
+        parts = []
+        for uid in ch["parts"]:
+            u = st["units"][uid]
+            path = self._tts_target(u) if st.get("work_dir") else ''
+            db = self._tts_speech_db(AudioSegment.from_file(path)) if path and os.path.exists(path) else None
+            parts.append({"id": uid, "db": db})
+        samples = {v: [os.path.basename(f) for f in self._tts_sample_files(v)] for v in ch.get("vars", [])}
+        dbs = [p["db"] for p in parts if p["db"] is not None]
+        return {"id": chain_id, "parts": parts, "samples": samples,
+                "spread": round(max(dbs) - min(dbs), 1) if len(dbs) > 1 else 0.0}
+
+    def tts_chain_play(self, chain_id):
+        """Сборка фразы целиком: кусочки + пример значения на месте каждой
+        переменной (пока значений нет — короткая пауза). Только для прослушки."""
+        st = self._tts()
+        ch = next((c for c in st.get("chains", []) if c["id"] == chain_id), None)
+        if not ch or not st.get("work_dir"):
+            return {"playing": False, "error": "Нет такой фразы."}
+        segs, rate = [], None
+        for k, uid in enumerate(ch["parts"]):
+            u = st["units"][uid]
+            if k == 0 and u.get("var_before"):
+                segs.append(('var', u["var_before"]))
+            path = self._tts_target(u)
+            segs.append(('file', path) if os.path.exists(path) else ('gap', 600))
+            if u.get("var_after"):
+                segs.append(('var', u["var_after"]))
+        out = None
+        for kind, x in segs:
+            if kind == 'file':
+                parts = [AudioSegment.from_file(x)]
+            elif kind == 'var':
+                parts = [AudioSegment.from_file(f) for f in self._tts_sample_files(x)] or [None]
+            else:
+                parts = [None]
+            for p in parts:
+                if p is None:
+                    p = AudioSegment.silent(400 if kind == 'var' else x, frame_rate=rate or 16000)
+                rate = rate or p.frame_rate
+                p = p.set_frame_rate(rate).set_channels(1)
+                out = p if out is None else out + p
+        if out is None:
+            return {"playing": False}
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_chain_{os.getpid()}.wav")
+        out.export(tmp, format="wav")
+        self._tts_mark_listened()
+        self.player.play(tmp)
+        return {"playing": True, "duration": len(out) / 1000.0}

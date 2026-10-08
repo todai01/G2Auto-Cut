@@ -6431,7 +6431,138 @@ let isProcessing = false;
             ttsRenderList();
         }
 
-        function ttsOpenVars() { ttsOpenUnits('vars'); }
+        // ----- экран «Переменные»: фразы-цепочки и значения переменных -----
+        let ttsVars = null, ttsVarsTab = 'chains', ttsVarsCat = {}, ttsChainInfo = {};
+
+        async function ttsOpenVars() {
+            if (!tts || !tts.loaded) return;
+            ttsVars = await pywebview.api.tts_vars_state();
+            document.getElementById('ttsVarsOverlay').style.display = 'flex';
+            ttsRenderVars();
+            ttsLoadChainInfo();
+        }
+
+        function ttsCloseVars() {
+            document.getElementById('ttsVarsOverlay').style.display = 'none';
+            ttsStopPlay();
+        }
+
+        function ttsVarsSetTab(tab) { ttsVarsTab = tab; ttsRenderVars(); }
+
+        function ttsRenderVars() {
+            let tabs = [['chains', `Фразы · ${ttsVars.chains.length}`]].concat(ttsVars.sheets.map(sh => {
+                let ready = sh.categories.reduce((a, c) => a + c.ready, 0), all = sh.categories.reduce((a, c) => a + c.values.length, 0);
+                return [sh.key, `${sh.label} · ${ready}/${all}`];
+            }));
+            document.getElementById('ttsVarsTabs').innerHTML = tabs.map(([k, l]) =>
+                `<button type="button" class="chip ${k === ttsVarsTab ? 'chip-mode--active' : ''}" onclick="ttsVarsSetTab('${k}')">${escapeHtml(l)}</button>`).join('');
+            let body = document.getElementById('ttsVarsBody');
+            if (ttsVarsTab === 'chains') { body.innerHTML = ttsVarsChainsHTML(); return; }
+            let sh = ttsVars.sheets.find(x => x.key === ttsVarsTab);
+            if (!sh) { ttsVarsTab = 'chains'; ttsRenderVars(); return; }
+            body.innerHTML = ttsVarsSheetHTML(sh);
+        }
+
+        function ttsVarsChainsHTML() {
+            if (!ttsVars.chains.length) return '<div class="tts-dim tts-list__empty">В таблице нет фраз с переменными</div>';
+            let pill = v => `<span class="tts-var">${escapeHtml(ttsVarLabel(v))}</span>`;
+            return ttsVars.chains.map(ch => {
+                let info = ttsChainInfo[ch.id];
+                let db = id => { let p = info && info.parts.find(x => x.id === id); return p && p.db !== null ? `${p.db} дБ` : ''; };
+                let parts = ch.parts.map((p, k) =>
+                    (k === 0 && p.var_before ? pill(p.var_before) : '') +
+                    `<span class="tts-vpart ${p.saved ? 'is-saved' : ''}" title="${escapeHtml(p.text)}">
+                        <span class="tts-vpart__role">${p.role}${p.saved ? ' ✓' : ''}</span>
+                        <span class="tts-vpart__name">${escapeHtml(p.name)}</span>
+                        <span class="tts-vpart__db">${db(p.id)}</span></span>` +
+                    (p.var_after ? pill(p.var_after) : '')).join('');
+                let saved = ch.parts.filter(p => p.saved).length;
+                let spread = info && info.spread >= 3
+                    ? `<span class="tts-pill tts-pill--var" title="Кусочки заметно отличаются по громкости — на стыках будет слышно">разброс ${info.spread} дБ</span>` : '';
+                return `<div class="tts-vchain">
+                    <div class="tts-vchain__head">
+                        <span class="tts-vchain__name">${escapeHtml(ch.name)}</span>
+                        <span class="tts-dim">${saved} / ${ch.parts.length}</span>
+                        ${spread}
+                        <span class="tts-ed__spacer"></span>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsChainPlay(${ch.id})" ${saved ? '' : 'disabled'}
+                                title="Кусочки подряд, на месте переменных — пример готового значения (или пауза)">Слушать сборку</button>
+                    </div>
+                    <div class="tts-vchain__parts">${parts}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function ttsLoadChainInfo() {
+            for (let ch of ttsVars.chains) {
+                if (!ch.parts.some(p => p.saved)) continue;
+                let info = await pywebview.api.tts_chain_info(ch.id);
+                if (!info || info.error) continue;
+                ttsChainInfo[ch.id] = info;
+                if (ttsVarsTab === 'chains' && document.getElementById('ttsVarsOverlay').style.display === 'flex') ttsRenderVars();
+            }
+        }
+
+        async function ttsChainPlay(id) {
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_chain_play(id);
+            if (res && res.error) showToast(res.error);
+        }
+
+        function ttsVarsSheetHTML(sh) {
+            let catKey = ttsVarsCat[sh.key] || sh.categories[0].key;
+            ttsVarsCat[sh.key] = catKey;
+            let cat = sh.categories.find(c => c.key === catKey) || sh.categories[0];
+            let cats = sh.categories.map(c => `<button type="button" class="tts-vcat ${c.key === cat.key ? 'is-active' : ''}"
+                    onclick="ttsVarsCat['${sh.key}']='${c.key}'; ttsRenderVars()">
+                    <span>${escapeHtml(c.label)}</span><span class="tts-vcat__n">${c.ready} / ${c.values.length}</span></button>`).join('');
+            let vals = cat.values.map((v, k) => `<div class="tts-vval ${v.ready ? 'is-ready' : ''}">
+                    <span class="tts-vval__value">${escapeHtml(v.value)}</span>
+                    <input class="tts-vval__text ${v.custom ? 'is-custom' : ''}" value="${escapeHtml(v.text)}" spellcheck="false"
+                           title="Текст для синтеза — можно поправить" onchange="ttsVarSetText('${sh.key}', '${cat.key}', ${k}, this)"
+                           onkeydown="if (event.key === 'Enter' || event.key === 'Escape') this.blur()">
+                    ${v.ready ? `<button class="tts-vval__play" onclick="ttsVarPlay('${sh.key}', '${cat.key}', ${k})" title="Слушать">▶</button>` : '<span class="tts-vval__dot" title="Ещё нет файла"></span>'}
+                </div>`).join('');
+            return `<div class="tts-vsheet">
+                <div class="tts-vcats">${cats}</div>
+                <div class="tts-vvals-wrap">
+                    <div class="tts-vvals__bar">
+                        <span class="tts-dim">Текст для синтеза — правьте прямо в строке. Синтез через сервис — следующий этап.</span>
+                        <span class="tts-ed__spacer"></span>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsVarImport('${sh.key}', '${cat.key}')" title="Файлы «5.wav», «пять миллионов.wav» или «million_5.wav» — разложу по значениям">Загрузить готовые</button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="pywebview.api.tts_var_open_folder('${sh.key}', '${cat.key}')">Папка</button>
+                    </div>
+                    <div class="tts-vvals">${vals}</div>
+                </div>
+            </div>`;
+        }
+
+        function ttsVarFind(sheet, cat) {
+            return ttsVars.sheets.find(x => x.key === sheet).categories.find(c => c.key === cat);
+        }
+
+        async function ttsVarSetText(sheet, cat, k, input) {
+            let v = ttsVarFind(sheet, cat).values[k];
+            await pywebview.api.tts_var_set_text(sheet, cat, v.value, input.value);
+            ttsVars = await pywebview.api.tts_vars_state();
+            ttsRenderVars();
+        }
+
+        async function ttsVarPlay(sheet, cat, k) {
+            await ttsStopPlay();
+            await pywebview.api.tts_var_play(sheet, cat, ttsVarFind(sheet, cat).values[k].value);
+        }
+
+        async function ttsVarImport(sheet, cat) {
+            let res = await pywebview.api.tts_var_import(sheet, cat);
+            if (!res || res.error === 'cancel') return;
+            if (res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
+            ttsVars = res.state;
+            ttsRenderVars();
+            let msg = `Разложено файлов: <b>${res.matched}</b>`;
+            if (res.unknown_count) msg += `<br><br>Не понял, к какому значению относятся (${res.unknown_count}):<br>${res.unknown.map(escapeHtml).join('<br>')}`;
+            showBeautifulAlert(msg);
+        }
 
         function ttsRenderList() {
             let q = document.getElementById('ttsListSearch').value.trim().toLowerCase();
@@ -6479,6 +6610,11 @@ let isProcessing = false;
         }
 
         function ttsHandleKey(e) {
+            let vars = document.getElementById('ttsVarsOverlay');
+            if (vars.style.display === 'flex') {
+                if (e.code === 'Escape') { e.preventDefault(); ttsCloseVars(); }
+                return true;
+            }
             let list = document.getElementById('ttsListOverlay');
             if (list.style.display === 'flex') {
                 if (e.code === 'Escape') { e.preventDefault(); ttsCloseList(); }
