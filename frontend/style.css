@@ -2907,3 +2907,10 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 
 /* Окно с тремя вариантами */
 .custom-alert-box.custom-alert-box--wide{ max-width: 560px; }
+
+/* Пауза голосом («Стоп») */
+.tts-recbar.is-paused{ border-color: rgba(238,172,62,0.5); }
+.tts-recbar.is-paused .tts-recbar__dot{ background: var(--accent-var); box-shadow: 0 0 8px var(--accent-var); animation: none; }
+.tts-recbar.is-paused .tts-prompter{ opacity: .35; }
+.tts-prompter__pause{ padding: 8px 12px; border-radius: var(--radius-sm); background: var(--tint-var); color: var(--accent-var); font-size: var(--fs-md); }
+.tts-prompter__pause b{ color: var(--text); }

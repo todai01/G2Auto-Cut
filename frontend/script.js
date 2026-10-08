@@ -5989,6 +5989,11 @@ let isProcessing = false;
             } else if (p.stage === 'live') {
                 ttsLiveUpdate(p.state, p.added);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
+            } else if (p.stage === 'live_cmd') {
+                if (p.state) ttsLiveUpdate(p.state, 0);
+                if (p.prompt) ttsRenderPrompt(p.prompt, p.cmd === 'redo' ? 'restart' : null);
+                ttsSetPaused(p.paused);
+                if (p.message) showToast(p.message);
             } else if (p.stage === 'live_restart') {
                 if (p.prompt) ttsRenderPrompt(p.prompt, 'restart');
             } else if (p.stage === 'live_done') {
@@ -6758,11 +6763,20 @@ let isProcessing = false;
             let top = Math.max(...ttsRec.peaks);
             let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
             document.getElementById('ttsRecInfo').innerText = `${s.device} · записано: ${s.added}`
-                + (s.restarts ? ` · «заново»: ${s.restarts}` : ' · запнулись — скажите «заново»')
+                + ' · команды: «Заново», «Стоп», «Запись», «Играй»'
                 + (quiet ? ' · микрофон тихий — громкость выровняется при сохранении' : '')
                 + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
+            ttsSetPaused(s.paused);
+        }
+
+        // «Стоп» голосом — пауза: слушаю только «Запись».
+        function ttsSetPaused(paused) {
+            let bar = document.getElementById('ttsRecBar');
+            if (!bar || bar.classList.contains('is-paused') === !!paused) return;
+            bar.classList.toggle('is-paused', !!paused);
+            document.getElementById('ttsPromptPause').style.display = paused ? '' : 'none';
         }
 
         // ----- суфлёр: какую фразу читать сейчас -----
@@ -6814,6 +6828,7 @@ let isProcessing = false;
 
         function ttsRecStopped(state, error) {
             clearInterval(ttsRec.timer);
+            ttsSetPaused(false);
             ttsRec.on = false;
             ttsSetRecUi(false);
             if (state) ttsLiveUpdate(state, 0);
