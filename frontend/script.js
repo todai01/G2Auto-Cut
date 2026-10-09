@@ -5972,6 +5972,7 @@ let isProcessing = false;
             ttsLoadPrompt();
             ttsLiveRender();
             ttsMonitorLabel();
+            ttsFastRender();
             // Прослушивание дублей — сразу в выбранные наушники (не только во время записи).
             pywebview.api.tts_rec_devices().then(l => { if (l && !l.error) ttsMonitorApply(l.outputs); });
         }
@@ -5982,6 +5983,7 @@ let isProcessing = false;
             if (st && st.error) { showToast(st.error); return; }
             tts = st;
             ttsRender();
+            ttsFastRender();
             showToast(lang === 'kz' ? 'Распознаю по-казахски' : 'Распознаю по-русски');
         }
 
@@ -6037,6 +6039,9 @@ let isProcessing = false;
                 ttsLiveSt.busy = p.busy;
                 if (!p.busy) ttsLiveSt.waiting = !!p.waiting;
                 ttsLiveRender();
+            } else if (p.stage === 'live_doubt') {
+                ttsLiveUpdate(p.state, 0);
+                ttsLiveFlash('miss-msg', p.message);
             } else if (p.stage === 'live_miss') {
                 ttsLiveFlash(p.paused ? 'pause-miss' : 'miss', p.heard);
             } else if (p.stage === 'live_cmd') {
@@ -6944,6 +6949,8 @@ let isProcessing = false;
             }
             ttsRec.on = true;
             ttsRec.device = res.device;
+            await pywebview.api.tts_live_fast(ttsFastOn());
+            ttsFastRender();
             if (res.monitor_error) showToast(res.monitor_error);
             ttsMonitorLabel(res.monitor || null);
             ttsSetRecUi(true);
@@ -7099,6 +7106,8 @@ let isProcessing = false;
             let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
             document.getElementById('ttsRecInfo').innerText = `записано: ${s.added}`
                 + (quiet ? ' · микрофон тихий — громкость выровняется' : '')
+                + (s.asr_s ? ` · распознавание ${s.asr_s} с` : '')
+                + (s.pending_n > 1 ? ` · в очереди ${s.pending_n}` : '')
                 + (s.overflows ? ` · ⚠ звук прерывался ${s.overflows} раз — компьютер не успевает` : '')
 ;
             if (s.error) showToast('Запись остановилась: ' + s.error);
@@ -7400,6 +7409,31 @@ let isProcessing = false;
             ttsLiveRender();
             let res = await pywebview.api.tts_ptt(down);
             if (res && res.error) { showToast(res.error); ttsLiveSt.busy = false; ttsLiveRender(); }
+            // «Не ждать»: суфлёр уже на следующей фразе.
+            if (res && res.prompt) { ttsPromptKey = null; ttsRenderPrompt(res.prompt, 'next'); }
+        }
+
+        // ----- «Не ждать распознавания» (по умолчанию — для казахского) -----
+        const ttsFastKey = () => 'gvox_tts_fast_' + ((tts && tts.lang) || 'ru');
+        function ttsFastOn() {
+            let v = null;
+            try { v = localStorage.getItem(ttsFastKey()); } catch (e) {}
+            return v === null ? !!(tts && tts.lang === 'kz') : v === '1';
+        }
+        function ttsFastRender() {
+            let b = document.getElementById('ttsFastBtn');
+            if (!b) return;
+            let on = ttsFastOn();
+            b.classList.toggle('is-on', on);
+            b.innerHTML = on ? '&#9889; Не ждать: вкл' : '&#9889; Не ждать: выкл';
+        }
+        async function ttsFastToggle() {
+            let on = !ttsFastOn();
+            try { localStorage.setItem(ttsFastKey(), on ? '1' : '0'); } catch (e) {}
+            await pywebview.api.tts_live_fast(on);
+            ttsFastRender();
+            showToast(on ? 'Не жду распознавания: отпустили Space — сразу следующая фраза, нераспознанное станет жёлтым'
+                         : 'Жду распознавания: следующая фраза — после того, как фраза распознана');
         }
         document.addEventListener('keyup', e => {
             if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(false); }

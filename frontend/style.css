@@ -3164,3 +3164,4 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-dev-head{ font-weight: 700; font-size: var(--fs-sm); padding: 12px 4px 6px; }
 .tts-dev-head:first-child{ padding-top: 2px; }
 .tts-dev-head .tts-dim{ font-weight: 500; font-size: var(--fs-xs); }
+.tts-rbtn--fast.is-on{ color: var(--accent-var); border-color: rgba(238,172,62,0.5); background: var(--tint-var); }

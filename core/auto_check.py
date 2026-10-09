@@ -209,9 +209,9 @@ class AutoCheckMixin:
         local = self._auto_check_model_path(lang)
         cores = os.cpu_count() or 2
         if kz:
-            # Крупная модель: одна очередь и 2 ядра в запасе — иначе запись с
-            # микрофона и прослушка не успевают (треск, дыры в записи).
-            workers, threads = 1, max(1, cores - 2)
+            # Крупная модель: одна очередь и одно ядро в запасе под запись и
+            # прослушку (у них теперь большой буфер — этого хватает).
+            workers, threads = 1, max(2, cores - 1)
         else:
             workers = 2 if cores >= 4 else 1
             threads = max(1, cores // workers)
