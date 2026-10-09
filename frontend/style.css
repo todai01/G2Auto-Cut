@@ -3171,3 +3171,4 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-redo-here{ display: inline-block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
     color: #2a1c00; background: var(--accent-var); border-radius: 999px; padding: 1px 8px; margin-right: 4px; }
 .tts-redo-row b{ font-family: var(--font-mono); font-size: 11.5px; }
+.tts-lang.is-auto button{ cursor: default; }

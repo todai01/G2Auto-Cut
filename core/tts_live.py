@@ -367,11 +367,16 @@ class TtsLiveMixin:
             if not picked:
                 return {"error": "cancel"}
             st["work_dir"] = picked if isinstance(picked, str) else picked[0]
-        model, err = self._auto_check_model(st["lang"])
-        if err:
-            if not isinstance(err, str):
-                return {"error": "need_model_kz" if st["lang"] == 'kz' else "need_model"}
-            return {"error": err}
+        # Модель на каждый язык таблицы (блоки <…_kz> / <…_ru>) — грузим сразу.
+        models = {}
+        for lg in self._tts_langs():
+            m, err = self._auto_check_model(lg)
+            if err:
+                if not isinstance(err, str):
+                    return {"error": "need_model_kz" if lg == 'kz' else "need_model"}
+                return {"error": err}
+            models[lg] = m
+        model = models.get(st.get("lang")) or next(iter(models.values()))
         folder = os.path.join(st["work_dir"], RECORDS_DIR)
         os.makedirs(folder, exist_ok=True)
         os.makedirs(os.path.join(st["work_dir"], TTS_CHUNKS_DIR), exist_ok=True)
@@ -386,7 +391,7 @@ class TtsLiveMixin:
         # нажатия Space/Backspace/Enter: они не ждут распознавания.
         self._tts_live_lock = threading.RLock()
         self._tts_q_lock = threading.Lock()
-        self._tts_live = {"model": model, "done_ms": 0, "from_ms": 0, "busy": False, "added": 0,
+        self._tts_live = {"model": model, "models": models, "done_ms": 0, "from_ms": 0, "busy": False, "added": 0,
                           "restarts": 0, "expected": self._tts_live_expected(), "queue": [], "hold": None,
                           "gen": 0, "fast": bool(getattr(self, '_tts_fast', False))}
         mon = getattr(self, '_tts_mon', None)
@@ -507,15 +512,28 @@ class TtsLiveMixin:
         так она пишет казахские слова правильно, а не «по-русски». Для
         русского не нужно — распознаётся и так."""
         st = self._tts()
-        if st.get("lang") != 'kz':
-            return None
         items = self._tts_prompt_items()
         if not items:
             return None
         pos = max(0, min(st.get("prompt_pos", 0) if pos is None else pos, len(items) - 1))
+        if self._tts_pos_lang(pos) != 'kz':
+            return None
         ids = items[pos] + (items[pos + 1] if pos + 1 < len(items) else [])
         text = ' '.join(st["units"][i]["text"] for i in ids)
         return text[:400] or None
+
+    def _tts_pos_lang(self, pos=None):
+        """Язык фразы суфлёра (по метке <…_kz> / <…_ru> в таблице)."""
+        st = self._tts()
+        items = self._tts_prompt_items()
+        if pos is None:
+            pos = st.get("prompt_pos", 0)
+        ids = items[pos] if items and 0 <= pos < len(items) else None
+        return self._tts_unit_lang(ids[0]) if ids else st.get("lang", "ru")
+
+    def _tts_live_model(self, lang):
+        live = self._tts_live
+        return (live.get("models") or {}).get(lang) or live["model"]
 
     def _tts_ptt_segment(self, rec, a_ms, b_ms, gen=None, pos=None):
         """pos — фраза суфлёра, которую читали (в режиме «не ждать» суфлёр
@@ -534,8 +552,9 @@ class TtsLiveMixin:
         seg = rec.ana_segment(a_ms, b_ms)
         samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
         t0 = time.time()
-        words = self._tts_transcribe_pack(live["model"], [{"index": 0, "audio": samples, "ms": len(seg)}],
-                                          'kk' if st["lang"] == 'kz' else 'ru', live=True,
+        lg = self._tts_pos_lang(pos)
+        words = self._tts_transcribe_pack(self._tts_live_model(lg), [{"index": 0, "audio": samples, "ms": len(seg)}],
+                                          'kk' if lg == 'kz' else 'ru', live=True,
                                           hotwords=self._tts_hint_text(pos))[0]
         live["asr_s"] = round(time.time() - t0, 1)
         with self._tts_live_lock:
@@ -828,7 +847,7 @@ class TtsLiveMixin:
         if part and items[pos] == [part["unit"]]:
             toks, _ = tok_norms(units[part["unit"]]["text"])
             resume = {"unit": part["unit"], "k": part["k"], "word": toks[part["k"]] if part["k"] < len(toks) else ''}
-        return {"pos": pos, "total": len(items), "left": left, "done": left == 0 and not pending, "resume": resume, "redo": redo, "pending": len(pending),
+        return {"pos": pos, "total": len(items), "left": left, "done": left == 0 and not pending, "resume": resume, "redo": redo, "pending": len(pending), "lang": self._tts_pos_lang(pos),
                 "redo_here": any(r["pos"] == pos for r in redo_l),
                 "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
                 "current": show(items[pos]), "next": show(nxt) if nxt else None}
@@ -975,8 +994,9 @@ class TtsLiveMixin:
         if not len(seg):
             return b_ms
         samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
-        words = self._tts_transcribe_pack(live["model"], [{"index": 0, "audio": samples, "ms": len(seg)}],
-                                          'kk' if st["lang"] == 'kz' else 'ru', live=True)[0]
+        lg = self._tts_pos_lang()
+        words = self._tts_transcribe_pack(self._tts_live_model(lg), [{"index": 0, "audio": samples, "ms": len(seg)}],
+                                          'kk' if lg == 'kz' else 'ru', live=True)[0]
         text = ''.join(w[0] for w in words).strip()
         if not words or self._asr_is_noise(text):
             live["waiting"] = False

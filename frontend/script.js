@@ -5977,7 +5977,18 @@ let isProcessing = false;
             pywebview.api.tts_rec_devices().then(l => { if (l && !l.error) ttsMonitorApply(l.outputs); });
         }
 
+        // Язык распознавания: если в таблице есть метки <…_kz> / <…_ru> — сам,
+        // по фразе на суфлёре; иначе — переключатель (язык всего листа).
+        let ttsLangNow = null;
+        function ttsLangShow(lang) {
+            let box = document.getElementById('ttsLang');
+            if (!box) return;
+            box.classList.toggle('is-auto', !!(tts && tts.lang_auto));
+            box.title = tts && tts.lang_auto ? 'Язык распознавания — сам, по меткам <…_kz> / <…_ru> в таблице' : 'Язык распознавания речи';
+            box.querySelectorAll('button').forEach(b => b.classList.toggle('is-on', b.dataset.l === lang));
+        }
         async function ttsSetLang(lang) {
+            if (tts && tts.lang_auto) { showToast('Язык переключается сам — по меткам <…_kz> / <…_ru> в таблице'); return; }
             if (!tts || !tts.loaded || tts.lang === lang) return;
             let st = await pywebview.api.tts_set_lang(lang);
             if (st && st.error) { showToast(st.error); return; }
@@ -6073,7 +6084,7 @@ let isProcessing = false;
             document.getElementById('ttsMeta').innerText = tts.loaded
                 ? `${tts.excel_name}${tts.project ? ' · ' + tts.project : ''}` : 'Таблица не загружена';
             document.getElementById('ttsLang').style.display = tts.loaded ? '' : 'none';
-            document.querySelectorAll('#ttsLang button').forEach(b => b.classList.toggle('is-on', b.dataset.l === tts.lang));
+            ttsLangShow(ttsLangNow || tts.lang);
             document.getElementById('ttsStatSaved').innerText = s.saved;
             document.getElementById('ttsStatUnits').innerText = s.units;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
@@ -7135,6 +7146,11 @@ let isProcessing = false;
             let text = document.getElementById('ttsPromptText');
             let meta = document.getElementById('ttsPromptMeta');
             let next = document.getElementById('ttsPromptNext');
+            if (pr.lang && pr.lang !== ttsLangNow) {
+                if (ttsLangNow && tts && tts.lang_auto) ttsLiveFlash('lang', pr.lang === 'kz' ? 'Дальше по-казахски — распознаю на казахском' : 'Дальше по-русски — распознаю на русском');
+                ttsLangNow = pr.lang;
+                ttsLangShow(pr.lang);
+            }
             if (pr.none) {
                 text.innerHTML = '<span class="tts-dim">Загрузите таблицу</span>';
                 meta.innerText = ''; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
@@ -7279,6 +7295,8 @@ let isProcessing = false;
                 html = '<span class="lv-dot"></span><span>Запись выключена — нажмите <b>R</b></span>';
             } else if (f && f.kind === 'ok') {
                 cls = 'is-ok'; html = `<span class="lv-ico">✓</span><span>Записано: <b>${escapeHtml(f.text)}</b></span>`;
+            } else if (f && f.kind === 'lang') {
+                cls = 'is-cmd'; html = `<span class="lv-ico">🌐</span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'miss-msg') {
                 cls = 'is-miss'; html = `<span class="lv-ico">!</span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'miss') {

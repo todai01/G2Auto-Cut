@@ -176,14 +176,21 @@ def _parse_phrase_sheet(title, rows, head_idx):
         return r[c] if c is not None and c < len(r) else None
 
     lines = []
+    cur_lang = None                   # строка-метка <full_phrase_kz> / <…_ru> — дальше фразы на этом языке
     for i, r in enumerate(rows[head_idx + 1:], start=head_idx + 2):
         text = str(cell(r, text_c) or '').strip()
+        mark = _tag(text) or _tag(cell(r, name_c))
+        ml = re.search(r'_(ru|kz|kk)$', mark or '')
+        if ml and (_text_tag(mark) or _name_tag(mark) or mark.endswith(('_ru', '_kz', '_kk'))):
+            cur_lang = 'kz' if ml.group(1) in ('kz', 'kk') else 'ru'
+            continue
         name = clean_name(cell(r, name_c) or '')
         role = next((f for f in FLAG_COLS if _flag(cell(r, col.get(f)))), None)
         vars_ = [t for t, c in var_cols if _flag(cell(r, c))]
         if not text and not name and not role:
             continue
-        lines.append({"row": i, "text": text, "name": name or f"фраза_{i:04d}", "role": role, "vars": vars_})
+        lines.append({"row": i, "text": text, "name": name or f"фраза_{i:04d}", "role": role, "vars": vars_,
+                      "lang": cur_lang})
     units, chains = build_units(lines)
     # Колонки разметки (1-based, как в Excel) — чтобы дописывать отметки в таблицу.
     mark_cols = {t: c + 1 for t, c in col.items() if t in FLAG_COLS or t in dict(var_cols)}
@@ -209,7 +216,8 @@ def build_units(lines):
         uid = len(units)
         units.append({"id": uid, "kind": "piece" if ln["role"] else "phrase", "name": ln["name"],
                       "text": ln["text"] or ln["name"], "role": ln["role"], "row": ln["row"],
-                      "vars": list(ln["vars"]), "var_before": None, "var_after": None, "chain": None})
+                      "vars": list(ln["vars"]), "var_before": None, "var_after": None, "chain": None,
+                      "lang": ln.get("lang")})
         if ln["role"] == 'start' or (ln["role"] and cur is None):
             close()
             cur = {"id": len(chains), "parts": [uid]}
@@ -360,7 +368,8 @@ class TtsFlowMixin:
         return {
             "loaded": bool(units), "has_takes": bool(st["takes"]),
             "excel_name": os.path.basename(st["excel_path"] or ''), "sheet": st.get("sheet"),
-            "lang": st.get("lang", "ru"), "project": os.path.basename(wd) if wd else '',
+            "lang": st.get("lang", "ru"), "lang_auto": any(u.get("lang") for u in units),
+            "project": os.path.basename(wd) if wd else '',
             "units": [{**u, "saved": saved[u["id"]], "takes": takes_by_unit.get(u["id"], [])} for u in units],
             "chains": st.get("chains", []),
             "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
@@ -404,6 +413,20 @@ class TtsFlowMixin:
         st = self._tts()
         if st["takes"] and st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
             st["takes"] = []      # другая таблица — старая привязка дублей неверна
+        elif st["takes"] and st["units"]:
+            # Та же таблица перечитана — номера фраз могли сдвинуться (строки-метки
+            # <…_kz> больше не фразы, добавили строки): дубли — к той же строке Excel.
+            by_row = {(u["row"], u["name"]): u["id"] for u in chosen["units"]}
+            by_name = {}
+            for u in chosen["units"]:
+                by_name.setdefault(u["name"], u["id"])
+            old = st["units"]
+            for t in st["takes"]:
+                uid = t.get("unit")
+                if uid is None or uid >= len(old):
+                    continue
+                ou = old[uid]
+                t["unit"] = by_row.get((ou.get("row"), ou["name"]), by_name.get(ou["name"]))
         st.update({"excel_path": path, "sheet": chosen["title"], "lang": chosen["lang"],
                    "units": chosen["units"], "chains": chosen["chains"], "v": TTS_STATE_VERSION,
                    "lines": chosen["lines"], "mark_cols": chosen["mark_cols"], "var_cols": chosen["var_keys"],
@@ -419,6 +442,16 @@ class TtsFlowMixin:
         if not pend:
             return {"error": "Таблица не выбрана."}
         return self.tts_load_excel(pend[0], title)
+
+    def _tts_unit_lang(self, uid):
+        """Язык фразы: из метки <…_kz>/<…_ru> над ней в таблице, иначе — языка листа."""
+        st = self._tts()
+        u = st["units"][uid] if uid is not None and 0 <= uid < len(st["units"]) else None
+        return (u or {}).get("lang") or st.get("lang", "ru")
+
+    def _tts_langs(self):
+        st = self._tts()
+        return sorted({u.get("lang") or st.get("lang", "ru") for u in st["units"]}) or [st.get("lang", "ru")]
 
     def tts_set_lang(self, lang):
         """Язык распознавания: RU или KZ (если по названию листа угадал не так)."""
