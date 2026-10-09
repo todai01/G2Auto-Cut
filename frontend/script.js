@@ -6758,6 +6758,8 @@ let isProcessing = false;
 
         function ttsSetRecUi(on, info) {
             document.getElementById('ttsRecBar').style.display = on ? 'flex' : 'none';
+            // Режим суфлёра: на время записи главное на экране — текст для диктора.
+            document.getElementById('stage4-tts').classList.toggle('is-recording', on);
             let btn = document.getElementById('ttsRecBtn');
             btn.classList.toggle('is-recording', on);
             btn.innerHTML = on ? '■ Стоп <kbd>R</kbd>' : '● Записывать <kbd>R</kbd>';
@@ -6778,9 +6780,8 @@ let isProcessing = false;
             ttsRec.peaks = (ttsRec.peaks || []).concat(s.level_db).slice(-25);
             let top = Math.max(...ttsRec.peaks);
             let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
-            document.getElementById('ttsRecInfo').innerText = `${s.device} · записано: ${s.added}`
-                + ' · Space — пауза · Backspace — заново · P — прослушать'
-                + (quiet ? ' · микрофон тихий — громкость выровняется при сохранении' : '')
+            document.getElementById('ttsRecInfo').innerText = `записано: ${s.added}`
+                + (quiet ? ' · микрофон тихий — громкость выровняется' : '')
                 + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
@@ -6812,7 +6813,8 @@ let isProcessing = false;
                 ttsPromptKey = 'done';
                 return;
             }
-            let pill = v => v ? ` <span class="tts-var">${escapeHtml(ttsVarLabel(v))}: любое значение</span> ` : '';
+            // Место переменной — тихая пометка, чтобы не перебивать текст.
+            let pill = v => v ? ` <span class="tts-slot" title="${escapeHtml(ttsVarLabel(v))}: прочитайте любое значение">${escapeHtml(ttsSlotLabel(v))}</span> ` : '';
             let line = parts => parts.map(p => pill(p.var_before) + escapeHtml(p.text) + pill(p.var_after)).join(' ');
             let key = JSON.stringify(pr.current) + '|' + pr.pos;
             if (key !== ttsPromptKey) {
@@ -6822,10 +6824,11 @@ let isProcessing = false;
                     text.classList.remove('is-in'); void text.offsetWidth; text.classList.add('is-in');
                 }
             }
-            let names = pr.current.map(p => p.name).join(' · ');
-            meta.innerHTML = `Фраза ${pr.pos + 1} из ${pr.total} · осталось ${pr.left} · <span class="tts-prompter__name">${escapeHtml(names)}</span>`
+            let doneShare = pr.total ? Math.round((pr.total - pr.left) / pr.total * 100) : 0;
+            meta.innerHTML = `<span>Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}</span>`
+                + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
-            next.innerHTML = pr.next ? `Дальше: ${line(pr.next)}` : '';
+            next.innerHTML = pr.next ? `<span class="tts-prompter__next-label">Дальше</span> ${line(pr.next)}` : '';
             ttsRenderMarks(pr);
             if (flash === 'restart') {
                 let box = document.getElementById('ttsPrompter');
@@ -7011,4 +7014,9 @@ let isProcessing = false;
             let kind = action === 'pause' ? (res.paused ? 'cmd-pause' : 'cmd-resume') : 'cmd-' + action;
             if (action === 'pause' && !res.paused) ttsSetPaused(false);
             ttsLiveFlash(kind, res.message);
+        }
+
+        // «sum_ru» → «сумма», «date_ru» → «дата» — коротко, для пометки в тексте суфлёра.
+        function ttsSlotLabel(key) {
+            return ttsVarLabel(key).replace(/\s+(RU|KZ|KK)$/i, '').toLowerCase();
         }

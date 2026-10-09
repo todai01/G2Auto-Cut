@@ -2988,3 +2988,57 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-mark kbd{ font-size: 9.5px; padding: 0 4px; }
 .tts-mark.is-on{ background: var(--tint-primary); border-color: var(--accent-primary); color: var(--accent-primary); }
 .tts-mark--var.is-on{ background: var(--tint-var); border-color: var(--accent-var); color: var(--accent-var); }
+
+/* ===== Режим суфлёра: во время записи главное — текст для диктора ===== */
+.tts-recbar__row .tts-live{ position: static; max-width: 42%; }
+.tts-recbar__btns{ display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.tts-rbtn{
+    display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+    background: transparent; border: 1px solid var(--border-soft); color: var(--text-dim); font: inherit; font-size: 12px; font-weight: 650;
+    transition: border-color .15s, color .15s, background .15s;
+}
+.tts-rbtn:hover{ border-color: var(--text-faint); color: var(--text); background: var(--panel-raised); }
+.tts-rbtn kbd{ font-size: 9.5px; padding: 0 4px; opacity: .8; }
+.tts-rbtn--stop{ color: var(--accent-trash); border-color: rgba(239,91,80,0.35); }
+.tts-rbtn--stop:hover{ color: #fff; background: var(--accent-trash); border-color: var(--accent-trash); }
+
+.tts-prompter__meta{ padding-right: 0; justify-content: center; }
+.tts-prompter__meta b{ color: var(--text); }
+.tts-slot{
+    display: inline-block; font-size: .4em; line-height: 1; vertical-align: middle; transform: translateY(-.12em);
+    padding: .45em .8em; border-radius: 999px; border: 1px dashed rgba(238,172,62,0.6);
+    color: var(--accent-var); background: rgba(238,172,62,0.06); font-weight: 700; letter-spacing: .03em;
+}
+.tts-prompter__next-label{ text-transform: uppercase; letter-spacing: .1em; font-size: .7em; font-weight: 700; color: var(--text-faint); margin-right: .5em; }
+
+.stage-tts.is-recording .tts-body,
+.stage-tts.is-recording .tts-keys{ display: none; }
+.stage-tts.is-recording .tts-recbar{
+    flex: 1; min-height: 0; margin-bottom: 10px; padding: 10px 14px 18px;
+    border-color: var(--border); background: var(--panel);
+}
+.stage-tts.is-recording .tts-prompter{
+    flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; gap: 22px; padding: 12px 4vw 4px;
+}
+.stage-tts.is-recording .tts-prompter__meta{ font-size: var(--fs-sm); letter-spacing: .02em; }
+.stage-tts.is-recording .tts-prompter__text{
+    font-size: clamp(30px, 3.3vw, 58px); line-height: 1.28; font-weight: 700; letter-spacing: -0.02em;
+    max-width: 1250px; color: #f6f8fb; text-wrap: balance;
+}
+.stage-tts.is-recording .tts-prompter__next{
+    max-width: 1000px; white-space: normal; font-size: clamp(14px, 1.2vw, 19px); line-height: 1.4; color: var(--text-faint);
+}
+.stage-tts.is-recording .tts-prompter__next .tts-slot{ font-size: .62em; }
+.stage-tts.is-recording .tts-marks{ align-items: center; opacity: .55; transition: opacity .2s; margin-top: 4px; }
+.stage-tts.is-recording .tts-marks:hover{ opacity: 1; }
+.stage-tts.is-recording .tts-marks__name{ min-width: 0; text-align: right; }
+.stage-tts.is-recording .tts-recbar.is-paused .tts-prompter{ opacity: .3; }
+
+/* лента записанного — компактно внизу */
+.stage-tts.is-recording .tts-rail-wrap{ padding: 6px; }
+.stage-tts.is-recording .tts-take{ width: 100px; padding: 6px 8px 5px; }
+.stage-tts.is-recording .tts-take__num{ font-size: 11px; }
+.tts-prompter__meta{ flex-direction: column; gap: 8px; }
+.tts-prompter__progress{ display: block; width: 180px; height: 3px; border-radius: 2px; background: var(--border-soft); overflow: hidden; }
+.tts-prompter__progress i{ display: block; height: 100%; background: var(--accent-good); border-radius: 2px; transition: width .4s var(--ease); }
