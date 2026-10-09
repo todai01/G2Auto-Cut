@@ -48,14 +48,18 @@ class AudioPlayer:
         import sounddevice as sd
         data, rate = _read_audio(path)
         info = sd.query_devices(self.device, 'output')
-        out_rate = int(info['default_samplerate']) or rate
-        if out_rate != rate and len(data):
-            n = int(round(len(data) * out_rate / rate))
-            t = np.linspace(0, len(data) - 1, n)
-            data = np.stack([np.interp(t, np.arange(len(data)), data[:, c]) for c in range(data.shape[1])], axis=1)
-        if data.shape[1] == 1 and info['max_output_channels'] >= 2:
+        ch = 2 if data.shape[1] == 1 and info['max_output_channels'] >= 2 else data.shape[1]
+        # Своя частота файла (8 кГц и т.п.) — пусть пересчитает Windows, как
+        # раньше: качественно. Не принимает — пересчитываем сами, без «робота».
+        out_rate = rate
+        try:
+            sd.check_output_settings(device=self.device, samplerate=rate, channels=ch, dtype='float32')
+        except Exception:
+            out_rate = int(info['default_samplerate']) or rate
+            data = resample(data, rate, out_rate)
+        if ch == 2 and data.shape[1] == 1:
             data = np.repeat(data, 2, axis=1)            # моно — в оба уха
-        sd.play(data.astype(np.float32), out_rate, device=self.device)
+        sd.play(np.ascontiguousarray(data, dtype=np.float32), out_rate, device=self.device)
         self._sd = sd
 
 
@@ -91,3 +95,32 @@ def _read_audio(path):
     seg = AudioSegment.from_file(path)
     x = np.array(seg.get_array_of_samples(), dtype=np.float32) / float(1 << (8 * seg.sample_width - 1))
     return x.reshape(-1, seg.channels), seg.frame_rate
+
+
+def resample(data, rate, out_rate):
+    """Пересчёт частоты без искажений: scipy (если есть) или через спектр
+    (FFT) — без «металла», который даёт простая линейная интерполяция."""
+    import numpy as np
+    if out_rate == rate or not len(data):
+        return data
+    try:
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(int(out_rate), int(rate))
+        return resample_poly(data, int(out_rate) // g, int(rate) // g, axis=0).astype(np.float32)
+    except Exception:
+        pass
+    n = len(data)
+    m = int(round(n * out_rate / rate))
+    spec = np.fft.rfft(data, axis=0)
+    keep = min(spec.shape[0], m // 2 + 1)
+    out = np.zeros((m // 2 + 1, data.shape[1]), dtype=spec.dtype)
+    out[:keep] = spec[:keep]
+    y = np.fft.irfft(out, n=m, axis=0) * (m / n)
+    # края: короткое затухание, чтобы не щёлкало
+    f = min(len(y) // 2, int(out_rate * 0.004))
+    if f > 1:
+        ramp = np.linspace(0, 1, f)[:, None]
+        y[:f] *= ramp
+        y[-f:] *= ramp[::-1]
+    return y.astype(np.float32)
