@@ -3140,3 +3140,10 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 @media (prefers-reduced-motion: reduce){ .stage-tts.is-prompter.show-assembly .tts-current{ animation: none; } }
 .tts-live.is-off .lv-dot, .tts-live.is-miss .lv-dot{ background: var(--text-faint); box-shadow: none; animation: none; }
 .tts-live.is-off .lv-dot::after, .tts-live.is-miss .lv-dot::after{ display: none; }
+
+/* Язык распознавания RU / KZ в шапке TTS */
+.tts-lang{ display: inline-flex; margin-left: 8px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; vertical-align: middle; }
+.tts-lang button{ font: inherit; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }
+.tts-lang button + button{ border-left: 1px solid var(--border); }
+.tts-lang button:hover{ color: var(--text); }
+.tts-lang button.is-on{ background: var(--accent-info); color: #fff; }

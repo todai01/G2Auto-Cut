@@ -22,6 +22,12 @@ AUTO_CHECK_MARGIN = 0.10      # насколько лучший вариант �
 MODEL_DIR_NAME = 'whisper-model'
 DEFAULT_MODEL = 'small'
 MODEL_PATH_FILE = os.path.join(os.path.expanduser('~'), '.gvox', 'whisper_model_path.txt')
+# Казахский: small распознаёт его плохо — отдельная, более крупная модель.
+# Своя папка (запоминается) или «whisper-model-kz» рядом с программой;
+# иначе — скачать large-v3-turbo (~1,6 ГБ, один раз).
+KZ_MODEL = 'mobiuslabsgmbh/faster-whisper-large-v3-turbo'
+KZ_MODEL_DIR_NAME = 'whisper-model-kz'
+KZ_MODEL_PATH_FILE = os.path.join(os.path.expanduser('~'), '.gvox', 'whisper_model_path_kz.txt')
 NEED_MODEL = object()   # модель не скачалась и локальной нет — спросить папку
 
 ASR_RATE = 16000        # Whisper работает на 16 кГц
@@ -46,6 +52,13 @@ _LAT2CYR = [
 ]
 
 
+# Казахские буквы → похожие русские: Whisper и таблица пишут их по-разному
+# («қ»/«к», «і»/«и», «ү»/«у»), сравниваем без этой разницы. Латиница
+# казахского алфавита 2021 года — туда же.
+_KZ_FOLD = str.maketrans({'ә': 'а', 'ғ': 'г', 'қ': 'к', 'ң': 'н', 'ө': 'о', 'ұ': 'у', 'ү': 'у', 'һ': 'х', 'і': 'и',
+                          'ä': 'а', 'ğ': 'г', 'ñ': 'н', 'ö': 'о', 'ū': 'у', 'ü': 'у', 'ı': 'ы', 'ş': 'ш'})
+
+
 def _norm(text):
     text = (text or '').lower().replace('ё', 'е')
     text = re.sub(r'[^\w\s]', ' ', text)
@@ -63,7 +76,7 @@ def _lat_to_cyr(text):
         else:
             out.append(text[i])
             i += 1
-    return ''.join(out).replace('ё', 'е')
+    return ''.join(out).replace('ё', 'е').translate(_KZ_FOLD)
 
 
 def _ratio(a, b):
@@ -107,11 +120,12 @@ class AutoCheckMixin:
         return bool(path) and os.path.isfile(os.path.join(path, 'model.bin')) \
             and os.path.isfile(os.path.join(path, 'config.json'))
 
-    def _auto_check_model_path(self):
+    def _auto_check_model_path(self, lang=None):
         """Папка с моделью: та, что юзер указал сам (запоминается), или
-        «whisper-model» рядом с программой."""
+        «whisper-model» рядом с программой (для казахского — свои)."""
+        kz = lang == 'kz'
         try:
-            with open(MODEL_PATH_FILE, 'r', encoding='utf-8') as f:
+            with open(KZ_MODEL_PATH_FILE if kz else MODEL_PATH_FILE, 'r', encoding='utf-8') as f:
                 saved = f.read().strip()
             if self._is_model_dir(saved):
                 return saved
@@ -122,13 +136,14 @@ class AutoCheckMixin:
         if getattr(sys, 'frozen', False):
             bases.insert(0, os.path.dirname(sys.executable))
         for base in bases:
-            p = os.path.join(base, MODEL_DIR_NAME)
+            p = os.path.join(base, KZ_MODEL_DIR_NAME if kz else MODEL_DIR_NAME)
             if self._is_model_dir(p):
                 return p
         return None
 
-    def sum_auto_check_pick_model(self):
-        """Указать папку с уже скачанной моделью (если интернет закрыт)."""
+    def sum_auto_check_pick_model(self, lang=None):
+        """Указать папку с уже скачанной моделью (если интернет закрыт).
+        lang='kz' — модель для казахского (хранится отдельно)."""
         picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not picked:
             return {"error": "cancel"}
@@ -136,17 +151,23 @@ class AutoCheckMixin:
         if not self._is_model_dir(folder):
             return {"error": "В этой папке нет файлов модели (нужны model.bin, config.json, "
                               "tokenizer.json, vocabulary.txt)."}
+        kz = lang == 'kz'
         try:
             os.makedirs(os.path.dirname(MODEL_PATH_FILE), exist_ok=True)
-            with open(MODEL_PATH_FILE, 'w', encoding='utf-8') as f:
+            with open(KZ_MODEL_PATH_FILE if kz else MODEL_PATH_FILE, 'w', encoding='utf-8') as f:
                 f.write(folder)
         except OSError:
             pass
-        self._asr_model = None
+        if kz:
+            self._asr_model_kz = None
+        else:
+            self._asr_model = None
         return {"status": "ok", "path": folder}
 
-    def _auto_check_model(self):
-        model = getattr(self, '_asr_model', None)
+    def _auto_check_model(self, lang=None):
+        kz = lang == 'kz'
+        slot = '_asr_model_kz' if kz else '_asr_model'
+        model = getattr(self, slot, None)
         if model is not None:
             return model, None
         try:
@@ -154,17 +175,17 @@ class AutoCheckMixin:
         except ImportError:
             return None, ("Не установлен модуль распознавания речи. В командной строке выполните:\n"
                           "pip install faster-whisper")
-        local = self._auto_check_model_path()
+        local = self._auto_check_model_path(lang)
         cores = os.cpu_count() or 2
         self._asr_workers = 2 if cores >= 4 else 1
         try:
-            model = WhisperModel(local or DEFAULT_MODEL, device='cpu', compute_type='int8',
+            model = WhisperModel(local or (KZ_MODEL if kz else DEFAULT_MODEL), device='cpu', compute_type='int8',
                                  cpu_threads=max(1, cores // self._asr_workers), num_workers=self._asr_workers)
         except Exception as e:
             if local:
                 return None, f"Не удалось загрузить модель из папки «{local}».\n\n{e}"
             return None, NEED_MODEL
-        self._asr_model = model
+        setattr(self, slot, model)
         return model, None
 
     def _auto_check_push(self, payload):

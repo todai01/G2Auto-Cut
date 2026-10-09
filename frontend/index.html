@@ -183,7 +183,7 @@
                 <h3 class="modal-title">Нужна модель распознавания</h3>
                 <button class="modal-close" onclick="closeAsrModel()" title="Закрыть">&times;</button>
             </div>
-            <div class="modal-hint asr-model-hint">
+            <div class="modal-hint asr-model-hint" id="asrModelHint">
                 Скачать модель автоматически не получилось — похоже, доступ к сайту <b>huggingface.co</b> из этой сети закрыт.
                 Скачайте её один раз вручную (можно на другом компьютере):
                 <ol>
@@ -1358,7 +1358,10 @@
             </div>
             <div class="tts-title">
                 <span class="tts-title__main">TTS</span>
-                <span class="tts-title__sub" id="ttsMeta">Таблица не загружена</span>
+                <span class="tts-title__sub"><span id="ttsMeta">Таблица не загружена</span>
+                    <span class="tts-lang" id="ttsLang" title="Язык распознавания речи">
+                        <button type="button" data-l="ru" onclick="ttsSetLang('ru')">RU</button><button type="button" data-l="kz" onclick="ttsSetLang('kz')">KZ</button>
+                    </span></span>
             </div>
             <div class="stat-row">
                 <span class="stat-good">Сохранено: <span id="ttsStatSaved">0</span> / <span id="ttsStatUnits">0</span></span>

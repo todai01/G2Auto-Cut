@@ -247,9 +247,11 @@ class TtsLiveMixin:
             if not picked:
                 return {"error": "cancel"}
             st["work_dir"] = picked if isinstance(picked, str) else picked[0]
-        model, err = self._auto_check_model()
+        model, err = self._auto_check_model(st["lang"])
         if err:
-            return {"error": "need_model"} if not isinstance(err, str) else {"error": err}
+            if not isinstance(err, str):
+                return {"error": "need_model_kz" if st["lang"] == 'kz' else "need_model"}
+            return {"error": err}
         folder = os.path.join(st["work_dir"], RECORDS_DIR)
         os.makedirs(folder, exist_ok=True)
         os.makedirs(os.path.join(st["work_dir"], TTS_CHUNKS_DIR), exist_ok=True)
@@ -358,6 +360,21 @@ class TtsLiveMixin:
             lo, hi = int(first_s * 1000) - 50, int(last_e * 1000) + 80
         return max(0, lo), hi
 
+    def _tts_hint_text(self):
+        """Казахский: подсказываем модели текст фразы на суфлёре (и следующей) —
+        так она пишет казахские слова правильно, а не «по-русски». Для
+        русского не нужно — распознаётся и так."""
+        st = self._tts()
+        if st.get("lang") != 'kz':
+            return None
+        items = self._tts_prompt_items()
+        if not items:
+            return None
+        pos = max(0, min(st.get("prompt_pos", 0), len(items) - 1))
+        ids = items[pos] + (items[pos + 1] if pos + 1 < len(items) else [])
+        text = ' '.join(st["units"][i]["text"] for i in ids)
+        return text[:400] or None
+
     def _tts_ptt_segment(self, rec, a_ms, b_ms):
         st = self._tts()
         live = self._tts_live
@@ -366,7 +383,8 @@ class TtsLiveMixin:
         seg = rec.ana_segment(a_ms, b_ms)
         samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
         words = self._tts_transcribe_pack(live["model"], [{"index": 0, "audio": samples, "ms": len(seg)}],
-                                          'kk' if st["lang"] == 'kz' else 'ru', live=True)[0]
+                                          'kk' if st["lang"] == 'kz' else 'ru', live=True,
+                                          hotwords=self._tts_hint_text())[0]
         text = ''.join(w[0] for w in words).strip()
         if not words or self._asr_is_noise(text):
             self._tts_push({"stage": "live_miss", "heard": "", "paused": False})

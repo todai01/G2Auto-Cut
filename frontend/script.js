@@ -2549,11 +2549,28 @@ let isProcessing = false;
         function closeAsrModel() {
             document.getElementById('asrModelOverlay').style.display = 'none';
         }
+        // Окно «нужна модель»: для казахского — своя, крупнее (small его почти не понимает).
+        let asrModelLang = null;
+        const ASR_HINT_RU = document.getElementById('asrModelHint') ? document.getElementById('asrModelHint').innerHTML : '';
+        function showAsrModel(lang) {
+            asrModelLang = lang === 'kz' ? 'kz' : null;
+            document.getElementById('asrModelHint').innerHTML = asrModelLang ? `
+                Для <b>казахского</b> нужна модель крупнее: скачать её автоматически не получилось — похоже, доступ к сайту <b>huggingface.co</b> закрыт.
+                Скачайте один раз вручную (можно на другом компьютере):
+                <ol>
+                    <li>Откройте <b>huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo</b> → вкладка <b>Files</b>.</li>
+                    <li>Скачайте все файлы: <code>config.json</code>, <code>model.bin</code> (~1,6 ГБ), <code>tokenizer.json</code>, <code>vocabulary.json</code>, <code>preprocessor_config.json</code>.</li>
+                    <li>Сложите их в одну папку и укажите её кнопкой ниже — программа запомнит (для русского останется прежняя модель).</li>
+                </ol>
+                Подойдёт и другая модель faster-whisper (CTranslate2), например дообученная на казахском — укажите её папку.` : ASR_HINT_RU;
+            document.getElementById('asrModelOverlay').style.display = 'flex';
+        }
         async function pickAsrModel() {
-            let res = await pywebview.api.sum_auto_check_pick_model();
+            let res = await pywebview.api.sum_auto_check_pick_model(asrModelLang);
             if (!res || res.error === 'cancel') return;
             if (res.error) { showBeautifulAlert(`❌ <b>Модель</b><br><br>${escapeHtml(res.error)}`); return; }
             closeAsrModel();
+            if (isShown('stage4-tts')) { showToast('Модель найдена — можно записывать (R)'); return; }
             showToast('Модель найдена — запускаю автопроверку');
             sumAutoCheckToggle();
         }
@@ -5956,6 +5973,15 @@ let isProcessing = false;
             ttsLiveRender();
         }
 
+        async function ttsSetLang(lang) {
+            if (!tts || !tts.loaded || tts.lang === lang) return;
+            let st = await pywebview.api.tts_set_lang(lang);
+            if (st && st.error) { showToast(st.error); return; }
+            tts = st;
+            ttsRender();
+            showToast(lang === 'kz' ? 'Распознаю по-казахски' : 'Распознаю по-русски');
+        }
+
         async function ttsLoadPrompt() {
             if (!tts || !tts.loaded) { ttsRenderPrompt({ none: true }); return; }
             let pr = await pywebview.api.tts_prompt_info();
@@ -5993,7 +6019,7 @@ let isProcessing = false;
             else if (p.stage === 'asr') ttsShowBusy(`Слушаю дубли: ${p.done} / ${p.total}`, Math.round(p.done / p.total * 100));
             else if (p.stage === 'error') {
                 ttsRender();
-                if (p.error === 'need_model') { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
+                if (p.error === 'need_model' || p.error === 'need_model_kz') { showAsrModel(p.error === 'need_model_kz' ? 'kz' : 'ru'); return; }
                 showBeautifulAlert('⚠️ ' + escapeHtml(p.error));
             } else if (p.stage === 'live') {
                 ttsLiveUpdate(p.state, p.added);
@@ -6037,7 +6063,9 @@ let isProcessing = false;
             if (!tts) return;
             let s = tts.stats;
             document.getElementById('ttsMeta').innerText = tts.loaded
-                ? `${tts.excel_name} · ${tts.lang.toUpperCase()}${tts.project ? ' · ' + tts.project : ''}` : 'Таблица не загружена';
+                ? `${tts.excel_name}${tts.project ? ' · ' + tts.project : ''}` : 'Таблица не загружена';
+            document.getElementById('ttsLang').style.display = tts.loaded ? '' : 'none';
+            document.querySelectorAll('#ttsLang button').forEach(b => b.classList.toggle('is-on', b.dataset.l === tts.lang));
             document.getElementById('ttsStatSaved').innerText = s.saved;
             document.getElementById('ttsStatUnits').innerText = s.units;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
@@ -6900,12 +6928,12 @@ let isProcessing = false;
             let device = await ttsPickMic(list.devices);
             if (device === null) return;
             ttsRec.starting = true;
-            ttsSetRecUi(true, 'Включаю микрофон и распознавание…');
+            ttsSetRecUi(true, tts.lang === 'kz' ? 'Включаю микрофон и казахскую модель (первый раз скачивается ~1,6 ГБ)…' : 'Включаю микрофон и распознавание…');
             let res;
             try { res = await pywebview.api.tts_rec_start(device); } finally { ttsRec.starting = false; }
             if (!res || res.error) {
                 ttsSetRecUi(false);
-                if (res && res.error === 'need_model') { document.getElementById('asrModelOverlay').style.display = 'flex'; return; }
+                if (res && (res.error === 'need_model' || res.error === 'need_model_kz')) { showAsrModel(res.error === 'need_model_kz' ? 'kz' : 'ru'); return; }
                 if (res && res.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(res.error));
                 return;
             }

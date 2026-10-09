@@ -420,6 +420,15 @@ class TtsFlowMixin:
             return {"error": "Таблица не выбрана."}
         return self.tts_load_excel(pend[0], title)
 
+    def tts_set_lang(self, lang):
+        """Язык распознавания: RU или KZ (если по названию листа угадал не так)."""
+        if getattr(self, '_tts_rec', None):
+            return {"error": "Сначала остановите запись (R)."}
+        st = self._tts()
+        st["lang"] = 'kz' if lang == 'kz' else 'ru'
+        self._tts_save()
+        return self.tts_state()
+
     def tts_open_project(self, path):
         """Продолжить TTS-проект (tts_project.json в папке)."""
         try:
@@ -519,9 +528,9 @@ class TtsFlowMixin:
                 self._tts_push({"stage": "cut", "done": i + 1, "total": len(ranges)})
 
         self._tts_push({"stage": "model", "done": 0, "total": 0})
-        model, err = self._auto_check_model()
+        model, err = self._auto_check_model(st["lang"])
         if err is NEED_MODEL:
-            return {"error": "need_model"}
+            return {"error": "need_model_kz" if st["lang"] == 'kz' else "need_model"}
         if err:
             return {"error": err}
 
