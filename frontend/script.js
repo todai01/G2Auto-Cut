@@ -5992,6 +5992,9 @@ let isProcessing = false;
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
             } else if (p.stage === 'marks') {
                 ttsShowMarksPending(p.pending, p.error);
+            } else if (p.stage === 'live_partial') {
+                if (p.prompt) ttsRenderPrompt(p.prompt);
+                ttsLiveFlash('partial', p.message);
             } else if (p.stage === 'live_busy') {
                 ttsLiveSt.busy = p.busy;
                 if (!p.busy) ttsLiveSt.waiting = !!p.waiting;
@@ -6668,11 +6671,10 @@ let isProcessing = false;
             }
             if (e.repeat && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') { e.preventDefault(); return true; }
             if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
-            // Во время записи: Space — пауза, Backspace — заново, P — прослушать последнее.
-            if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsLiveAction('pause'); return true; }
+            // Во время записи: держите Space — пишу, Backspace — заново, P — прослушать последнее.
+            if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(true); return true; }
             if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsLiveAction('redo'); return true; }
             if (ttsRec.on && e.code === 'KeyP') { e.preventDefault(); ttsLiveAction('play'); return true; }
-            if (ttsRec.on && (e.code === 'Enter' || e.code === 'NumpadEnter')) { e.preventDefault(); ttsLiveAction('commit'); return true; }
             if (e.code === 'Space') { e.preventDefault(); ttsTogglePlay(); }
             else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); ttsApprove(); }
             else if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); ttsStep(1); }
@@ -6788,7 +6790,8 @@ let isProcessing = false;
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
             ttsSetPaused(s.paused);
-            Object.assign(ttsLiveSt, { hearing: s.hearing, paused: s.paused, waiting: s.waiting, busy: !!s.busy });
+            Object.assign(ttsLiveSt, { hearing: false, paused: false, waiting: false, busy: !!s.busy });
+            if (!ttsPttDown) ttsLiveSt.holding = !!s.holding;
             let live = document.getElementById('ttsLive');
             if (live) live.style.setProperty('--lv', Math.max(0.15, Math.min(1, (s.level_db + 50) / 40)).toFixed(2));
             ttsLiveRender();
@@ -6819,10 +6822,10 @@ let isProcessing = false;
             // Место переменной — тихая пометка, чтобы не перебивать текст.
             let pill = v => v ? ` <span class="tts-slot" title="${escapeHtml(ttsVarLabel(v))}: прочитайте любое значение">${escapeHtml(ttsSlotLabel(v))}</span> ` : '';
             let line = parts => parts.map(p => pill(p.var_before) + escapeHtml(p.text) + pill(p.var_after)).join(' ');
-            let key = JSON.stringify(pr.current) + '|' + pr.pos;
+            let key = JSON.stringify(pr.current) + '|' + pr.pos + '|' + JSON.stringify(pr.resume || null);
             if (key !== ttsPromptKey) {
                 ttsPromptKey = key;
-                text.innerHTML = line(pr.current);
+                text.innerHTML = pr.resume ? ttsResumeHTML(pr.current[0], pr.resume.k) : line(pr.current);
                 if (flash === 'next' && motionOK()) {
                     text.classList.remove('is-in'); void text.offsetWidth; text.classList.add('is-in');
                 }
@@ -6910,11 +6913,15 @@ let isProcessing = false;
                 cls = 'is-miss'; html = `<span class="lv-ico">✕</span><span>Не понял: «${escapeHtml(f.text)}»</span>`;
             } else if (f && f.kind === 'pause-miss') {
                 cls = 'is-miss'; html = `<span class="lv-ico">❚❚</span><span>Пауза — не фиксирую. Space — продолжить</span>`;
+            } else if (f && f.kind === 'partial') {
+                cls = 'is-wait'; html = `<span class="lv-ico">▸</span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'mark') {
                 cls = 'is-cmd'; html = `<span class="lv-ico">✎</span><span>Отмечено — ${escapeHtml(f.text)}</span>`;
             } else if (f && TTS_LIVE_CMD[f.kind]) {
                 let [ico, name] = TTS_LIVE_CMD[f.kind];
                 cls = 'is-cmd'; html = `<span class="lv-ico">${ico}</span><span>${escapeHtml(f.text || name)}</span>`;
+            } else if (ttsLiveSt.holding) {
+                cls = 'is-rec'; html = '<span class="lv-recdot"></span><span>Говорите… отпустите, когда закончите</span>';
             } else if (ttsLiveSt.busy) {
                 cls = 'is-busy'; html = '<span class="lv-spin"></span><span>Распознаю…</span>';
             } else if (ttsLiveSt.paused) {
@@ -6924,7 +6931,7 @@ let isProcessing = false;
             } else if (ttsLiveSt.waiting) {
                 cls = 'is-wait'; html = '<span class="lv-dots"><i></i><i></i><i></i></span><span>Дочитайте фразу</span>';
             } else {
-                cls = 'is-idle'; html = '<span class="lv-dot"></span><span>Слушаю</span>';
+                cls = 'is-idle'; html = '<span class="lv-dot"></span><span>Держите Space и читайте</span>';
             }
             let key = cls + '|' + html + '|' + (f ? f.id : '');
             if (key === ttsLiveKey) return;
@@ -7009,13 +7016,6 @@ let isProcessing = false;
         // ===== Клавиши во время записи =====
         async function ttsLiveAction(action) {
             if (!ttsRec.on) return;
-            if (action === 'commit') {
-                // «Готово»: сразу «Распознаю…», не дожидаясь ответа.
-                ttsLiveSt.busy = true; ttsLiveSt.hearing = false; ttsLiveRender();
-                let res = await pywebview.api.tts_live_key('commit');
-                if (res && res.error) { ttsLiveSt.busy = false; ttsLiveRender(); showToast(res.error); }
-                return;
-            }
             let res = await pywebview.api.tts_live_key(action);
             if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
             if (res.state) ttsLiveUpdate(res.state, 0);
@@ -7060,7 +7060,37 @@ let isProcessing = false;
         }
         window.addEventListener('resize', () => requestAnimationFrame(ttsFitPrompt));
 
-        // Клик по тексту суфлёра — «я закончил фразу, распознавай сейчас».
-        document.addEventListener('click', e => {
-            if (ttsRec.on && e.target.closest && e.target.closest('#ttsPromptText')) ttsLiveAction('commit');
+
+
+        // ===== Запись «как голосовое»: держите Space (или кнопку) — пишу =====
+        let ttsPttDown = false;
+        async function ttsPtt(down) {
+            if (!ttsRec.on || ttsPttDown === down) return;
+            ttsPttDown = down;
+            ttsLiveSt.holding = down;
+            if (!down) ttsLiveSt.busy = true;          // сразу «Распознаю…»
+            document.getElementById('ttsRecBar').classList.toggle('is-holding', down);
+            ttsLiveRender();
+            let res = await pywebview.api.tts_ptt(down);
+            if (res && res.error) { showToast(res.error); ttsLiveSt.busy = false; ttsLiveRender(); }
+        }
+        document.addEventListener('keyup', e => {
+            if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(false); }
         });
+        window.addEventListener('blur', () => { if (ttsPttDown) ttsPtt(false); });
+        // Мышью: зажать кнопку записи или сам текст суфлёра.
+        document.addEventListener('mousedown', e => {
+            if (!ttsRec.on || e.button !== 0) return;
+            if (e.target.closest && e.target.closest('#ttsHoldBtn, #ttsPromptText')) { e.preventDefault(); ttsPtt(true); }
+        });
+        document.addEventListener('mouseup', () => { if (ttsPttDown) ttsPtt(false); });
+
+        // Длинная фраза, диктор сбился: верное начало — подсвечено, дальше —
+        // «продолжите отсюда». Слова — как на экране (по пробелам), как и на бэкенде.
+        function ttsResumeHTML(p, k) {
+            let toks = String(p.text || '').split(/\s+/).filter(Boolean);
+            let done = toks.slice(0, k).map(escapeHtml).join(' ');
+            let rest = toks.slice(k).map(escapeHtml).join(' ');
+            return `<span class="tts-done" title="Уже записано">${done}</span> `
+                + `<span class="tts-resume">продолжите отсюда</span> <span class="tts-rest">${rest}</span>`;
+        }

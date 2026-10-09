@@ -3056,3 +3056,26 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-prompter__hint{ display: none; font-size: var(--fs-xs); color: var(--text-faint); }
 .tts-prompter__hint kbd{ font-size: 9.5px; }
 .stage-tts.is-recording .tts-prompter__hint{ display: block; }
+
+/* ===== Запись «как голосовое» ===== */
+.tts-rbtn--hold{ color: #fff; background: var(--accent-trash); border-color: var(--accent-trash); user-select: none; }
+.tts-rbtn--hold:hover{ background: #f26b61; color: #fff; border-color: #f26b61; }
+.tts-recbar.is-holding{ border-color: var(--accent-trash) !important; box-shadow: 0 0 0 1px var(--accent-trash), 0 0 28px rgba(239,91,80,0.25); }
+.tts-recbar.is-holding .tts-rbtn--hold{ box-shadow: 0 0 0 3px rgba(239,91,80,0.35); }
+.tts-live.is-rec{ color: #fff; background: var(--accent-trash); border-color: var(--accent-trash); }
+.lv-recdot{ width: 9px; height: 9px; border-radius: 50%; background: #fff; animation: ttsRecPulse 1s ease-in-out infinite; }
+.stage-tts.is-recording .tts-prompter__text{ user-select: none; }
+.stage-tts.is-recording .tts-recbar.is-holding .tts-prompter__text{ background: rgba(239,91,80,0.05); box-shadow: 0 0 0 1px rgba(239,91,80,0.3); }
+/* продолжение после сбоя */
+.tts-done{ color: var(--accent-good); opacity: .55; }
+.tts-resume{
+    display: inline-block; vertical-align: middle; transform: translateY(-.12em); font-size: .36em; font-weight: 800;
+    letter-spacing: .06em; text-transform: uppercase; color: #06281a; background: var(--accent-good);
+    padding: .45em .8em; border-radius: 999px; animation: ttsResume 1.4s ease-in-out infinite;
+}
+.tts-resume::after{ content: ' ▸'; }
+@keyframes ttsResume{ 50%{ box-shadow: 0 0 0 .35em rgba(47,191,125,0.25); } }
+.tts-rest{ color: #fff; }
+@media (prefers-reduced-motion: reduce){ .tts-resume, .lv-recdot{ animation: none; } }
+.stage-tts.is-recording .tts-prompter__text:hover{ background: rgba(239,91,80,0.04); box-shadow: 0 0 0 1px rgba(239,91,80,0.2); }
+.stage-tts.is-recording .tts-prompter__text:active{ background: rgba(239,91,80,0.08); }
