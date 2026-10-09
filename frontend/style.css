@@ -3161,3 +3161,6 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-recbar__info{ min-width: 0; flex: 0 1 auto; }
 .tts-recbar__meter{ flex: 0 1 110px; min-width: 50px; }
 @media (max-width: 1500px){ .tts-recbar__btns .tts-rbtn kbd{ display: none; } }
+.tts-dev-head{ font-weight: 700; font-size: var(--fs-sm); padding: 12px 4px 6px; }
+.tts-dev-head:first-child{ padding-top: 2px; }
+.tts-dev-head .tts-dim{ font-weight: 500; font-size: var(--fs-xs); }

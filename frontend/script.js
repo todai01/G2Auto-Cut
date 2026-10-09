@@ -6955,87 +6955,119 @@ let isProcessing = false;
             ttsRec.timer = setInterval(ttsRecPoll, 200);
         }
 
-        // ----- прослушка: голос диктора сразу во вторые наушники -----
-        // Устройство запоминается по названию (номера в Windows меняются).
+        // ----- устройства: микрофон диктора и наушники того, кто слушает -----
+        // Запоминаем название + какое оно по счёту среди одноимённых: Windows
+        // обрезает названия до 31 знака, и у двух гарнитур они могут совпасть,
+        // а номера устройств меняются при переподключении.
         const TTS_MON_KEY = 'gvox_tts_monitor';
-        function ttsMonitorSaved() {
-            try { return JSON.parse(localStorage.getItem(TTS_MON_KEY) || 'null'); } catch (e) { return null; }
+        const ttsLoad = k => { try { let v = JSON.parse(localStorage.getItem(k) || 'null'); return v && typeof v === 'object' ? v : null; } catch (e) { return null; } };
+        const ttsSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+        const ttsMonitorSaved = () => ttsLoad(TTS_MON_KEY);
+        const ttsMicSaved = () => ttsLoad(TTS_MIC_KEY);
+        function ttsDevFind(list, saved) {
+            if (!saved || !saved.name) return null;
+            let same = (list || []).filter(d => d.name === saved.name);
+            return same.find(d => (d.nth || 0) === (saved.nth || 0)) || (same.length === 1 ? same[0] : null);
         }
+        const ttsDevLabel = (name, nth, same) => same > 1 || nth ? `${name} · №${(nth || 0) + 1}` : name;
+
         function ttsMonitorLabel(name) {
             let btn = document.getElementById('ttsMonBtn');
             if (!btn) return;
-            let cfg = ttsMonitorSaved();
+            let cfg = ttsMonitorSaved(), mic = ttsMicSaved();
             let on = !!(cfg && cfg.name);
             btn.classList.toggle('is-on', on);
+            let label = on ? ttsDevLabel(cfg.name, cfg.nth, cfg.same) : '';
             let short = s => s.length > 18 ? s.slice(0, 17) + '…' : s;
-            btn.innerHTML = on ? `&#127911; ${escapeHtml(short(name || cfg.name))}` : '&#127911; Прослушка';
-            btn.title = on ? `Ваши наушники: «${cfg.name}» — голос диктора (громкость ${Math.round(cfg.volume * 100)}%) и прослушивание дублей. Клик — сменить` : 'Ваши наушники: голос диктора в реальном времени и прослушивание дублей';
+            let num = on && (cfg.same > 1 || cfg.nth) ? ` №${(cfg.nth || 0) + 1}` : '';
+            btn.innerHTML = on ? `&#127911; ${escapeHtml(short(cfg.name))}${num}` : '&#127911; Устройства';
+            btn.title = `Микрофон диктора: ${mic && mic.name ? ttsDevLabel(mic.name, mic.nth, mic.same) : 'не выбран'}\n`
+                + `Ваши наушники: ${on ? label + ` (громкость прослушки ${Math.round((cfg.volume || 1) * 100)}%)` : 'как в Windows'}\nКлик — сменить`;
         }
         async function ttsMonitorApply(outputs) {
             let cfg = ttsMonitorSaved();
             if (!cfg || !cfg.name) { await pywebview.api.tts_monitor(null, 1); return; }
-            let dev = (outputs || []).find(d => d.name === cfg.name);
-            if (!dev) { showToast(`Наушники «${cfg.name}» не найдены — прослушка выключена`); await pywebview.api.tts_monitor(null, 1); return; }
+            let dev = ttsDevFind(outputs, cfg);
+            if (!dev) {
+                showToast(`Наушники «${ttsDevLabel(cfg.name, cfg.nth, cfg.same)}» не найдены — звук пойдёт в устройство Windows`);
+                await pywebview.api.tts_monitor(null, 1); return;
+            }
             await pywebview.api.tts_monitor(dev.id, cfg.volume || 1);
         }
+
+        // Одно окно — оба выбора; запоминается навсегда (до следующей смены).
         async function ttsMonitorPick() {
             let list = await pywebview.api.tts_rec_devices();
             if (!list || list.error) { showToast(list && list.error || 'Нет устройств'); return; }
-            let cfg = ttsMonitorSaved() || {};
-            let vol = cfg.volume || 1;
-            ttsOpenListOverlay('Ваши наушники', false);
-            document.getElementById('ttsList').innerHTML = `
-                <div class="tts-mon-vol"><span>Громкость</span>
-                    <input type="range" id="ttsMonVol" min="0.5" max="4" step="0.1" value="${vol}">
-                    <b id="ttsMonVolTxt">${Math.round(vol * 100)}%</b></div>
-                <div class="tts-dim tts-mon-hint">Выберите ваши наушники, не гарнитуру диктора. Туда пойдёт голос диктора в реальном времени (пока идёт запись) и всё прослушивание дублей.</div>
-                <button type="button" class="audit-category-item" data-off="1">Не выбирать — как в Windows
-                    <span class="audit-choice-desc">${cfg.name ? '' : 'сейчас'}</span></button>` +
-                (list.outputs || []).map(d => `<button type="button" class="audit-category-item ${d.name === cfg.name ? 'is-first' : ''}" data-id="${d.id}" data-name="${escapeHtml(d.name)}">${escapeHtml(d.name)}
-                    <span class="audit-choice-desc">${d.name === cfg.name ? 'выбрано' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`).join('');
-            let range = document.getElementById('ttsMonVol');
-            range.oninput = async () => {
-                vol = +range.value;
-                document.getElementById('ttsMonVolTxt').innerText = Math.round(vol * 100) + '%';
-                let c = ttsMonitorSaved();
-                if (c && c.name) {
-                    c.volume = vol;
-                    try { localStorage.setItem(TTS_MON_KEY, JSON.stringify(c)); } catch (e) {}
-                    let dev = (list.outputs || []).find(d => d.name === c.name);
-                    if (dev) pywebview.api.tts_monitor(dev.id, vol);
+            ttsOpenListOverlay('Устройства', false);
+            let draw = () => {
+                let cfg = ttsMonitorSaved() || {}, mic = ttsMicSaved() || {};
+                let vol = cfg.volume || 1;
+                let micNow = ttsDevFind(list.devices, mic), outNow = ttsDevFind(list.outputs, cfg);
+                let item = (d, kind, on) => `<button type="button" class="audit-category-item ${on ? 'is-first' : ''}" data-kind="${kind}" data-id="${d.id}">
+                        ${escapeHtml(ttsDevLabel(d.name, d.nth, d.same))}
+                        <span class="audit-choice-desc">${on ? 'выбрано' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`;
+                document.getElementById('ttsList').innerHTML = `
+                    <div class="tts-dev-head">🎙 Микрофон диктора</div>
+                    ${list.devices.map(d => item(d, 'mic', micNow && micNow.id === d.id)).join('')}
+                    <div class="tts-dev-head">🎧 Ваши наушники <span class="tts-dim">— голос диктора вживую и всё прослушивание</span></div>
+                    <button type="button" class="audit-category-item ${outNow ? '' : 'is-first'}" data-kind="out" data-id="-1">Как в Windows (по умолчанию)
+                        <span class="audit-choice-desc">${outNow ? '' : 'выбрано'}</span></button>
+                    ${list.outputs.map(d => item(d, 'out', outNow && outNow.id === d.id)).join('')}
+                    <div class="tts-mon-vol"><span>Громкость прослушки</span>
+                        <input type="range" id="ttsMonVol" min="0.5" max="4" step="0.1" value="${vol}">
+                        <b id="ttsMonVolTxt">${Math.round(vol * 100)}%</b></div>
+                    <div class="tts-dim tts-mon-hint">Две одинаковые гарнитуры различаются номером (№1, №2). Наушники выбирайте не те, что у диктора.</div>
+                    <div class="modal-actions"><button class="custom-alert-btn" onclick="ttsCloseList()">Готово</button></div>`;
+                document.querySelectorAll('#ttsList [data-kind]').forEach(b => b.onclick = async () => {
+                    let id = +b.dataset.id;
+                    if (b.dataset.kind === 'mic') {
+                        let d = list.devices.find(x => x.id === id);
+                        ttsSave(TTS_MIC_KEY, { name: d.name, nth: d.nth || 0, same: d.same || 1 });
+                        if (ttsRec.on) showToast('Новый микрофон — со следующего включения записи (R)');
+                    } else {
+                        let d = list.outputs.find(x => x.id === id);
+                        ttsSave(TTS_MON_KEY, d ? { name: d.name, nth: d.nth || 0, same: d.same || 1, volume: vol } : null);
+                        let res = await pywebview.api.tts_monitor(d ? d.id : null, vol);
+                        if (res && res.error) showToast(res.error);
+                    }
                     ttsMonitorLabel();
-                }
+                    draw();
+                });
+                let range = document.getElementById('ttsMonVol');
+                range.oninput = () => {
+                    vol = +range.value;
+                    document.getElementById('ttsMonVolTxt').innerText = Math.round(vol * 100) + '%';
+                    let c = ttsMonitorSaved();
+                    if (c && c.name) {
+                        c.volume = vol; ttsSave(TTS_MON_KEY, c);
+                        let d = ttsDevFind(list.outputs, c);
+                        if (d) pywebview.api.tts_monitor(d.id, vol);
+                        ttsMonitorLabel();
+                    }
+                };
             };
-            document.querySelectorAll('#ttsList [data-id], #ttsList [data-off]').forEach(b => b.onclick = async () => {
-                let off = !!b.dataset.off;
-                let c = off ? null : { name: b.dataset.name, volume: vol };
-                try { localStorage.setItem(TTS_MON_KEY, JSON.stringify(c)); } catch (e) {}
-                let res = await pywebview.api.tts_monitor(off ? null : +b.dataset.id, vol);
-                ttsCloseList();
-                if (res && res.error) { showToast(res.error); return; }
-                ttsMonitorLabel(res && res.name);
-                showToast(off ? 'Звук — в устройство Windows по умолчанию' : `Прослушивание — в «${c.name}»${ttsRec.on ? '' : '; голос диктора пойдёт туда же, когда включите запись'}`);
-            });
+            draw();
         }
 
-        // Микрофон: один — сразу он; несколько — выбор, последний выбранный запоминаем.
+        // Микрофон: один — сразу он; запомненный — сразу он, без вопросов
+        // (сменить — кнопка «Устройства»); иначе — спросить один раз.
         function ttsPickMic(devices) {
-            let saved = null;
-            try { saved = localStorage.getItem(TTS_MIC_KEY); } catch (e) {}
             if (devices.length === 1) return Promise.resolve(devices[0].id);
-            let known = devices.find(d => String(d.id) === saved);
-            if (known && ttsRec.askedOnce) return Promise.resolve(known.id);
+            let saved = ttsMicSaved();
+            let known = ttsDevFind(devices, saved);
+            if (known) return Promise.resolve(known.id);
             return new Promise(resolve => {
-                ttsOpenListOverlay('Какой микрофон?', false);
-                let order = [...devices].sort((a, b) => (String(b.id) === saved) - (String(a.id) === saved) || b.default - a.default);
+                ttsOpenListOverlay('Микрофон диктора', false);
+                let order = [...devices].sort((a, b) => b.default - a.default);
                 document.getElementById('ttsList').innerHTML = order.map((d, i) =>
-                    `<button type="button" class="audit-category-item ${i === 0 ? 'is-first' : ''}" data-id="${d.id}">${escapeHtml(d.name)}
-                        <span class="audit-choice-desc">${String(d.id) === saved ? 'выбран в прошлый раз' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`).join('');
+                    `<button type="button" class="audit-category-item ${i === 0 ? 'is-first' : ''}" data-id="${d.id}">${escapeHtml(ttsDevLabel(d.name, d.nth, d.same))}
+                        <span class="audit-choice-desc">${d.default ? 'по умолчанию в Windows' : ''}</span></button>`).join('');
                 document.querySelectorAll('#ttsList [data-id]').forEach(b => b.onclick = () => {
-                    try { localStorage.setItem(TTS_MIC_KEY, b.dataset.id); } catch (e) {}
-                    ttsRec.askedOnce = true;
+                    let d = devices.find(x => x.id === +b.dataset.id);
+                    ttsSave(TTS_MIC_KEY, { name: d.name, nth: d.nth || 0, same: d.same || 1 });
                     ttsListOnClose = null;
-                    ttsCloseList(); resolve(+b.dataset.id);
+                    ttsCloseList(); ttsMonitorLabel(); resolve(d.id);
                 });
                 ttsListOnClose = () => resolve(null);
             });

@@ -292,6 +292,17 @@ class TtsLiveMixin:
         except Exception:
             return {"error": "Для записи нужен модуль sounddevice. В командной строке выполните:\n"
                              "pip install sounddevice"}
+        # Список устройств PortAudio запоминает при запуске — гарнитуру
+        # переподключили, номера уже другие. Пока запись не идёт — обновляем.
+        if not getattr(self, '_tts_rec', None):
+            try:
+                player = getattr(self, 'player', None)
+                if player is not None:
+                    player.stop()
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
         try:
             default = sd.default.device[0]
             devs = [{"id": i, "name": d['name'], "default": i == default}
@@ -310,6 +321,16 @@ class TtsLiveMixin:
             return {"error": f"Не удалось получить список микрофонов: {e}"}
         if not devs:
             return {"error": "Не найден ни один микрофон."}
+        # Windows обрезает названия до 31 знака — у двух гарнитур они могут
+        # совпасть. nth — какое по счёту устройство с таким же названием.
+        for lst in (devs, outs):
+            seen = {}
+            for d in lst:
+                d["nth"] = seen.get(d["name"], 0)
+                seen[d["name"]] = d["nth"] + 1
+                d["same"] = 0
+            for d in lst:
+                d["same"] = seen[d["name"]]
         return {"devices": devs, "outputs": outs}
 
     def tts_monitor(self, device=None, volume=1.0):
