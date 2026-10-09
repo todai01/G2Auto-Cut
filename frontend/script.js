@@ -6056,7 +6056,7 @@ let isProcessing = false;
         function ttsRenderRail() {
             let rail = document.getElementById('ttsRail');
             if (!tts.takes.length) {
-                rail.innerHTML = `<div class="tts-rail__empty">${tts.loaded ? 'Загрузите запись — здесь появятся дубли' : 'Загрузите таблицу и запись'}</div>`;
+                rail.innerHTML = `<div class="tts-rail__empty">${!tts.loaded ? 'Загрузите таблицу и запись' : (ttsRec.on ? 'Записанные фразы появятся здесь' : 'Загрузите или запишите запись — здесь появятся дубли')}</div>`;
                 return;
             }
             rail.innerHTML = tts.takes.map(t => `
@@ -6760,6 +6760,7 @@ let isProcessing = false;
             document.getElementById('ttsRecBar').style.display = on ? 'flex' : 'none';
             // Режим суфлёра: на время записи главное на экране — текст для диктора.
             document.getElementById('stage4-tts').classList.toggle('is-recording', on);
+            if (on) requestAnimationFrame(ttsFitPrompt);
             let btn = document.getElementById('ttsRecBtn');
             btn.classList.toggle('is-recording', on);
             btn.innerHTML = on ? '■ Стоп <kbd>R</kbd>' : '● Записывать <kbd>R</kbd>';
@@ -6797,6 +6798,7 @@ let isProcessing = false;
             let bar = document.getElementById('ttsRecBar');
             if (!bar || bar.classList.contains('is-paused') === !!paused) return;
             bar.classList.toggle('is-paused', !!paused);
+            requestAnimationFrame(ttsFitPrompt);
             document.getElementById('ttsPromptPause').style.display = paused ? '' : 'none';
         }
 
@@ -6830,6 +6832,7 @@ let isProcessing = false;
 ;
             next.innerHTML = pr.next ? `<span class="tts-prompter__next-label">Дальше</span> ${line(pr.next)}` : '';
             ttsRenderMarks(pr);
+            ttsFitPrompt();
             if (flash === 'restart') {
                 let box = document.getElementById('ttsPrompter');
                 box.classList.remove('is-restart'); void box.offsetWidth; box.classList.add('is-restart');
@@ -7020,3 +7023,30 @@ let isProcessing = false;
         function ttsSlotLabel(key) {
             return ttsVarLabel(key).replace(/\s+(RU|KZ|KK)$/i, '').toLowerCase();
         }
+
+        // Размер текста суфлёра — под длину фразы: длинная фраза уменьшается,
+        // пока не поместится целиком в своё поле (короткая — крупно).
+        const TTS_PROMPT_MAX = 58, TTS_PROMPT_MIN = 20;
+        function ttsFitPrompt() {
+            let stage = document.getElementById('stage4-tts');
+            let box = document.getElementById('ttsPrompter');
+            let text = document.getElementById('ttsPromptText');
+            if (!stage || !box || !text) return;
+            if (!stage.classList.contains('is-recording')) { text.style.fontSize = ''; return; }
+            let others = 0;
+            ['ttsPromptMeta', 'ttsPromptNext', 'ttsMarks'].forEach(id => {
+                let el = document.getElementById(id);
+                if (el && el.offsetParent) others += el.offsetHeight;
+            });
+            let cs = getComputedStyle(box);
+            let gaps = (parseFloat(cs.rowGap) || 0) * 3 + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+            let avail = box.clientHeight - others - gaps - 8;
+            let maxByWidth = Math.max(TTS_PROMPT_MIN, Math.min(TTS_PROMPT_MAX, window.innerWidth / 30));
+            let size = maxByWidth;
+            text.style.fontSize = size + 'px';
+            while (size > TTS_PROMPT_MIN && text.scrollHeight > avail) {
+                size -= 2;
+                text.style.fontSize = size + 'px';
+            }
+        }
+        window.addEventListener('resize', () => requestAnimationFrame(ttsFitPrompt));

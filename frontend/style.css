@@ -3042,3 +3042,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-prompter__meta{ flex-direction: column; gap: 8px; }
 .tts-prompter__progress{ display: block; width: 180px; height: 3px; border-radius: 2px; background: var(--border-soft); overflow: hidden; }
 .tts-prompter__progress i{ display: block; height: 100%; background: var(--accent-good); border-radius: 2px; transition: width .4s var(--ease); }
+
+/* текст суфлёра никогда не вылезает за своё поле */
+.stage-tts.is-recording .tts-prompter{ overflow: hidden; }
+.stage-tts.is-recording .tts-prompter__text{ flex: 0 1 auto; min-height: 0; overflow: hidden; }
