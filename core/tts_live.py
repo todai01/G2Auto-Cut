@@ -18,7 +18,7 @@ import webview
 from pydub import AudioSegment
 
 from core.auto_check import _lat_to_cyr, _norm, _ratio
-from core.tts_flow import FIND_SCORE, TTS_CHUNKS_DIR, align_stream
+from core.tts_flow import FIND_SCORE, TTS_CHUNKS_DIR, align_stream, var_label
 
 LIVE_RATE = 16000          # копия для распознавания
 LIVE_SILENCE_MS = 700      # пауза, после которой сказанное считается готовым
@@ -27,7 +27,8 @@ LIVE_SHORT_SILENCE_MS = 350  # после короткой реплики (ко�
 LIVE_SHORT_SPEECH_MS = 1200  # «короткая» — столько речи или меньше
 LIVE_FORCE_MS = 40000      # без пауз дольше — режем в самом тихом месте
 LIVE_FRAME_MS = 20
-LIVE_NOISE_ABOVE_DB = 10   # речь — громче фона хотя бы на столько
+LIVE_NOISE_ABOVE_DB = 6    # речь — громче фона хотя бы на столько (тихие команды тоже)
+LIVE_HOTWORDS = 'Заново Стоп Запись Играй'
 RECORDS_DIR = 'Записи'
 LIVE_WAIT_MAX_MS = 45000   # недочитанную фразу ждём не дольше
 PROMPT_PREFIX_SCORE = 0.6  # сказанное похоже на начало фразы — ждём продолжения
@@ -299,12 +300,14 @@ class TtsLiveMixin:
         units = st["units"]
 
         def show(ids):
-            return [{"name": units[i]["name"], "text": units[i]["text"], "role": units[i]["role"],
+            return [{"id": i, "name": units[i]["name"], "text": units[i]["text"], "role": units[i]["role"],
+                     "vars": units[i].get("vars", []),
                      "var_before": units[i].get("var_before") if k == 0 else None,
                      "var_after": units[i].get("var_after")} for k, i in enumerate(ids)]
         left = sum(1 for ids in items if self._tts_prompt_needed(ids))
         nxt = next((items[k] for k in range(pos + 1, len(items)) if self._tts_prompt_needed(items[k])), None)
         return {"pos": pos, "total": len(items), "left": left, "done": left == 0,
+                "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
                 "current": show(items[pos]), "next": show(nxt) if nxt else None}
 
     def tts_prompt_move(self, step):
@@ -428,7 +431,8 @@ class TtsLiveMixin:
             return b_ms
         samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
         words = self._tts_transcribe_pack(live["model"], [{"index": 0, "audio": samples, "ms": len(seg)}],
-                                          'kk' if st["lang"] == 'kz' else 'ru')[0]
+                                          'kk' if st["lang"] == 'kz' else 'ru', live=True,
+                                          hotwords=LIVE_HOTWORDS)[0]
         text = ''.join(w[0] for w in words).strip()
         if not words or self._asr_is_noise(text):
             live["waiting"] = False

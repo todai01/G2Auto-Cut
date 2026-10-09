@@ -5990,6 +5990,8 @@ let isProcessing = false;
                 ttsLiveUpdate(p.state, p.added);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
+            } else if (p.stage === 'marks') {
+                ttsShowMarksPending(p.pending, p.error);
             } else if (p.stage === 'live_busy') {
                 ttsLiveSt.busy = p.busy;
                 if (!p.busy) ttsLiveSt.waiting = !!p.waiting;
@@ -6034,6 +6036,7 @@ let isProcessing = false;
             ttsRenderRail();
             ttsRenderCurrent();
             ttsRenderAssembly();
+            ttsShowMarksPending(tts.marks_pending);
             // Audacity встроен — текущий дубль сам уезжает туда.
             let cur = ttsCurTake();
             if (audacityEmbedded && cur && ttsAudacitySent !== cur.i) {
@@ -6674,6 +6677,7 @@ let isProcessing = false;
             else if (e.code === 'KeyX') { e.preventDefault(); ttsEditorCut(); }
             else if (e.code === 'KeyR') { e.preventDefault(); ttsToggleRec(); }
             else if (e.code === 'ArrowDown' && ttsRec.on) { e.preventDefault(); ttsPromptMove(1); }
+            else if (ttsRec.on && /^(Digit|Numpad)\d$/.test(e.code)) { e.preventDefault(); ttsMarkKey(+e.code.slice(-1)); }
             else if (e.code === 'ArrowUp' && ttsRec.on) { e.preventDefault(); ttsPromptMove(-1); }
             return true;
         }
@@ -6818,6 +6822,7 @@ let isProcessing = false;
             meta.innerHTML = `Фраза ${pr.pos + 1} из ${pr.total} · осталось ${pr.left} · <span class="tts-prompter__name">${escapeHtml(names)}</span>`
 ;
             next.innerHTML = pr.next ? `Дальше: ${line(pr.next)}` : '';
+            ttsRenderMarks(pr);
             if (flash === 'restart') {
                 let box = document.getElementById('ttsPrompter');
                 box.classList.remove('is-restart'); void box.offsetWidth; box.classList.add('is-restart');
@@ -6894,6 +6899,8 @@ let isProcessing = false;
                 cls = 'is-miss'; html = `<span class="lv-ico">✕</span><span>Не понял: «${escapeHtml(f.text)}»</span>`;
             } else if (f && f.kind === 'pause-miss') {
                 cls = 'is-miss'; html = `<span class="lv-ico">❚❚</span><span>Пауза — «${escapeHtml(f.text)}» не фиксирую. Скажите «Запись»</span>`;
+            } else if (f && f.kind === 'mark') {
+                cls = 'is-cmd'; html = `<span class="lv-ico">✎</span><span>Отмечено — ${escapeHtml(f.text)}</span>`;
             } else if (f && TTS_LIVE_CMD[f.kind]) {
                 let [ico, name] = TTS_LIVE_CMD[f.kind];
                 cls = 'is-cmd'; html = `<span class="lv-ico">${ico}</span><span>Команда «${name}»${f.text ? ' — ' + escapeHtml(f.text.replace(/^«?[^»]*»?\s*—\s*/, '')) : ''}</span>`;
@@ -6917,4 +6924,72 @@ let isProcessing = false;
             if (changed && motionOK()) { el.classList.remove('lv-pop'); void el.offsetWidth; el.classList.add('lv-pop'); }
             let text = document.getElementById('ttsPromptText');
             if (text) text.classList.toggle('is-busy', cls === 'is-busy');
+        }
+
+
+        // ===== Разметка таблицы прямо на суфлёре =====
+        // Роль строки: 1 — start, 2 — start_2, 3 — end, 0 — снять; переменные
+        // (колонки справа: Сумма, Дата…) — 4, 5…; клик по чипу — то же самое.
+        // Клавиши действуют на последнюю строку текущей фразы суфлёра.
+        const TTS_ROLES = [['start', 'start'], ['start_2', 'start_2'], ['end', 'end']];
+        let ttsPromptNow = null;
+
+        function ttsRenderMarks(pr) {
+            ttsPromptNow = pr;
+            let box = document.getElementById('ttsMarks');
+            if (!box) return;
+            if (!pr || pr.done || !pr.current) { box.innerHTML = ''; return; }
+            let vars = pr.var_cols || [];
+            let last = pr.current.length - 1;
+            box.innerHTML = pr.current.map((p, k) => `
+                <div class="tts-marks__row ${k === last ? 'is-keys' : ''}">
+                    <span class="tts-marks__name" title="${escapeHtml(p.text)}">${escapeHtml(p.name)}</span>
+                    ${TTS_ROLES.map(([r, label], i) => `<button type="button" class="tts-mark ${p.role === r ? 'is-on' : ''}"
+                        onclick="ttsSetMark(${p.id}, 'role', '${r}')">${k === last ? `<kbd>${i + 1}</kbd>` : ''}${label}</button>`).join('')}
+                    <span class="tts-marks__sep"></span>
+                    ${vars.map((v, i) => `<button type="button" class="tts-mark tts-mark--var ${(p.vars || []).includes(v.key) ? 'is-on' : ''}"
+                        onclick="ttsSetMark(${p.id}, 'var', '${v.key}')">${k === last ? `<kbd>${i + 4}</kbd>` : ''}${escapeHtml(v.label)}</button>`).join('')}
+                </div>`).join('');
+        }
+
+        function ttsMarkKey(n) {
+            let pr = ttsPromptNow;
+            if (!pr || pr.done || !pr.current || !pr.current.length) return;
+            let p = pr.current[pr.current.length - 1];
+            if (n === 0) ttsSetMark(p.id, 'role', null);
+            else if (n <= 3) ttsSetMark(p.id, 'role', TTS_ROLES[n - 1][0]);
+            else { let v = (pr.var_cols || [])[n - 4]; if (v) ttsSetMark(p.id, 'var', v.key); }
+        }
+
+        async function ttsSetMark(unitId, what, value) {
+            let cur = ttsPromptNow && ttsPromptNow.current.find(p => p.id === unitId);
+            if (what === 'role' && cur && cur.role === value) value = null;          // повторный клик — снять
+            let res = await pywebview.api.tts_set_mark(unitId, what, value);
+            if (!res || res.error) { showToast(res && res.error || 'Не удалось отметить'); return; }
+            if (res.state) ttsLiveUpdate(res.state, 0);
+            if (res.prompt) { ttsPromptKey = null; ttsRenderPrompt(res.prompt); }
+            let label = what === 'role' ? (value || 'без роли') : ((ttsPromptNow.var_cols || []).find(v => v.key === value) || {}).label;
+            ttsLiveFlash('mark', `${cur ? cur.name : ''}: ${label}`);
+        }
+
+        function ttsShowMarksPending(n, error) {
+            let btn = document.getElementById('ttsMarksBtn');
+            if (!btn) return;
+            btn.style.display = n ? '' : 'none';
+            btn.innerText = `Разметка не записана в таблицу: ${n}`;
+            if (error && n) btn.title = error;
+            if (error && n && !ttsShowMarksPending.warned) { ttsShowMarksPending.warned = true; showToast(error); }
+            if (!n) ttsShowMarksPending.warned = false;
+            // Таблица открыта в Excel — пробуем дописать раз в 10 с, пока не получится.
+            clearInterval(ttsShowMarksPending.timer);
+            if (n) ttsShowMarksPending.timer = setInterval(async () => {
+                let r = await pywebview.api.tts_marks_write();
+                if (r && !r.pending) { ttsShowMarksPending(0); showToast('Разметка записана в таблицу'); }
+            }, 10000);
+        }
+
+        async function ttsMarksRetry() {
+            let res = await pywebview.api.tts_marks_write();
+            ttsShowMarksPending(res.pending, res.error);
+            showToast(res.saved ? 'Разметка записана в таблицу' : (res.error || 'Не удалось записать'));
         }

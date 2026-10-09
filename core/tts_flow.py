@@ -108,6 +108,16 @@ def _common_name(names):
     return pref or names[0]
 
 
+def _text_tag(t):
+    """<phrase>, <full_phrase_ru>, <phrase_kz> — колонка с текстом фраз."""
+    return bool(t) and re.fullmatch(r'(full_)?phrase(_(ru|kz|kk))?', t) is not None
+
+
+def _name_tag(t):
+    """<name_phrase>, <name_phrase_ru>, <name_full_phrase_kz> — колонка с именем файла."""
+    return bool(t) and re.fullmatch(r'name_(full_)?phrase(_(ru|kz|kk))?', t) is not None
+
+
 def parse_tts_workbook(path):
     """Разбирает таблицу. {phrase_sheets: [...], var_sheets: {...}}."""
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
@@ -118,7 +128,7 @@ def parse_tts_workbook(path):
             continue
         head_idx = None
         for i, r in enumerate(rows[:10]):
-            if any(_tag(c) == 'phrase' for c in r):
+            if any(_text_tag(_tag(c)) for c in r):
                 head_idx = i
                 break
         if head_idx is not None:
@@ -155,8 +165,12 @@ def _parse_phrase_sheet(title, rows, head_idx):
         t = _tag(h)
         if t:
             col.setdefault(t, c)
-    text_c, name_c = col.get('phrase'), col.get('name_phrase')
-    var_cols = [(t, c) for t, c in col.items() if t not in ('phrase', 'name_phrase') + FLAG_COLS]
+    text_t = next((t for t in col if _text_tag(t)), None)
+    name_t = next((t for t in col if _name_tag(t)), None)
+    text_c, name_c = col.get(text_t), col.get(name_t)
+    var_cols = [(t, c) for t, c in col.items() if t not in (text_t, name_t) + FLAG_COLS]
+    lang_m = re.search(r'_(ru|kz|kk)$', text_t or '')
+    lang = ('kz' if lang_m.group(1) in ('kz', 'kk') else 'ru') if lang_m else _lang_of(title)
 
     def cell(r, c):
         return r[c] if c is not None and c < len(r) else None
@@ -170,11 +184,19 @@ def _parse_phrase_sheet(title, rows, head_idx):
         if not text and not name and not role:
             continue
         lines.append({"row": i, "text": text, "name": name or f"фраза_{i:04d}", "role": role, "vars": vars_})
+    units, chains = build_units(lines)
+    # Колонки разметки (1-based, как в Excel) — чтобы дописывать отметки в таблицу.
+    mark_cols = {t: c + 1 for t, c in col.items() if t in FLAG_COLS or t in dict(var_cols)}
+    return {"title": title, "lang": lang, "units": units, "chains": chains, "lines": lines,
+            "var_keys": [t for t, _ in var_cols], "mark_cols": mark_cols, "head_row": head_idx + 1}
 
-    # Юнит — каждая строка: сохраняется отдельным файлом под своим именем.
-    # Строки с флагами связываем в «цепочку» start → start_2 → end — это
-    # кусочки одной фразы. Цепочка нужна для «Сборки» и для разрезки
-    # дубля, где фраза прочитана целиком (с примером значения внутри).
+
+def build_units(lines):
+    """Строки таблицы → юниты и цепочки.
+    Юнит — каждая строка: сохраняется отдельным файлом под своим именем.
+    Строки с флагами связываем в «цепочку» start → start_2 → end — это
+    кусочки одной фразы. Цепочка нужна для «Сборки», суфлёра и для разрезки
+    дубля, где фраза прочитана целиком (с примером значения внутри)."""
     units, chains, cur = [], [], None
 
     def close():
@@ -187,7 +209,7 @@ def _parse_phrase_sheet(title, rows, head_idx):
         uid = len(units)
         units.append({"id": uid, "kind": "piece" if ln["role"] else "phrase", "name": ln["name"],
                       "text": ln["text"] or ln["name"], "role": ln["role"], "row": ln["row"],
-                      "var_before": None, "var_after": None, "chain": None, "_vars": ln["vars"]})
+                      "vars": list(ln["vars"]), "var_before": None, "var_after": None, "chain": None})
         if ln["role"] == 'start' or (ln["role"] and cur is None):
             close()
             cur = {"id": len(chains), "parts": [uid]}
@@ -206,18 +228,15 @@ def _parse_phrase_sheet(title, rows, head_idx):
             u["chain"] = ch["id"]
             if u["role"] in ('start', 'start_2'):
                 nxt = parts[k + 1] if k + 1 < len(parts) else None
-                var = u["_vars"][0] if u["_vars"] else (nxt["_vars"][0] if nxt and nxt["_vars"] else None)
+                var = u["vars"][0] if u["vars"] else (nxt["vars"][0] if nxt and nxt["vars"] else None)
                 u["var_after"] = var
                 if nxt:
                     nxt["var_before"] = var
-            elif u["role"] == 'end' and not u["var_before"] and u["_vars"]:
-                u["var_before"] = u["_vars"][0]
+            elif u["role"] == 'end' and not u["var_before"] and u["vars"]:
+                u["var_before"] = u["vars"][0]
         ch["name"] = _common_name([u["name"] for u in parts])
         ch["vars"] = [u["var_after"] for u in parts if u["var_after"]]
-    for u in units:
-        u.pop("_vars", None)
-    return {"title": title, "lang": _lang_of(title), "units": units, "chains": chains,
-            "var_keys": [t for t, _ in var_cols]}
+    return units, chains
 
 
 FIND_SCORE = 0.75         # окно слов засчитываем как фразу из таблицы
@@ -332,6 +351,8 @@ class TtsFlowMixin:
             "lang": st.get("lang", "ru"), "project": os.path.basename(wd) if wd else '',
             "units": [{**u, "saved": saved[u["id"]], "takes": takes_by_unit.get(u["id"], [])} for u in units],
             "chains": st.get("chains", []),
+            "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
+            "marks_pending": len(st.get("marks_dirty") or []),
             "takes": takes, "index": min(st.get("index", 0), max(0, len(takes) - 1)),
             "var_sheets": {k: {"label": v["label"],
                                "categories": [{"key": c["key"], "label": c["label"], "count": len(c["values"])}
@@ -362,7 +383,7 @@ class TtsFlowMixin:
             return {"error": f"Не удалось прочитать таблицу «{os.path.basename(path)}».\n\n{e}"}
         sheets = parsed["phrase_sheets"]
         if not sheets:
-            return {"error": "В таблице нет листа фраз: нужна шапка с колонкой <phrase>."}
+            return {"error": "В таблице нет листа фраз: нужна шапка с колонкой <phrase> (или <full_phrase_ru>)."}
         if sheet is None and len(sheets) > 1:
             self._tts_pending = (path, parsed)
             return {"choose_sheet": [{"title": s["title"], "lang": s["lang"], "units": len(s["units"])}
@@ -373,6 +394,8 @@ class TtsFlowMixin:
             st["takes"] = []      # другая таблица — старая привязка дублей неверна
         st.update({"excel_path": path, "sheet": chosen["title"], "lang": chosen["lang"],
                    "units": chosen["units"], "chains": chosen["chains"], "v": TTS_STATE_VERSION,
+                   "lines": chosen["lines"], "mark_cols": chosen["mark_cols"], "var_cols": chosen["var_keys"],
+                   "head_row": chosen["head_row"], "marks_dirty": [],
                    "var_sheets": {k: v for k, v in parsed["var_sheets"].items()
                                   if k in chosen["var_keys"] or not chosen["var_keys"]}})
         st["index"] = 0
@@ -589,9 +612,11 @@ class TtsFlowMixin:
                 run = None
         return best[1] + (best[0] + 10) // 2
 
-    def _tts_transcribe_pack(self, model, pack, language):
+    def _tts_transcribe_pack(self, model, pack, language, live=False, hotwords=None):
         """Как _asr_transcribe_pack, но со временем слов внутри каждого дубля:
-        [(слово, начало_с, конец_с)] — по ним режем цепочку на кусочки."""
+        [(слово, начало_с, конец_с)] — по ним режем цепочку на кусочки.
+        live — запись с микрофона: чувствительнее к тихим коротким словам
+        (команды), hotwords — подсказка модели, какие слова ждать."""
         import numpy as np
         gap = np.zeros(int(PACK_GAP_SEC * ASR_RATE), dtype=np.float32)
         parts, spans, t = [], [], 0.0
@@ -604,17 +629,27 @@ class TtsFlowMixin:
             spans.append((t, t + d))
             t += d
         audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
-        # Тихая запись (некоторые гарнитуры) распознаётся хуже — поднимаем.
-        peak = float(np.abs(audio).max()) if len(audio) else 0.0
-        if 1e-4 < peak < 0.5:
-            audio = audio * min(30.0, 0.7 / peak)
-        segments, _info = model.transcribe(
-            audio, language=None if language == 'auto' else language,
-            beam_size=1, best_of=1, word_timestamps=True, vad_filter=True,
-            condition_on_previous_text=False)
+        # Тихая запись (некоторые гарнитуры) распознаётся хуже — поднимаем по
+        # уровню голоса, а не по одному пику (щелчок не должен мешать).
+        if len(audio):
+            ref = float(np.percentile(np.abs(audio), 99.5))
+            if 1e-4 < ref < 0.35:
+                audio = np.clip(audio * min(40.0, 0.5 / ref), -1.0, 1.0)
+        opts = dict(language=None if language == 'auto' else language, beam_size=1, best_of=1,
+                    word_timestamps=True, vad_filter=True, condition_on_previous_text=False)
+        if live:
+            opts["vad_parameters"] = {"threshold": 0.3, "min_speech_duration_ms": 80, "min_silence_duration_ms": 300}
+        if hotwords:
+            opts["hotwords"] = hotwords
+        try:
+            segments, _info = model.transcribe(audio, **opts)
+        except TypeError:                          # старая faster-whisper — без hotwords
+            opts.pop("hotwords", None)
+            segments, _info = model.transcribe(audio, **opts)
+        no_speech, logprob = (0.85, -1.0) if live else (0.6, -0.7)
         words = [[] for _ in pack]
         for seg in segments:
-            if getattr(seg, 'no_speech_prob', 0) > 0.6 and getattr(seg, 'avg_logprob', 0) < -0.7:
+            if getattr(seg, 'no_speech_prob', 0) > no_speech and getattr(seg, 'avg_logprob', 0) < logprob:
                 continue
             for w in (seg.words or []):
                 mid = (w.start + w.end) / 2
@@ -1233,3 +1268,118 @@ class TtsFlowMixin:
         self._tts_mark_listened()
         self.player.play(tmp)
         return {"playing": True, "duration": len(out) / 1000.0}
+
+    # ---------------- разметка таблицы: start / start_2 / end и переменные ----------------
+    # Отмечается прямо во время записи (суфлёр, клавиши 1/2/3/0 и 4, 5…).
+    # Отметки сразу перестраивают цепочки, хранятся в проекте и дописываются
+    # в саму таблицу 1-ками (перед первой записью — резервная копия).
+
+    def _tts_ensure_lines(self):
+        st = self._tts()
+        if st.get("lines") and st.get("mark_cols"):
+            return True
+        path = st.get("excel_path")
+        if not path or not os.path.exists(path):
+            return False
+        parsed = parse_tts_workbook(path)
+        sh = next((s for s in parsed["phrase_sheets"] if s["title"] == st.get("sheet")), None)
+        if not sh:
+            return False
+        st.update({"lines": sh["lines"], "mark_cols": sh["mark_cols"], "var_cols": sh["var_keys"],
+                   "head_row": sh["head_row"]})
+        st.setdefault("marks_dirty", [])
+        return True
+
+    def _tts_rebuild_units(self):
+        """Цепочки заново из строк; суфлёр остаётся на той же фразе, уже
+        сохранённые файлы переезжают, если фраза стала кусочком (или наоборот)."""
+        st = self._tts()
+        old = {u["id"]: self._tts_target(u) for u in st["units"]} if st.get("work_dir") else {}
+        anchor = None
+        if hasattr(self, '_tts_prompt_items'):
+            items = self._tts_prompt_items()
+            pos = st.get("prompt_pos", 0)
+            anchor = items[pos][-1] if 0 <= pos < len(items) else None
+        st["units"], st["chains"] = build_units(st["lines"])
+        for u in st["units"]:
+            src = old.get(u["id"])
+            if src and os.path.exists(src):
+                dst = self._tts_target(u)
+                if dst != src:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if os.path.exists(dst):
+                        self._tts_trash(dst)
+                    shutil.move(src, dst)
+        if anchor is not None and hasattr(self, '_tts_prompt_items'):
+            items = self._tts_prompt_items()
+            st["prompt_pos"] = next((k for k, ids in enumerate(items) if anchor in ids), st.get("prompt_pos", 0))
+
+    def tts_set_mark(self, unit_id, what, value=None):
+        """what='role' — value: 'start' | 'start_2' | 'end' | None (снять);
+        what='var' — value: ключ колонки (<sum_ru> → 'sum_ru'), отметка переключается."""
+        st = self._tts()
+        if not self._tts_ensure_lines():
+            return {"error": "Не нашёл файл таблицы — разметку некуда записать."}
+        if not (0 <= unit_id < len(st["lines"])):
+            return {"error": "Нет такой строки."}
+        ln = st["lines"][unit_id]
+        if what == 'role':
+            ln["role"] = value if value in FLAG_COLS else None
+        elif what == 'var' and value in (st.get("var_cols") or []):
+            ln["vars"] = [v for v in ln["vars"] if v != value] if value in ln["vars"] else ln["vars"] + [value]
+        else:
+            return {"error": "Неизвестная отметка."}
+        if ln["row"] not in st.setdefault("marks_dirty", []):
+            st["marks_dirty"].append(ln["row"])
+        self._tts_rebuild_units()
+        self._tts_save()
+        threading.Thread(target=self._tts_marks_write_bg, daemon=True).start()
+        out = {"state": self.tts_state()}
+        if hasattr(self, 'tts_prompt_info'):
+            out["prompt"] = self.tts_prompt_info()
+        return out
+
+    def _tts_marks_write_bg(self):
+        lock = getattr(self, '_tts_marks_lock', None)
+        if lock is None:
+            lock = self._tts_marks_lock = threading.Lock()
+        with lock:
+            res = self.tts_marks_write()
+        self._tts_push({"stage": "marks", **res})
+
+    def tts_marks_write(self):
+        """Дописать отметки в таблицу. Файл открыт в Excel — отметки ждут в проекте."""
+        st = self._tts()
+        dirty = list(st.get("marks_dirty") or [])
+        if not dirty:
+            return {"saved": True, "pending": 0}
+        path = st.get("excel_path")
+        if not path or not os.path.exists(path):
+            return {"saved": False, "pending": len(dirty), "error": "Файл таблицы не найден."}
+        backup = os.path.splitext(path)[0] + '_до_разметки.xlsx'
+        try:
+            if not os.path.exists(backup):
+                shutil.copy2(path, backup)
+            wb = openpyxl.load_workbook(path)
+            ws = wb[st["sheet"]]
+            cols = st.get("mark_cols") or {}
+            by_row = {ln["row"]: ln for ln in st["lines"]}
+            for row in dirty:
+                ln = by_row.get(row)
+                if not ln:
+                    continue
+                for f in FLAG_COLS:
+                    if f in cols:
+                        ws.cell(row=row, column=cols[f]).value = 1 if ln["role"] == f else None
+                for v in st.get("var_cols") or []:
+                    if v in cols:
+                        ws.cell(row=row, column=cols[v]).value = 1 if v in ln["vars"] else None
+            wb.save(path)
+        except PermissionError:
+            return {"saved": False, "pending": len(dirty),
+                    "error": "Таблица открыта в Excel — закройте её, отметки допишутся сами."}
+        except Exception as e:
+            return {"saved": False, "pending": len(dirty), "error": f"Не удалось записать в таблицу: {e}"}
+        st["marks_dirty"] = [r for r in st.get("marks_dirty", []) if r not in dirty]
+        self._tts_save()
+        return {"saved": True, "pending": len(st["marks_dirty"]), "backup": os.path.basename(backup)}

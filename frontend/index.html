@@ -1354,6 +1354,7 @@
                 <button class="btn-ghost btn-ghost--rec" id="ttsRecBtn" onclick="ttsToggleRec()" title="Записывать с микрофона: готовые фразы появляются на ленте прямо во время записи">● Записывать <kbd>R</kbd></button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
+                <button class="btn-ghost btn-alert btn-ghost--compact" id="ttsMarksBtn" style="display:none" onclick="ttsMarksRetry()" title="Отметки start/end и переменных ещё не записаны в таблицу (например, она открыта в Excel)"></button>
             </div>
             <div class="tts-title">
                 <span class="tts-title__main">TTS</span>
@@ -1382,6 +1383,7 @@
                 <div class="tts-live" id="ttsLive"></div>
                 <div class="tts-prompter__meta" id="ttsPromptMeta"></div>
                 <div class="tts-prompter__text" id="ttsPromptText"></div>
+                <div class="tts-marks" id="ttsMarks"></div>
                 <div class="tts-prompter__next" id="ttsPromptNext"></div>
             </div>
         </div>
