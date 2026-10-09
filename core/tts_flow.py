@@ -158,6 +158,28 @@ def parse_tts_workbook(path):
     return {"phrase_sheets": sheets, "var_sheets": var_sheets}
 
 
+def _lang_mark(v):
+    """Строка-переключатель языка: «<full_phrase_kz>», «full_phrase_ru»,
+    «<name_full_phrase_kz>» (со скобками или без) → тег; иначе None."""
+    s = str(v or '').strip().lower()
+    s = s[1:-1].strip() if s.startswith('<') and s.endswith('>') else s
+    return s if re.fullmatch(r'(name_)?(full_)?phrase_(ru|kz|kk)', s) else None
+
+
+_KZ_LETTERS = re.compile(r'[әғқңөұүһі]', re.I)
+
+
+def text_lang(text):
+    """Язык по самому тексту: казахские буквы → 'kz'; длинный текст без них →
+    'ru'; короткий без них («Рахмет») — не понять, None."""
+    t = str(text or '')
+    if _KZ_LETTERS.search(t):
+        return 'kz'
+    if re.search(r'[а-яё]', t, re.I) and len(t.split()) >= 4:
+        return 'ru'
+    return None
+
+
 def _parse_phrase_sheet(title, rows, head_idx):
     head = rows[head_idx]
     col = {}
@@ -179,9 +201,9 @@ def _parse_phrase_sheet(title, rows, head_idx):
     cur_lang = None                   # строка-метка <full_phrase_kz> / <…_ru> — дальше фразы на этом языке
     for i, r in enumerate(rows[head_idx + 1:], start=head_idx + 2):
         text = str(cell(r, text_c) or '').strip()
-        mark = _tag(text) or _tag(cell(r, name_c))
+        mark = _lang_mark(text) or _lang_mark(cell(r, name_c))
         ml = re.search(r'_(ru|kz|kk)$', mark or '')
-        if ml and (_text_tag(mark) or _name_tag(mark) or mark.endswith(('_ru', '_kz', '_kk'))):
+        if ml:
             cur_lang = 'kz' if ml.group(1) in ('kz', 'kk') else 'ru'
             continue
         name = clean_name(cell(r, name_c) or '')
@@ -368,7 +390,7 @@ class TtsFlowMixin:
         return {
             "loaded": bool(units), "has_takes": bool(st["takes"]),
             "excel_name": os.path.basename(st["excel_path"] or ''), "sheet": st.get("sheet"),
-            "lang": st.get("lang", "ru"), "lang_auto": any(u.get("lang") for u in units),
+            "lang": st.get("lang", "ru"), "lang_auto": bool(units) and len(self._tts_langs()) > 1,
             "project": os.path.basename(wd) if wd else '',
             "units": [{**u, "saved": saved[u["id"]], "takes": takes_by_unit.get(u["id"], [])} for u in units],
             "chains": st.get("chains", []),
@@ -447,11 +469,15 @@ class TtsFlowMixin:
         """Язык фразы: из метки <…_kz>/<…_ru> над ней в таблице, иначе — языка листа."""
         st = self._tts()
         u = st["units"][uid] if uid is not None and 0 <= uid < len(st["units"]) else None
-        return (u or {}).get("lang") or st.get("lang", "ru")
+        if not u:
+            return st.get("lang", "ru")
+        # Что на экране у диктора: казахские буквы — казахская модель, иначе
+        # метка <…_kz>/<…_ru> над фразой, иначе язык листа.
+        return text_lang(u.get("text")) or u.get("lang") or st.get("lang", "ru")
 
     def _tts_langs(self):
         st = self._tts()
-        return sorted({u.get("lang") or st.get("lang", "ru") for u in st["units"]}) or [st.get("lang", "ru")]
+        return sorted({self._tts_unit_lang(u["id"]) for u in st["units"]}) or [st.get("lang", "ru")]
 
     def tts_set_lang(self, lang):
         """Язык распознавания: RU или KZ (если по названию листа угадал не так)."""
