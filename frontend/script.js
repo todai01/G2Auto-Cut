@@ -6064,7 +6064,7 @@ let isProcessing = false;
             }
             rail.innerHTML = tts.takes.map(t => `
                 <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'piece' ? 'is-chain' : ''}"
-                        data-i="${t.i}" onclick="ttsSelect(${t.i})" title="${escapeHtml(t.heard || 'тишина / шум')}">
+                        data-i="${t.i}" onclick="ttsRailClick(${t.i})" title="${escapeHtml(t.heard || 'тишина / шум')}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
                     <span class="tts-take__meta">${t.unit !== null ? Math.round(t.score * 100) + '%' : ''}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
@@ -6139,7 +6139,8 @@ let isProcessing = false;
                 : block(u);
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
-                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span></div>
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span>
+                    <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc)">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-blocks">${blocks}</div>
                 <div class="tts-ed">
                     <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
@@ -6672,6 +6673,7 @@ let isProcessing = false;
             if (e.repeat && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') { e.preventDefault(); return true; }
             if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
             // Во время записи: держите Space — пишу, Backspace — заново, P — прослушать последнее.
+            if (ttsRec.on && e.code === 'Escape' && document.getElementById('stage4-tts').classList.contains('show-assembly')) { e.preventDefault(); ttsShowAssembly(false); return true; }
             if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(true); return true; }
             if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsLiveAction('redo'); return true; }
             if (ttsRec.on && e.code === 'KeyP') { e.preventDefault(); ttsLiveAction('play'); return true; }
@@ -6763,6 +6765,7 @@ let isProcessing = false;
             document.getElementById('ttsRecBar').style.display = on ? 'flex' : 'none';
             // Режим суфлёра: на время записи главное на экране — текст для диктора.
             document.getElementById('stage4-tts').classList.toggle('is-recording', on);
+            if (!on) document.getElementById('stage4-tts').classList.remove('show-assembly');
             if (on) requestAnimationFrame(ttsFitPrompt);
             let btn = document.getElementById('ttsRecBtn');
             btn.classList.toggle('is-recording', on);
@@ -6786,7 +6789,7 @@ let isProcessing = false;
             let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
             document.getElementById('ttsRecInfo').innerText = `записано: ${s.added}`
                 + (quiet ? ' · микрофон тихий — громкость выровняется' : '')
-                + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
+;
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
             ttsSetPaused(s.paused);
@@ -6875,8 +6878,8 @@ let isProcessing = false;
             if (busy && keep !== null && keep < tts.takes.length) tts.index = keep;
             ttsRenderRail();
             if (!busy) { ttsRenderCurrent(); ttsRenderAssembly(); }
-            else {
-                document.getElementById('ttsStatSaved').innerText = tts.stats.saved;
+            ttsRenderStats();
+            if (busy) {
                 let num = document.querySelector('#ttsCurrent .tts-current__num');
                 if (num) num.innerText = `дубль ${tts.index + 1} / ${tts.takes.length}`;
             }
@@ -7093,4 +7096,31 @@ let isProcessing = false;
             let rest = toks.slice(k).map(escapeHtml).join(' ');
             return `<span class="tts-done" title="Уже записано">${done}</span> `
                 + `<span class="tts-resume">продолжите отсюда</span> <span class="tts-rest">${rest}</span>`;
+        }
+
+
+        // Счётчики в шапке — всегда по текущему состоянию.
+        function ttsRenderStats() {
+            if (!tts) return;
+            let s = tts.stats;
+            document.getElementById('ttsStatSaved').innerText = s.saved;
+            document.getElementById('ttsStatUnits').innerText = s.units;
+            document.getElementById('ttsStatDoubt').innerText = s.doubt;
+            document.getElementById('ttsStatMissing').innerText = s.missing;
+            document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;
+        }
+
+        // Клик по ячейке ленты — сразу слушать (повторный клик — стоп). Во
+        // время записи над лентой открывается «Сборка» этого дубля.
+        async function ttsRailClick(i) {
+            if (ttsPlayingIdx === i) { await ttsStopPlay(); ttsRender(); return; }
+            await ttsSelect(i);
+            if (ttsRec.on) ttsShowAssembly(true);
+            ttsTogglePlay();
+        }
+
+        function ttsShowAssembly(on) {
+            let stage = document.getElementById('stage4-tts');
+            stage.classList.toggle('show-assembly', on === undefined ? !stage.classList.contains('show-assembly') : on);
+            if (stage.classList.contains('show-assembly')) { ttsEd = null; ttsRenderAssembly(); }
         }

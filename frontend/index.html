@@ -1378,6 +1378,7 @@
                 <div class="tts-recbar__btns">
                     <button class="tts-rbtn tts-rbtn--hold" id="ttsHoldBtn" title="Держите — идёт запись фразы; отпустите — распознаю (то же — Space или зажать текст)">&#9679; Держите — запись <kbd>Space</kbd></button>
                     <button class="tts-rbtn" onclick="ttsLiveAction('redo')" title="Удалить последнюю запись и вернуться к этой фразе (недочитанную — начать сначала)">&#8634; Заново <kbd>Backspace</kbd></button>
+                    <button class="tts-rbtn" onclick="ttsShowAssembly()" title="Сборка последнего/выбранного дубля — обрезка и вырезы, не останавливая запись (клик по ячейке внизу — тоже)">&#9986; Сборка</button>
                     <button class="tts-rbtn" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
                     <button class="tts-rbtn" onclick="ttsPromptMove(-1)" title="Вернуться к предыдущей фразе (например, перечитать)">Назад <kbd>&#8593;</kbd></button>
                     <button class="tts-rbtn" onclick="ttsPromptMove(1)" title="Пропустить фразу — вернётся в конце">Пропустить <kbd>&#8595;</kbd></button>

@@ -296,7 +296,8 @@ class TtsLiveMixin:
         return {"recording": rec.running, "seconds": rec.frames / rec.rate, "level_db": round(rec.level_db, 1),
                 "device": rec.device_name, "busy": live.get("busy", False),
                 "pending_s": round(max(0, rec.ana_ms - live.get("done_ms", 0)) / 1000, 1),
-                "added": live.get("added", 0), "restarts": live.get("restarts", 0),
+                # Сколько записей этой сессии есть сейчас (удалённые «Заново» — не в счёт).
+                "added": sum(len(h["takes"]) for h in live.get("history", [])), "restarts": live.get("restarts", 0),
                 "waiting": live.get("waiting", False), "paused": bool(live.get("paused")),
                 "hearing": bool(live.get("hearing")),
                 "holding": live.get("hold") is not None,
