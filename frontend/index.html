@@ -1376,6 +1376,7 @@
                 <span class="tts-ed__spacer"></span>
                 <span class="tts-recbar__info" id="ttsRecInfo"></span>
                 <div class="tts-recbar__btns">
+                    <button class="tts-rbtn tts-rbtn--go" onclick="ttsLiveAction('commit')" title="Я закончил фразу — распознать сразу, не дожидаясь тишины (то же — клик по тексту)">&#10003; Готово <kbd>Enter</kbd></button>
                     <button class="tts-rbtn" onclick="ttsLiveAction('pause')" title="Пауза / продолжить — ничего не фиксируется">&#10074;&#10074; Пауза <kbd>Space</kbd></button>
                     <button class="tts-rbtn" onclick="ttsLiveAction('redo')" title="Удалить последнюю запись и вернуться к этой фразе (недочитанную — начать сначала)">&#8634; Заново <kbd>Backspace</kbd></button>
                     <button class="tts-rbtn" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
@@ -1390,6 +1391,7 @@
                 <div class="tts-prompter__text" id="ttsPromptText"></div>
                 <div class="tts-prompter__next" id="ttsPromptNext"></div>
                 <div class="tts-marks" id="ttsMarks"></div>
+                <div class="tts-prompter__hint">Закончили фразу, а вокруг шумно? Клик по тексту или <kbd>Enter</kbd> — распознаю сразу</div>
             </div>
         </div>
 
@@ -1422,7 +1424,7 @@
 
         <div class="tts-keys">
             <span><kbd>R</kbd> запись</span>
-            <span class="tts-keys__rec">при записи: <kbd>Space</kbd> пауза <kbd>Backspace</kbd> заново <kbd>P</kbd> прослушать <kbd>&#8593;</kbd><kbd>&#8595;</kbd> фразы <kbd>1</kbd>–<kbd>5</kbd> разметка</span>
+            <span class="tts-keys__rec">при записи: <kbd>Enter</kbd> готово <kbd>Space</kbd> пауза <kbd>Backspace</kbd> заново <kbd>P</kbd> прослушать <kbd>&#8593;</kbd><kbd>&#8595;</kbd> фразы <kbd>1</kbd>–<kbd>5</kbd> разметка</span>
             <span><kbd>Space</kbd> слушать</span>
             <span><kbd>Enter</kbd> сохранить</span>
             <span><kbd>&#8592;</kbd><kbd>&#8594;</kbd> дубли</span>

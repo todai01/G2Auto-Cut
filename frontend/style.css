@@ -3046,3 +3046,13 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 /* текст суфлёра никогда не вылезает за своё поле */
 .stage-tts.is-recording .tts-prompter{ overflow: hidden; }
 .stage-tts.is-recording .tts-prompter__text{ flex: 0 1 auto; min-height: 0; overflow: hidden; }
+
+/* «Готово» — клик по тексту суфлёра */
+.tts-rbtn--go{ color: var(--accent-good); border-color: rgba(47,191,125,0.4); }
+.tts-rbtn--go:hover{ color: #06281a; background: var(--accent-good); border-color: var(--accent-good); }
+.stage-tts.is-recording .tts-prompter__text{ cursor: pointer; border-radius: 14px; padding: 6px 14px; transition: background .2s, box-shadow .2s; }
+.stage-tts.is-recording .tts-prompter__text:hover{ background: rgba(47,191,125,0.06); box-shadow: 0 0 0 1px rgba(47,191,125,0.25); }
+.stage-tts.is-recording .tts-prompter__text:active{ background: rgba(47,191,125,0.12); }
+.tts-prompter__hint{ display: none; font-size: var(--fs-xs); color: var(--text-faint); }
+.tts-prompter__hint kbd{ font-size: 9.5px; }
+.stage-tts.is-recording .tts-prompter__hint{ display: block; }

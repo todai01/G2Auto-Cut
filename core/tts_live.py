@@ -235,15 +235,21 @@ class TtsLiveMixin:
                         break
                     time.sleep(0.15)
                     continue
-                cut = total if stopping else self._tts_live_cut(rec, live["done_ms"], total)
-                if cut and cut - live["done_ms"] >= (1 if stopping else LIVE_MIN_REGION_MS):
+                # «Готово» (клик по тексту / Enter): разбираем сразу, не ждём тишины.
+                forced = live.pop("force_cut", None)
+                if forced is not None:
+                    cut = max(forced, live["done_ms"] + 1)
+                else:
+                    cut = total if stopping else self._tts_live_cut(rec, live["done_ms"], total)
+                final = stopping or forced is not None
+                if cut and cut - live["done_ms"] >= (1 if final else LIVE_MIN_REGION_MS):
                     live["busy"] = True
                     self._tts_push({"stage": "live_busy", "busy": True})
                     with self._tts_live_lock:
                         try:
                             # Разбираем с from_ms: недочитанная фраза ждёт продолжения
                             # и разбирается заново вместе с ним.
-                            live["from_ms"] = self._tts_live_region(rec, live["from_ms"], cut, final=stopping)
+                            live["from_ms"] = self._tts_live_region(rec, live["from_ms"], cut, final=final)
                         except Exception as e:
                             live["from_ms"] = cut
                             self._tts_push({"stage": "live_error", "error": f"Не удалось разобрать кусок записи: {e}"})
@@ -532,6 +538,13 @@ class TtsLiveMixin:
                     msg = "Заново — читайте фразу с начала"
                 else:
                     msg = self._tts_live_undo()
+            elif action == "commit":
+                # Диктор закончил — не ждём паузы (вокруг может долго шуметь).
+                if live.get("paused"):
+                    return {"error": "Сейчас пауза — Space, чтобы продолжить."}
+                live["force_cut"] = rec.ana_ms
+                live["busy"] = True
+                msg = None
             elif action == "play":
                 msg = self._tts_live_play(rec)
             else:

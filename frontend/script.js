@@ -6672,6 +6672,7 @@ let isProcessing = false;
             if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsLiveAction('pause'); return true; }
             if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsLiveAction('redo'); return true; }
             if (ttsRec.on && e.code === 'KeyP') { e.preventDefault(); ttsLiveAction('play'); return true; }
+            if (ttsRec.on && (e.code === 'Enter' || e.code === 'NumpadEnter')) { e.preventDefault(); ttsLiveAction('commit'); return true; }
             if (e.code === 'Space') { e.preventDefault(); ttsTogglePlay(); }
             else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); ttsApprove(); }
             else if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); ttsStep(1); }
@@ -7008,6 +7009,13 @@ let isProcessing = false;
         // ===== Клавиши во время записи =====
         async function ttsLiveAction(action) {
             if (!ttsRec.on) return;
+            if (action === 'commit') {
+                // «Готово»: сразу «Распознаю…», не дожидаясь ответа.
+                ttsLiveSt.busy = true; ttsLiveSt.hearing = false; ttsLiveRender();
+                let res = await pywebview.api.tts_live_key('commit');
+                if (res && res.error) { ttsLiveSt.busy = false; ttsLiveRender(); showToast(res.error); }
+                return;
+            }
             let res = await pywebview.api.tts_live_key(action);
             if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
             if (res.state) ttsLiveUpdate(res.state, 0);
@@ -7033,13 +7041,14 @@ let isProcessing = false;
             let text = document.getElementById('ttsPromptText');
             if (!stage || !box || !text) return;
             if (!stage.classList.contains('is-recording')) { text.style.fontSize = ''; return; }
-            let others = 0;
-            ['ttsPromptMeta', 'ttsPromptNext', 'ttsMarks'].forEach(id => {
-                let el = document.getElementById(id);
-                if (el && el.offsetParent) others += el.offsetHeight;
+            // Всё остальное в поле суфлёра (номер, «Дальше», разметка, подсказка) — по факту.
+            let others = 0, shown = 0;
+            [...box.children].forEach(el => {
+                if (el === text || !el.offsetParent || !el.offsetHeight) return;
+                others += el.offsetHeight; shown++;
             });
             let cs = getComputedStyle(box);
-            let gaps = (parseFloat(cs.rowGap) || 0) * 3 + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+            let gaps = (parseFloat(cs.rowGap) || 0) * shown + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
             let avail = box.clientHeight - others - gaps - 8;
             let maxByWidth = Math.max(TTS_PROMPT_MIN, Math.min(TTS_PROMPT_MAX, window.innerWidth / 30));
             let size = maxByWidth;
@@ -7050,3 +7059,8 @@ let isProcessing = false;
             }
         }
         window.addEventListener('resize', () => requestAnimationFrame(ttsFitPrompt));
+
+        // Клик по тексту суфлёра — «я закончил фразу, распознавай сейчас».
+        document.addEventListener('click', e => {
+            if (ttsRec.on && e.target.closest && e.target.closest('#ttsPromptText')) ttsLiveAction('commit');
+        });
