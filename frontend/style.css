@@ -3012,41 +3012,41 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 }
 .tts-prompter__next-label{ text-transform: uppercase; letter-spacing: .1em; font-size: .7em; font-weight: 700; color: var(--text-faint); margin-right: .5em; }
 
-.stage-tts.is-recording .tts-body,
-.stage-tts.is-recording .tts-keys{ display: none; }
-.stage-tts.is-recording .tts-recbar{
+.stage-tts.is-prompter .tts-body,
+.stage-tts.is-prompter .tts-keys{ display: none; }
+.stage-tts.is-prompter .tts-recbar{
     flex: 1; min-height: 0; margin-bottom: 10px; padding: 10px 14px 18px;
     border-color: var(--border); background: var(--panel);
 }
-.stage-tts.is-recording .tts-prompter{
+.stage-tts.is-prompter .tts-prompter{
     flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; align-items: center;
     text-align: center; gap: 22px; padding: 12px 4vw 4px;
 }
-.stage-tts.is-recording .tts-prompter__meta{ font-size: var(--fs-sm); letter-spacing: .02em; }
-.stage-tts.is-recording .tts-prompter__text{
+.stage-tts.is-prompter .tts-prompter__meta{ font-size: var(--fs-sm); letter-spacing: .02em; }
+.stage-tts.is-prompter .tts-prompter__text{
     font-size: clamp(30px, 3.3vw, 58px); line-height: 1.28; font-weight: 700; letter-spacing: -0.02em;
     max-width: 1250px; color: #f6f8fb; text-wrap: balance;
 }
-.stage-tts.is-recording .tts-prompter__next{
+.stage-tts.is-prompter .tts-prompter__next{
     max-width: 1000px; white-space: normal; font-size: clamp(14px, 1.2vw, 19px); line-height: 1.4; color: var(--text-faint);
 }
-.stage-tts.is-recording .tts-prompter__next .tts-slot{ font-size: .62em; }
-.stage-tts.is-recording .tts-marks{ align-items: center; opacity: .55; transition: opacity .2s; margin-top: 4px; }
-.stage-tts.is-recording .tts-marks:hover{ opacity: 1; }
-.stage-tts.is-recording .tts-marks__name{ min-width: 0; text-align: right; }
-.stage-tts.is-recording .tts-recbar.is-paused .tts-prompter{ opacity: .3; }
+.stage-tts.is-prompter .tts-prompter__next .tts-slot{ font-size: .62em; }
+.stage-tts.is-prompter .tts-marks{ align-items: center; opacity: .55; transition: opacity .2s; margin-top: 4px; }
+.stage-tts.is-prompter .tts-marks:hover{ opacity: 1; }
+.stage-tts.is-prompter .tts-marks__name{ min-width: 0; text-align: right; }
+.stage-tts.is-prompter .tts-recbar.is-paused .tts-prompter{ opacity: .3; }
 
 /* лента записанного — компактно внизу */
-.stage-tts.is-recording .tts-rail-wrap{ padding: 6px; }
-.stage-tts.is-recording .tts-take{ width: 100px; padding: 6px 8px 5px; }
-.stage-tts.is-recording .tts-take__num{ font-size: 11px; }
+.stage-tts.is-prompter .tts-rail-wrap{ padding: 6px; }
+.stage-tts.is-prompter .tts-take{ width: 100px; padding: 6px 8px 5px; }
+.stage-tts.is-prompter .tts-take__num{ font-size: 11px; }
 .tts-prompter__meta{ flex-direction: column; gap: 8px; }
 .tts-prompter__progress{ display: block; width: 180px; height: 3px; border-radius: 2px; background: var(--border-soft); overflow: hidden; }
 .tts-prompter__progress i{ display: block; height: 100%; background: var(--accent-good); border-radius: 2px; transition: width .4s var(--ease); }
 
 /* текст суфлёра никогда не вылезает за своё поле */
-.stage-tts.is-recording .tts-prompter{ overflow: hidden; }
-.stage-tts.is-recording .tts-prompter__text{ flex: 0 1 auto; min-height: 0; overflow: hidden; }
+.stage-tts.is-prompter .tts-prompter{ overflow: hidden; }
+.stage-tts.is-prompter .tts-prompter__text{ flex: 0 1 auto; min-height: 0; overflow: hidden; }
 
 /* «Готово» — клик по тексту суфлёра */
 .tts-rbtn--go{ color: var(--accent-good); border-color: rgba(47,191,125,0.4); }
@@ -3065,7 +3065,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-recbar.is-holding .tts-rbtn--hold{ box-shadow: 0 0 0 3px rgba(239,91,80,0.35); }
 .tts-live.is-rec{ color: #fff; background: var(--accent-trash); border-color: var(--accent-trash); }
 .lv-recdot{ width: 9px; height: 9px; border-radius: 50%; background: #fff; animation: ttsRecPulse 1s ease-in-out infinite; }
-.stage-tts.is-recording .tts-prompter__text{ user-select: none; }
+.stage-tts.is-prompter .tts-prompter__text{ user-select: none; }
 .stage-tts.is-recording .tts-recbar.is-holding .tts-prompter__text{ background: rgba(239,91,80,0.05); box-shadow: 0 0 0 1px rgba(239,91,80,0.3); }
 /* продолжение после сбоя */
 .tts-done{ color: var(--accent-good); opacity: .55; }
@@ -3086,17 +3086,57 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-asm-close{ display: none; margin-left: auto; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 7px; cursor: pointer;
     border: 1px solid var(--border); background: var(--screen); color: var(--text-dim); font: inherit; font-size: 11.5px; font-weight: 650; }
 .tts-asm-close:hover{ color: var(--text); border-color: var(--text-faint); }
-.stage-tts.is-recording .tts-asm-close{ display: inline-flex; }
-.stage-tts.is-recording.show-assembly .tts-body{
+.stage-tts .tts-asm-close{ display: inline-flex; }
+.stage-tts.is-prompter.show-assembly .tts-body{
     display: block; position: absolute; left: 0; right: 0; bottom: 96px; z-index: 60; margin: 0; height: auto;
 }
-.stage-tts.is-recording.show-assembly .tts-left,
-.stage-tts.is-recording.show-assembly .tts-embed{ display: none; }
-.stage-tts.is-recording.show-assembly .tts-right{ display: block; }
-.stage-tts.is-recording.show-assembly .tts-assembly{
+.stage-tts.is-prompter.show-assembly .tts-left,
+.stage-tts.is-prompter.show-assembly .tts-embed{ display: none; }
+.stage-tts.is-prompter.show-assembly .tts-right{ display: block; }
+.stage-tts.is-prompter.show-assembly .tts-assembly{
     max-height: 52vh; border-color: rgba(77,149,234,0.5); box-shadow: var(--shadow-pop), 0 0 0 1px rgba(77,149,234,0.25);
     animation: ttsDrawer .28s var(--ease);
 }
 @keyframes ttsDrawer{ from{ opacity: 0; transform: translateY(14px); } }
-.stage-tts.is-recording.show-assembly .tts-prompter{ opacity: .25; transition: opacity .2s; }
-@media (prefers-reduced-motion: reduce){ .stage-tts.is-recording.show-assembly .tts-assembly{ animation: none; } }
+.stage-tts.is-prompter.show-assembly .tts-prompter{ opacity: .25; transition: opacity .2s; }
+@media (prefers-reduced-motion: reduce){ .stage-tts.is-prompter.show-assembly .tts-assembly{ animation: none; } }
+
+/* ===== Суфлёр — основной экран; R только включает/выключает запись ===== */
+.stage-tts.is-prompter:not(.is-recording) .tts-recbar{ border-color: var(--border); }
+.stage-tts:not(.is-recording) .tts-recbar__dot{ background: var(--text-faint); box-shadow: none; animation: none; }
+.stage-tts:not(.is-recording) .tts-recbar__time,
+.stage-tts:not(.is-recording) .tts-recbar__meter{ opacity: .4; }
+.stage-tts:not(.is-recording) .tts-rbtn--hold,
+.stage-tts:not(.is-recording) .tts-rbtn--live{ display: none; }
+.stage-tts.is-recording .tts-rbtn--start{ display: none; }
+.tts-rbtn--start{ color: var(--accent-trash); border-color: rgba(239,91,80,0.45); }
+.tts-rbtn--start:hover{ color: #fff; background: var(--accent-trash); border-color: var(--accent-trash); }
+.tts-live.is-off{ color: var(--text-dim); }
+.tts-live.is-off b{ color: var(--text); font-family: var(--font-mono); }
+.stage-tts:not(.is-recording) .tts-prompter__text{ color: var(--text-dim); }
+
+/* Лента + папка «Переменные» рядом — карточки перетаскиваются в папку */
+.stage-tts.is-prompter .tts-rail-wrap{ display: flex; align-items: stretch; gap: 8px; }
+.stage-tts.is-prompter .tts-rail{ flex: 1; min-width: 0; }
+.stage-tts.is-prompter .tts-rail-wrap .tts-varcard{
+    width: 250px; flex: none; padding: 8px 12px; gap: 10px; box-shadow: none; background: var(--screen); border-style: dashed;
+}
+.stage-tts.is-prompter .tts-rail-wrap .tts-varcard__icon{ width: 32px; height: 32px; }
+.tts-varcard.is-drop{ border-color: var(--accent-var); border-style: solid; background: var(--tint-var); transform: scale(1.02); }
+.tts-rail.is-dragging .tts-take:not(.is-drag){ opacity: .45; }
+.tts-take.is-drag{ opacity: .5; }
+.stage-tts.is-prompter .tts-rail .tts-busy{ flex-direction: row; align-items: center; width: 100%; margin: 0; padding: 6px 8px; }
+.stage-tts.is-prompter .tts-rail .tts-busy progress{ flex: 1; }
+
+/* Сборка над лентой: слева дубль (слушать / сохранить), справа дорожка */
+.stage-tts.is-prompter.show-assembly .tts-body{ display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 10px; }
+.stage-tts.is-prompter.show-assembly .tts-left{ display: flex; }
+.stage-tts.is-prompter.show-assembly .tts-current{
+    max-height: 52vh; padding: 14px 16px; gap: 8px; border-color: rgba(77,149,234,0.5);
+    box-shadow: var(--shadow-pop), 0 0 0 1px rgba(77,149,234,0.25); animation: ttsDrawer .28s var(--ease);
+}
+.stage-tts.is-prompter.show-assembly .tts-current__text{ font-size: 17px; }
+.stage-tts.is-prompter.show-assembly .tts-current__actions .btn-tile{ padding-top: 9px; padding-bottom: 9px; }
+@media (prefers-reduced-motion: reduce){ .stage-tts.is-prompter.show-assembly .tts-current{ animation: none; } }
+.tts-live.is-off .lv-dot, .tts-live.is-miss .lv-dot{ background: var(--text-faint); box-shadow: none; animation: none; }
+.tts-live.is-off .lv-dot::after, .tts-live.is-miss .lv-dot::after{ display: none; }

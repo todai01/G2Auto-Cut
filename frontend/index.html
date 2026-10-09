@@ -1367,7 +1367,7 @@
             </div>
         </header>
 
-        <div class="tts-recbar" id="ttsRecBar" style="display:none">
+        <div class="tts-recbar" id="ttsRecBar">
             <div class="tts-recbar__row">
                 <span class="tts-recbar__dot"></span>
                 <span class="tts-recbar__time" id="ttsRecTime">00:00</span>
@@ -1376,13 +1376,14 @@
                 <span class="tts-ed__spacer"></span>
                 <span class="tts-recbar__info" id="ttsRecInfo"></span>
                 <div class="tts-recbar__btns">
+                    <button class="tts-rbtn tts-rbtn--start" onclick="ttsToggleRec()" title="Включить микрофон и продолжить запись">&#9679; Записывать <kbd>R</kbd></button>
                     <button class="tts-rbtn tts-rbtn--hold" id="ttsHoldBtn" title="Держите — идёт запись фразы; отпустите — распознаю (то же — Space или зажать текст)">&#9679; Держите — запись <kbd>Space</kbd></button>
-                    <button class="tts-rbtn" onclick="ttsLiveAction('redo')" title="Удалить последнюю запись и вернуться к этой фразе (недочитанную — начать сначала)">&#8634; Заново <kbd>Backspace</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('redo')" title="Удалить последнюю запись и вернуться к этой фразе (недочитанную — начать сначала)">&#8634; Заново <kbd>Backspace</kbd></button>
                     <button class="tts-rbtn" onclick="ttsShowAssembly()" title="Сборка последнего/выбранного дубля — обрезка и вырезы, не останавливая запись (клик по ячейке внизу — тоже)">&#9986; Сборка</button>
-                    <button class="tts-rbtn" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
                     <button class="tts-rbtn" onclick="ttsPromptMove(-1)" title="Вернуться к предыдущей фразе (например, перечитать)">Назад <kbd>&#8593;</kbd></button>
                     <button class="tts-rbtn" onclick="ttsPromptMove(1)" title="Пропустить фразу — вернётся в конце">Пропустить <kbd>&#8595;</kbd></button>
-                    <button class="tts-rbtn tts-rbtn--stop" onclick="ttsToggleRec()" title="Остановить запись">&#9632; Стоп <kbd>R</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--stop tts-rbtn--live" onclick="ttsToggleRec()" title="Остановить запись">&#9632; Стоп <kbd>R</kbd></button>
                 </div>
             </div>
             <div class="tts-prompter__pause" id="ttsPromptPause" style="display:none">Пауза — ничего не фиксирую. Нажмите <b>Space</b>, чтобы продолжить</div>
@@ -1397,20 +1398,19 @@
 
         <div class="tts-rail-wrap">
             <div class="tts-rail" id="ttsRail"></div>
+            <button class="tts-varcard" id="ttsVarCard" ondragover="ttsVarDragOver(event)" ondragleave="this.classList.remove('is-drop')" ondrop="ttsVarDrop(event)" onclick="ttsOpenVars()" title="Фразы с переменными (папка «Фразы_Переменные»). Перетащите сюда карточку дубля — сохраню её как кусочек фразы с переменной">
+                <span class="tts-varcard__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
+                <span class="tts-varcard__text">
+                    <span class="tts-varcard__title">Переменные</span>
+                    <span class="tts-varcard__desc" id="ttsVarDesc">Фразы с переменными</span>
+                </span>
+                <span class="tts-varcard__count" id="ttsVarCount">0 / 0</span>
+            </button>
         </div>
 
         <div class="tts-body">
             <div class="tts-left">
                 <section class="tts-current" id="ttsCurrent"></section>
-
-                <button class="tts-varcard" id="ttsVarCard" onclick="ttsOpenVars()" title="Фразы с переменными: сохраняются в «Фразы_Переменные», дальше из них режутся start/end">
-                    <span class="tts-varcard__icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
-                    <span class="tts-varcard__text">
-                        <span class="tts-varcard__title">Переменные</span>
-                        <span class="tts-varcard__desc" id="ttsVarDesc">Фразы с переменными</span>
-                    </span>
-                    <span class="tts-varcard__count" id="ttsVarCount">0 / 0</span>
-                </button>
             </div>
 
             <div class="tts-right">
