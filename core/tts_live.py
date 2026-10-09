@@ -407,53 +407,66 @@ class TtsLiveMixin:
 
         this = self._tts_word_span(rec, stream, pairs[0][1], pairs[-1][2], b_ms / 1000.0)
         times = {t: (stream[h0][1], stream[h1][2]) for t, h0, h1 in pairs}
-        if part:
-            ranges, ptimes = [list(r) for r in part["ranges"]], dict(part["times"])
-            if s0 < part["k"]:
-                # Начал раньше места сбоя — из первого куска берём только до слова s0.
-                prev = max((t for t in ptimes if t < s0), default=None)
-                if prev is not None:
-                    e = ptimes[prev][1]
-                    cut = self._tts_ana_quiet(rec, e - 0.03, e + LEAD_S)
-                    ranges = [r for r in ranges if r[0] < cut]
-                    ranges[-1][1] = min(ranges[-1][1], cut)
-                ptimes = {t: v for t, v in ptimes.items() if t < s0}
-            ranges.append(list(this))
-            ptimes.update(times)
-            times = ptimes
-        else:
-            ranges = [list(this)]
-
         heard_all = ((part.get("heard", '') + ' … ') if part else '') + text
+        score_of = lambda n: round(n / max(1, sum(1 for x in tn if x)), 3)
+
+        if not part:
+            if complete:
+                live["partial"] = None
+                self._tts_live_make_take(rec, uid, [{"raw": rec.path, "a": this[0], "b": this[1], "cuts": [], "pos": 0}],
+                                         heard_all, score_of(len(times)), pos)
+                return
+            frags = []
+        else:
+            frags = [dict(f) for f in part["frags"]]
+            prev = frags[-1]
+            if s0 < part["k"]:
+                # Начал раньше места сбоя — первый кусок звучит только до слова s0.
+                pt = {int(k): v for k, v in prev["times"].items()}
+                before = max((k for k in pt if k < s0), default=None)
+                if before is not None:
+                    e = pt[before][1]
+                    prev["cut"] = self._tts_ana_quiet(rec, e - 0.03, e + LEAD_S)
+                prev["times"] = {k: v for k, v in pt.items() if k < s0}
+        # Фрагмент целиком (со сбоем на конце) — на дорожку; «cut» — где кончается верное.
+        full = self._tts_word_span(rec, stream, pairs[0][1], len(stream) - 1, b_ms / 1000.0)
+        frags.append({"a": this[0], "b": this[1] if complete else max(this[1], full[1]), "cut": this[1], "times": times})
+
         if complete:
+            # Все фрагменты — отдельными клипами, уже выставленными по местам сбоя:
+            # следующий начинается там, где кончается верное в предыдущем.
+            clips, pos_ = [], 0
+            for f in frags:
+                clips.append({"raw": rec.path, "a": int(f["a"]), "b": int(f["b"]), "cuts": [], "pos": int(pos_)})
+                pos_ += max(0, f["cut"] - f["a"])
             live["partial"] = None
-            score = round(len(times) / max(1, sum(1 for x in tn if x)), 3)
-            self._tts_live_make_take(rec, uid, ranges, heard_all, score, pos)
+            n_ok = sum(len(f["times"]) for f in frags)
+            self._tts_live_make_take(rec, uid, clips, heard_all, score_of(n_ok), pos)
             return
-        live["partial"] = {"unit": uid, "k": kk, "raw": rec.path, "ranges": ranges, "times": times,
-                           "heard": heard_all}
+        live["partial"] = {"unit": uid, "k": kk, "raw": rec.path, "frags": frags, "heard": heard_all}
         word = toks[kk] if kk < len(toks) else ''
         self._tts_push({"stage": "live_partial", "prompt": self.tts_prompt_info(),
                         "message": f"Начало записано — продолжите с «{word}»"})
 
-    def _tts_live_make_take(self, rec, uid, ranges, heard, score, pos):
-        """Дубль из кусков исходной записи (байт в байт); шов между кусками —
-        вырез в «Сборке», его можно поправить."""
+    def _tts_live_make_take(self, rec, uid, clips, heard, score, pos):
+        """Дубль из клипов исходной записи (байт в байт). Фраза из кусочков —
+        несколько клипов на дорожке «Сборки»: их можно двигать и подрезать."""
         st = self._tts()
         live = self._tts_live
         n = max([t.get("chunk", 0) for t in st["takes"]] + [0]) + 1
         name = f"{n:04d}.wav"
-        dst = os.path.join(st["work_dir"], TTS_CHUNKS_DIR, name)
-        ranges = [(int(a), int(b)) for a, b in ranges if b > a]
-        if not wav_concat(rec.path, dst, ranges):
-            raise RuntimeError("не удалось вырезать дубль из записи")
-        a0, b1 = ranges[0][0], ranges[-1][1]
-        take = {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a0, "ms": sum(b - a for a, b in ranges),
+        a0 = min(c["a"] for c in clips)
+        b1 = max(c["b"] for c in clips)
+        take = {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a0, "ms": 0,
                 "orig": [a0, b1], "raw": rec.path, "heard": heard, "listened": False, "chunk": n,
                 "unit": uid, "score": score, "status": "ok" if score >= 0.85 else "doubt"}
-        if len(ranges) > 1:
-            take["edit"] = {"a": a0, "b": b1, "cuts": [[ranges[i][1], ranges[i + 1][0]] for i in range(len(ranges) - 1)]}
+        if len(clips) > 1:
+            take["clips"] = clips
+            take["clips_orig"] = [dict(c) for c in clips]
             take["stitched"] = True
+        else:
+            take["orig"] = [clips[0]["a"], clips[0]["b"]]
+        self._tts_render_clips(take, clips)
         cur = st["takes"][st["index"]] if st["takes"] and st["index"] < len(st["takes"]) else None
         st["takes"].append(take)
         live.setdefault("history", []).append({"takes": [take["file"]], "pos": pos})

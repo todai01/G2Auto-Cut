@@ -37,7 +37,7 @@ from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              similarity)
 from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
-from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_slice
+from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_render, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
 TTS_STATE_VERSION = 3     # 3: фразы ищутся в сплошном потоке слов, а не по паузам
@@ -988,6 +988,16 @@ class TtsFlowMixin:
     def _tts_reset_file(self, i):
         st = self._tts()
         t = st["takes"][i]
+        if t.get("clips_orig"):
+            # Фраза из кусочков — вернуть клипы, как их разложила программа.
+            t["clips"] = [dict(c) for c in t["clips_orig"]]
+            self._tts_render_clips(t, t["clips"])
+            t["listened"] = False
+            t.pop("edit", None)
+            t.pop("audacity", None)
+            self._tts_save()
+            return self.tts_state()
+        t.pop("clips", None)
         orig = self._tts_orig(t)
         wav_slice(self._tts_raw(t), os.path.join(st["work_dir"], t["file"]), orig[0], orig[1])
         t["ms"] = orig[1] - orig[0]
@@ -996,6 +1006,169 @@ class TtsFlowMixin:
         t.pop("audacity", None)
         self._tts_save()
         return self.tts_state()
+
+    # ---------------- дорожка: клипы (склейка вручную) ----------------
+    # Дубль = клипы на дорожке. Клип — кусок исходной записи [a, b] без
+    # вырезов cuts, стоящий на дорожке с позиции pos. Клипы идут по порядку;
+    # промежуток — тишина; если клип наезжает на предыдущий, хвост
+    # предыдущего не звучит. Обычный дубль — один клип.
+
+    def _tts_clips(self, t):
+        if t.get("clips"):
+            return [dict(c, cuts=[list(x) for x in c.get("cuts", [])]) for c in t["clips"]]
+        ed = t.get("edit") or {}
+        orig = self._tts_orig(t)
+        return [{"raw": self._tts_raw(t), "a": ed.get("a", orig[0]), "b": ed.get("b", orig[1]),
+                 "cuts": [list(x) for x in ed.get("cuts", [])], "pos": 0}]
+
+    @staticmethod
+    def _clip_ranges(c):
+        a, b = int(c["a"]), int(c["b"])
+        ranges, cur = [], a
+        for c0, c1 in sorted((max(a, int(x)), min(b, int(y))) for x, y in c.get("cuts", [])):
+            if c1 <= c0:
+                continue
+            if c0 > cur:
+                ranges.append((cur, c0))
+            cur = max(cur, c1)
+        if b > cur:
+            ranges.append((cur, b))
+        return ranges
+
+    def _tts_timeline(self, clips):
+        """Клипы → куски для сборки файла [("audio", raw, a, b) | ("silence", ms)]."""
+        order = sorted(clips, key=lambda c: c["pos"])
+        if not order:
+            return []
+        base = order[0]["pos"]
+        pieces, cursor = [], base
+        for k, c in enumerate(order):
+            start = c["pos"]
+            limit = order[k + 1]["pos"] if k + 1 < len(order) else None
+            if start > cursor:
+                pieces.append(("silence", start - cursor))
+                cursor = start
+            room = None if limit is None else max(0, limit - cursor)
+            for r0, r1 in self._clip_ranges(c):
+                if start < cursor:                       # начало клипа под предыдущим — пропускаем
+                    skip = min(r1 - r0, cursor - start)
+                    r0, start = r0 + skip, start + skip
+                    if r0 >= r1:
+                        continue
+                ln = r1 - r0
+                if room is not None:
+                    ln = min(ln, room)
+                    room -= ln
+                if ln > 0:
+                    pieces.append(("audio", c["raw"], r0, r0 + ln))
+                    cursor += ln
+                    start += ln
+                if room is not None and room <= 0:
+                    break
+        return pieces
+
+    def _tts_render_clips(self, t, clips):
+        st = self._tts()
+        pieces = self._tts_timeline(clips)
+        dst = os.path.join(st["work_dir"], t["file"])
+        if not pieces or not wav_render(dst, pieces):
+            out = None
+            for p in pieces:
+                seg = (AudioSegment.from_file(p[1])[p[2]:p[3]] if p[0] == "audio"
+                       else AudioSegment.silent(p[1]))
+                out = seg if out is None else out + seg
+            if out is None:
+                raise RuntimeError("пустая дорожка")
+            out.export(dst, format="wav")
+        t["ms"] = int(sum((p[3] - p[2]) if p[0] == "audio" else p[1] for p in pieces))
+
+    def _tts_raw_length(self, raw):
+        lay = wav_layout(raw)
+        return int(lay[2] / lay[3] * 1000 / lay[4]) if lay else len(AudioSegment.from_file(raw))
+
+    def tts_clips_load(self, i):
+        """Дорожка дубля: клипы с волной (и запасом записи вокруг — край можно вытянуть)."""
+        st = self._tts()
+        t = st["takes"][i] if 0 <= i < len(st["takes"]) else None
+        if not t:
+            return {"error": "Нет такого дубля."}
+        clips = self._tts_clips(t)
+        import tempfile
+        out, top = [], 0.0
+        for c in clips:
+            raw = c["raw"]
+            if not raw or not os.path.exists(raw):
+                return {"error": "Нет исходной записи для этого дубля."}
+            total = self._tts_raw_length(raw)
+            lo, hi = max(0, int(c["a"]) - EDIT_CONTEXT_MS), min(total, int(c["b"]) + EDIT_CONTEXT_MS)
+            tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_ctx_{os.getpid()}.wav")
+            seg = AudioSegment.from_file(tmp) if wav_slice(raw, tmp, lo, hi) else AudioSegment.from_file(raw)[lo:hi]
+            seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+            smp = seg.get_array_of_samples()
+            per = 16000 * EDIT_BUCKET_MS // 1000
+            peaks = [max(abs(min(smp[k:k + per])), max(smp[k:k + per])) / 32768 for k in range(0, len(smp), per)]
+            top = max([top] + peaks)
+            out.append(dict(c, lo=lo, hi=hi, peaks=peaks))
+        k_ = min(40.0, 0.9 / top) if top > 1e-4 else 1.0         # тихая запись — не плоская линия
+        for c in out:
+            c["peaks"] = [round(min(1.0, x * k_), 3) for x in c["peaks"]]
+        return {"i": i, "clips": out, "bucket": EDIT_BUCKET_MS, "audacity": bool(t.get("audacity")),
+                "orig": self._tts_orig(t)}
+
+    def tts_clips_apply(self, i, clips):
+        """Записать дорожку в файл дубля (из исходной записи байт в байт).
+        Правленый дубль нужно прослушать заново — только потом сохранить."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        t = st["takes"][i]
+        allowed = {c["raw"] for c in self._tts_clips(t)} | {self._tts_raw(t)}
+        clean = []
+        for c in clips or []:
+            if c.get("raw") not in allowed:
+                return {"error": "Клип не из записи этого дубля."}
+            a, b = int(c["a"]), int(c["b"])
+            if b - a < 30:
+                continue
+            clean.append({"raw": c["raw"], "a": a, "b": b, "pos": max(0, int(c.get("pos", 0))),
+                          "cuts": [[int(x), int(y)] for x, y in c.get("cuts", []) if int(y) > int(x)]})
+        if not clean:
+            return {"error": "На дорожке не осталось звука."}
+        self._tts_orig(t)
+        if not t.get("clips_orig"):
+            t["clips_orig"] = self._tts_clips(t)
+        self._tts_render_clips(t, clean)
+        t["clips"] = clean
+        t.pop("edit", None)
+        t["listened"] = False
+        t.pop("audacity", None)
+        self._tts_save()
+        return self.tts_state()
+
+    def tts_play_from(self, i, ms):
+        """Прослушать дубль с места на дорожке (как сохранится: выровнено, 8 кГц)."""
+        st = self._tts()
+        self._tts_mark_listened()
+        if not (0 <= i < len(st["takes"])):
+            return {"playing": False}
+        t = st["takes"][i]
+        path = os.path.join(st["work_dir"], t["file"])
+        if not os.path.exists(path):
+            return {"playing": False, "error": "Файл дубля пропал с диска."}
+        prev = self._tts_preview(path)
+        ms = max(0, int(ms))
+        total = t.get("ms", 0)
+        if ms >= total - 50:
+            ms = 0
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_from_{os.getpid()}.wav")
+        play = tmp if ms > 0 and wav_slice(prev, tmp, ms, total + 1000) else prev
+        st["index"] = i
+        dur = (total - ms) / 1000.0
+        self.player.play(play)
+        # «Прослушано» засчитываем, только если слушали с начала.
+        self._tts_playing = (i, time.time(), dur) if ms < 300 else None
+        return {"playing": True, "duration": dur, "from": ms}
 
     # ---------------- Audacity ----------------
 

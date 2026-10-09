@@ -2826,6 +2826,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 /* Редактор дубля в «Сборке» */
 .tts-ed{ display: flex; flex-direction: column; gap: 8px; }
 .tts-ed__canvas{ width: 100%; height: 120px; display: block; border-radius: 9px; background: var(--screen); border: 1px solid var(--border-soft); cursor: text; }
+.tts-ed__canvas.is-multi{ height: 196px; }
 .tts-ed__bar{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tts-ed__time{ font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); margin-right: 4px; }
 .tts-ed__spacer{ flex: 1; }

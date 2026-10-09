@@ -167,3 +167,43 @@ def fix_wav_header(path):
                 f.seek(40); f.write(struct.pack('<I', real))
     except OSError:
         pass
+
+
+def wav_render(dst, pieces):
+    """Собирает WAV из кусков исходников и тишины — байт в байт, без
+    перекодирования. pieces: [("audio", src, a_ms, b_ms) | ("silence", ms)].
+    Все исходники должны быть в одном формате; иначе — False."""
+    fmt = block = rate = None
+    lays = {}
+    for p in pieces:
+        if p[0] != "audio":
+            continue
+        lay = lays.get(p[1]) or wav_layout(p[1])
+        if not lay:
+            return False
+        lays[p[1]] = lay
+        if fmt is None:
+            fmt, block, rate = lay[0], lay[3], lay[4]
+        elif lay[0] != fmt:
+            return False
+    if fmt is None or block <= 0 or rate <= 0:
+        return False
+    out = []
+    for p in pieces:
+        if p[0] == "silence":
+            n = max(0, int(p[1] * rate / 1000)) * block
+            if n:
+                out.append(bytes(n))
+            continue
+        _, src, s, e = p
+        _, data_pos, data_size, _, _ = lays[src]
+        a = max(0, int(s * rate / 1000)) * block
+        b = min(data_size // block, int(e * rate / 1000)) * block
+        if b > a:
+            with open(src, 'rb') as f:
+                f.seek(data_pos + a)
+                out.append(f.read(b - a))
+    if not out:
+        return False
+    _write_wav(dst, fmt, b''.join(out))
+    return True
