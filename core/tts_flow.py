@@ -245,6 +245,16 @@ LONGER_TIE = 0.05         # почти равные окна — берём то
 LEAD_S = 0.40             # сколько тишины оставлять перед/после фразы (макс.)
 
 
+def end_word_ok(window_words, target):
+    """Фраза из 3+ слов засчитывается, только если сказан её конец:
+    «вам сейчас удобно…» — ещё не «Вам сейчас удобно говорить?»."""
+    tw = target.split()
+    if len(tw) < 3 or not window_words:
+        return True
+    last = window_words[-1]
+    return last[:4] == tw[-1][:4] or _ratio(last, tw[-1]) >= 0.6
+
+
 def _first_word_ok(word, first):
     return bool(word) and bool(first) and (word[:3] == first[:3] or _ratio(word, first) >= 0.6)
 
@@ -272,6 +282,8 @@ def align_stream(words, units, expected=0):
                 j = i + size
                 if j > len(wn):
                     break
+                if not end_word_ok(wn[i:j], t):
+                    continue
                 sc = _ratio(' '.join(wn[i:j]), t)
                 if sc > best[0] + 1e-9:
                     best = (sc, j)

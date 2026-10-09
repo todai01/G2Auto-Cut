@@ -6668,6 +6668,10 @@ let isProcessing = false;
             }
             if (e.repeat && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') { e.preventDefault(); return true; }
             if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
+            // Во время записи: Space — пауза, Backspace — заново, P — прослушать последнее.
+            if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsLiveAction('pause'); return true; }
+            if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsLiveAction('redo'); return true; }
+            if (ttsRec.on && e.code === 'KeyP') { e.preventDefault(); ttsLiveAction('play'); return true; }
             if (e.code === 'Space') { e.preventDefault(); ttsTogglePlay(); }
             else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); ttsApprove(); }
             else if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); ttsStep(1); }
@@ -6775,7 +6779,7 @@ let isProcessing = false;
             let top = Math.max(...ttsRec.peaks);
             let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
             document.getElementById('ttsRecInfo').innerText = `${s.device} · записано: ${s.added}`
-                + ' · команды: «Заново», «Стоп», «Запись», «Играй»'
+                + ' · Space — пауза · Backspace — заново · P — прослушать'
                 + (quiet ? ' · микрофон тихий — громкость выровняется при сохранении' : '')
                 + (s.busy ? ' · распознаю…' : (s.pending_s > 2 ? ` · ждёт паузы: ${s.pending_s} с` : ''));
             if (s.error) showToast('Запись остановилась: ' + s.error);
@@ -6787,7 +6791,7 @@ let isProcessing = false;
             ttsLiveRender();
         }
 
-        // «Стоп» голосом — пауза: слушаю только «Запись».
+        // Пауза (Space): ничего не фиксируется.
         function ttsSetPaused(paused) {
             let bar = document.getElementById('ttsRecBar');
             if (!bar || bar.classList.contains('is-paused') === !!paused) return;
@@ -6826,7 +6830,7 @@ let isProcessing = false;
             if (flash === 'restart') {
                 let box = document.getElementById('ttsPrompter');
                 box.classList.remove('is-restart'); void box.offsetWidth; box.classList.add('is-restart');
-                showToast('«Заново» — пишу фразу с начала');
+
             }
         }
 
@@ -6877,7 +6881,7 @@ let isProcessing = false;
         let ttsLiveSt = { busy: false, hearing: false, waiting: false, paused: false, flash: null, flashT: null };
 
         const TTS_LIVE_CMD = {
-            'cmd-redo': ['↺', 'Заново'], 'cmd-pause': ['❚❚', 'Стоп'], 'cmd-resume': ['●', 'Запись'], 'cmd-play': ['▶', 'Играй'],
+            'cmd-redo': ['↺', 'Заново'], 'cmd-pause': ['❚❚', 'Пауза'], 'cmd-resume': ['●', 'Продолжаем'], 'cmd-play': ['▶', 'Прослушать'],
         };
 
         // Итог разбора держится на экране ~2,5 с, потом — снова текущее состояние.
@@ -6898,12 +6902,12 @@ let isProcessing = false;
             } else if (f && f.kind === 'miss') {
                 cls = 'is-miss'; html = `<span class="lv-ico">✕</span><span>Не понял: «${escapeHtml(f.text)}»</span>`;
             } else if (f && f.kind === 'pause-miss') {
-                cls = 'is-miss'; html = `<span class="lv-ico">❚❚</span><span>Пауза — «${escapeHtml(f.text)}» не фиксирую. Скажите «Запись»</span>`;
+                cls = 'is-miss'; html = `<span class="lv-ico">❚❚</span><span>Пауза — не фиксирую. Space — продолжить</span>`;
             } else if (f && f.kind === 'mark') {
                 cls = 'is-cmd'; html = `<span class="lv-ico">✎</span><span>Отмечено — ${escapeHtml(f.text)}</span>`;
             } else if (f && TTS_LIVE_CMD[f.kind]) {
                 let [ico, name] = TTS_LIVE_CMD[f.kind];
-                cls = 'is-cmd'; html = `<span class="lv-ico">${ico}</span><span>Команда «${name}»${f.text ? ' — ' + escapeHtml(f.text.replace(/^«?[^»]*»?\s*—\s*/, '')) : ''}</span>`;
+                cls = 'is-cmd'; html = `<span class="lv-ico">${ico}</span><span>${escapeHtml(f.text || name)}</span>`;
             } else if (ttsLiveSt.busy) {
                 cls = 'is-busy'; html = '<span class="lv-spin"></span><span>Распознаю…</span>';
             } else if (ttsLiveSt.paused) {
@@ -6992,4 +6996,19 @@ let isProcessing = false;
             let res = await pywebview.api.tts_marks_write();
             ttsShowMarksPending(res.pending, res.error);
             showToast(res.saved ? 'Разметка записана в таблицу' : (res.error || 'Не удалось записать'));
+        }
+
+
+        // ===== Клавиши во время записи =====
+        async function ttsLiveAction(action) {
+            if (!ttsRec.on) return;
+            let res = await pywebview.api.tts_live_key(action);
+            if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+            if (res.state) ttsLiveUpdate(res.state, 0);
+            if (res.prompt) { ttsPromptKey = null; ttsRenderPrompt(res.prompt, action === 'redo' ? 'restart' : null); }
+            ttsSetPaused(res.paused);
+            ttsLiveSt.paused = !!res.paused;
+            let kind = action === 'pause' ? (res.paused ? 'cmd-pause' : 'cmd-resume') : 'cmd-' + action;
+            if (action === 'pause' && !res.paused) ttsSetPaused(false);
+            ttsLiveFlash(kind, res.message);
         }

@@ -1374,11 +1374,14 @@
                 <span class="tts-recbar__meter"><span id="ttsRecLevel"></span></span>
                 <span class="tts-recbar__info" id="ttsRecInfo"></span>
                 <span class="tts-ed__spacer"></span>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsLiveAction('pause')" title="Пауза / продолжить — ничего не фиксируется">&#10074;&#10074; Пауза <kbd>Space</kbd></button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsLiveAction('redo')" title="Удалить последнюю запись и вернуться к этой фразе (недочитанную — начать сначала)">&#8634; Заново <kbd>Backspace</kbd></button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
                 <button class="btn-ghost btn-ghost--compact" onclick="ttsPromptMove(-1)" title="Вернуться к предыдущей фразе (например, перечитать)">&#8593; Назад</button>
                 <button class="btn-ghost btn-ghost--compact" onclick="ttsPromptMove(1)" title="Пропустить фразу — вернётся в конце">Пропустить &#8595;</button>
                 <button class="btn-ghost btn-ghost--compact" onclick="ttsToggleRec()">Стоп <kbd>R</kbd></button>
             </div>
-            <div class="tts-prompter__pause" id="ttsPromptPause" style="display:none">Пауза — ничего не фиксирую. Скажите <b>«Запись»</b>, чтобы продолжить</div>
+            <div class="tts-prompter__pause" id="ttsPromptPause" style="display:none">Пауза — ничего не фиксирую. Нажмите <b>Space</b>, чтобы продолжить</div>
             <div class="tts-prompter" id="ttsPrompter">
                 <div class="tts-live" id="ttsLive"></div>
                 <div class="tts-prompter__meta" id="ttsPromptMeta"></div>
@@ -1417,6 +1420,7 @@
 
         <div class="tts-keys">
             <span><kbd>R</kbd> запись</span>
+            <span class="tts-keys__rec">при записи: <kbd>Space</kbd> пауза <kbd>Backspace</kbd> заново <kbd>P</kbd> прослушать <kbd>&#8593;</kbd><kbd>&#8595;</kbd> фразы <kbd>1</kbd>–<kbd>5</kbd> разметка</span>
             <span><kbd>Space</kbd> слушать</span>
             <span><kbd>Enter</kbd> сохранить</span>
             <span><kbd>&#8592;</kbd><kbd>&#8594;</kbd> дубли</span>
