@@ -300,11 +300,15 @@ class TtsLiveMixin:
         return {"devices": devs, "outputs": outs}
 
     def tts_monitor(self, device=None, volume=1.0):
-        """Прослушка: голос диктора в реальном времени — в наушники
-        пользователя (device — устройство вывода, None — выключить).
-        Запоминается: при следующем включении записи — сразу."""
+        """Наушники пользователя (device — устройство вывода, None — по умолчанию
+        Windows): туда идёт голос диктора в реальном времени (пока идёт запись)
+        и всё прослушивание дублей. Запоминается до следующей записи."""
         device = None if device in (None, '', -1) else int(device)
         self._tts_mon = {"device": device, "volume": float(volume or 1.0)}
+        # Прослушивание дублей — в те же наушники, а не в гарнитуру диктора.
+        player = getattr(self, 'player', None)
+        if player is not None and hasattr(player, 'set_device') and getattr(player, 'device', None) != device:
+            player.set_device(device)
         rec = getattr(self, '_tts_rec', None)
         if not rec:
             return {"on": device is not None, "name": None, "pending": True}

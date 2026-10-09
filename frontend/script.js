@@ -5972,6 +5972,8 @@ let isProcessing = false;
             ttsLoadPrompt();
             ttsLiveRender();
             ttsMonitorLabel();
+            // Прослушивание дублей — сразу в выбранные наушники (не только во время записи).
+            pywebview.api.tts_rec_devices().then(l => { if (l && !l.error) ttsMonitorApply(l.outputs); });
         }
 
         async function ttsSetLang(lang) {
@@ -6967,7 +6969,7 @@ let isProcessing = false;
             btn.classList.toggle('is-on', on);
             let short = s => s.length > 18 ? s.slice(0, 17) + '…' : s;
             btn.innerHTML = on ? `&#127911; ${escapeHtml(short(name || cfg.name))}` : '&#127911; Прослушка';
-            btn.title = on ? `Голос диктора выводится в «${cfg.name}» · громкость ${Math.round(cfg.volume * 100)}% — клик, чтобы сменить` : 'Прослушка: голос диктора в реальном времени — в ваши наушники';
+            btn.title = on ? `Ваши наушники: «${cfg.name}» — голос диктора (громкость ${Math.round(cfg.volume * 100)}%) и прослушивание дублей. Клик — сменить` : 'Ваши наушники: голос диктора в реальном времени и прослушивание дублей';
         }
         async function ttsMonitorApply(outputs) {
             let cfg = ttsMonitorSaved();
@@ -6981,13 +6983,13 @@ let isProcessing = false;
             if (!list || list.error) { showToast(list && list.error || 'Нет устройств'); return; }
             let cfg = ttsMonitorSaved() || {};
             let vol = cfg.volume || 1;
-            ttsOpenListOverlay('Куда выводить голос диктора?', false);
+            ttsOpenListOverlay('Ваши наушники', false);
             document.getElementById('ttsList').innerHTML = `
                 <div class="tts-mon-vol"><span>Громкость</span>
                     <input type="range" id="ttsMonVol" min="0.5" max="4" step="0.1" value="${vol}">
                     <b id="ttsMonVolTxt">${Math.round(vol * 100)}%</b></div>
-                <div class="tts-dim tts-mon-hint">Выберите ваши наушники (не те, в которых микрофон диктора). Звук идёт сразу, пока включена запись.</div>
-                <button type="button" class="audit-category-item" data-off="1">Не выводить
+                <div class="tts-dim tts-mon-hint">Выберите ваши наушники, не гарнитуру диктора. Туда пойдёт голос диктора в реальном времени (пока идёт запись) и всё прослушивание дублей.</div>
+                <button type="button" class="audit-category-item" data-off="1">Не выбирать — как в Windows
                     <span class="audit-choice-desc">${cfg.name ? '' : 'сейчас'}</span></button>` +
                 (list.outputs || []).map(d => `<button type="button" class="audit-category-item ${d.name === cfg.name ? 'is-first' : ''}" data-id="${d.id}" data-name="${escapeHtml(d.name)}">${escapeHtml(d.name)}
                     <span class="audit-choice-desc">${d.name === cfg.name ? 'выбрано' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`).join('');
@@ -7012,7 +7014,7 @@ let isProcessing = false;
                 ttsCloseList();
                 if (res && res.error) { showToast(res.error); return; }
                 ttsMonitorLabel(res && res.name);
-                showToast(off ? 'Прослушка выключена' : (ttsRec.on ? `Голос диктора — в «${c.name}»` : `Прослушка в «${c.name}» включится вместе с записью`));
+                showToast(off ? 'Звук — в устройство Windows по умолчанию' : `Прослушивание — в «${c.name}»${ttsRec.on ? '' : '; голос диктора пойдёт туда же, когда включите запись'}`);
             });
         }
 
