@@ -561,7 +561,17 @@ class TtsLiveMixin:
             if live.get("gen", 0) != gen:
                 return                     # пока распознавали — отменили (Backspace) или зафиксировали (Enter)
             out = self._tts_ptt_apply(rec, a_ms, b_ms, seg, words, gen, pos, fast) or "miss"
-            if fast and out in ("miss", "partial"):
+            if fast and out == "partial" and self._tts_fast_can_return(pos):
+                # Длинную фразу не дочитали, а следующую ещё не начали — суфлёр
+                # обратно: зелёным записанное, «продолжите отсюда».
+                self._tts()["prompt_pos"] = pos
+                part = live.get("partial") or {}
+                toks, _ = tok_norms(self._tts()["units"][part["unit"]]["text"]) if part else ([], [])
+                word = toks[part["k"]] if part and part["k"] < len(toks) else ''
+                self._tts_save()
+                self._tts_push({"stage": "live_partial", "prompt": self.tts_prompt_info(), "back": True,
+                                "message": f"Не дочитано — продолжите с «{word}»"})
+            elif fast and out in ("miss", "partial"):
                 # Не ждём: суфлёр уже дальше — сохраняем как сомнительный, ничего не теряем.
                 heard = ''.join(w[0] for w in words).strip()
                 self._tts_live_force(rec, a_ms, b_ms, pos, status="doubt", heard=heard or '(не распознано)',
@@ -571,6 +581,22 @@ class TtsLiveMixin:
                                 "message": f"{name}: распознано не полностью — сохранил как сомнительный"})
                 out = "take"
             last["outcome"] = out
+
+    def _tts_fast_can_return(self, pos):
+        """Вернуть суфлёр на фразу можно, если после неё ещё ничего не начали читать."""
+        live = self._tts_live
+        with self._tts_q_lock:
+            idle = live.get("hold") is None and not live["queue"]
+        lr = live.get("last_release") or {}
+        return idle and lr.get("pos") == pos and self._tts().get("prompt_pos") == lr.get("next")
+
+    def _tts_voiced_ms(self, rec, a_ms, b_ms):
+        """Сколько в отрезке звучал голос (мс)."""
+        db = self._tts_live_levels(rec.ana_segment(a_ms, b_ms))
+        if not len(db):
+            return 0
+        thr = max(-50.0, float(db.max()) - 30.0)
+        return int((db > thr).sum()) * LIVE_FRAME_MS
 
     def _tts_pos_name(self, pos):
         items = self._tts_prompt_items()
@@ -736,11 +762,26 @@ class TtsLiveMixin:
         with self._tts_live_lock:
             st = self._tts()
             pos = st.get("prompt_pos", 0)
+            items = self._tts_prompt_items()
+            ids = items[pos] if 0 <= pos < len(items) else []
+            part = live.get("partial")
+            resuming = bool(part) and ids == [part["unit"]] and part.get("gen") == live.get("gen")
+            text = ' '.join(st["units"][i]["text"] for i in ids)
+            # Голоса заметно меньше, чем нужно на этот текст (~15 знаков в секунду) —
+            # похоже, сбились и не дочитали: суфлёр не двигаем, ждём распознавания.
+            short = (not resuming and len(text) >= 30
+                     and self._tts_voiced_ms(rec, start, now) < 0.5 * len(text) / 15 * 1000)
+            if resuming or short:
+                with self._tts_q_lock:
+                    live["queue"].append((start, now + PTT_POSTROLL_MS, None))
+                    live["busy"] = True
+                return {"holding": False, "queued": True, "checking": True, "resuming": resuming}
             live.pop("partial", None)
             with self._tts_q_lock:
                 live["queue"].append((start, now + PTT_POSTROLL_MS, pos))
                 live["busy"] = True
             self._tts_prompt_fix(pos + 1)
+            live["last_release"] = {"pos": pos, "next": st.get("prompt_pos")}
             self._tts_save()
             return {"holding": False, "queued": True, "prompt": self.tts_prompt_info()}
 

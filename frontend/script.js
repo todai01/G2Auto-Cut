@@ -6044,7 +6044,7 @@ let isProcessing = false;
             } else if (p.stage === 'marks') {
                 ttsShowMarksPending(p.pending, p.error);
             } else if (p.stage === 'live_partial') {
-                if (p.prompt) ttsRenderPrompt(p.prompt);
+                if (p.prompt) { if (p.back) ttsPromptKey = null; ttsRenderPrompt(p.prompt, p.back ? 'restart' : null); }
                 ttsLiveFlash('partial', p.message);
             } else if (p.stage === 'live_busy') {
                 ttsLiveSt.busy = p.busy;
@@ -7466,6 +7466,7 @@ let isProcessing = false;
             if (res && res.error) { showToast(res.error); ttsLiveSt.busy = false; ttsLiveRender(); }
             // «Не ждать»: суфлёр уже на следующей фразе.
             if (res && res.prompt) { ttsPromptKey = null; ttsRenderPrompt(res.prompt, 'next'); }
+            else if (res && res.checking) ttsLiveFlash('partial', res.resuming ? 'Продолжение — проверяю, дочитана ли фраза…' : 'Похоже, фраза не дочитана — проверяю, что записано…');
         }
 
         // ----- «Не ждать распознавания» (по умолчанию — для казахского) -----
