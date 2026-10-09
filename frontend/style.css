@@ -3165,3 +3165,9 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-dev-head:first-child{ padding-top: 2px; }
 .tts-dev-head .tts-dim{ font-weight: 500; font-size: var(--fs-xs); }
 .tts-rbtn--fast.is-on{ color: var(--accent-var); border-color: rgba(238,172,62,0.5); background: var(--tint-var); }
+.tts-redo-chip{ font: inherit; font-size: inherit; color: var(--accent-var); background: var(--tint-var); border: 1px solid rgba(238,172,62,0.45);
+    border-radius: 999px; padding: 1px 9px; cursor: pointer; }
+.tts-redo-chip:hover{ border-color: var(--accent-var); }
+.tts-redo-here{ display: inline-block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+    color: #2a1c00; background: var(--accent-var); border-radius: 999px; padding: 1px 8px; margin-right: 4px; }
+.tts-redo-row b{ font-family: var(--font-mono); font-size: 11.5px; }

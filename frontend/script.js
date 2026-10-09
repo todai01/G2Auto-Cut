@@ -7140,6 +7140,11 @@ let isProcessing = false;
                 meta.innerText = ''; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
                 return;
             }
+            if (!pr.done && !pr.left && pr.pending) {
+                text.innerHTML = '<span class="tts-dim">Всё прочитано — дораспознаю…</span>';
+                meta.innerText = `в очереди ${pr.pending}`; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
+                return;
+            }
             if (pr.done) {
                 text.innerHTML = 'Все фразы прочитаны 🎉';
                 meta.innerText = `${pr.total} из ${pr.total}`;
@@ -7159,7 +7164,8 @@ let isProcessing = false;
                 }
             }
             let doneShare = pr.total ? Math.round((pr.total - pr.left) / pr.total * 100) : 0;
-            meta.innerHTML = `<span>Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}</span>`
+            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}`
+                + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
                 + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
             next.innerHTML = pr.next ? `<span class="tts-prompter__next-label">Дальше</span> ${line(pr.next)}` : '';
@@ -7193,8 +7199,39 @@ let isProcessing = false;
             ttsLiveSt.holding = ttsLiveSt.busy = false; ttsLiveRender();
             if (state) ttsLiveUpdate(state, 0);
             ttsLoadPrompt();
-            if (error) showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error));
-            else showToast('Запись сохранена в папку «Записи»');
+            if (error) { showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error)); return; }
+            showToast('Запись сохранена в папку «Записи»');
+            ttsShowRedo(true);
+        }
+
+        // ----- что перезаписать: сомнительные / нераспознанные / без привязки -----
+        async function ttsShowRedo(auto) {
+            let r = await pywebview.api.tts_redo_list();
+            if (!r) return;
+            if (auto && !r.redo.length && !r.loose.length) return;
+            ttsOpenListOverlay(r.redo.length ? `Перезаписать: ${r.redo.length}` : 'Перезаписывать нечего', false);
+            let rows = r.redo.map(x => `<button type="button" class="audit-category-item tts-redo-row" data-pos="${x.pos}">
+                    <b>${escapeHtml(x.name)}</b> — ${escapeHtml(x.text)}
+                    <span class="audit-choice-desc">${x.heard ? 'услышано: ' + escapeHtml(x.heard) : 'не распознано'}</span></button>`).join('');
+            let loose = r.loose.length ? `<div class="tts-dev-head">Без привязки к фразе: ${r.loose.length}</div>
+                <div class="tts-dim tts-mon-hint">Фразы с переменными, зафиксированные целиком. Откройте карточку на ленте — привяжите (F) и подрежьте, или удалите (Del).</div>
+                ${r.loose.map(k => `<button type="button" class="audit-category-item" data-take="${k}">Дубль ${String((tts.takes[k] || {}).chunk || k + 1).padStart(3, '0')}
+                    <span class="audit-choice-desc">${escapeHtml((tts.takes[k] || {}).heard || '')}</span></button>`).join('')}` : '';
+            document.getElementById('ttsList').innerHTML =
+                (r.redo.length ? `<div class="tts-dim tts-mon-hint">Распознались не полностью или с сомнением. Клик — суфлёр на эту фразу; «Перезаписать все» — по очереди с первой (R).</div>` : '')
+                + rows + loose
+                + `<div class="modal-actions">${r.redo.length ? '<button class="custom-alert-btn" id="ttsRedoAll">Перезаписать все</button>' : ''}
+                   <button class="custom-alert-btn btn-secondary" onclick="ttsCloseList()">${r.redo.length ? 'Позже' : 'Закрыть'}</button></div>`;
+            let go = async pos => {
+                ttsCloseList();
+                let pr = await pywebview.api.tts_prompt_goto(pos);
+                if (pr) { ttsPromptKey = null; ttsRenderPrompt(pr, 'next'); }
+                if (!ttsRec.on) showToast('Нажмите R — и читайте');
+            };
+            document.querySelectorAll('#ttsList [data-pos]').forEach(b => b.onclick = () => go(+b.dataset.pos));
+            document.querySelectorAll('#ttsList [data-take]').forEach(b => b.onclick = () => { ttsCloseList(); ttsRailClick(+b.dataset.take); });
+            let all = document.getElementById('ttsRedoAll');
+            if (all) all.onclick = () => go(r.redo[0].pos);
         }
 
         // Новые дубли во время записи: не сбиваем то, что сейчас слушаете.
@@ -7418,7 +7455,7 @@ let isProcessing = false;
         function ttsFastOn() {
             let v = null;
             try { v = localStorage.getItem(ttsFastKey()); } catch (e) {}
-            return v === null ? !!(tts && tts.lang === 'kz') : v === '1';
+            return v === null ? true : v === '1';
         }
         function ttsFastRender() {
             let b = document.getElementById('ttsFastBtn');

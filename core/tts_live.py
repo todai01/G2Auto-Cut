@@ -742,12 +742,50 @@ class TtsLiveMixin:
             items.append(ids)
         return items
 
-    def _tts_prompt_needed(self, ids):
-        """Нужно ли ещё читать: хоть один кусочек не сохранён и не записан."""
+    # Дубль, который засчитывается: не забракован и не «сомнительный» (тот —
+    # к перезаписи: суфлёр вернётся к фразе, когда дойдёт до конца).
+    GOOD_STATUS = ("ok", "manual")
+
+    def _tts_good_units(self):
         st = self._tts()
-        have = {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
+        return {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")
+                and (t.get("status") in self.GOOD_STATUS or t.get("approved"))}
+
+    def _tts_pending_pos(self):
+        """Фразы, которые прочитаны и ещё распознаются («не ждать»)."""
+        live = getattr(self, '_tts_live', None) or {}
+        out = {j[2] for j in live.get("queue", []) if len(j) > 2 and j[2] is not None}
+        if live.get("inflight_pos") is not None:
+            out.add(live["inflight_pos"])
+        return out
+
+    def _tts_prompt_needed(self, ids, have=None):
+        """Нужно ли ещё читать: хоть один кусочек не сохранён и нет хорошего дубля."""
+        st = self._tts()
+        have = self._tts_good_units() if have is None else have
         return any(i not in have and not (st.get("work_dir") and os.path.exists(self._tts_target(st["units"][i])))
                    for i in ids)
+
+    def tts_redo_list(self):
+        """Что перезаписать: фразы, у которых есть только сомнительные или
+        нераспознанные дубли, и дубли без привязки к фразе."""
+        st = self._tts()
+        items = self._tts_prompt_items()
+        good = self._tts_good_units()
+        pending = self._tts_pending_pos()
+        tried = {t["unit"]: t for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
+        out = []
+        for pos, ids in enumerate(items):
+            if pos in pending or not any(i in tried for i in ids):
+                continue
+            if self._tts_prompt_needed(ids, good):
+                t = next(tried[i] for i in ids if i in tried)
+                u = st["units"][ids[0]]
+                out.append({"pos": pos, "name": u["name"], "text": ' '.join(st["units"][i]["text"] for i in ids),
+                            "heard": t.get("heard", ''), "take": st["takes"].index(t)})
+        loose = [k for k, t in enumerate(st["takes"]) if t.get("unit") is None and not t.get("rejected")
+                 and t.get("raw") and t.get("status") != "noise"]
+        return {"redo": out, "loose": loose}
 
     def _tts_prompt_fix(self, start=None):
         """Встать на ближайшую фразу, которую ещё нужно прочитать."""
@@ -758,8 +796,9 @@ class TtsLiveMixin:
             return
         pos = st.get("prompt_pos", 0) if start is None else start
         pos = max(0, min(pos, len(items) - 1))
+        good, pending = self._tts_good_units(), self._tts_pending_pos()
         for k in list(range(pos, len(items))) + list(range(0, pos)):
-            if self._tts_prompt_needed(items[k]):
+            if k not in pending and self._tts_prompt_needed(items[k], good):
                 st["prompt_pos"] = k
                 return
         st["prompt_pos"] = pos
@@ -777,17 +816,35 @@ class TtsLiveMixin:
                      "vars": units[i].get("vars", []),
                      "var_before": units[i].get("var_before") if k == 0 else None,
                      "var_after": units[i].get("var_after")} for k, i in enumerate(ids)]
-        left = sum(1 for ids in items if self._tts_prompt_needed(ids))
-        nxt = next((items[k] for k in range(pos + 1, len(items)) if self._tts_prompt_needed(items[k])), None)
+        good, pending = self._tts_good_units(), self._tts_pending_pos()
+        need = [k not in pending and self._tts_prompt_needed(ids, good) for k, ids in enumerate(items)]
+        left = sum(need)
+        nxt = next((items[k] for k in range(pos + 1, len(items)) if need[k]), None)
+        redo_l = self.tts_redo_list()["redo"]
+        redo = len(redo_l)
         live = getattr(self, '_tts_live', None) or {}
         part = live.get("partial")
         resume = None
         if part and items[pos] == [part["unit"]]:
             toks, _ = tok_norms(units[part["unit"]]["text"])
             resume = {"unit": part["unit"], "k": part["k"], "word": toks[part["k"]] if part["k"] < len(toks) else ''}
-        return {"pos": pos, "total": len(items), "left": left, "done": left == 0, "resume": resume,
+        return {"pos": pos, "total": len(items), "left": left, "done": left == 0 and not pending, "resume": resume, "redo": redo, "pending": len(pending),
+                "redo_here": any(r["pos"] == pos for r in redo_l),
                 "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
                 "current": show(items[pos]), "next": show(nxt) if nxt else None}
+
+    def tts_prompt_goto(self, pos):
+        """Суфлёр — на эту фразу (из списка «к перезаписи»)."""
+        st = self._tts()
+        items = self._tts_prompt_items()
+        if not items:
+            return None
+        st["prompt_pos"] = max(0, min(int(pos), len(items) - 1))
+        live = getattr(self, '_tts_live', None)
+        if live:
+            live.pop("partial", None)
+        self._tts_save()
+        return self.tts_prompt_info()
 
     def tts_prompt_move(self, step):
         """«Назад» — на предыдущую фразу (в т.ч. уже записанную — перечитать);
@@ -800,7 +857,9 @@ class TtsLiveMixin:
         if step < 0:
             st["prompt_pos"] = max(0, pos - 1)
         else:
-            nxt = next((k for k in range(pos + 1, len(items)) if self._tts_prompt_needed(items[k])), None)
+            good, pending = self._tts_good_units(), self._tts_pending_pos()
+            nxt = next((k for k in range(pos + 1, len(items))
+                        if k not in pending and self._tts_prompt_needed(items[k], good)), None)
             st["prompt_pos"] = nxt if nxt is not None else min(len(items) - 1, pos + 1)
         live = getattr(self, '_tts_live', None)
         rec = getattr(self, '_tts_rec', None)
