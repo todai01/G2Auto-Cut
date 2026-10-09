@@ -153,8 +153,10 @@ class LiveRecorder:
             self.overflows += 1                  # компьютер не успел — кусок звука потерян
         block = indata[:, 0].copy()
         self.q.put(block)
-        if self.mon is not None:
+        if self.mon is not None and not self.mic_off:
             self._mon_feed(block)
+
+    mic_off = False     # открыта «Сборка»: микрофон не слышен в наушниках и не пишет фраз
 
     # ----- прослушка: голос диктора сразу во вторые наушники -----
     mon = None
@@ -442,7 +444,7 @@ class TtsLiveMixin:
                 "hearing": bool(live.get("hearing")),
                 "holding": live.get("hold") is not None,
                 "hold_s": round(max(0, rec.ana_ms - live["hold"]) / 1000, 1) if live.get("hold") is not None else 0,
-                "overflows": rec.overflows, "asr_s": live.get("asr_s"),
+                "overflows": rec.overflows, "mic_off": bool(live.get("mic_off")), "asr_s": live.get("asr_s"),
                 "pending_n": len(live.get("queue", [])) + (1 if live.get("busy") and live.get("inflight_pos") is not None else 0),
                 "error": rec.error, "prompt": self.tts_prompt_info()}
 
@@ -745,6 +747,8 @@ class TtsLiveMixin:
             return {"error": "Запись не идёт."}
         now = rec.ana_ms                      # время нажатия — сразу, ничего не ждём
         with self._tts_q_lock:
+            if live.get("mic_off"):
+                return {"holding": False, "mic_off": True}
             if down:
                 if live.get("hold") is None:
                     live["hold"] = max(live.get("mute_until", 0), now - PTT_PREROLL_MS, 0)
@@ -1104,6 +1108,23 @@ class TtsLiveMixin:
 
     # ---------------- клавиши во время записи ----------------
     # Space — пауза / продолжить, Backspace — заново, P — прослушать последнее.
+
+    def tts_live_mic(self, on):
+        """Открыли «Сборку» — микрофон выключаем (не шумит в наушниках при
+        прослушивании, Space не пишет); закрыли — снова включаем."""
+        live = getattr(self, '_tts_live', None)
+        rec = getattr(self, '_tts_rec', None)
+        if not live or not rec:
+            return {"mic": False}
+        with self._tts_q_lock:
+            live["mic_off"] = not on
+            rec.mic_off = not on
+            if not on:
+                live["hold"] = None              # держали Space — этот кусок не нужен
+            if getattr(rec, 'mon', None) is not None and not on:
+                with rec.mon_lock:
+                    rec.mon_buf = rec.mon_buf[:0]
+        return {"mic": bool(on)}
 
     def tts_live_fast(self, on):
         """Режим «не ждать распознавания»: отпустили Space — суфлёр сразу на

@@ -6962,6 +6962,8 @@ let isProcessing = false;
             ttsRec.device = res.device;
             await pywebview.api.tts_live_fast(ttsFastOn());
             ttsFastRender();
+            ttsLiveSt.micOff = document.getElementById('stage4-tts').classList.contains('show-assembly');
+            if (ttsLiveSt.micOff) pywebview.api.tts_live_mic(false);
             if (res.monitor_error) showToast(res.monitor_error);
             ttsMonitorLabel(res.monitor || null);
             ttsSetRecUi(true);
@@ -7212,7 +7214,7 @@ let isProcessing = false;
             ttsSetPaused(false);
             ttsRec.on = false;
             ttsSetRecUi(false);
-            ttsLiveSt.holding = ttsLiveSt.busy = false; ttsLiveRender();
+            ttsLiveSt.holding = ttsLiveSt.busy = false; ttsLiveSt.micOff = false; ttsLiveRender();
             if (state) ttsLiveUpdate(state, 0);
             ttsLoadPrompt();
             if (error) { showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error)); return; }
@@ -7290,7 +7292,9 @@ let isProcessing = false;
             let el = document.getElementById('ttsLive');
             if (!el) return;
             let f = ttsLiveSt.flash, cls, html;
-            if (!ttsRec.on && !ttsRec.starting) {
+            if (ttsRec.on && ttsLiveSt.micOff) {
+                cls = 'is-off'; html = '<span class="lv-dot"></span><span>Микрофон выключен — идёт сборка (Esc — вернуться к записи)</span>';
+            } else if (!ttsRec.on && !ttsRec.starting) {
                 cls = f && f.kind === 'off' ? 'is-miss' : 'is-off';
                 html = '<span class="lv-dot"></span><span>Запись выключена — нажмите <b>R</b></span>';
             } else if (f && f.kind === 'ok') {
@@ -7545,6 +7549,13 @@ let isProcessing = false;
         function ttsShowAssembly(on) {
             let stage = document.getElementById('stage4-tts');
             stage.classList.toggle('show-assembly', on === undefined ? !stage.classList.contains('show-assembly') : on);
-            if (stage.classList.contains('show-assembly')) { if (ttsPttDown) ttsPtt(false); ttsEd = null; ttsRenderAssembly(); }
+            let open = stage.classList.contains('show-assembly');
+            if (open) { ttsPttCancel(); ttsEd = null; ttsRenderAssembly(); }
+            // Сборка открыта — микрофон выключен: не шумит при прослушивании.
+            if (ttsRec.on && ttsLiveSt.micOff !== open) {
+                ttsLiveSt.micOff = open;
+                pywebview.api.tts_live_mic(!open);
+                ttsLiveRender();
+            }
             else if (ttsPlayingIdx >= 0) ttsStopPlay().then(() => { ttsRenderRail(); ttsRenderCurrent(); });
         }
