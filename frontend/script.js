@@ -5984,11 +5984,11 @@ let isProcessing = false;
             let box = document.getElementById('ttsLang');
             if (!box) return;
             box.classList.toggle('is-auto', !!(tts && tts.lang_auto));
-            box.title = tts && tts.lang_auto ? 'Язык распознавания — сам, по меткам <…_kz> / <…_ru> в таблице' : 'Язык распознавания речи';
+            box.title = tts && tts.lang_auto ? 'Язык распознавания — сам: по тексту фразы на экране (казахские буквы — KZ) и меткам full_phrase_kz / full_phrase_ru' : 'Язык распознавания речи';
             box.querySelectorAll('button').forEach(b => b.classList.toggle('is-on', b.dataset.l === lang));
         }
         async function ttsSetLang(lang) {
-            if (tts && tts.lang_auto) { showToast('Язык переключается сам — по меткам <…_kz> / <…_ru> в таблице'); return; }
+            if (tts && tts.lang_auto) { showToast('Язык переключается сам — по тексту фразы на экране (и меткам full_phrase_kz / full_phrase_ru)'); return; }
             if (!tts || !tts.loaded || tts.lang === lang) return;
             let st = await pywebview.api.tts_set_lang(lang);
             if (st && st.error) { showToast(st.error); return; }
