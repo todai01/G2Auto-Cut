@@ -6804,6 +6804,9 @@ let isProcessing = false;
             if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
             // Во время записи: держите Space — пишу, Backspace — заново, P — прослушать последнее.
             if (ttsRec.on && e.code === 'Escape' && document.getElementById('stage4-tts').classList.contains('show-assembly')) { e.preventDefault(); ttsShowAssembly(false); return true; }
+            // Открыта сборка — Space слушает/останавливает дубль, а не пишет.
+            let inAssembly = document.getElementById('stage4-tts').classList.contains('show-assembly');
+            if (ttsRec.on && inAssembly && e.code === 'Space') { e.preventDefault(); ttsTogglePlay(); return true; }
             if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(true); return true; }
             if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsLiveAction('redo'); return true; }
             if (ttsRec.on && e.code === 'KeyP') { e.preventDefault(); ttsLiveAction('play'); return true; }
@@ -7252,5 +7255,6 @@ let isProcessing = false;
         function ttsShowAssembly(on) {
             let stage = document.getElementById('stage4-tts');
             stage.classList.toggle('show-assembly', on === undefined ? !stage.classList.contains('show-assembly') : on);
-            if (stage.classList.contains('show-assembly')) { ttsEd = null; ttsRenderAssembly(); }
+            if (stage.classList.contains('show-assembly')) { if (ttsPttDown) ttsPtt(false); ttsEd = null; ttsRenderAssembly(); }
+            else if (ttsPlayingIdx >= 0) ttsStopPlay().then(() => { ttsRenderRail(); ttsRenderCurrent(); });
         }
