@@ -29,6 +29,14 @@ LIVE_FORCE_MS = 40000      # без пауз дольше — режем в са
 LIVE_FRAME_MS = 20
 LIVE_NOISE_ABOVE_DB = 6    # речь — громче фона хотя бы на столько (тихие команды тоже)
 LIVE_HOTWORDS = 'Заново Стоп Запись Играй'
+# Шумно, вокруг разговаривают: речью считаем только то, что не тише вашего
+# голоса больше чем на LIVE_VOICE_DROP_DB (гарнитура у рта — вы громче всех).
+LIVE_VOICE_DROP_DB = 18
+LIVE_VOICE_SPREAD_DB = 22   # голос заметно громче фона — значит, есть по чему отсчитывать
+# Пауза так и не наступила — раз в секунду ищем команду в последних секундах.
+LIVE_SPOT_AFTER_MS = 2500
+LIVE_SPOT_EVERY_S = 1.0
+LIVE_SPOT_WINDOW_MS = 2500
 RECORDS_DIR = 'Записи'
 LIVE_WAIT_MAX_MS = 45000   # недочитанную фразу ждём не дольше
 PROMPT_PREFIX_SCORE = 0.6  # сказанное похоже на начало фразы — ждём продолжения
@@ -230,6 +238,14 @@ class TtsLiveMixin:
                 stopping = live.get("stopping") or not rec.running
                 total = rec.ana_ms
                 cut = total if stopping else self._tts_live_cut(rec, live["done_ms"], total)
+                # Шумно и паузы нет — не ждём её, ищем в хвосте команду.
+                if (not cut and not stopping and total - live["done_ms"] > LIVE_SPOT_AFTER_MS
+                        and time.time() - live.get("spot_t", 0) >= LIVE_SPOT_EVERY_S):
+                    live["spot_t"] = time.time()
+                    try:
+                        cut = self._tts_live_spot(rec, live["done_ms"], total)
+                    except Exception:
+                        cut = None
                 if cut and cut - live["done_ms"] >= (1 if stopping else LIVE_MIN_REGION_MS):
                     live["busy"] = True
                     self._tts_push({"stage": "live_busy", "busy": True})
@@ -393,7 +409,12 @@ class TtsLiveMixin:
             return None
         hist = self._tts_live_levels(rec.ana_segment(max(0, total_ms - 60000), total_ms))
         floor = float(np.percentile(hist, 10)) if len(hist) else -70.0
-        quiet = lv < floor + LIVE_NOISE_ABOVE_DB
+        thr = floor + LIVE_NOISE_ABOVE_DB
+        if len(hist) >= 150:                                   # хотя бы 3 с истории
+            voice = float(np.percentile(hist, 95))
+            if voice - floor > LIVE_VOICE_SPREAD_DB:
+                thr = max(thr, voice - LIVE_VOICE_DROP_DB)     # чужие голоса вдалеке — это «тишина»
+        quiet = lv < thr
         # «Слышу речь»: в ещё не разобранном куске есть голос.
         live = getattr(self, '_tts_live', None)
         if live is not None:
@@ -416,6 +437,34 @@ class TtsLiveMixin:
             tail = lv[-500:]
             return done_ms + (len(lv) - len(tail) + int(np.argmin(tail))) * LIVE_FRAME_MS
         return None
+
+    def _tts_prompt_words(self):
+        """Слова текущей фразы суфлёра — внутри неё «стоп»/«запись» не команды."""
+        st = self._tts()
+        items = self._tts_prompt_items()
+        pos = st.get("prompt_pos", 0)
+        ids = items[pos] if 0 <= pos < len(items) else None
+        return set(_norm(' '.join(st["units"][i]["text"] for i in ids)).split()) if ids else set()
+
+    def _tts_live_spot(self, rec, done_ms, total_ms):
+        """Быстрый поиск команды в последних секундах, когда паузы нет
+        (шумно). Нашли — режем сразу после слова команды."""
+        live = self._tts_live
+        st = self._tts()
+        a = max(done_ms, total_ms - LIVE_SPOT_WINDOW_MS, live.get("mute_until", 0))
+        if total_ms - a < 300:
+            return None
+        seg = rec.ana_segment(a, total_ms)
+        samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
+        words = self._tts_transcribe_pack(live["model"], [{"index": 0, "audio": samples, "ms": len(seg)}],
+                                          'kk' if st["lang"] == 'kz' else 'ru', live=True,
+                                          hotwords=LIVE_HOTWORDS)[0]
+        skip = self._tts_prompt_words()
+        hits = [w for w in words if _norm(w[0]) in COMMANDS and _norm(w[0]) not in skip]
+        if not hits:
+            return None
+        end = a + int(hits[-1][2] * 1000) + 120
+        return min(total_ms, max(end, done_ms + LIVE_MIN_REGION_MS))
 
     def _tts_live_region(self, rec, a_ms, b_ms, final=False):
         """Разбор куска записи [a_ms, b_ms): фразы и голосовые команды по
