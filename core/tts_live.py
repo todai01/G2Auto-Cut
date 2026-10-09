@@ -134,8 +134,9 @@ class LiveRecorder:
         self.error = None
         self._f = open(path, 'wb')
         self._write_header(0xFFFFFFFF - 36)   # пока пишем — «до конца файла»
+        # Запас буфера побольше: пока модель занимает процессор, звук не теряется.
         self.stream = sd.InputStream(samplerate=self.rate, channels=1, dtype='int32',
-                                     device=device, callback=self._callback, blocksize=0)
+                                     device=device, callback=self._callback, blocksize=0, latency='high')
 
     def _write_header(self, data_size):
         block, bits = 3, 24
@@ -145,7 +146,11 @@ class LiveRecorder:
                       + b'fmt ' + struct.pack('<I', 16) + fmt + b'data' + struct.pack('<I', min(0xFFFFFFFF, data_size)))
         self._f.seek(0, 2)
 
+    overflows = 0
+
     def _callback(self, indata, frames, t, status):
+        if status and getattr(status, 'input_overflow', False):
+            self.overflows += 1                  # компьютер не успел — кусок звука потерян
         block = indata[:, 0].copy()
         self.q.put(block)
         if self.mon is not None:
@@ -153,7 +158,8 @@ class LiveRecorder:
 
     # ----- прослушка: голос диктора сразу во вторые наушники -----
     mon = None
-    MON_MAX_S = 0.12     # копится больше — выбрасываем старое: задержка не растёт
+    MON_MAX_S = 0.25     # копится больше — выбрасываем старое: задержка не растёт
+    MON_PRIME_S = 0.05   # после «опустело» — сначала подкопить, чтобы не трещало
 
     def set_monitor(self, device, volume=1.0):
         """Выводить микрофон в реальном времени на device (None — выключить).
@@ -166,9 +172,10 @@ class LiveRecorder:
         ch = 2 if info['max_output_channels'] >= 2 else 1
         self.mon_rate, self.mon_gain = rate, float(volume)
         self.mon_buf = np.zeros(0, np.float32)
+        self.mon_prime = True
         self.mon_lock = threading.Lock()
         stream = self.sd.OutputStream(samplerate=rate, channels=ch, dtype='float32', device=device,
-                                      callback=self._mon_out, blocksize=0, latency='low')
+                                      callback=self._mon_out, blocksize=0, latency=0.08)
         stream.start()
         self.mon = stream
         return info['name']
@@ -185,14 +192,20 @@ class LiveRecorder:
             buf = np.concatenate([self.mon_buf, x])
             cap = int(self.MON_MAX_S * self.mon_rate)
             if len(buf) > cap:
-                buf = buf[-int(cap / 3):]
+                buf = buf[-int(self.MON_PRIME_S * 2 * self.mon_rate):]
             self.mon_buf = buf
 
     def _mon_out(self, outdata, frames, t, status):
         with self.mon_lock:
+            if self.mon_prime and len(self.mon_buf) < self.MON_PRIME_S * self.mon_rate:
+                outdata[:] = 0
+                return
+            self.mon_prime = False
             n = min(frames, len(self.mon_buf))
             out = self.mon_buf[:n]
             self.mon_buf = self.mon_buf[n:]
+            if n < frames:
+                self.mon_prime = True            # опустело — подкопить заново
         outdata[:n] = np.clip(out * self.mon_gain, -1.0, 1.0)[:, None]
         outdata[n:] = 0
 
@@ -403,6 +416,7 @@ class TtsLiveMixin:
                 "hearing": bool(live.get("hearing")),
                 "holding": live.get("hold") is not None,
                 "hold_s": round(max(0, rec.ana_ms - live["hold"]) / 1000, 1) if live.get("hold") is not None else 0,
+                "overflows": rec.overflows,
                 "error": rec.error, "prompt": self.tts_prompt_info()}
 
     # ---------------- разбор в паузах ----------------
@@ -540,6 +554,10 @@ class TtsLiveMixin:
             return "take"
 
         this = self._tts_word_span(rec, stream, pairs[0][1], pairs[-1][2], b_ms / 1000.0)
+        whole = pairs[0][1] == 0 and pairs[-1][2] == len(stream) - 1
+        if whole and not self._tts_times_sane(rec, stream, a_ms, b_ms):
+            # Время слов у модели «плывёт» (бывает у дообученных) — режем по голосу.
+            this = self._tts_voice_bounds(rec, a_ms, b_ms)
         times = {t: (stream[h0][1], stream[h1][2]) for t, h0, h1 in pairs}
         heard_all = ((part.get("heard", '') + ' … ') if part else '') + text
         score_of = lambda n: round(n / max(1, sum(1 for x in tn if x)), 3)
@@ -970,6 +988,18 @@ class TtsLiveMixin:
                 live["last_seg"] = {"a": a_ms, "b": b_ms, "gen": live["gen"], "outcome": "take"}
             return {"action": "commit", "message": msg, "paused": False,
                     "state": self.tts_state(), "prompt": self.tts_prompt_info()}
+
+    def _tts_times_sane(self, rec, stream, a_ms, b_ms):
+        """Похоже ли время слов на правду: идут по порядку, длительности
+        разумные и края речи совпадают с тем, где в записи громко."""
+        prev = -1.0
+        for w, s_, e, *_ in stream:
+            if e <= s_ or s_ < prev - 0.05 or e - s_ > 2.5:
+                return False
+            prev = s_
+        lo, hi = self._tts_voice_bounds(rec, a_ms, b_ms)
+        ws, we = stream[0][1] * 1000, stream[-1][2] * 1000
+        return abs(ws - lo) < 700 and abs(we - hi) < 700
 
     def _tts_voice_bounds(self, rec, a_ms, b_ms):
         """Где в отрезке голос: обрезаем тишину по краям (с запасом)."""

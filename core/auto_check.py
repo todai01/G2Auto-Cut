@@ -199,6 +199,7 @@ class AutoCheckMixin:
         slot = '_asr_model_kz' if kz else '_asr_model'
         model = getattr(self, slot, None)
         if model is not None:
+            self._asr_workers = getattr(model, '_gvox_workers', 1)
             return model, None
         try:
             from faster_whisper import WhisperModel
@@ -207,15 +208,23 @@ class AutoCheckMixin:
                           "pip install faster-whisper")
         local = self._auto_check_model_path(lang)
         cores = os.cpu_count() or 2
-        self._asr_workers = 2 if cores >= 4 else 1
+        if kz:
+            # Крупная модель: одна очередь и 2 ядра в запасе — иначе запись с
+            # микрофона и прослушка не успевают (треск, дыры в записи).
+            workers, threads = 1, max(1, cores - 2)
+        else:
+            workers = 2 if cores >= 4 else 1
+            threads = max(1, cores // workers)
         try:
             model = WhisperModel(local or (KZ_MODEL if kz else DEFAULT_MODEL), device='cpu', compute_type='int8',
-                                 cpu_threads=max(1, cores // self._asr_workers), num_workers=self._asr_workers)
+                                 cpu_threads=threads, num_workers=workers)
         except Exception as e:
             if local:
                 return None, f"Не удалось загрузить модель из папки «{local}».\n\n{e}"
             return None, NEED_MODEL
         fix_feature_size(model)
+        model._gvox_workers = workers
+        self._asr_workers = workers
         setattr(self, slot, model)
         return model, None
 

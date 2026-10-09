@@ -7067,6 +7067,7 @@ let isProcessing = false;
             let quiet = ttsRec.peaks.length >= 25 && top > -60 && top < -30;
             document.getElementById('ttsRecInfo').innerText = `записано: ${s.added}`
                 + (quiet ? ' · микрофон тихий — громкость выровняется' : '')
+                + (s.overflows ? ` · ⚠ звук прерывался ${s.overflows} раз — компьютер не успевает` : '')
 ;
             if (s.error) showToast('Запись остановилась: ' + s.error);
             if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
