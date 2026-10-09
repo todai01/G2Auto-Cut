@@ -146,7 +146,64 @@ class LiveRecorder:
         self._f.seek(0, 2)
 
     def _callback(self, indata, frames, t, status):
-        self.q.put(indata[:, 0].copy())
+        block = indata[:, 0].copy()
+        self.q.put(block)
+        if self.mon is not None:
+            self._mon_feed(block)
+
+    # ----- прослушка: голос диктора сразу во вторые наушники -----
+    mon = None
+    MON_MAX_S = 0.12     # копится больше — выбрасываем старое: задержка не растёт
+
+    def set_monitor(self, device, volume=1.0):
+        """Выводить микрофон в реальном времени на device (None — выключить).
+        Возвращает название устройства вывода."""
+        self._mon_close()
+        if device is None:
+            return None
+        info = self.sd.query_devices(device, 'output')
+        rate = int(info['default_samplerate']) or 48000
+        ch = 2 if info['max_output_channels'] >= 2 else 1
+        self.mon_rate, self.mon_gain = rate, float(volume)
+        self.mon_buf = np.zeros(0, np.float32)
+        self.mon_lock = threading.Lock()
+        stream = self.sd.OutputStream(samplerate=rate, channels=ch, dtype='float32', device=device,
+                                      callback=self._mon_out, blocksize=0, latency='low')
+        stream.start()
+        self.mon = stream
+        return info['name']
+
+    def set_monitor_volume(self, volume):
+        self.mon_gain = float(volume)
+
+    def _mon_feed(self, block):
+        x = block.astype(np.float32) / 2147483648.0
+        if self.mon_rate != self.rate and len(x):
+            n = int(round(len(x) * self.mon_rate / self.rate))
+            x = np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32) if n else x[:0]
+        with self.mon_lock:
+            buf = np.concatenate([self.mon_buf, x])
+            cap = int(self.MON_MAX_S * self.mon_rate)
+            if len(buf) > cap:
+                buf = buf[-int(cap / 3):]
+            self.mon_buf = buf
+
+    def _mon_out(self, outdata, frames, t, status):
+        with self.mon_lock:
+            n = min(frames, len(self.mon_buf))
+            out = self.mon_buf[:n]
+            self.mon_buf = self.mon_buf[n:]
+        outdata[:n] = np.clip(out * self.mon_gain, -1.0, 1.0)[:, None]
+        outdata[n:] = 0
+
+    def _mon_close(self):
+        mon, self.mon = self.mon, None
+        if mon is not None:
+            try:
+                mon.stop()
+                mon.close()
+            except Exception:
+                pass
 
     def start(self):
         self.running = True
@@ -198,6 +255,7 @@ class LiveRecorder:
         return AudioSegment(data=bytes(self.ana[a:b]), sample_width=2, frame_rate=LIVE_RATE, channels=1)
 
     def stop(self):
+        self._mon_close()
         try:
             self.stream.stop()
             self.stream.close()
@@ -230,11 +288,35 @@ class TtsLiveMixin:
             host = sd.query_hostapis(sd.default.hostapi)['devices'] if sd.default.hostapi >= 0 else None
             if host:
                 devs = [d for d in devs if d["id"] in host] or devs
+            out_default = sd.default.device[1]
+            outs = [{"id": i, "name": d['name'], "default": i == out_default}
+                    for i, d in enumerate(sd.query_devices()) if d['max_output_channels'] > 0]
+            if host:
+                outs = [d for d in outs if d["id"] in host] or outs
         except Exception as e:
             return {"error": f"Не удалось получить список микрофонов: {e}"}
         if not devs:
             return {"error": "Не найден ни один микрофон."}
-        return {"devices": devs}
+        return {"devices": devs, "outputs": outs}
+
+    def tts_monitor(self, device=None, volume=1.0):
+        """Прослушка: голос диктора в реальном времени — в наушники
+        пользователя (device — устройство вывода, None — выключить).
+        Запоминается: при следующем включении записи — сразу."""
+        device = None if device in (None, '', -1) else int(device)
+        self._tts_mon = {"device": device, "volume": float(volume or 1.0)}
+        rec = getattr(self, '_tts_rec', None)
+        if not rec:
+            return {"on": device is not None, "name": None, "pending": True}
+        try:
+            if device is not None and rec.mon is not None and getattr(rec, '_mon_device', None) == device:
+                rec.set_monitor_volume(volume)
+                return {"on": True, "name": rec._mon_name}
+            name = rec.set_monitor(device, volume)
+            rec._mon_device, rec._mon_name = device, name
+        except Exception as e:
+            return {"error": f"Не удалось вывести звук в наушники: {e}"}
+        return {"on": device is not None, "name": name}
 
     def tts_rec_start(self, device=None):
         st = self._tts()
@@ -262,13 +344,26 @@ class TtsLiveMixin:
         except Exception as e:
             return {"error": f"Не удалось включить микрофон: {e}"}
         self._tts_rec = rec
+        # Две блокировки: _tts_live_lock — правка дублей (короткая), _tts_q_lock —
+        # нажатия Space/Backspace/Enter: они не ждут распознавания.
         self._tts_live_lock = threading.RLock()
+        self._tts_q_lock = threading.Lock()
         self._tts_live = {"model": model, "done_ms": 0, "from_ms": 0, "busy": False, "added": 0,
-                          "restarts": 0, "expected": self._tts_live_expected(), "queue": [], "hold": None}
+                          "restarts": 0, "expected": self._tts_live_expected(), "queue": [], "hold": None,
+                          "gen": 0}
+        mon = getattr(self, '_tts_mon', None)
+        mon_name = mon_err = None
+        if mon and mon.get("device") is not None:
+            try:
+                mon_name = rec.set_monitor(mon["device"], mon.get("volume", 1.0))
+                rec._mon_device, rec._mon_name = mon["device"], mon_name
+            except Exception as e:
+                mon_err = f"Прослушка не включилась: {e}"
         self._tts_prompt_fix()
         self._tts_save()
         threading.Thread(target=self._tts_live_loop, daemon=True).start()
-        return {"status": "ok", "device": rec.device_name, "rate": rec.rate}
+        return {"status": "ok", "device": rec.device_name, "rate": rec.rate,
+                "monitor": mon_name, "monitor_error": mon_err}
 
     def _tts_live_expected(self):
         """С какой строки таблицы диктор, скорее всего, продолжит: после
@@ -282,7 +377,7 @@ class TtsLiveMixin:
         if not rec:
             return self.tts_state()
         live = self._tts_live
-        with self._tts_live_lock:
+        with self._tts_q_lock:
             if live.get("hold") is not None:             # отпускание так и не пришло
                 live["queue"].append((live["hold"], rec.ana_ms))
                 live["hold"] = None
@@ -317,19 +412,21 @@ class TtsLiveMixin:
             while True:
                 stopping = live.get("stopping") or not rec.running
                 job = None
-                with self._tts_live_lock:
+                with self._tts_q_lock:
                     q = live["queue"]
                     if q and (rec.ana_ms >= q[0][1] or stopping):
                         job = q.pop(0)
+                        live["busy"] = True
+                        gen = live["gen"]
                 if job:
-                    live["busy"] = True
                     self._tts_push({"stage": "live_busy", "busy": True})
-                    with self._tts_live_lock:
-                        try:
-                            self._tts_ptt_segment(rec, job[0], min(job[1], rec.ana_ms))
-                        except Exception as e:
-                            self._tts_push({"stage": "live_error", "error": f"Не удалось разобрать запись: {e}"})
-                    live["busy"] = bool(live["queue"])
+                    # Распознавание — без блокировок: Backspace / Enter не ждут его.
+                    try:
+                        self._tts_ptt_segment(rec, job[0], min(job[1], rec.ana_ms), gen)
+                    except Exception as e:
+                        self._tts_push({"stage": "live_error", "error": f"Не удалось разобрать запись: {e}"})
+                    with self._tts_q_lock:
+                        live["busy"] = bool(live["queue"])
                     self._tts_push({"stage": "live_busy", "busy": live["busy"]})
                     continue
                 if stopping and not live["queue"]:
@@ -375,20 +472,33 @@ class TtsLiveMixin:
         text = ' '.join(st["units"][i]["text"] for i in ids)
         return text[:400] or None
 
-    def _tts_ptt_segment(self, rec, a_ms, b_ms):
+    def _tts_ptt_segment(self, rec, a_ms, b_ms, gen=None):
         st = self._tts()
         live = self._tts_live
+        if gen is None:
+            gen = live.get("gen", 0)
         if b_ms - a_ms < 200:
             return
+        last = live["last_seg"] = {"a": a_ms, "b": b_ms, "gen": gen, "outcome": "pending"}
         seg = rec.ana_segment(a_ms, b_ms)
         samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
         words = self._tts_transcribe_pack(live["model"], [{"index": 0, "audio": samples, "ms": len(seg)}],
                                           'kk' if st["lang"] == 'kz' else 'ru', live=True,
                                           hotwords=self._tts_hint_text())[0]
+        with self._tts_live_lock:
+            if live.get("gen", 0) != gen:
+                return                     # пока распознавали — отменили (Backspace) или зафиксировали (Enter)
+            last["outcome"] = self._tts_ptt_apply(rec, a_ms, b_ms, seg, words, gen) or "miss"
+
+    def _tts_ptt_apply(self, rec, a_ms, b_ms, seg, words, gen):
+        """Разобранный отрезок → дубль / начало длинной фразы / «не понял».
+        Возвращает 'take' | 'partial' | 'miss'."""
+        st = self._tts()
+        live = self._tts_live
         text = ''.join(w[0] for w in words).strip()
         if not words or self._asr_is_noise(text):
             self._tts_push({"stage": "live_miss", "heard": "", "paused": False})
-            return
+            return "miss"
         off = a_ms / 1000.0
         stream = [(w, off + s_, off + e, 0) for w, s_, e in words]
         items = self._tts_prompt_items()
@@ -399,13 +509,14 @@ class TtsLiveMixin:
         if not ids or len(ids) > 1:
             if self._tts_live_words(rec, seg, a_ms, stream, 0, len(stream), final=True) == "none":
                 self._tts_push({"stage": "live_miss", "heard": text, "paused": False})
-            return
+                return "miss"
+            return "take"
 
         uid = ids[0]
         toks, tn = tok_norms(st["units"][uid]["text"])
         heard = [_lat_to_cyr(_norm(w[0])) for w in stream]
         part = live.get("partial")
-        if part and (part["unit"] != uid or part["raw"] != rec.path):
+        if part and (part["unit"] != uid or part["raw"] != rec.path or part.get("gen", gen) != gen):
             part = live["partial"] = None
         s0 = 0
         if part:
@@ -421,7 +532,8 @@ class TtsLiveMixin:
             # Не начало текущей фразы — может, прочитали другую.
             if self._tts_live_words(rec, seg, a_ms, stream, 0, len(stream), final=True) == "none":
                 self._tts_push({"stage": "live_miss", "heard": text, "paused": False})
-            return
+                return "miss"
+            return "take"
 
         this = self._tts_word_span(rec, stream, pairs[0][1], pairs[-1][2], b_ms / 1000.0)
         times = {t: (stream[h0][1], stream[h1][2]) for t, h0, h1 in pairs}
@@ -433,7 +545,7 @@ class TtsLiveMixin:
                 live["partial"] = None
                 self._tts_live_make_take(rec, uid, [{"raw": rec.path, "a": this[0], "b": this[1], "cuts": [], "pos": 0}],
                                          heard_all, score_of(len(times)), pos)
-                return
+                return "take"
             frags = []
         else:
             frags = [dict(f) for f in part["frags"]]
@@ -460,13 +572,15 @@ class TtsLiveMixin:
             live["partial"] = None
             n_ok = sum(len(f["times"]) for f in frags)
             self._tts_live_make_take(rec, uid, clips, heard_all, score_of(n_ok), pos)
-            return
-        live["partial"] = {"unit": uid, "k": kk, "raw": rec.path, "frags": frags, "heard": heard_all}
+            return "take"
+        live["partial"] = {"unit": uid, "k": kk, "raw": rec.path, "frags": frags, "heard": heard_all,
+                           "gen": gen, "seg": [a_ms, b_ms]}
         word = toks[kk] if kk < len(toks) else ''
         self._tts_push({"stage": "live_partial", "prompt": self.tts_prompt_info(),
                         "message": f"Начало записано — продолжите с «{word}»"})
+        return "partial"
 
-    def _tts_live_make_take(self, rec, uid, clips, heard, score, pos):
+    def _tts_live_make_take(self, rec, uid, clips, heard, score, pos, status=None):
         """Дубль из клипов исходной записи (байт в байт). Фраза из кусочков —
         несколько клипов на дорожке «Сборки»: их можно двигать и подрезать."""
         st = self._tts()
@@ -477,7 +591,7 @@ class TtsLiveMixin:
         b1 = max(c["b"] for c in clips)
         take = {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a0, "ms": 0,
                 "orig": [a0, b1], "raw": rec.path, "heard": heard, "listened": False, "chunk": n,
-                "unit": uid, "score": score, "status": "ok" if score >= 0.85 else "doubt"}
+                "unit": uid, "score": score, "status": status or ("ok" if score >= 0.85 else "doubt")}
         if len(clips) > 1:
             take["clips"] = clips
             take["clips_orig"] = [dict(c) for c in clips]
@@ -488,7 +602,8 @@ class TtsLiveMixin:
         cur = st["takes"][st["index"]] if st["takes"] and st["index"] < len(st["takes"]) else None
         st["takes"].append(take)
         live.setdefault("history", []).append({"takes": [take["file"]], "pos": pos})
-        live["expected"] = uid + 1
+        if uid is not None:
+            live["expected"] = uid + 1
         if cur is None or cur.get("approved") or cur.get("rejected") or cur.get("unit") is None:
             st["index"] = len(st["takes"]) - 1
         self._tts_prompt_fix(pos + 1)
@@ -503,16 +618,17 @@ class TtsLiveMixin:
         rec = getattr(self, '_tts_rec', None)
         if not live or not rec:
             return {"error": "Запись не идёт."}
-        with self._tts_live_lock:
+        now = rec.ana_ms                      # время нажатия — сразу, ничего не ждём
+        with self._tts_q_lock:
             if down:
                 if live.get("hold") is None:
-                    live["hold"] = max(live.get("mute_until", 0), rec.ana_ms - PTT_PREROLL_MS, 0)
+                    live["hold"] = max(live.get("mute_until", 0), now - PTT_PREROLL_MS, 0)
                 return {"holding": True}
             start = live.get("hold")
             live["hold"] = None
             if start is None:
                 return {"holding": False}
-            live["queue"].append((start, rec.ana_ms + PTT_POSTROLL_MS))
+            live["queue"].append((start, now + PTT_POSTROLL_MS))
             live["busy"] = True
             return {"holding": False, "queued": True}
 
@@ -781,7 +897,24 @@ class TtsLiveMixin:
         rec = getattr(self, '_tts_rec', None)
         if not live or not rec:
             return {"error": "Запись не идёт."}
-        with self._tts_live_lock:              # дождаться, если сейчас идёт распознавание
+        if action == "redo":
+            # Держат Space или ещё распознаётся — отменяем сразу, не дожидаясь.
+            with self._tts_q_lock:
+                fast = live.get("hold") is not None or bool(live["queue"]) or live.get("busy")
+                if fast:
+                    live["hold"] = None
+                    live["queue"].clear()
+                    live["gen"] = live.get("gen", 0) + 1
+                    live["busy"] = False
+            if fast:
+                live.pop("partial", None)
+                live["restarts"] += 1
+                self._tts_push({"stage": "live_busy", "busy": False})
+                return {"action": "redo", "message": "Отменил — читайте фразу сначала", "paused": False,
+                        "state": self.tts_state(), "prompt": self.tts_prompt_info(), "cancelled": True}
+        if action == "commit":
+            return self._tts_live_commit(rec)
+        with self._tts_live_lock:
             if action == "redo":
                 if live.pop("partial", None):
                     live["restarts"] += 1
@@ -795,6 +928,92 @@ class TtsLiveMixin:
             return {"action": action, "message": msg, "paused": False,
                     "state": self.tts_state(), "prompt": self.tts_prompt_info()}
 
+    def _tts_live_commit(self, rec):
+        """Enter — «Зафиксировать»: последний записанный кусок становится
+        дублем текущей фразы суфлёра, даже если распознавание его не поняло
+        (или ещё не досчитало). Распознавание — помощник, а не шлагбаум."""
+        live = self._tts_live
+        now = rec.ana_ms
+        with self._tts_q_lock:
+            if live.get("hold") is not None:            # нажали, не отпустив Space
+                seg = (live["hold"], now + PTT_POSTROLL_MS)
+                live["hold"] = None
+            elif live["queue"]:
+                seg = live["queue"][-1]
+            else:
+                ls = live.get("last_seg")
+                seg = (ls["a"], ls["b"]) if ls and ls.get("outcome") != "take" else None
+            if seg:
+                live["queue"].clear()
+                live["gen"] = live.get("gen", 0) + 1     # результат распознавания — уже не нужен
+                live["busy"] = False
+        if not seg:
+            part = live.get("partial")
+            if not part:
+                return {"error": "Нечего фиксировать — сначала запишите фразу (держите Space)"}
+            seg = tuple(part["seg"])
+        t_end = time.time() + 1.0
+        while rec.ana_ms < seg[1] and rec.running and time.time() < t_end:
+            time.sleep(0.02)
+        a_ms, b_ms = seg[0], min(seg[1], rec.ana_ms)
+        self._tts_push({"stage": "live_busy", "busy": False})
+        with self._tts_live_lock:
+            msg = self._tts_live_force(rec, a_ms, b_ms)
+            ls = live.get("last_seg")
+            if ls and ls["a"] == a_ms:
+                ls["outcome"] = "take"
+            else:
+                live["last_seg"] = {"a": a_ms, "b": b_ms, "gen": live["gen"], "outcome": "take"}
+            return {"action": "commit", "message": msg, "paused": False,
+                    "state": self.tts_state(), "prompt": self.tts_prompt_info()}
+
+    def _tts_voice_bounds(self, rec, a_ms, b_ms):
+        """Где в отрезке голос: обрезаем тишину по краям (с запасом)."""
+        seg = rec.ana_segment(a_ms, b_ms)
+        db = self._tts_live_levels(seg)
+        if not len(db):
+            return a_ms, b_ms
+        thr = max(-50.0, float(db.max()) - 35.0)
+        on = np.nonzero(db > thr)[0]
+        if not len(on):
+            return a_ms, b_ms
+        lo = a_ms + max(0, on[0] * LIVE_FRAME_MS - 120)
+        hi = min(b_ms, a_ms + (on[-1] + 1) * LIVE_FRAME_MS + 160)
+        return int(lo), int(hi)
+
+    def _tts_live_force(self, rec, a_ms, b_ms):
+        st = self._tts()
+        live = self._tts_live
+        items = self._tts_prompt_items()
+        pos = st.get("prompt_pos", 0)
+        ids = items[pos] if 0 <= pos < len(items) else None
+        lo, hi = self._tts_voice_bounds(rec, a_ms, b_ms)
+        part = live.pop("partial", None)
+        if part and (not ids or ids != [part["unit"]] or part["raw"] != rec.path):
+            part = None
+        if part:
+            # Длинная фраза: верное начало уже есть — к нему добавляем этот кусок.
+            frags = [dict(f) for f in part["frags"]]
+            if list(part.get("seg") or []) == [a_ms, b_ms]:
+                frags[-1]["cut"] = frags[-1]["b"]        # этот кусок уже последний фрагмент
+            else:
+                frags.append({"a": lo, "b": hi, "cut": hi})
+            clips, p = [], 0
+            for f in frags:
+                clips.append({"raw": rec.path, "a": int(f["a"]), "b": int(f["b"]), "cuts": [], "pos": int(p)})
+                p += max(0, f["cut"] - f["a"])
+            heard = part.get("heard", '') + ' … (зафиксировано вручную)'
+        else:
+            clips = [{"raw": rec.path, "a": lo, "b": hi, "cuts": [], "pos": 0}]
+            heard = '(зафиксировано вручную)'
+        if ids and len(ids) == 1:
+            self._tts_live_make_take(rec, ids[0], clips, heard, 1.0, pos, status="manual")
+            return f"Зафиксировал: {st['units'][ids[0]]['name']}"
+        # Фраза с переменными — кусочки без распознавания не разрезать: дубль
+        # целиком, без привязки; привязать (F) и подрезать — в «Сборке».
+        self._tts_live_make_take(rec, None, clips, heard, 0.0, pos, status="none")
+        return "Зафиксировал целиком — привяжите (F) и подрежьте в «Сборке»"
+
     def _tts_live_undo(self):
         """«Заново»: последний зафиксированный дубль — прочь (и из сохранённых),
         суфлёр — обратно на эту фразу."""
@@ -806,6 +1025,9 @@ class TtsLiveMixin:
             return "Нечего отменять — ещё ничего не записано"
         last = hist.pop()
         files = set(last["takes"])
+        ls = live.get("last_seg")
+        if ls and ls.get("outcome") == "take":
+            ls["outcome"] = "undone"           # можно зафиксировать вручную (Enter)
         gone = [t for t in st["takes"] if t["file"] in files]
         for t in gone:
             if t.get("approved") and t.get("unit") is not None:

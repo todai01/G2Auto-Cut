@@ -1380,12 +1380,14 @@
                 <span class="tts-recbar__info" id="ttsRecInfo"></span>
                 <div class="tts-recbar__btns">
                     <button class="tts-rbtn tts-rbtn--start" onclick="ttsToggleRec()" title="Включить микрофон и продолжить запись">&#9679; Записывать <kbd>R</kbd></button>
-                    <button class="tts-rbtn tts-rbtn--hold" id="ttsHoldBtn" title="Держите — идёт запись фразы; отпустите — распознаю (то же — Space или зажать текст)">&#9679; Держите — запись <kbd>Space</kbd></button>
-                    <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('redo')" title="Удалить последнюю запись и вернуться к этой фразе (недочитанную — начать сначала)">&#8634; Заново <kbd>Backspace</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--hold" id="ttsHoldBtn" title="Держите — идёт запись фразы; отпустите — распознаю (то же — Space или зажать текст)">&#9679; Запись <kbd>Space</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--live tts-rbtn--go" onclick="ttsLiveAction('commit')" title="Зафиксировать последний кусок как эту фразу — даже если распознавание его не поняло или ещё думает">&#10003; Зафиксировать <kbd>Enter</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('redo')" title="Отменить сразу (даже пока держите Space или идёт распознавание) — фраза с начала; иначе удалить последнюю запись">&#8634; Заново <kbd>Backspace</kbd></button>
+                    <button class="tts-rbtn tts-rbtn--mon" id="ttsMonBtn" onclick="ttsMonitorPick()" title="Прослушка: голос диктора в реальном времени — в ваши наушники">&#127911; Прослушка</button>
                     <button class="tts-rbtn" onclick="ttsShowAssembly()" title="Сборка последнего/выбранного дубля — обрезка и вырезы, не останавливая запись (клик по ячейке внизу — тоже)">&#9986; Сборка</button>
                     <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
-                    <button class="tts-rbtn" onclick="ttsPromptMove(-1)" title="Вернуться к предыдущей фразе (например, перечитать)">Назад <kbd>&#8593;</kbd></button>
-                    <button class="tts-rbtn" onclick="ttsPromptMove(1)" title="Пропустить фразу — вернётся в конце">Пропустить <kbd>&#8595;</kbd></button>
+                    <button class="tts-rbtn" onclick="ttsPromptMove(-1)" title="Назад — предыдущая фраза, например перечитать (↑)">&#8593;</button>
+                    <button class="tts-rbtn" onclick="ttsPromptMove(1)" title="Пропустить фразу — вернётся в конце (↓)">&#8595;</button>
                     <button class="tts-rbtn tts-rbtn--stop tts-rbtn--live" onclick="ttsToggleRec()" title="Остановить запись">&#9632; Стоп <kbd>R</kbd></button>
                 </div>
             </div>
@@ -1395,7 +1397,7 @@
                 <div class="tts-prompter__text" id="ttsPromptText"></div>
                 <div class="tts-prompter__next" id="ttsPromptNext"></div>
                 <div class="tts-marks" id="ttsMarks"></div>
-                <div class="tts-prompter__hint">Держите <kbd>Space</kbd> (или зажмите текст мышью) и читайте — отпустите, когда закончите. Сбились — отпустите и продолжите с подсвеченного места</div>
+                <div class="tts-prompter__hint">Держите <kbd>Space</kbd> (или зажмите текст мышью) и читайте — отпустите, когда закончите. Сбились — отпустите и продолжите с подсвеченного места. <kbd>Backspace</kbd> — отменить сразу, <kbd>Enter</kbd> — зафиксировать как есть</div>
             </div>
         </div>
 

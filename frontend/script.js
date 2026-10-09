@@ -5971,6 +5971,7 @@ let isProcessing = false;
             ttsRender();
             ttsLoadPrompt();
             ttsLiveRender();
+            ttsMonitorLabel();
         }
 
         async function ttsSetLang(lang) {
@@ -6105,7 +6106,7 @@ let isProcessing = false;
                         ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
-                    <span class="tts-take__meta">${t.unit !== null ? Math.round(t.score * 100) + '%' : ''}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
+                    <span class="tts-take__meta">${t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
             rail.classList.toggle('is-playing', ttsPlayingIdx === tts.index);
             let cur = rail.querySelector('.is-current');
@@ -6885,7 +6886,8 @@ let isProcessing = false;
             if (inAssembly && e.code === 'Space') { e.preventDefault(); ttsTogglePlay(); return true; }
             if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(true); return true; }
             if (e.code === 'Space') { e.preventDefault(); ttsLiveFlash('off'); return true; }
-            if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsLiveAction('redo'); return true; }
+            if (ttsRec.on && e.code === 'Backspace') { e.preventDefault(); ttsPttCancel(); ttsLiveAction('redo'); return true; }
+            if (ttsRec.on && !inAssembly && (e.code === 'Enter' || e.code === 'NumpadEnter')) { e.preventDefault(); ttsLiveAction('commit'); return true; }
             if (ttsRec.on && e.code === 'KeyP') { e.preventDefault(); ttsLiveAction('play'); return true; }
             if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); ttsApprove(); }
             else if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); ttsStep(1); }
@@ -6927,6 +6929,7 @@ let isProcessing = false;
             if (list && list.error) { showBeautifulAlert('⚠️ ' + escapeHtml(list.error).replace(/\n/g, '<br>')); return; }
             let device = await ttsPickMic(list.devices);
             if (device === null) return;
+            await ttsMonitorApply(list.outputs);
             ttsRec.starting = true;
             ttsSetRecUi(true, tts.lang === 'kz' ? 'Включаю микрофон и казахскую модель (первый раз скачивается ~1,6 ГБ)…' : 'Включаю микрофон и распознавание…');
             let res;
@@ -6939,6 +6942,8 @@ let isProcessing = false;
             }
             ttsRec.on = true;
             ttsRec.device = res.device;
+            if (res.monitor_error) showToast(res.monitor_error);
+            ttsMonitorLabel(res.monitor || null);
             ttsSetRecUi(true);
             ttsLiveKey = null; ttsLiveRender();
             ttsPromptKey = null;
@@ -6946,6 +6951,69 @@ let isProcessing = false;
             if (pr) ttsRenderPrompt(pr, 'next');
             clearInterval(ttsRec.timer);
             ttsRec.timer = setInterval(ttsRecPoll, 200);
+        }
+
+        // ----- прослушка: голос диктора сразу во вторые наушники -----
+        // Устройство запоминается по названию (номера в Windows меняются).
+        const TTS_MON_KEY = 'gvox_tts_monitor';
+        function ttsMonitorSaved() {
+            try { return JSON.parse(localStorage.getItem(TTS_MON_KEY) || 'null'); } catch (e) { return null; }
+        }
+        function ttsMonitorLabel(name) {
+            let btn = document.getElementById('ttsMonBtn');
+            if (!btn) return;
+            let cfg = ttsMonitorSaved();
+            let on = !!(cfg && cfg.name);
+            btn.classList.toggle('is-on', on);
+            let short = s => s.length > 18 ? s.slice(0, 17) + '…' : s;
+            btn.innerHTML = on ? `&#127911; ${escapeHtml(short(name || cfg.name))}` : '&#127911; Прослушка';
+            btn.title = on ? `Голос диктора выводится в «${cfg.name}» · громкость ${Math.round(cfg.volume * 100)}% — клик, чтобы сменить` : 'Прослушка: голос диктора в реальном времени — в ваши наушники';
+        }
+        async function ttsMonitorApply(outputs) {
+            let cfg = ttsMonitorSaved();
+            if (!cfg || !cfg.name) { await pywebview.api.tts_monitor(null, 1); return; }
+            let dev = (outputs || []).find(d => d.name === cfg.name);
+            if (!dev) { showToast(`Наушники «${cfg.name}» не найдены — прослушка выключена`); await pywebview.api.tts_monitor(null, 1); return; }
+            await pywebview.api.tts_monitor(dev.id, cfg.volume || 1);
+        }
+        async function ttsMonitorPick() {
+            let list = await pywebview.api.tts_rec_devices();
+            if (!list || list.error) { showToast(list && list.error || 'Нет устройств'); return; }
+            let cfg = ttsMonitorSaved() || {};
+            let vol = cfg.volume || 1;
+            ttsOpenListOverlay('Куда выводить голос диктора?', false);
+            document.getElementById('ttsList').innerHTML = `
+                <div class="tts-mon-vol"><span>Громкость</span>
+                    <input type="range" id="ttsMonVol" min="0.5" max="4" step="0.1" value="${vol}">
+                    <b id="ttsMonVolTxt">${Math.round(vol * 100)}%</b></div>
+                <div class="tts-dim tts-mon-hint">Выберите ваши наушники (не те, в которых микрофон диктора). Звук идёт сразу, пока включена запись.</div>
+                <button type="button" class="audit-category-item" data-off="1">Не выводить
+                    <span class="audit-choice-desc">${cfg.name ? '' : 'сейчас'}</span></button>` +
+                (list.outputs || []).map(d => `<button type="button" class="audit-category-item ${d.name === cfg.name ? 'is-first' : ''}" data-id="${d.id}" data-name="${escapeHtml(d.name)}">${escapeHtml(d.name)}
+                    <span class="audit-choice-desc">${d.name === cfg.name ? 'выбрано' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`).join('');
+            let range = document.getElementById('ttsMonVol');
+            range.oninput = async () => {
+                vol = +range.value;
+                document.getElementById('ttsMonVolTxt').innerText = Math.round(vol * 100) + '%';
+                let c = ttsMonitorSaved();
+                if (c && c.name) {
+                    c.volume = vol;
+                    try { localStorage.setItem(TTS_MON_KEY, JSON.stringify(c)); } catch (e) {}
+                    let dev = (list.outputs || []).find(d => d.name === c.name);
+                    if (dev) pywebview.api.tts_monitor(dev.id, vol);
+                    ttsMonitorLabel();
+                }
+            };
+            document.querySelectorAll('#ttsList [data-id], #ttsList [data-off]').forEach(b => b.onclick = async () => {
+                let off = !!b.dataset.off;
+                let c = off ? null : { name: b.dataset.name, volume: vol };
+                try { localStorage.setItem(TTS_MON_KEY, JSON.stringify(c)); } catch (e) {}
+                let res = await pywebview.api.tts_monitor(off ? null : +b.dataset.id, vol);
+                ttsCloseList();
+                if (res && res.error) { showToast(res.error); return; }
+                ttsMonitorLabel(res && res.name);
+                showToast(off ? 'Прослушка выключена' : (ttsRec.on ? `Голос диктора — в «${c.name}»` : `Прослушка в «${c.name}» включится вместе с записью`));
+            });
         }
 
         // Микрофон: один — сразу он; несколько — выбор, последний выбранный запоминаем.
@@ -7109,7 +7177,7 @@ let isProcessing = false;
         let ttsLiveSt = { busy: false, hearing: false, waiting: false, paused: false, flash: null, flashT: null };
 
         const TTS_LIVE_CMD = {
-            'cmd-redo': ['↺', 'Заново'], 'cmd-pause': ['❚❚', 'Пауза'], 'cmd-resume': ['●', 'Продолжаем'], 'cmd-play': ['▶', 'Прослушать'],
+            'cmd-redo': ['↺', 'Заново'], 'cmd-commit': ['✓', 'Зафиксировано'], 'cmd-pause': ['❚❚', 'Пауза'], 'cmd-resume': ['●', 'Продолжаем'], 'cmd-play': ['▶', 'Прослушать'],
         };
 
         // Итог разбора держится на экране ~2,5 с, потом — снова текущее состояние.
@@ -7130,6 +7198,8 @@ let isProcessing = false;
                 html = '<span class="lv-dot"></span><span>Запись выключена — нажмите <b>R</b></span>';
             } else if (f && f.kind === 'ok') {
                 cls = 'is-ok'; html = `<span class="lv-ico">✓</span><span>Записано: <b>${escapeHtml(f.text)}</b></span>`;
+            } else if (f && f.kind === 'miss-msg') {
+                cls = 'is-miss'; html = `<span class="lv-ico">!</span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'miss') {
                 cls = 'is-miss'; html = `<span class="lv-ico">✕</span><span>Не понял: «${escapeHtml(f.text)}»</span>`;
             } else if (f && f.kind === 'pause-miss') {
@@ -7238,7 +7308,8 @@ let isProcessing = false;
         async function ttsLiveAction(action) {
             if (!ttsRec.on) return;
             let res = await pywebview.api.tts_live_key(action);
-            if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+            if (!res || res.error) { if (res && res.error) ttsLiveFlash('miss-msg', res.error); return; }
+            if (res.cancelled || action === 'commit') { ttsLiveSt.busy = false; ttsLiveSt.holding = false; }
             if (res.state) ttsLiveUpdate(res.state, 0);
             if (res.prompt) { ttsPromptKey = null; ttsRenderPrompt(res.prompt, action === 'redo' ? 'restart' : null); }
             ttsSetPaused(res.paused);
@@ -7298,6 +7369,15 @@ let isProcessing = false;
         document.addEventListener('keyup', e => {
             if (ttsRec.on && e.code === 'Space') { e.preventDefault(); ttsPtt(false); }
         });
+        // Backspace, пока держите Space: кусок выбрасывается сразу (бэкенд
+        // сбросит его сам) — отпускание Space потом ничего не отправит.
+        function ttsPttCancel() {
+            if (!ttsPttDown) return;
+            ttsPttDown = false;
+            ttsLiveSt.holding = false;
+            document.getElementById('ttsRecBar').classList.remove('is-holding');
+            ttsLiveRender();
+        }
         window.addEventListener('blur', () => { if (ttsPttDown) ttsPtt(false); });
         // Мышью: зажать кнопку записи или сам текст суфлёра.
         document.addEventListener('mousedown', e => {

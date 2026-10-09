@@ -3147,3 +3147,17 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-lang button + button{ border-left: 1px solid var(--border); }
 .tts-lang button:hover{ color: var(--text); }
 .tts-lang button.is-on{ background: var(--accent-info); color: #fff; }
+
+/* Прослушка во вторые наушники */
+.tts-rbtn--mon.is-on{ color: var(--accent-info); border-color: rgba(77,149,234,0.5); background: var(--tint-info); }
+.tts-mon-vol{ display: flex; align-items: center; gap: 10px; padding: 6px 4px 10px; font-size: var(--fs-sm); color: var(--text-dim); }
+.tts-mon-vol input{ flex: 1; accent-color: var(--accent-info); }
+.tts-mon-vol b{ font-family: var(--font-mono); color: var(--text); min-width: 44px; text-align: right; }
+.tts-mon-hint{ font-size: var(--fs-xs); padding: 0 4px 10px; }
+/* кнопки записи — в одну строку; сжимаются подписи, а не ряд */
+.tts-recbar__btns{ flex-wrap: nowrap; flex: none; }
+.tts-recbar__row .tts-live{ min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.tts-recbar__row .tts-live > span:last-child{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-recbar__info{ min-width: 0; flex: 0 1 auto; }
+.tts-recbar__meter{ flex: 0 1 110px; min-width: 50px; }
+@media (max-width: 1500px){ .tts-recbar__btns .tts-rbtn kbd{ display: none; } }
