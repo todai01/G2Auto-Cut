@@ -34,7 +34,7 @@ from pydub.silence import detect_nonsilent
 from core import recent_projects
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
-                             similarity)
+                             fix_feature_size, mels_from_error, similarity)
 from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
 from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_render, wav_slice
@@ -662,11 +662,20 @@ class TtsFlowMixin:
             opts["vad_parameters"] = {"threshold": 0.3, "min_speech_duration_ms": 80, "min_silence_duration_ms": 300}
         if hotwords:
             opts["hotwords"] = hotwords
+        def run():
+            try:
+                return model.transcribe(audio, **opts)
+            except TypeError:                      # старая faster-whisper — без hotwords
+                opts.pop("hotwords", None)
+                return model.transcribe(audio, **opts)
         try:
-            segments, _info = model.transcribe(audio, **opts)
-        except TypeError:                          # старая faster-whisper — без hotwords
-            opts.pop("hotwords", None)
-            segments, _info = model.transcribe(audio, **opts)
+            segments, _info = run()
+            segments = list(segments)
+        except Exception as e:
+            # Модель ждёт другое число мел-полос (нет preprocessor_config.json) — чиним и ещё раз.
+            if not fix_feature_size(model, mels_from_error(e)):
+                raise
+            segments, _info = run()
         no_speech, logprob = (0.85, -1.0) if live else (0.6, -0.7)
         words = [[] for _ in pack]
         for seg in segments:

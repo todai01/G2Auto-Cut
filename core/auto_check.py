@@ -59,6 +59,36 @@ _KZ_FOLD = str.maketrans({'ә': 'а', 'ғ': 'г', 'қ': 'к', 'ң': 'н', 'ө': 
                           'ä': 'а', 'ğ': 'г', 'ñ': 'н', 'ö': 'о', 'ū': 'у', 'ü': 'у', 'ı': 'ы', 'ş': 'ш'})
 
 
+def fix_feature_size(model, n_mels=None):
+    """large-v3 / turbo и дообученные на них модели слушают 128 мел-полос, а
+    не 80. Число faster-whisper берёт из preprocessor_config.json; если его в
+    папке модели нет — ставит 80, и распознавание падает с «expected an input
+    with shape (1, 128, 3000)». Сверяем с самой моделью и чиним. True — поправили."""
+    try:
+        n = int(n_mels or getattr(getattr(model, 'model', None), 'n_mels', 0) or 0)
+        fe = getattr(model, 'feature_extractor', None)
+        if not n or fe is None or getattr(fe, 'mel_filters', None) is None or fe.mel_filters.shape[0] == n:
+            return False
+        from faster_whisper.feature_extractor import FeatureExtractor
+        kw = dict(getattr(model, 'feat_kwargs', None) or {})
+        kw['feature_size'] = n
+        try:
+            model.feature_extractor = FeatureExtractor(**kw)
+        except TypeError:
+            model.feature_extractor = FeatureExtractor(feature_size=n)
+        if hasattr(model, 'feat_kwargs'):
+            model.feat_kwargs = kw
+        return True
+    except Exception:
+        return False
+
+
+def mels_from_error(err):
+    """«expected an input with shape (1, 128, 3000)» → 128."""
+    m = re.search(r'expected an input with shape \(\d+,\s*(\d+),', str(err))
+    return int(m.group(1)) if m else None
+
+
 def _norm(text):
     text = (text or '').lower().replace('ё', 'е')
     text = re.sub(r'[^\w\s]', ' ', text)
@@ -185,6 +215,7 @@ class AutoCheckMixin:
             if local:
                 return None, f"Не удалось загрузить модель из папки «{local}».\n\n{e}"
             return None, NEED_MODEL
+        fix_feature_size(model)
         setattr(self, slot, model)
         return model, None
 
