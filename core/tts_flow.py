@@ -58,6 +58,8 @@ OUT_RATE = 8000           # готовые файлы — 8 кГц, 16 бит, �
 OUT_SPEECH_DB = -18.0     # уровень речи готовых файлов: одинаковый у всех, «не тихо и не громко»
 OUT_PEAK_DB = -1.0        # пики не выше — без перегруза
 OUT_GAIN_LIMIT_DB = 30.0  # больше не поднимаем (если это тишина/шум)
+TAKE_GAIN_DB = (-12.0, 12.0)   # громкость дубля в «Сборке»: ± к выровненному уровню
+TAKE_TEMPO = (0.70, 1.40)      # темп: быстрее/медленнее без смены высоты голоса (ffmpeg atempo)
 EDIT_CONTEXT_MS = 1500    # запас записи вокруг дубля в «Сборке» — край можно вытянуть
 EDIT_BUCKET_MS = 10       # шаг волны
 
@@ -900,15 +902,16 @@ class TtsFlowMixin:
         if not os.path.exists(path):
             return {"playing": False, "error": "Файл дубля пропал с диска."}
         st["index"] = i
-        dur = st["takes"][i].get("ms", 0) / 1000.0
-        # Слушаете ровно то, что сохранится: громкость выровнена, 8 кГц.
+        gain, tempo = self._tts_sound(st["takes"][i])
+        dur = st["takes"][i].get("ms", 0) / 1000.0 / tempo
+        # Слушаете ровно то, что сохранится: громкость выровнена, темп, 8 кГц.
         try:
-            path = self._tts_preview(path)
+            path = self._tts_preview(path, gain, tempo)
         except Exception:
             pass
         self.player.play(path)
         self._tts_playing = (i, time.time(), dur)
-        return {"playing": True, "duration": dur}
+        return {"playing": True, "duration": dur, "tempo": tempo}
 
     def tts_stop_audio(self):
         self._tts_mark_listened()
@@ -960,7 +963,7 @@ class TtsFlowMixin:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         if os.path.exists(target):
             self._tts_trash(target)
-        self._tts_render_final(os.path.join(st["work_dir"], t["file"]), target)
+        self._tts_render_final(os.path.join(st["work_dir"], t["file"]), target, *self._tts_sound(t))
         for other in st["takes"]:
             if other.get("unit") == t["unit"]:
                 other["approved"] = False
@@ -1314,23 +1317,26 @@ class TtsFlowMixin:
         path = os.path.join(st["work_dir"], t["file"])
         if not os.path.exists(path):
             return {"playing": False, "error": "Файл дубля пропал с диска."}
-        prev = self._tts_preview(path)
+        gain, tempo = self._tts_sound(t)
+        prev = self._tts_preview(path, gain, tempo)
         ms = max(0, int(ms))
         total = t.get("ms", 0)
         if ms >= total - 50:
             ms = 0
+        # ms — место на дорожке (время записи); в файле с другим темпом оно раньше/позже.
+        at = int(ms / tempo)
         import tempfile
         # Свой файл на каждый клик (по кругу из 4): не переписываем тот, что
         # ещё играет или читается.
         self._tts_from_n = (getattr(self, '_tts_from_n', 0) + 1) % 4
         tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_from_{os.getpid()}_{self._tts_from_n}.wav")
-        play = tmp if ms > 0 and wav_slice(prev, tmp, ms, total + 1000) else prev
+        play = tmp if at > 0 and wav_slice(prev, tmp, at, total / tempo + 1000) else prev
         st["index"] = i
-        dur = (total - ms) / 1000.0
+        dur = (total - ms) / 1000.0 / tempo
         self.player.play(play)
         # «Прослушано» засчитываем, только если слушали с начала.
         self._tts_playing = (i, time.time(), dur) if ms < 300 else None
-        return {"playing": True, "duration": dur, "from": ms}
+        return {"playing": True, "duration": dur, "from": ms, "tempo": tempo}
 
     # ---------------- Audacity ----------------
 
@@ -1518,31 +1524,93 @@ class TtsFlowMixin:
         return seg.apply_gain(gain) if abs(gain) > 0.1 else seg
 
     @staticmethod
-    def _tts_export_8k(seg, dst):
+    def _tts_export_8k(seg, dst, tempo=1.0):
         """WAV 8 кГц / 16 бит / моно. Частоту пересчитывает ffmpeg (с фильтром,
-        без призвуков); нет ffmpeg — запасной путь pydub."""
+        без призвуков); нет ffmpeg — запасной путь pydub. tempo — темп без
+        смены высоты голоса (фильтр atempo: растягивает время, а не частоту)."""
+        change = abs(tempo - 1.0) > 0.004
+        params = (["-af", f"atempo={tempo:.3f}"] if change else []) + \
+            ["-ar", str(OUT_RATE), "-ac", "1", "-acodec", "pcm_s16le"]
         try:
-            seg.export(dst, format="wav", parameters=["-ar", str(OUT_RATE), "-ac", "1", "-acodec", "pcm_s16le"])
+            seg.export(dst, format="wav", parameters=params)
             if os.path.exists(dst) and os.path.getsize(dst) > 44:
                 return
         except Exception:
             pass
+        if change:
+            raise RuntimeError("Чтобы менять темп, нужен ffmpeg — без него темп не применить.")
         seg.set_frame_rate(OUT_RATE).set_sample_width(2).set_channels(1).export(dst, format="wav")
 
-    def _tts_render_final(self, src, dst):
-        """Дубль → готовый файл: громкость выровнена, 8 кГц."""
-        self._tts_export_8k(self._tts_normalized(AudioSegment.from_file(src)), dst)
+    @staticmethod
+    def _tts_gain_limited(seg, db):
+        """Громче/тише на db. Пики, которые вылезли бы выше OUT_PEAK_DB, мягко
+        прижимаются (без треска перегруза) — так «+6 дБ» правда звучит громче,
+        даже если запись уже была выровнена до потолка."""
+        import numpy as np
+        if abs(db) < 0.05:
+            return seg
+        w = seg.sample_width
+        dt = {1: np.int8, 2: '<i2', 4: '<i4'}.get(w)
+        if dt is None:
+            return seg.apply_gain(db)
+        full = float(1 << (8 * w - 1))
+        x = np.frombuffer(seg.raw_data, dtype=dt).astype(np.float64) / full * (10 ** (db / 20))
+        ceil = 10 ** (OUT_PEAK_DB / 20)
+        knee = ceil * 0.7
+        a = np.abs(x)
+        over = a > knee
+        if over.any():
+            a[over] = knee + (ceil - knee) * np.tanh((a[over] - knee) / (ceil - knee))
+            x = np.sign(x) * a
+        y = np.clip(np.round(x * full), -full, full - 1).astype(dt)
+        return seg._spawn(y.tobytes())
 
-    def _tts_preview(self, src):
-        """Готовая к сохранению версия дубля для прослушки (кэш во временной папке)."""
+    def _tts_render_final(self, src, dst, gain_db=0.0, tempo=1.0):
+        """Дубль → готовый файл: громкость выровнена (± ваша поправка), темп, 8 кГц."""
+        seg = self._tts_normalized(AudioSegment.from_file(src))
+        seg = self._tts_gain_limited(seg, gain_db)
+        self._tts_export_8k(seg, dst, tempo)
+
+    @staticmethod
+    def _tts_sound(t):
+        """(громкость дБ, темп) дубля — настройки из «Сборки»."""
+        return float((t or {}).get("gain_db") or 0.0), float((t or {}).get("tempo") or 1.0)
+
+    def _tts_preview(self, src, gain_db=0.0, tempo=1.0):
+        """Готовая к сохранению версия дубля для прослушки (кэш во временной папке):
+        ровно то, что сохранится — с громкостью и темпом из «Сборки»."""
         import hashlib
         import tempfile
         st_ = os.stat(src)
-        key = hashlib.md5(f"{os.path.abspath(src)}|{st_.st_mtime_ns}|{st_.st_size}".encode()).hexdigest()[:16]
+        key = hashlib.md5(f"{os.path.abspath(src)}|{st_.st_mtime_ns}|{st_.st_size}|{gain_db:.2f}|{tempo:.3f}"
+                          .encode()).hexdigest()[:16]
         dst = os.path.join(tempfile.gettempdir(), f"gvox_tts_prev_{key}.wav")
         if not os.path.exists(dst):
-            self._tts_render_final(src, dst)
+            self._tts_render_final(src, dst, gain_db, tempo)
         return dst
+
+    def tts_take_sound(self, i, gain_db=0.0, tempo=1.0):
+        """Громкость и темп дубля (из «Сборки»). Темп — без смены высоты голоса.
+        Дубль уже сохранён — сохранённый файл сразу пересобирается."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        t = st["takes"][i]
+        g = round(max(TAKE_GAIN_DB[0], min(TAKE_GAIN_DB[1], float(gain_db or 0))), 1)
+        k = round(max(TAKE_TEMPO[0], min(TAKE_TEMPO[1], float(tempo or 1))), 3)
+        t["gain_db"], t["tempo"] = g, k
+        resaved = False
+        if t.get("approved") and t.get("unit") is not None and st.get("work_dir"):
+            src = os.path.join(st["work_dir"], t["file"])
+            target = self._tts_target(st["units"][t["unit"]])
+            try:
+                self._tts_render_final(src, target, g, k)
+                resaved = True
+            except Exception as e:
+                self._tts_save()
+                return {**self.tts_state(), "error": str(e)}
+        self._tts_save()
+        return {**self.tts_state(), "resaved": resaved}
 
     def _tts_sample_files(self, var_key):
         """Пример значения переменной для прослушки сборки: первые готовые

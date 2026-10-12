@@ -244,6 +244,15 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
             return {"playing": True, "duration": duration, "source": "saved"}
         return {"playing": False, "duration": 0}
 
+    def toggle_fullscreen(self):
+        """Полный экран (F11 или кнопка ⛶) — и обратно."""
+        try:
+            webview.windows[0].toggle_fullscreen()
+            self._fullscreen = not getattr(self, '_fullscreen', False)
+        except Exception as e:
+            return {"error": f"Не удалось переключить полный экран: {e}"}
+        return {"fullscreen": self._fullscreen}
+
     def stop_audio(self):
         """Остановка плеера"""
         self.player.stop()

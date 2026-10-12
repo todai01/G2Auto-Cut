@@ -1329,9 +1329,10 @@ class TtsLiveMixin:
         files = [f for f in files if os.path.exists(f)]
         if not files:
             return "Файл пропал с диска"
+        by_file = {os.path.join(st["work_dir"], t["file"]): t for t in st["takes"]}
         out = None
         for f in files:
-            p = AudioSegment.from_file(self._tts_preview(f))
+            p = AudioSegment.from_file(self._tts_preview(f, *self._tts_sound(by_file.get(f))))
             out = p if out is None else out + AudioSegment.silent(150, frame_rate=p.frame_rate) + p
         import tempfile
         tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_last_{os.getpid()}.wav")

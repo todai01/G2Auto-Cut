@@ -3172,3 +3172,12 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
     color: #2a1c00; background: var(--accent-var); border-radius: 999px; padding: 1px 8px; margin-right: 4px; }
 .tts-redo-row b{ font-family: var(--font-mono); font-size: 11.5px; }
 .tts-lang.is-auto button{ cursor: default; }
+
+/* Громкость и темп дубля в «Сборке» */
+.tts-snd{ display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 8px 2px 0; border-top: 1px solid var(--border-soft); margin-top: 6px; }
+.tts-snd__item{ display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text-dim); cursor: pointer; }
+.tts-snd__lbl{ font-weight: 650; }
+.tts-snd__item input{ width: 150px; accent-color: var(--accent-info); cursor: pointer; }
+.tts-snd__item b{ font-family: var(--font-mono); color: var(--text); min-width: 52px; }
+.tts-snd .btn-ghost[disabled]{ opacity: .4; pointer-events: none; }
+.tts-fs-btn kbd{ margin-left: 2px; }

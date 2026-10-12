@@ -4425,6 +4425,15 @@ let isProcessing = false;
             isLongPress[keyNum] = false;
         }
 
+        // Полный экран — F11 на любом экране программы.
+        async function toggleFullscreen() {
+            let res = await pywebview.api.toggle_fullscreen();
+            if (res && res.error) showToast(res.error);
+        }
+        document.addEventListener('keydown', e => {
+            if (e.code === 'F11') { e.preventDefault(); toggleFullscreen(); }
+        });
+
         document.addEventListener('keydown', function(e) {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
@@ -6229,9 +6238,52 @@ let isProcessing = false;
                         <button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsSendToAudacity()" title="Открыть дубль в Audacity">В Audacity</button>
                         <button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsTakeFromAudacity()" title="Забрать правку из Audacity в этот дубль">Забрать из Audacity</button>
                     </div>
+                    ${ttsSoundBarHTML(t)}
                 </div>`;
             ttsEditorLoad();
         }
+
+        // ----- громкость и темп дубля -----
+        // Темп — без смены высоты голоса (ffmpeg atempo). Слушаете и сохраняете
+        // ровно с этими настройками; сохранённый дубль пересобирается сам.
+        function ttsSoundBarHTML(t) {
+            let g = +(t.gain_db || 0), k = Math.round((t.tempo || 1) * 100);
+            return `<div class="tts-snd">
+                <label class="tts-snd__item" title="Громче / тише относительно выровненного уровня (−18 дБ). Пики не перегружаются">
+                    <span class="tts-snd__lbl">Громкость</span>
+                    <input type="range" id="ttsGain" min="-12" max="12" step="0.5" value="${g}"
+                        oninput="ttsSoundLabel()" onchange="ttsSoundApply(this)">
+                    <b id="ttsGainTxt">${ttsGainText(g)}</b></label>
+                <label class="tts-snd__item" title="Темп речи без изменения высоты голоса">
+                    <span class="tts-snd__lbl">Темп</span>
+                    <input type="range" id="ttsTempo" min="70" max="140" step="1" value="${k}"
+                        oninput="ttsSoundLabel()" onchange="ttsSoundApply(this)">
+                    <b id="ttsTempoTxt">${k}%</b></label>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsSoundReset()" title="Громкость 0 дБ, темп 100%" ${g === 0 && k === 100 ? 'disabled' : ''}>Звук по умолчанию</button>
+            </div>`;
+        }
+        const ttsGainText = g => `${g > 0 ? '+' : ''}${(+g).toFixed(1).replace('.0', '')} дБ`;
+        function ttsSoundLabel() {
+            let g = document.getElementById('ttsGain'), k = document.getElementById('ttsTempo');
+            if (g) document.getElementById('ttsGainTxt').innerText = ttsGainText(+g.value);
+            if (k) document.getElementById('ttsTempoTxt').innerText = k.value + '%';
+        }
+        async function ttsSoundApply(el, values) {
+            let t = ttsCurTake();
+            if (!t) return;
+            if (el) el.blur();                       // Space / Enter снова работают
+            let g = values ? values[0] : +document.getElementById('ttsGain').value;
+            let k = values ? values[1] : +document.getElementById('ttsTempo').value / 100;
+            let wasPlaying = ttsPlayingIdx === t.i;
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_take_sound(t.i, g, k);
+            if (!res) return;
+            if (res.error) showToast(res.error);
+            if (res.takes) { tts = res; ttsRenderRail(); ttsRenderCurrent(); ttsRenderAssembly(); }
+            if (res.resaved) showToast('Сохранённый файл обновлён');
+            if (wasPlaying) ttsTogglePlay();          // слушали — сразу с новым звуком
+        }
+        function ttsSoundReset() { ttsSoundApply(null, [0, 1]); }
 
         // ----- дорожка «Сборки»: клипы, как в Audacity, прямо здесь -----
         // Дубль — клипы на дорожке. Клип = кусок исходной записи [a, b] без
@@ -6378,7 +6430,8 @@ let isProcessing = false;
             let time = document.getElementById('ttsEdTime');
             if (time) {
                 let cuts = ttsEd.clips.reduce((acc, c) => acc + (c.cuts || []).length, 0);
-                time.innerText = `${((tlTotal() - base) / 1000).toFixed(2)} с${ttsEd.clips.length > 1 ? ` · клипов ${ttsEd.clips.length}` : ''}`
+                let tk = ((tts.takes[ttsEd.i] || {}).tempo) || 1;
+                time.innerText = `${((tlTotal() - base) / 1000).toFixed(2)} с${Math.abs(tk - 1) > 0.004 ? ` · в темпе ${Math.round(tk * 100)}% — ${((tlTotal() - base) / 1000 / tk).toFixed(2)} с` : ''}${ttsEd.clips.length > 1 ? ` · клипов ${ttsEd.clips.length}` : ''}`
                     + `${cuts ? ` · вырезов ${cuts}` : ''}${ttsEd.audacity ? ' · правлен в Audacity' : ''}`;
             }
             let cut = document.getElementById('ttsEdCutBtn');
@@ -6524,7 +6577,7 @@ let isProcessing = false;
             if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
             ttsPlayingIdx = ttsEd.i;
             ttsRenderRail(); ttsRenderCurrent();
-            ttsEditorPlayhead(res.duration, res.from, g);
+            ttsEditorPlayhead(res.duration, res.from, g, res.tempo);
             clearTimeout(ttsPlayTimer);
             let i = ttsEd.i;
             ttsPlayTimer = setTimeout(() => {
@@ -6535,14 +6588,16 @@ let isProcessing = false;
         }
 
         // Бегунок по дорожке во время прослушки (время файла = время дорожки).
-        function ttsEditorPlayhead(duration, fromMs, gen) {
+        function ttsEditorPlayhead(duration, fromMs, gen, tempo) {
             if (!ttsEd) return;
-            let t0 = performance.now(), i = ttsEd.i, start = tlBase() + (fromMs || 0), end = start + duration * 1000;
+            // Темп ≠ 100% — бегунок идёт по дорожке (время записи) быстрее/медленнее.
+            let k = tempo || 1;
+            let t0 = performance.now(), i = ttsEd.i, start = tlBase() + (fromMs || 0), end = start + duration * 1000 * k;
             let g = gen === undefined ? ttsPlayGen : gen;
             let step = () => {
                 if (g !== ttsPlayGen) return;            // бегунок прежнего запуска — тихо уходим
                 if (!ttsEd || ttsEd.i !== i || ttsPlayingIdx !== i) { if (ttsEd) { ttsEd.play = null; ttsEditorDraw(); } return; }
-                let pos = start + (performance.now() - t0);
+                let pos = start + (performance.now() - t0) * k;
                 if (pos > end) { ttsEd.play = null; ttsEditorDraw(); return; }
                 ttsEd.play = pos;
                 ttsEditorDraw();
@@ -6606,7 +6661,7 @@ let isProcessing = false;
             if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
             ttsPlayingIdx = t.i;
             ttsRenderRail(); ttsRenderCurrent();
-            ttsEditorPlayhead(res.duration, 0, g);
+            ttsEditorPlayhead(res.duration, 0, g, res.tempo);
             ttsPlayTimer = setTimeout(() => {
                 if (g !== ttsPlayGen) return;
                 // Отыграл до конца — считаем прослушанным (бэкенд сверит по времени).
