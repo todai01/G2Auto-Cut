@@ -6905,8 +6905,11 @@ let isProcessing = false;
                 return `<div class="tts-syn__item ${it.k === ttsSynthCur ? 'is-cur' : ''} is-${it.status}" data-k="${it.k}" onclick="ttsSynthSelect(${it.k})">
                     <span class="tts-syn__num">${it.k + 1}</span>
                     <span class="tts-syn__sum">${ttsSumFmt(it.n)}</span>
-                    <input class="tts-syn__text" value="${escapeHtml(it.text)}" title="Текст для синтеза — можно поправить"
-                        onclick="event.stopPropagation()" onchange="ttsSynthSetText(${it.k}, this.value)">
+                    <div class="tts-syn__tx">
+                        <input class="tts-syn__text" value="${escapeHtml(it.text)}" title="Текст для синтеза — можно поправить"
+                            onclick="event.stopPropagation()" onchange="ttsSynthSetText(${it.k}, this.value)">
+                        ${ttsSynthPlanHTML(it.plan)}
+                    </div>
                     <span class="tts-syn__st tts-syn__st--${cls}" title="${escapeHtml(it.error || '')}">${it.status === 'working' ? '<span class="lv-spin"></span>' : ''}${lbl}</span>
                     <button class="btn-ghost btn-ghost--compact" title="Слушать" ${it.has_variant || it.has_file ? '' : 'disabled'}
                         onclick="event.stopPropagation(); ttsSynthPlay(${it.k})">&#9654;</button>
@@ -6933,6 +6936,16 @@ let isProcessing = false;
                             placeholder="что сказано в записи, словами" onchange="ttsSynthSetup({etalon_text: this.value})">
                     </div>
                     <div class="tts-syn__row">
+                        <span class="tts-syn__lbl">Живые слова</span>
+                        ${chip(sy.hybrid, 'Гибрид', 'ttsSynthSetup({hybrid: true})')}${chip(!sy.hybrid, 'Всё синтезом', 'ttsSynthSetup({hybrid: false})')}
+                        ${sy.hybrid ? sy.words.map(w => w.ok
+                            ? `<span class="tts-syn__word is-ok" title="Живое, из «${escapeHtml(w.src || '')}»"><button type="button" onclick="ttsSynthWordPlay('${w.form}')">&#9654; ${escapeHtml(w.form)}</button><button type="button" title="Убрать — это слово пойдёт в синтез" onclick="ttsSynthWordRemove('${w.form}')">&times;</button></span>`
+                            : `<span class="tts-syn__word" title="Нет живой записи этой формы — синтезируется вместе с числом. Добавьте запись, где диктор её говорит.">${escapeHtml(w.form)} — синтез</span>`).join('') : ''}
+                        ${sy.hybrid ? (sy.words_busy ? '<span class="tts-dim"><span class="lv-spin"></span> ищу слова…</span>'
+                            : `<button class="btn-ghost btn-ghost--compact" onclick="ttsSynthWordsFind(false)" ${sy.etalon_ok ? '' : 'disabled'} title="Найти «миллион», «тысяча», «тенге» в эталоне">Найти в эталоне</button>
+                               <button class="btn-ghost btn-ghost--compact" onclick="ttsSynthWordsFind(true)" title="Другая запись диктора, где есть недостающие формы (например «миллиона», «тысяч»)">+ запись со словами</button>`) : ''}
+                    </div>
+                    <div class="tts-syn__row">
                         <span class="tts-syn__lbl">Язык</span>
                         ${chip(sy.lang === 'ru', 'Русский', "ttsSynthSetup({lang: 'ru'})")}${chip(sy.lang === 'kz', 'Казахский', "ttsSynthSetup({lang: 'kz'})")}
                         <span class="tts-syn__lbl" style="margin-left:18px">Суммы</span>
@@ -6957,7 +6970,21 @@ let isProcessing = false;
         }
         const ttsSynthPickEtalon = () => ttsSynthCall(pywebview.api.tts_synth_pick_etalon());
         const ttsSynthPlayEtalon = () => ttsSynthCall(pywebview.api.tts_synth_play_etalon());
-        const ttsSynthSetup = o => ttsSynthCall(pywebview.api.tts_synth_setup(o.lang || null, o.logic || null, o.etalon_text === undefined ? null : o.etalon_text));
+        const ttsSynthSetup = o => ttsSynthCall(pywebview.api.tts_synth_setup(o.lang || null, o.logic || null,
+            o.etalon_text === undefined ? null : o.etalon_text, o.hybrid === undefined ? null : o.hybrid));
+        const ttsSynthWordsFind = extra => ttsSynthCall(pywebview.api.tts_synth_words_find(extra));
+        const ttsSynthWordRemove = f => ttsSynthCall(pywebview.api.tts_synth_word_remove(f));
+        async function ttsSynthWordPlay(f) {
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_synth_word_play(f);
+            if (res && res.error) showToast(res.error);
+        }
+        // Из чего собрана сумма: живые слова — подсвечены, остальное — синтез.
+        function ttsSynthPlanHTML(plan) {
+            if (!plan || !plan.some(p => p[0] === 'live')) return '';
+            return `<div class="tts-syn__plan">${plan.map(([kind, t]) =>
+                kind === 'live' ? `<b title="живое слово">${escapeHtml(t)}</b>` : `<span title="синтез">${escapeHtml(t)}</span>`).join(' ')}</div>`;
+        }
         const ttsSynthSetText = (k, v) => ttsSynthCall(pywebview.api.tts_synth_set_text(k, v));
         const ttsSynthRunAll = () => ttsSynthCall(pywebview.api.tts_synth_run_all());
         const ttsSynthStop = () => ttsSynthCall(pywebview.api.tts_synth_stop());
@@ -6994,6 +7021,7 @@ let isProcessing = false;
         // Сервис закончил очередную сумму (событие из Python).
         async function ttsSynthEvent(p) {
             if (p.error) showToast('Синтез: ' + p.error);
+            else if (p.message && p.k === null) showToast(p.message);
             if (!ttsSynth) return;
             let typing = document.activeElement && document.activeElement.tagName === 'INPUT'
                 && document.activeElement.closest('#ttsVarsOverlay');

@@ -11,6 +11,9 @@
   3. Робот открывает сервис (Chrome за краем экрана, как в G2Synth), вкладка
      «Клонирование»: язык, файл эталона, текст эталона, текст суммы →
      «Синтезировать» → скачивает результат.
+     Гибрид (по умолчанию): слова «миллион», «тысяча», «тенге» — живые, их
+     вырезаем из эталона (и из доп. записей); на сервис уходят только числа
+     («два», «двести две», «два»), потом всё склеивается в одну сумму.
   4. Вы слушаете; не понравилось — пересинтез; понравилось — «Одобрить»:
      тишина по краям обрезается, файл ложится в «Синтез_суммы_RU/» (или _KZ).
   5. «Перейти в режим «Суммы»» — режим открывается сразу на этой папке.
@@ -46,7 +49,19 @@ SYNTH_TIMEOUT_S = 180                      # ждать результат си�
 SYNTH_DIR = 'Синтез_суммы'          # + _RU / _KZ: у каждого языка своя папка (режим «Суммы» — по одному языку)
 SYNTH_VARIANTS = '_варианты'
 SYNTH_ETALON = '_эталон'
+SYNTH_WORDS = '_слова'                      # живые слова из эталона: миллион.wav, тысячи.wav…
 SYNTH_PREFETCH = 2                         # пока слушаете — столько следующих уже синтезируется
+
+# Живые слова (гибрид). В русском у слова три формы — каждую нужно услышать
+# в какой-нибудь записи; нет формы — это слово уйдёт в синтез вместе с числом.
+UNIT_FORMS = {
+    'ru': ['миллион', 'миллиона', 'миллионов', 'тысяча', 'тысячи', 'тысяч', 'тенге'],
+    'kz': ['миллион', 'мың', 'теңге'],
+}
+_UNIT_ALIAS = {'ru': {'теңге': 'тенге', 'милион': 'миллион', 'милиона': 'миллиона', 'милионов': 'миллионов'},
+               'kz': {'тенге': 'теңге', 'мын': 'мың', 'милион': 'миллион'}}
+GLUE_XFADE_MS = 12          # число → живое слово: стык без паузы, с короткой перекрёстной склейкой
+GLUE_GAP_MS = 70            # живое слово → следующее число (если в эталоне не измерили своё)
 
 # Ярусы режима «Суммы» (как в variables_handler): логика 1 и 2.
 _TIER_VALUES = {
@@ -91,6 +106,42 @@ def synth_sums(logic):
 
 def synth_text(n, lang):
     return f"{kz_words(n)} теңге" if lang == 'kz' else f"{ru_words(n)} тенге"
+
+
+def unit_form(word, lang):
+    """Слово → форма «миллион/тысячи/тенге…» или None (это число)."""
+    w = word.lower().replace('ё', 'е').strip(' .,!?;:«»"\'()-—')
+    w = _UNIT_ALIAS.get(lang, {}).get(w, w)
+    return w if w in UNIT_FORMS.get(lang, ()) else None
+
+
+def split_sum_text(text, lang):
+    """«два миллиона двести две тысячи два тенге» →
+    [('num','два'), ('unit','миллиона'), ('num','двести две'), ('unit','тысячи'), ('num','два'), ('unit','тенге')]"""
+    out = []
+    for w in str(text).split():
+        f = unit_form(w, lang)
+        if f:
+            out.append(('unit', f))
+        elif out and out[-1][0] == 'num':
+            out[-1] = ('num', out[-1][1] + ' ' + w)
+        else:
+            out.append(('num', w))
+    return out
+
+
+def synth_plan(text, lang, bank):
+    """Что синтезировать, а что взять живым: [(kind, текст)], kind — 'synth'
+    или 'live'. Формы, которой нет в живых словах, синтезируем вместе с числом."""
+    plan = []
+    for kind, t in split_sum_text(text, lang):
+        if kind == 'unit' and t in bank:
+            plan.append(['live', t])
+        elif plan and plan[-1][0] == 'synth':
+            plan[-1][1] += ' ' + t
+        else:
+            plan.append(['synth', t])
+    return plan
 
 
 class _SynthWorker(threading.Thread):
@@ -210,6 +261,8 @@ class TtsSynthMixin:
                                                          "etalon_text": sy.pop("etalon_text", ''), "store": {}})
         for lg in ('ru', 'kz'):
             sy["per"].setdefault(lg, {"etalon": None, "etalon_text": '', "store": {}})
+            sy["per"][lg].setdefault("words", {})                # живые слова: форма → {file, src, gap}
+        sy.setdefault("hybrid", True)
         if not sy["items"]:
             self._synth_build(sy)
         return sy
@@ -231,7 +284,7 @@ class TtsSynthMixin:
             lg = it.get("lang", sy["lang"])
             if lg in sy["per"]:
                 sy["per"][lg]["store"][str(it["n"])] = {k: it.get(k) for k in
-                                                        ("text", "status", "variant", "file", "tries", "error")}
+                                                        ("text", "status", "variant", "file", "tries", "error", "plan")}
         cur = self._synth_lang(sy)
         items = []
         for k, (n, parts) in enumerate(synth_sums(sy.get("logic", 1))):
@@ -257,7 +310,7 @@ class TtsSynthMixin:
     def tts_synth_state(self):
         with self._synth_lock():
             sy = self._synth()
-            items = [{**{k: it.get(k) for k in ("k", "n", "text", "status", "error", "tries", "parts")},
+            items = [{**{k: it.get(k) for k in ("k", "n", "text", "status", "error", "tries", "parts", "plan")},
                       "has_variant": bool(it.get("variant") and os.path.exists(it["variant"])),
                       "has_file": bool(it.get("file") and os.path.exists(it["file"]))} for it in sy["items"]]
             w = getattr(self, '_synth_worker', None)
@@ -268,7 +321,23 @@ class TtsSynthMixin:
                     "items": items, "has_project": bool(self._tts().get("work_dir")),
                     "approved": sum(1 for it in sy["items"] if it["status"] == "approved"),
                     "queue": len(w.jobs) + (1 if w and w.current is not None else 0) if w else 0,
-                    "folder": self._synth_dir()}
+                    "folder": self._synth_dir(), "hybrid": sy.get("hybrid", True),
+                    "words": self._synth_words_info(sy), "words_busy": bool(getattr(self, '_synth_words_busy', False))}
+
+    def _synth_words_info(self, sy):
+        """Нужные формы слов (по текстам сумм) и какие из них уже есть живыми."""
+        cur = self._synth_lang(sy)
+        need = set()
+        for it in sy["items"]:
+            need.update(t for kind, t in split_sum_text(it["text"], sy["lang"]) if kind == 'unit')
+        bank = cur.get("words", {})
+        out = []
+        for f in UNIT_FORMS[sy["lang"]]:
+            w = bank.get(f)
+            ok = bool(w and os.path.exists(w.get("file", '')))
+            if f in need or ok:
+                out.append({"form": f, "ok": ok, "src": w.get("src") if ok else None, "need": f in need})
+        return out
 
     def _synth_push(self, k=None, message=None, error=None):
         self._tts_push({"stage": "synth", "k": k, "message": message, "error": error})
@@ -297,9 +366,10 @@ class TtsSynthMixin:
         with self._synth_lock():
             self._synth_lang(self._synth())["etalon"] = dst
         self._tts_save()
+        self.tts_synth_words_find()                       # сразу ищем в нём живые слова
         return self.tts_synth_state()
 
-    def tts_synth_setup(self, lang=None, logic=None, etalon_text=None):
+    def tts_synth_setup(self, lang=None, logic=None, etalon_text=None, hybrid=None):
         """Язык, логика сумм, текст эталона. Смена языка/логики — новый список
         (одобренные с тем же числом и языком остаются)."""
         with self._synth_lock():
@@ -317,6 +387,8 @@ class TtsSynthMixin:
                 self._synth_build(sy)
             if etalon_text is not None:
                 self._synth_lang(sy)["etalon_text"] = str(etalon_text).strip()
+            if hybrid is not None:
+                sy["hybrid"] = bool(hybrid)
         self._tts_save()
         return self.tts_synth_state()
 
@@ -400,15 +472,50 @@ class TtsSynthMixin:
                 n += 1
 
     def _synth_job(self, k, worker):
-        """Шаги на сайте — в потоке браузера."""
+        """Одна сумма: в гибриде — каждое число отдельным запросом и склейка
+        с живыми словами; без гибрида — вся фраза одним запросом."""
         with self._synth_lock():
             sy = self._synth()
             it = sy["items"][k]
             it["status"], it["error"] = "working", None
             cur = self._synth_lang(sy)
             etalon, etalon_text, lang, text = cur["etalon"], cur["etalon_text"], sy["lang"], it["text"]
+            bank = {f: dict(w) for f, w in cur.get("words", {}).items()
+                    if os.path.exists(w.get("file", ''))} if sy.get("hybrid", True) else {}
             vdir = self._synth_dir(SYNTH_VARIANTS, lang=lang)
+            tries = it.get("tries", 0) + 1
         self._synth_push(k)
+        os.makedirs(vdir, exist_ok=True)
+        plan = synth_plan(text, lang, bank)
+        dst = os.path.join(vdir, f"{k + 1:04d}_v{tries}.wav")
+        if not any(kind == 'live' for kind, _t in plan):
+            plan = [['synth', text]]
+            self._synth_request(worker, etalon, etalon_text, lang, text, dst)
+        else:
+            parts = []
+            for i, (kind, t) in enumerate(plan):
+                if kind == 'live':
+                    parts.append(('live', bank[t]["file"], bank[t].get("gap")))
+                else:
+                    piece = os.path.join(vdir, f"{k + 1:04d}_v{tries}_{i + 1}.wav")
+                    self._synth_request(worker, etalon, etalon_text, lang, t, piece)
+                    parts.append(('synth', piece, None))
+            self._synth_glue(parts, dst)
+        with self._synth_lock():
+            sy = self._synth()
+            if sy["lang"] != lang or k >= len(sy["items"]) or sy["items"][k]["text"] != text:
+                # пока синтезировали — сменили язык/логику: вариант сохраним в его язык
+                sy["per"][lang]["store"].setdefault(str(it["n"]), {}).update(
+                    {"variant": dst, "status": "ready", "tries": tries, "text": text, "plan": plan})
+                self._tts_save()
+                return
+            it = sy["items"][k]
+            it.update({"variant": dst, "status": "ready", "tries": tries, "error": None, "plan": plan})
+        self._tts_save()
+        self._synth_push(k, message=f"Готово: {it['n']:,}".replace(',', ' '))
+
+    def _synth_request(self, worker, etalon, etalon_text, lang, text, dst):
+        """Шаги на сайте (в потоке браузера): один текст → WAV в dst."""
         page = worker.page_ready()
         sel = SYNTH_SEL
         page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
@@ -421,6 +528,7 @@ class TtsSynthMixin:
         def handler(d):                      # сервис мог сразу отдать файл на скачивание
             downloads.append(d)
         page.on("download", handler)
+        raw = os.path.splitext(dst)[0] + '.download'
         try:
             page.click(sel["submit"])
             t_end = time.time() + SYNTH_TIMEOUT_S
@@ -434,9 +542,6 @@ class TtsSynthMixin:
                     break
             else:
                 raise RuntimeError("Сервис не вернул результат за 3 минуты.")
-            os.makedirs(vdir, exist_ok=True)
-            tries = it.get("tries", 0) + 1
-            raw = os.path.join(vdir, f"{k + 1:04d}_v{tries}.download")
             if downloads:
                 downloads[0].save_as(raw)
             elif now[0] and now[0] != before[0]:
@@ -453,7 +558,6 @@ class TtsSynthMixin:
                 page.remove_listener("download", handler)
             except Exception:
                 pass
-        dst = os.path.join(os.path.dirname(raw), f"{k + 1:04d}_v{tries}.wav")
         if wav_layout(raw):
             os.replace(raw, dst)                     # WAV — как есть, без перекодирования
         else:
@@ -464,18 +568,151 @@ class TtsSynthMixin:
                     os.remove(raw)
                 except OSError:
                     pass
+
+    # ---------------- гибрид: живые слова ----------------
+
+    @staticmethod
+    def _seg_trim(seg, lead=15, tail=30):
+        """Срезать тишину по краям синтезированного куска — почти вплотную."""
+        if not len(seg) or seg.max_dBFS == float('-inf'):
+            return seg
+        thr = max(-50.0, seg.max_dBFS - 35.0)
+        a = detect_leading_silence(seg, silence_threshold=thr, chunk_size=5)
+        b = len(seg) - detect_leading_silence(seg.reverse(), silence_threshold=thr, chunk_size=5)
+        if b - a < 40:
+            return seg
+        return seg[max(0, a - lead):min(len(seg), b + tail)]
+
+    @classmethod
+    def _synth_glue(cls, parts, dst):
+        """Склейка: синтезированные числа + живые слова. Числа приводим к
+        формату и громкости живых слов (голос диктора — эталон)."""
+        segs = [(kind, AudioSegment.from_file(path), gap) for kind, path, gap in parts]
+        live = [sg for kind, sg, _g in segs if kind == 'live' and len(sg) and sg.dBFS != float('-inf')]
+        ref = live[0] if live else segs[0][1]
+        target = sum(sg.dBFS for sg in live) / len(live) if live else None
+        out, prev = None, None
+        for kind, sg, gap in segs:
+            sg = sg.set_frame_rate(ref.frame_rate).set_channels(ref.channels).set_sample_width(ref.sample_width)
+            if kind == 'synth':
+                sg = cls._seg_trim(sg)
+                if target is not None and sg.dBFS != float('-inf'):
+                    sg = sg.apply_gain(max(-12.0, min(12.0, target - sg.dBFS)))
+            if out is None:
+                out = AudioSegment.silent(60, frame_rate=ref.frame_rate) + sg
+            elif prev[0] == 'synth' and kind == 'live':
+                out = out.append(sg, crossfade=max(1, min(GLUE_XFADE_MS, len(sg) // 4, len(out) // 4)))
+            else:
+                pause = prev[1] if prev[0] == 'live' and prev[1] is not None else GLUE_GAP_MS
+                out += AudioSegment.silent(int(pause), frame_rate=ref.frame_rate) + sg
+            prev = (kind, gap)
+        out += AudioSegment.silent(90, frame_rate=ref.frame_rate)
+        out.export(dst, format="wav")
+
+    @staticmethod
+    def _word_cut(seg, s_ms, e_ms):
+        """Уточнить края слова по тишине рядом с отметками распознавания:
+        Whisper ошибается на десятки миллисекунд — режем в самом тихом месте."""
+        def rms(a):
+            return seg[a:a + 5].rms if a + 5 <= len(seg) else 0
+
+        def quiet_near(lo, hi, aim):
+            lo, hi = max(0, int(lo)), min(len(seg) - 5, int(hi))
+            if hi <= lo:
+                return int(aim)
+            vals = [(rms(a), a) for a in range(lo, hi, 5)]
+            floor = min(v for v, _a in vals)
+            calm = [a for v, a in vals if v <= floor * 1.6 + 2]
+            return min(calm, key=lambda a: abs(a - aim))
+        a = quiet_near(s_ms - 110, s_ms + 30, s_ms)
+        b = quiet_near(e_ms - 30, e_ms + 140, e_ms)
+        return a, max(b, a + 60)
+
+    def tts_synth_words_find(self, extra=False):
+        """Найти живые слова: в эталоне или (extra) в любой другой записи
+        диктора, где сказаны нужные формы («миллиона», «тысяч»…). Распознавание
+        (Whisper) идёт в фоне — по готовности придёт событие."""
         with self._synth_lock():
             sy = self._synth()
-            if sy["lang"] != lang or k >= len(sy["items"]) or sy["items"][k]["text"] != text:
-                # пока синтезировали — сменили язык/логику: вариант сохраним в его язык
-                sy["per"][lang]["store"].setdefault(str(it["n"]), {}).update(
-                    {"variant": dst, "status": "ready", "tries": tries, "text": text})
-                self._tts_save()
-                return
-            it = sy["items"][k]
-            it.update({"variant": dst, "status": "ready", "tries": tries, "error": None})
+            cur = self._synth_lang(sy)
+            lang = sy["lang"]
+            if getattr(self, '_synth_words_busy', False):
+                return {"error": "Уже ищу слова — подождите."}
+            if extra:
+                picked = webview.windows[0].create_file_dialog(
+                    webview.FileDialog.OPEN, file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+                if not picked:
+                    return {"error": "cancel"}
+                path, hint = (picked if isinstance(picked, str) else picked[0]), ''
+            else:
+                path, hint = cur.get("etalon"), cur.get("etalon_text", '')
+                if not path or not os.path.exists(path):
+                    return {"error": "Сначала выберите эталон."}
+            self._synth_words_busy = True
+        threading.Thread(target=self._synth_words_run, args=(path, hint, lang), daemon=True).start()
+        self._synth_push(message="Ищу живые слова в записи…")
+        return self.tts_synth_state()
+
+    def _synth_words_run(self, path, hint, lang):
+        try:
+            found = self._synth_words_extract(path, hint, lang)
+            if found:
+                msg = "Живые слова: " + ", ".join(found)
+            else:
+                msg = None
+                self._synth_push(error="В записи не нашёл ни «миллион», ни «тысяч», ни «тенге». "
+                                       "Проверьте язык и текст эталона.")
+        except Exception as e:
+            msg = None
+            self._synth_push(error=f"Не удалось найти слова: {e}")
+        finally:
+            self._synth_words_busy = False
         self._tts_save()
-        self._synth_push(k, message=f"Готово: {it['n']:,}".replace(',', ' '))
+        self._synth_push(message=msg)
+
+    def _synth_words_extract(self, path, hint, lang):
+        """Распознать запись, вырезать «миллион/тысяча/тенге» в «_слова/»."""
+        model, err = self._auto_check_model(lang)
+        if err:
+            raise RuntimeError(err)
+        samples, ms, _peak = self._asr_load(path)
+        forms = ' '.join(UNIT_FORMS[lang])
+        words = self._tts_transcribe_pack(model, [{"index": 0, "audio": samples, "ms": ms}],
+                                          'kk' if lang == 'kz' else 'ru',
+                                          hotwords=(hint + ' ' + forms).strip())[0]
+        seg = AudioSegment.from_file(path)
+        wdir = self._synth_dir(SYNTH_WORDS, lang=lang)
+        os.makedirs(wdir, exist_ok=True)
+        found = []
+        for i, (w, s, e) in enumerate(words):
+            f = unit_form(w, lang)
+            if not f:
+                continue
+            a, b = self._word_cut(seg, s * 1000, e * 1000)
+            gap = None
+            if i + 1 < len(words):                     # пауза после слова, как у диктора
+                gap = max(20, min(250, int(words[i + 1][1] * 1000 - b)))
+            out = os.path.join(wdir, f"{f}.wav")
+            seg[a:b].fade_in(5).fade_out(10).export(out, format="wav")
+            with self._synth_lock():
+                self._synth()["per"][lang]["words"][f] = {"file": out, "src": os.path.basename(path), "gap": gap}
+            if f not in found:
+                found.append(f)
+        return found
+
+    def tts_synth_word_play(self, form):
+        w = self._synth_lang(self._synth()).get("words", {}).get(form)
+        if not w or not os.path.exists(w.get("file", '')):
+            return {"error": "Этого слова пока нет."}
+        self.player.play(w["file"])
+        return {"playing": True}
+
+    def tts_synth_word_remove(self, form):
+        """Убрать живое слово — эта форма снова пойдёт в синтез."""
+        with self._synth_lock():
+            self._synth_lang(self._synth()).get("words", {}).pop(form, None)
+        self._tts_save()
+        return self.tts_synth_state()
 
     def _synth_failed(self, k, error):
         with self._synth_lock():

@@ -3216,3 +3216,10 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-syn__st--ok{ color: var(--accent-good); }
 .tts-syn__st--err{ color: var(--accent-trash); }
 .tts-syn__ok{ color: var(--accent-good); }
+.tts-syn__tx{ display: flex; flex-direction: column; min-width: 0; }
+.tts-syn__plan{ font-size: 11px; color: var(--text-faint); padding: 0 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-syn__plan b{ color: var(--accent-good); font-weight: 700; }
+.tts-syn__word{ display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--text-faint); border: 1px dashed var(--border); border-radius: 999px; padding: 3px 9px; }
+.tts-syn__word.is-ok{ color: var(--accent-good); border-style: solid; border-color: color-mix(in srgb, var(--accent-good) 45%, transparent); padding: 1px 4px; }
+.tts-syn__word button{ font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 2px 5px; border-radius: 999px; }
+.tts-syn__word button:hover{ background: var(--screen); }
