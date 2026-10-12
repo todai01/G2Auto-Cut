@@ -6787,7 +6787,19 @@ let isProcessing = false;
                 else showToast(`Сохранено: ${res.saved_name}.wav`);
                 ttsRender();
                 // Идёт запись и дубль проверяли в «Сборке» — сохранили и сразу обратно к чтению.
-                if (ttsRec.on && document.getElementById('stage4-tts').classList.contains('show-assembly')) ttsShowAssembly(false);
+                if (ttsRec.on && document.getElementById('stage4-tts').classList.contains('show-assembly')) {
+                    // Фраза с переменными: следующий кусочек — сразу здесь же; всё сохранили — к чтению.
+                    let next = null;
+                    while (ttsAsmQueue.length && next === null) {
+                        let k = tts.takes.findIndex(x => x.file === ttsAsmQueue[0]);
+                        ttsAsmQueue.shift();
+                        if (k >= 0 && !tts.takes[k].unit_saved) next = k;
+                    }
+                    if (next !== null) {
+                        tts.index = next;
+                        ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); ttsAsmAuto = true; ttsTogglePlay();
+                    } else ttsShowAssembly(false);
+                }
                 else if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
             } finally { ttsApproving = false; }
         }
@@ -6866,7 +6878,7 @@ let isProcessing = false;
             if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
             tts = res;
             ttsDelSeqs.push(++ttsActSeq);
-            if (ttsRec.on && document.getElementById('stage4-tts').classList.contains('show-assembly')) ttsShowAssembly(false);
+            if (ttsRec.on && document.getElementById('stage4-tts').classList.contains('show-assembly')) { ttsAsmQueue = []; ttsShowAssembly(false); }
             ttsRender();
             ttsLoadPrompt();
             showToast(`Удалён: ${res.deleted} — Ctrl+Z вернёт`);
@@ -7486,7 +7498,9 @@ let isProcessing = false;
             if (device === null) return;
             await ttsMonitorApply(list.outputs);
             ttsRec.starting = true;
-            ttsSetRecUi(true, tts.lang === 'kz' ? 'Включаю микрофон и казахскую модель (первый раз скачивается ~1,6 ГБ)…' : 'Включаю микрофон и распознавание…');
+            await pywebview.api.tts_live_no_asr(ttsNoAsrOn());
+            ttsSetRecUi(true, ttsNoAsrOn() ? 'Включаю микрофон…'
+                : (tts.lang === 'kz' ? 'Включаю микрофон и казахскую модель (первый раз скачивается ~1,6 ГБ)…' : 'Включаю микрофон и распознавание…'));
             let res;
             try { res = await pywebview.api.tts_rec_start(device); } finally { ttsRec.starting = false; }
             if (!res || res.error) {
@@ -8075,7 +8089,7 @@ let isProcessing = false;
 
         // ----- «Проверять сразу»: записали фразу — «Сборка» открывается сама -----
         // Дубль сразу звучит; подрезали → Enter сохраняет и возвращает к чтению.
-        let ttsAutoAsmPending = 0;
+        let ttsAutoAsmPending = 0, ttsAsmQueue = [], ttsAsmAuto = false;          // ещё не проверенные из этой записи (по файлу)
         function ttsAutoAsmOn() {
             try { return localStorage.getItem('gvox_tts_autoasm') !== '0'; } catch (e) { return true; }
         }
@@ -8095,13 +8109,48 @@ let isProcessing = false;
         function ttsAutoAsm(added) {
             if (!(added > 0) || !ttsRec.on || !ttsAutoAsmOn() || !tts || !tts.takes.length) return;
             if (ttsPttDown) { ttsAutoAsmPending = added; return; }     // сейчас пишут — откроем, когда отпустят
+            let fresh = tts.takes.slice(-added).map(t => t.file);
+            if (document.getElementById('stage4-tts').classList.contains('show-assembly') && ttsAsmAuto) {
+                ttsAsmQueue.push(...fresh);                             // кусочки той же фразы — по очереди после Enter
+                return;
+            }
+            ttsAsmQueue = fresh.slice(1);
             let overlays = ['ttsVarsOverlay', 'ttsListOverlay', 'ttsMarkOverlay', 'customAlertOverlay'];
             if (overlays.some(id => { let el = document.getElementById(id); return el && el.style.display === 'flex'; })) return;
             tts.index = tts.takes.length - added;                       // первый из только что записанных
             ttsRenderRail();
             ttsRenderCurrent();
             ttsShowAssembly(true);
+            ttsAsmAuto = true;
             ttsTogglePlay();
+        }
+
+        // ----- «Без распознавания»: дубль = фраза на суфлёре, без ожидания и без модели -----
+        function ttsNoAsrOn() {
+            try { return localStorage.getItem('gvox_tts_noasr') !== '0'; } catch (e) { return true; }
+        }
+        async function ttsNoAsrToggle() {
+            let on = !ttsNoAsrOn();
+            if (ttsRec.on && !on) showToast('Загружаю распознавание…');
+            let res = await pywebview.api.tts_live_no_asr(on);
+            if (res && res.error) {
+                if (res.error === 'need_model' || res.error === 'need_model_kz') showAsrModel(res.error === 'need_model_kz' ? 'kz' : 'ru');
+                else showToast(res.error);
+                return;
+            }
+            try { localStorage.setItem('gvox_tts_noasr', on ? '1' : '0'); } catch (e) {}
+            ttsFastRender();
+            showToast(on ? 'Без распознавания: отпустили Space — дубль сразу к фразе на суфлёре'
+                         : 'С распознаванием: программа сверяет, что прочитано');
+        }
+        function ttsNoAsrRender() {
+            let b = document.getElementById('ttsNoAsrBtn');
+            if (!b) return;
+            let on = ttsNoAsrOn();
+            b.classList.toggle('is-on', on);
+            b.innerHTML = on ? 'Без распознавания' : 'С распознаванием';
+            let fast = document.getElementById('ttsFastBtn');
+            if (fast) fast.style.display = on ? 'none' : '';      // «Не ждать» — только когда распознаём
         }
 
         // ----- «Не ждать распознавания» (по умолчанию — для казахского) -----
@@ -8118,6 +8167,7 @@ let isProcessing = false;
             b.classList.toggle('is-on', on);
             b.innerHTML = on ? '&#9889; Не ждать: вкл' : '&#9889; Не ждать: выкл';
             ttsAutoAsmRender();
+            ttsNoAsrRender();
         }
         async function ttsFastToggle() {
             let on = !ttsFastOn();
@@ -8194,6 +8244,7 @@ let isProcessing = false;
             stage.classList.toggle('show-assembly', on === undefined ? !stage.classList.contains('show-assembly') : on);
             let open = stage.classList.contains('show-assembly');
             if (open) { ttsPttCancel(); ttsEd = null; ttsRenderAssembly(); }
+            else { ttsAsmAuto = false; ttsAsmQueue = []; }
             // Сборка открыта — микрофон выключен: не шумит при прослушивании.
             if (ttsRec.on && ttsLiveSt.micOff !== open) {
                 ttsLiveSt.micOff = open;

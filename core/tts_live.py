@@ -373,15 +373,17 @@ class TtsLiveMixin:
             note = self._tts_attach_folder(picked if isinstance(picked, str) else picked[0])
             st = self._tts()
         # Модель на каждый язык таблицы (блоки <…_kz> / <…_ru>) — грузим сразу.
+        # «Без распознавания» — модель не нужна: дубль = фраза на суфлёре.
         models = {}
-        for lg in self._tts_langs():
+        no_asr = bool(getattr(self, '_tts_no_asr', False))
+        for lg in ([] if no_asr else self._tts_langs()):
             m, err = self._auto_check_model(lg)
             if err:
                 if not isinstance(err, str):
                     return {"error": "need_model_kz" if lg == 'kz' else "need_model"}
                 return {"error": err}
             models[lg] = m
-        model = models.get(st.get("lang")) or next(iter(models.values()))
+        model = models.get(st.get("lang")) or next(iter(models.values()), None)
         folder = os.path.join(st["work_dir"], RECORDS_DIR)
         os.makedirs(folder, exist_ok=True)
         os.makedirs(os.path.join(st["work_dir"], TTS_CHUNKS_DIR), exist_ok=True)
@@ -398,7 +400,7 @@ class TtsLiveMixin:
         self._tts_q_lock = threading.Lock()
         self._tts_live = {"model": model, "models": models, "done_ms": 0, "from_ms": 0, "busy": False, "added": 0,
                           "restarts": 0, "expected": self._tts_live_expected(), "queue": [], "hold": None,
-                          "gen": 0, "fast": bool(getattr(self, '_tts_fast', False))}
+                          "gen": 0, "fast": bool(getattr(self, '_tts_fast', False)), "no_asr": no_asr}
         mon = getattr(self, '_tts_mon', None)
         mon_name = mon_err = None
         if mon and mon.get("device") is not None:
@@ -555,6 +557,9 @@ class TtsLiveMixin:
             pos = st.get("prompt_pos", 0)
         last = live["last_seg"] = {"a": a_ms, "b": b_ms, "gen": gen, "outcome": "pending", "pos": pos,
                                    "job_pos": pos if fast else None}
+        if live.get("no_asr"):
+            self._tts_plain_segment(rec, a_ms, b_ms, gen, pos, last)
+            return
         seg = rec.ana_segment(a_ms, b_ms)
         samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
         t0 = time.time()
@@ -587,6 +592,52 @@ class TtsLiveMixin:
                                 "message": f"{name}: распознано не полностью — сохранил как сомнительный"})
                 out = "take"
             last["outcome"] = out
+
+    def _tts_plain_segment(self, rec, a_ms, b_ms, gen, pos, last):
+        """«Без распознавания»: вы читали фразу с суфлёра — это она и есть.
+        Тишину по краям срезаем, дубль — сразу к фразе. Фраза с переменными —
+        по дублю на каждый кусочек (вся запись; лишнее срежете в «Сборке»)."""
+        live = self._tts_live
+        with self._tts_live_lock:
+            if live.get("gen", 0) != gen:
+                return
+            st = self._tts()
+            if self._tts_voiced_ms(rec, a_ms, b_ms) < 150:
+                # Пусто — суфлёр обратно на эту фразу (если дальше ещё не читали).
+                if self._tts_fast_can_return(pos):
+                    st["prompt_pos"] = pos
+                    self._tts_save()
+                self._tts_push({"stage": "live_miss", "heard": "", "paused": False})
+                self._tts_push({"stage": "live_restart", "prompt": self.tts_prompt_info()})
+                last["outcome"] = "miss"
+                return
+            items = self._tts_prompt_items()
+            ids = items[pos] if 0 <= pos < len(items) else []
+            lo, hi = self._tts_voice_bounds(rec, a_ms, b_ms)
+            for uid in ids or [None]:
+                clips = [{"raw": rec.path, "a": lo, "b": hi, "cuts": [], "pos": 0}]
+                self._tts_live_make_take(rec, uid, clips, '', 1.0 if uid is not None else 0.0, pos,
+                                         status="manual" if uid is not None else "none", move=False)
+            last["outcome"] = "take"
+
+    def tts_live_no_asr(self, on):
+        """Режим «Без распознавания» (можно переключать и во время записи)."""
+        self._tts_no_asr = bool(on)
+        live = getattr(self, '_tts_live', None)
+        if live is not None:
+            if not on and not live.get("model"):
+                models = {}
+                for lg in self._tts_langs():
+                    m, err = self._auto_check_model(lg)
+                    if err:
+                        self._tts_no_asr = True
+                        return {"no_asr": True, "error": "need_model_kz" if lg == 'kz' and not isinstance(err, str)
+                                else ("need_model" if not isinstance(err, str) else err)}
+                    models[lg] = m
+                live["models"] = models
+                live["model"] = models.get(self._tts().get("lang")) or next(iter(models.values()), None)
+            live["no_asr"] = self._tts_no_asr
+        return {"no_asr": self._tts_no_asr}
 
     def _tts_fast_can_return(self, pos):
         """Вернуть суфлёр на фразу можно, если после неё ещё ничего не начали читать."""
@@ -761,7 +812,7 @@ class TtsLiveMixin:
             live["hold"] = None
             if start is None:
                 return {"holding": False}
-            if not live.get("fast"):
+            if not live.get("fast") and not live.get("no_asr"):
                 live["queue"].append((start, now + PTT_POSTROLL_MS, None))
                 live["busy"] = True
                 return {"holding": False, "queued": True}
@@ -779,7 +830,7 @@ class TtsLiveMixin:
             # похоже, сбились и не дочитали: суфлёр не двигаем, ждём распознавания.
             short = (not resuming and len(text) >= 30
                      and self._tts_voiced_ms(rec, start, now) < 0.5 * len(text) / 15 * 1000)
-            if resuming or short:
+            if (resuming or short) and not live.get("no_asr"):
                 with self._tts_q_lock:
                     live["queue"].append((start, now + PTT_POSTROLL_MS, None))
                     live["busy"] = True
