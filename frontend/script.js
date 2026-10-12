@@ -6784,6 +6784,8 @@ let isProcessing = false;
                 if (res && res.error) { showToast(res.error); return; }
                 tts = res;
                 if (res.saved_kind === 'piece') ttsDropToVars(t.i);
+                else if (res.twins && res.twins.length)
+                    showToast(`Сохранено: ${res.saved_name}.wav — и под ${res.twins.length === 1 ? 'названием' : 'названиями'} с тем же текстом: ${res.twins.slice(0, 4).join(', ')}${res.twins.length > 4 ? ` и ещё ${res.twins.length - 4}` : ''}`, 5000);
                 else showToast(`Сохранено: ${res.saved_name}.wav`);
                 ttsRender();
                 // Идёт запись и дубль проверяли в «Сборке» — сохранили и сразу обратно к чтению.
@@ -8217,6 +8219,26 @@ let isProcessing = false;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
             document.getElementById('ttsStatMissing').innerText = s.missing;
             document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;
+            let tw = document.getElementById('ttsTwinsBtn');
+            if (tw) { tw.style.display = tts.twins_fill ? '' : 'none'; document.getElementById('ttsTwinsN').innerText = tts.twins_fill || 0; }
+        }
+
+        // Одинаковый текст под разными названиями: записанную фразу — под остальные названия.
+        async function ttsTwinsFill() {
+            let info = await pywebview.api.tts_twins_info();
+            let groups = (info.groups || []).filter(g => g.can_fill);
+            if (!groups.length) { showToast('Нечего заполнять'); return; }
+            let rows = groups.slice(0, 8).map(g => {
+                let src = g.units.find(u => u.saved && !u.copy_of);
+                let to = g.units.filter(u => !u.saved).map(u => escapeHtml(u.name));
+                return `«${escapeHtml(g.text.length > 60 ? g.text.slice(0, 60) + '…' : g.text)}»<br><span class="tts-dim">${escapeHtml(src.name)} → ${to.join(', ')}</span>`;
+            }).join('<br><br>');
+            let more = groups.length > 8 ? `<br><br><span class="tts-dim">и ещё ${groups.length - 8} групп</span>` : '';
+            if (!(await showBeautifulConfirm(`Фразы с тем же текстом, но другим названием. Записанную скопирую под остальные названия (${info.fill} файлов):<br><br>${rows}${more}`, 'Заполнить', 'Отмена'))) return;
+            let res = await pywebview.api.tts_twins_apply();
+            if (!res || res.error) { showToast(res && res.error || 'Не получилось'); return; }
+            tts = res; ttsRender(); ttsLoadPrompt();
+            showToast(`Заполнено копиями: ${res.filled}`);
         }
 
         // Клик по ячейке ленты — сразу слушать (повторный клик — стоп). Во

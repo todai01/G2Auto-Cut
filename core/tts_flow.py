@@ -376,6 +376,105 @@ class TtsFlowMixin:
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         return os.path.join(self._tts()["work_dir"], folder, f"{unit['name']}.wav")
 
+    # ---------------- одинаковые фразы под разными названиями ----------------
+    # Текст тот же (без учёта регистра, ё/е и знаков внутри), тот же вид
+    # (фраза / кусочек) и та же концовка: вопрос «?» звучит иначе, чем
+    # утверждение, — такие не склеиваем. Записали одну — файл ложится и под
+    # остальные названия. Копии помним (twin_copies: копия → источник), чтобы
+    # обновлять их вместе с источником и не трогать записанные отдельно.
+
+    @staticmethod
+    def _tts_text_key(u):
+        t = str(u.get("text") or '').lower().replace('ё', 'е')
+        q = '?' if t.rstrip().endswith('?') else ''
+        words = re.findall(r"[\w'-]+", t)
+        if not words:
+            return None
+        return (u.get("kind"), u.get("var_before") or '', u.get("var_after") or '', ' '.join(words) + q)
+
+    def _tts_twin_groups(self):
+        groups = {}
+        for u in self._tts()["units"]:
+            k = self._tts_text_key(u)
+            if k:
+                groups.setdefault(k, []).append(u["id"])
+        return [ids for ids in groups.values() if len(ids) > 1]
+
+    def _tts_twins(self, uid):
+        st = self._tts()
+        k = self._tts_text_key(st["units"][uid])
+        return [u["id"] for u in st["units"] if u["id"] != uid and k and self._tts_text_key(u) == k]
+
+    def _tts_twin_spread(self, uid):
+        """Сохранённую фразу — под названия всех её «близнецов» (кроме тех, что
+        записаны отдельно). Возвращает названия, куда легла копия."""
+        st = self._tts()
+        if not st.get("work_dir"):
+            return []
+        copies = st.setdefault("twin_copies", {})
+        src_u = st["units"][uid]
+        copies.pop(src_u["name"], None)                  # сама фраза — уже не копия
+        src = self._tts_target(src_u)
+        if not os.path.exists(src):
+            return []
+        out = []
+        for tid in self._tts_twins(uid):
+            tu = st["units"][tid]
+            dst = self._tts_target(tu)
+            if os.path.exists(dst) and tu["name"] not in copies:
+                continue                                 # записана отдельно — не трогаем
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            copies[tu["name"]] = src_u["name"]
+            out.append(tu["name"])
+        return out
+
+    def _tts_twin_copies_of(self, uid):
+        """Пути копий, сделанных из этой фразы."""
+        st = self._tts()
+        name = st["units"][uid]["name"]
+        by_name = {u["name"]: u for u in st["units"]}
+        return [(n, self._tts_target(by_name[n])) for n, srcn in (st.get("twin_copies") or {}).items()
+                if srcn == name and n in by_name]
+
+    def tts_twins_info(self):
+        """Группы одинаковых фраз: что записано, что можно заполнить копией."""
+        st = self._tts()
+        copies = st.get("twin_copies") or {}
+        wd = st.get("work_dir")
+        out, fill = [], 0
+        for ids in self._tts_twin_groups():
+            rows = []
+            for i in ids:
+                u = st["units"][i]
+                saved = bool(wd) and os.path.exists(self._tts_target(u))
+                rows.append({"id": i, "name": u["name"], "saved": saved, "copy_of": copies.get(u["name"]) if saved else None})
+            has_src = any(r["saved"] and not r["copy_of"] for r in rows)
+            missing = sum(1 for r in rows if not r["saved"])
+            if has_src:
+                fill += missing
+            out.append({"text": st["units"][ids[0]]["text"], "units": rows, "can_fill": missing if has_src else 0})
+        return {"groups": out, "fill": fill}
+
+    def tts_twins_apply(self):
+        """Разложить уже записанные фразы под названия их «близнецов»."""
+        st = self._tts()
+        if not st.get("work_dir"):
+            return {"error": "Проект ещё не создан."}
+        copies = st.setdefault("twin_copies", {})
+        done = []
+        for ids in self._tts_twin_groups():
+            srcs = [i for i in ids if os.path.exists(self._tts_target(st["units"][i]))
+                    and st["units"][i]["name"] not in copies]
+            if not srcs:
+                continue
+            # источник — тот, что сохранён из дубля (одобренный), иначе первый записанный
+            approved = {t.get("unit") for t in st["takes"] if t.get("approved")}
+            src = next((i for i in srcs if i in approved), srcs[0])
+            done += self._tts_twin_spread(src)
+        self._tts_save()
+        return {**self.tts_state(), "filled": len(done), "filled_names": done[:30]}
+
     def tts_state(self):
         st = self._tts()
         if any(t.get("rejected") for t in st["takes"]):
@@ -409,6 +508,7 @@ class TtsFlowMixin:
                                "categories": [{"key": c["key"], "label": c["label"], "count": len(c["values"])}
                                               for c in v["categories"]]}
                            for k, v in st["var_sheets"].items()},
+            "twins_fill": self.tts_twins_info()["fill"] if units else 0,
             "stats": {"units": len(units), "saved": sum(saved.values()),
                       "pieces": len(pieces), "pieces_saved": sum(1 for u in pieces if saved[u["id"]]),
                       "chains": len(st.get("chains", [])),
@@ -974,9 +1074,10 @@ class TtsFlowMixin:
                 other["approved"] = False
         t["approved"] = True
         t["rejected"] = False
+        twins = self._tts_twin_spread(t["unit"])
         st["index"] = self._tts_next(i)
         self._tts_save()
-        return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"]}
+        return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"], "twins": twins}
 
     def tts_reject(self, i):
         """Прежняя «Плохой дубль» — теперь удаление (Ctrl+Z возвращает)."""
@@ -1007,6 +1108,11 @@ class TtsFlowMixin:
             hide(os.path.join(wd, t["file"]))
         if wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
             hide(self._tts_target(st["units"][t["unit"]]))
+            copies = st.setdefault("twin_copies", {})
+            rec["twin_copies"] = {}
+            for n, path in self._tts_twin_copies_of(t["unit"]):     # копии под другими названиями — тоже
+                hide(path)
+                rec["twin_copies"][n] = copies.pop(n)
         del st["takes"][i]
         st["index"] = max(0, min(i, len(st["takes"]) - 1))
         if t.get("unit") is not None and hasattr(self, '_tts_prompt_items'):
@@ -1031,6 +1137,7 @@ class TtsFlowMixin:
             if os.path.exists(dst) and not os.path.exists(orig):
                 os.makedirs(os.path.dirname(orig), exist_ok=True)
                 shutil.move(dst, orig)
+        st.setdefault("twin_copies", {}).update(rec.get("twin_copies") or {})
         i = max(0, min(rec["i"], len(st["takes"])))
         st["takes"].insert(i, rec["take"])
         st["index"] = i
@@ -1071,6 +1178,14 @@ class TtsFlowMixin:
         target = self._tts_target(st["units"][unit_id])
         if os.path.exists(target):
             self._tts_trash(target)
+        copies = st.get("twin_copies") or {}
+        if st["units"][unit_id]["name"] in copies:
+            copies.pop(st["units"][unit_id]["name"], None)        # убрали копию — только её
+        else:
+            for n, path in self._tts_twin_copies_of(unit_id):     # убрали источник — и его копии
+                if os.path.exists(path):
+                    self._tts_trash(path)
+                copies.pop(n, None)
         for t in st["takes"]:
             if t.get("unit") == unit_id:
                 t["approved"] = False
@@ -1682,6 +1797,7 @@ class TtsFlowMixin:
             target = self._tts_target(st["units"][t["unit"]])
             try:
                 self._tts_render_final(src, target, g, k)
+                self._tts_twin_spread(t["unit"])          # одинаковые фразы — с теми же настройками
                 resaved = True
             except Exception as e:
                 self._tts_save()
