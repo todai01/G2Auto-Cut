@@ -105,9 +105,8 @@ def kz_words(n):
     for value, name in ((10 ** 9, 'миллиард'), (10 ** 6, 'миллион'), (10 ** 3, 'мың')):
         part, n = divmod(n, value)
         if part:
+            # «бір миллион», но просто «мың» (тысяча без «бір») — как говорят.
             words += (_kz_triad(part) if part > 1 or value >= 10 ** 6 else []) + [name]
-            if part == 1 and value >= 10 ** 6:
-                words.insert(len(words) - 1, 'бір')
     words += _kz_triad(n)
     return ' '.join(w for w in words if w)
 

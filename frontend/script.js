@@ -1836,10 +1836,11 @@ let isProcessing = false;
         // выбираете папку с дублями (start/end не нужны), дальше сразу и
         // сортировка на слух по категориям (←/→ + ↑/↓), и сборка эталона
         // рулетками — вместе, без переключения между отдельными экранами.
-        async function startPremadeSumMode() {
+        async function startPremadeSumMode(folder) {
             updateProgress(0, 'Загрузка папки...');
             document.getElementById('progressContainer').style.display = 'block';
-            let state = await pywebview.api.sum_load_folder();
+            // folder — папку дал софт (синтезированные суммы), без диалога.
+            let state = await pywebview.api.sum_load_folder(typeof folder === 'string' ? folder : null);
             document.getElementById('progressContainer').style.display = 'none';
 
             if (state && state.error) {
@@ -6073,6 +6074,8 @@ let isProcessing = false;
                 ttsLiveUpdate(p.state, p.added);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
+            } else if (p.stage === 'synth') {
+                ttsSynthEvent(p);
             } else if (p.stage === 'marks') {
                 ttsShowMarksPending(p.pending, p.error);
             } else if (p.stage === 'live_partial') {
@@ -6865,17 +6868,174 @@ let isProcessing = false;
             ttsStopPlay();
         }
 
-        function ttsVarsSetTab(tab) { ttsVarsTab = tab; ttsRenderVars(); }
+        function ttsVarsSetTab(tab) { ttsVarsTab = tab; ttsRenderVars(); if (tab === 'synth') ttsSynthLoad(true); }
+
+        // ===== 4 этап: суммы голосом диктора — клонирование по эталону =====
+        // Эталон (запись диктора с суммой) + его текст → сервис синтеза клонирует
+        // голос и озвучивает каждую сумму списка. Вы слушаете: ↻ — ещё раз,
+        // ✓ — одобрить (тишина по краям срезается, файл — в «Синтез_суммы»).
+        // Пока слушаете — следующие уже синтезируются. Дальше — режим «Суммы».
+        let ttsSynth = null, ttsSynthCur = 0, ttsSynthWaitPlay = null;
+        const TTS_SYN_STATUS = {
+            idle: ['—', ''], queued: ['в очереди', 'wait'], working: ['синтез…', 'work'],
+            ready: ['готово — слушайте', 'ready'], approved: ['одобрено ✓', 'ok'], error: ['ошибка', 'err'],
+        };
+        const ttsSumFmt = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+        async function ttsSynthLoad(keepCur) {
+            ttsSynth = await pywebview.api.tts_synth_state();
+            if (!keepCur || ttsSynthCur >= ttsSynth.items.length) {
+                let i = ttsSynth.items.findIndex(it => it.status !== 'approved');
+                ttsSynthCur = i < 0 ? 0 : i;
+            }
+            if (document.getElementById('ttsVarsOverlay').style.display === 'flex') ttsRenderVars();
+        }
+        async function ttsSynthCall(promise) {
+            let res = await promise;
+            if (res && res.error) { if (res.error !== 'cancel') showToast(res.error); return null; }
+            if (res && res.items) { ttsSynth = res; ttsRenderVars(); }
+            return res;
+        }
+        function ttsSynthHTML() {
+            let sy = ttsSynth;
+            let chip = (on, label, js) => `<button type="button" class="chip ${on ? 'chip-mode--active' : ''}" onclick="${js}">${label}</button>`;
+            let rows = sy.items.map(it => {
+                let [lbl, cls] = TTS_SYN_STATUS[it.status] || TTS_SYN_STATUS.idle;
+                let ok = it.status === 'approved';
+                return `<div class="tts-syn__item ${it.k === ttsSynthCur ? 'is-cur' : ''} is-${it.status}" data-k="${it.k}" onclick="ttsSynthSelect(${it.k})">
+                    <span class="tts-syn__num">${it.k + 1}</span>
+                    <span class="tts-syn__sum">${ttsSumFmt(it.n)}</span>
+                    <input class="tts-syn__text" value="${escapeHtml(it.text)}" title="Текст для синтеза — можно поправить"
+                        onclick="event.stopPropagation()" onchange="ttsSynthSetText(${it.k}, this.value)">
+                    <span class="tts-syn__st tts-syn__st--${cls}" title="${escapeHtml(it.error || '')}">${it.status === 'working' ? '<span class="lv-spin"></span>' : ''}${lbl}</span>
+                    <button class="btn-ghost btn-ghost--compact" title="Слушать" ${it.has_variant || it.has_file ? '' : 'disabled'}
+                        onclick="event.stopPropagation(); ttsSynthPlay(${it.k})">&#9654;</button>
+                    <button class="btn-ghost btn-ghost--compact" title="${it.has_variant ? 'Пересинтезировать' : 'Синтезировать'}"
+                        onclick="event.stopPropagation(); ttsSynthRun(${it.k})" ${it.status === 'working' || it.status === 'queued' ? 'disabled' : ''}>&#8635;</button>
+                    ${ok ? `<button class="btn-ghost btn-ghost--compact" title="Убрать из одобренных" onclick="event.stopPropagation(); ttsSynthUnapprove(${it.k})">&times;</button>`
+                         : `<button class="btn-ghost btn-ghost--compact tts-syn__ok" title="Одобрить" ${it.has_variant ? '' : 'disabled'}
+                            onclick="event.stopPropagation(); ttsSynthApprove(${it.k})">&#10003;</button>`}
+                </div>`;
+            }).join('');
+            let first = sy.items[0];
+            return `<div class="tts-syn">
+                <div class="tts-syn__setup">
+                    <div class="tts-syn__row">
+                        <span class="tts-syn__lbl">Эталон</span>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsSynthPickEtalon()" title="Запись диктора с суммой — с неё клонируется голос">
+                            ${sy.etalon ? escapeHtml(sy.etalon) : 'Выбрать запись…'}</button>
+                        ${sy.etalon_ok ? '<button class="btn-ghost btn-ghost--compact" onclick="ttsSynthPlayEtalon()" title="Слушать эталон">&#9654;</button>' : ''}
+                        ${sy.etalon_ok && first && first.status !== 'approved' ? '<button class="btn-ghost btn-ghost--compact" onclick="ttsSynthEtalonFirst()" title="В эталоне сказана первая сумма списка — взять его как одобренный №1">Эталон = №1</button>' : ''}
+                    </div>
+                    <div class="tts-syn__row">
+                        <span class="tts-syn__lbl">Текст эталона</span>
+                        <input class="tts-syn__ettext" id="ttsSynthEtText" value="${escapeHtml(sy.etalon_text || '')}"
+                            placeholder="что сказано в записи, словами" onchange="ttsSynthSetup({etalon_text: this.value})">
+                    </div>
+                    <div class="tts-syn__row">
+                        <span class="tts-syn__lbl">Язык</span>
+                        ${chip(sy.lang === 'ru', 'Русский', "ttsSynthSetup({lang: 'ru'})")}${chip(sy.lang === 'kz', 'Казахский', "ttsSynthSetup({lang: 'kz'})")}
+                        <span class="tts-syn__lbl" style="margin-left:18px">Суммы</span>
+                        ${chip(sy.logic === 1, 'Логика 1 · 1 101 001', 'ttsSynthSetup({logic: 1})')}${chip(sy.logic === 2, 'Логика 2 · 1 100 001', 'ttsSynthSetup({logic: 2})')}
+                    </div>
+                    <div class="tts-syn__row">
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsSynthRunAll()" ${sy.etalon_ok ? '' : 'disabled'}>Синтезировать все</button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsSynthStop()" ${sy.queue ? '' : 'disabled'}>Остановить</button>
+                        <span class="tts-ed__spacer"></span>
+                        <span class="tts-dim">одобрено ${sy.approved} из ${sy.items.length}${sy.queue ? ` · в очереди ${sy.queue}` : ''}</span>
+                        <button class="custom-alert-btn tts-syn__go" onclick="ttsSynthToSums()" ${sy.approved ? '' : 'disabled'}
+                            title="Открыть режим «Суммы» на одобренных суммах">Режим «Суммы» →</button>
+                    </div>
+                </div>
+                <div class="tts-syn__keys"><kbd>Space</kbd> слушать <kbd>Enter</kbd> одобрить <kbd>Backspace</kbd> пересинтезировать <kbd>&#8593;</kbd><kbd>&#8595;</kbd> сумма</div>
+                <div class="tts-syn__list">${rows}</div>
+            </div>`;
+        }
+        function ttsSynthSelect(k) {
+            ttsSynthCur = k;
+            document.querySelectorAll('.tts-syn__item').forEach(el => el.classList.toggle('is-cur', +el.dataset.k === k));
+        }
+        const ttsSynthPickEtalon = () => ttsSynthCall(pywebview.api.tts_synth_pick_etalon());
+        const ttsSynthPlayEtalon = () => ttsSynthCall(pywebview.api.tts_synth_play_etalon());
+        const ttsSynthSetup = o => ttsSynthCall(pywebview.api.tts_synth_setup(o.lang || null, o.logic || null, o.etalon_text === undefined ? null : o.etalon_text));
+        const ttsSynthSetText = (k, v) => ttsSynthCall(pywebview.api.tts_synth_set_text(k, v));
+        const ttsSynthRunAll = () => ttsSynthCall(pywebview.api.tts_synth_run_all());
+        const ttsSynthStop = () => ttsSynthCall(pywebview.api.tts_synth_stop());
+        const ttsSynthEtalonFirst = () => ttsSynthCall(pywebview.api.tts_synth_etalon_as_first()).then(() => ttsSynthLoad());
+        const ttsSynthUnapprove = k => ttsSynthCall(pywebview.api.tts_synth_unapprove(k));
+        async function ttsSynthRun(k) {
+            ttsSynthSelect(k);
+            ttsSynthWaitPlay = k;                       // как будет готово — сразу прозвучит
+            await ttsSynthCall(pywebview.api.tts_synth_run(k, true));
+        }
+        async function ttsSynthPlay(k) {
+            ttsSynthSelect(k);
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_synth_play(k, false);
+            if (res && res.error) showToast(res.error);
+        }
+        async function ttsSynthApprove(k) {
+            let res = await ttsSynthCall(pywebview.api.tts_synth_approve(k));
+            if (!res) return;
+            // Следующая неодобренная — сразу слушаем, если готова; иначе прозвучит, как только будет.
+            let next = res.items.find(it => it.k > k && it.status !== 'approved');
+            if (!next) { showToast('Все суммы одобрены — можно в режим «Суммы»'); return; }
+            ttsSynthSelect(next.k);
+            ttsRenderVars();
+            if (next.has_variant && next.status === 'ready') ttsSynthPlay(next.k);
+            else ttsSynthWaitPlay = next.k;
+        }
+        async function ttsSynthToSums() {
+            let res = await pywebview.api.tts_synth_sums_folder();
+            if (!res || res.error) { showToast(res && res.error || 'Нет одобренных сумм'); return; }
+            ttsCloseVars();
+            startPremadeSumMode(res.folder);
+        }
+        // Сервис закончил очередную сумму (событие из Python).
+        async function ttsSynthEvent(p) {
+            if (p.error) showToast('Синтез: ' + p.error);
+            if (!ttsSynth) return;
+            let typing = document.activeElement && document.activeElement.tagName === 'INPUT'
+                && document.activeElement.closest('#ttsVarsOverlay');
+            ttsSynth = await pywebview.api.tts_synth_state();
+            let open = document.getElementById('ttsVarsOverlay').style.display === 'flex' && ttsVarsTab === 'synth';
+            if (open && !typing) ttsRenderVars();
+            let it = p.k !== null && p.k !== undefined ? ttsSynth.items[p.k] : null;
+            if (open && it && it.k === ttsSynthWaitPlay && it.status === 'ready') { ttsSynthWaitPlay = null; ttsSynthPlay(it.k); }
+        }
+        function ttsSynthKey(e) {
+            let it = ttsSynth && ttsSynth.items[ttsSynthCur];
+            if (!it) return false;
+            if (e.code === 'Space') { e.preventDefault(); ttsSynthPlay(it.k); return true; }
+            if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); if (it.has_variant && it.status !== 'approved') ttsSynthApprove(it.k); return true; }
+            if (e.code === 'Backspace') { e.preventDefault(); ttsSynthRun(it.k); return true; }
+            if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
+                e.preventDefault();
+                ttsSynthSelect(Math.max(0, Math.min(ttsSynth.items.length - 1, ttsSynthCur + (e.code === 'ArrowDown' ? 1 : -1))));
+                let row = document.querySelector('.tts-syn__item.is-cur');
+                if (row) row.scrollIntoView({ block: 'nearest' });
+                return true;
+            }
+            return false;
+        }
 
         function ttsRenderVars() {
             let tabs = [['chains', `Фразы · ${ttsVars.chains.length}`]].concat(ttsVars.sheets.map(sh => {
                 let ready = sh.categories.reduce((a, c) => a + c.ready, 0), all = sh.categories.reduce((a, c) => a + c.values.length, 0);
                 return [sh.key, `${sh.label} · ${ready}/${all}`];
-            }));
+            })).concat([['synth', ttsSynth ? `Синтез сумм · ${ttsSynth.approved}/${ttsSynth.items.length}` : 'Синтез сумм']]);
             document.getElementById('ttsVarsTabs').innerHTML = tabs.map(([k, l]) =>
                 `<button type="button" class="chip ${k === ttsVarsTab ? 'chip-mode--active' : ''}" onclick="ttsVarsSetTab('${k}')">${escapeHtml(l)}</button>`).join('');
             let body = document.getElementById('ttsVarsBody');
             if (ttsVarsTab === 'chains') { body.innerHTML = ttsVarsChainsHTML(); return; }
+            if (ttsVarsTab === 'synth') {
+                if (!ttsSynth) { body.innerHTML = '<div class="tts-dim tts-list__empty">Загружаю…</div>'; ttsSynthLoad(); return; }
+                let list = body.querySelector('.tts-syn__list'), top = list ? list.scrollTop : null;
+                body.innerHTML = ttsSynthHTML();
+                let nl = body.querySelector('.tts-syn__list');
+                if (nl && top !== null) nl.scrollTop = top;
+                return;
+            }
             let sh = ttsVars.sheets.find(x => x.key === ttsVarsTab);
             if (!sh) { ttsVarsTab = 'chains'; ttsRenderVars(); return; }
             body.innerHTML = ttsVarsSheetHTML(sh);
@@ -7032,6 +7192,7 @@ let isProcessing = false;
             let vars = document.getElementById('ttsVarsOverlay');
             if (vars.style.display === 'flex') {
                 if (e.code === 'Escape') { e.preventDefault(); ttsCloseVars(); }
+                else if (ttsVarsTab === 'synth') ttsSynthKey(e);
                 return true;
             }
             let list = document.getElementById('ttsListOverlay');

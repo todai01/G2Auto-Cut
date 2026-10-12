@@ -13,7 +13,7 @@ from core import project_state
 # Папки-«служебные» имена: если пользователь выбрал одну из них саму,
 # рабочей папкой проекта берём её родителя, а не её саму — иначе
 # «Суммы_сырые»/«Проверенные» создавались бы вложенными друг в друга.
-_STAGE1_SCAN_EXCLUDE = {'chunks', 'переменные', 'проверенные', 'суммы_сырые'}
+_STAGE1_SCAN_EXCLUDE = {'chunks', 'переменные', 'проверенные', 'суммы_сырые', 'синтез_суммы', 'синтез_суммы_ru', 'синтез_суммы_kz'}
 
 # --- «Суммы»: особая логика каскада (Миллионы → Сотни тысяч → Сотни →
 #     Тысячи → Тенге) ---
@@ -2565,7 +2565,7 @@ class VariablesMixin:
         if not hasattr(self, 'sum_stage2_frozen_idx'):
             self.sum_stage2_frozen_idx = {}
 
-    def sum_load_folder(self):
+    def sum_load_folder(self, path=None):
         """Вход в режим «Суммы» прямо с главного меню: выбираем папку с уже
         нарезанными дублями (например «Chunks» после автосрезки, или
         просто папка с WAV-файлами) — никакой связи с Audacity тут не
@@ -2573,11 +2573,12 @@ class VariablesMixin:
         start/end не спрашиваем. Если в этой же папке проекта уже есть
         «Суммы_сырые» с прошлого раза (докладывали дубли в прошлой
         сессии) — рулетки подхватят её автоматически."""
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        # path — папку дал сам софт (например «Синтез_суммы» после синтеза), без диалога.
+        folder = [path] if path else webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not folder:
             return {"error": "cancel"}
 
-        selected_path = folder[0]
+        selected_path = folder[0] if not isinstance(folder, str) else folder
         self.work_dir = (os.path.dirname(selected_path)
                           if os.path.basename(selected_path).lower() in _STAGE1_SCAN_EXCLUDE
                           else selected_path)

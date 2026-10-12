@@ -3189,3 +3189,30 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-here--wait{ color: var(--accent-info); border: 1px solid rgba(77,149,234,0.5); }
 .stage-tts.is-prompter .tts-prompter__text.is-recorded{ color: #c9d3cf; }
 .tts-prompter__text{ will-change: transform, opacity; }
+
+/* ===== 4 этап: синтез сумм по эталону ===== */
+.tts-syn{ display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.tts-syn__setup{ display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--screen); }
+.tts-syn__row{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tts-syn__lbl{ font-size: var(--fs-xs); font-weight: 700; color: var(--text-dim); min-width: 104px; }
+.tts-syn__ettext{ flex: 1; min-width: 260px; font: inherit; font-size: var(--fs-sm); color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; }
+.tts-syn__go{ padding: 7px 14px; }
+.tts-syn__go[disabled]{ opacity: .4; pointer-events: none; }
+.tts-syn .btn-ghost[disabled]{ opacity: .35; pointer-events: none; }
+.tts-syn__keys{ font-size: var(--fs-xs); color: var(--text-faint); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tts-syn__list{ overflow: auto; max-height: 46vh; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
+.tts-syn__item{ display: grid; grid-template-columns: 34px 120px 1fr 150px auto auto auto; align-items: center; gap: 8px;
+    padding: 5px 8px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--panel); cursor: pointer; }
+.tts-syn__item.is-cur{ border-color: var(--accent-primary); box-shadow: 0 0 0 1px var(--accent-primary); }
+.tts-syn__item.is-approved{ background: var(--tint-good); }
+.tts-syn__num{ font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); text-align: right; }
+.tts-syn__sum{ font-family: var(--font-mono); font-weight: 700; font-size: 13px; }
+.tts-syn__text{ font: inherit; font-size: var(--fs-sm); color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; min-width: 0; }
+.tts-syn__text:hover, .tts-syn__text:focus{ border-color: var(--border); background: var(--screen); outline: none; }
+.tts-syn__st{ font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; color: var(--text-faint); }
+.tts-syn__st--wait{ color: var(--text-dim); }
+.tts-syn__st--work{ color: var(--accent-info); }
+.tts-syn__st--ready{ color: var(--accent-var); }
+.tts-syn__st--ok{ color: var(--accent-good); }
+.tts-syn__st--err{ color: var(--accent-trash); }
+.tts-syn__ok{ color: var(--accent-good); }
