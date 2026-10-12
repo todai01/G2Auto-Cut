@@ -15,8 +15,8 @@ start → [сумма] → start_2 → [дата] → end. Каждый кусо
 Запись не обязана резаться по паузам: фразы часто слипаются. Поэтому
 распознанные слова всей записи идут сплошным потоком, и фразы таблицы
 ищутся в нём по тексту; оговорки, повторы и значения переменных между
-ними пропускаются. Разрез — в тишине между словами. Сохраняем только
-после того, как дубль прослушан: автопроверка ошибается."""
+ними пропускаются. Разрез — в тишине между словами. Что сохранять, решает
+человек (Enter): автопроверка ошибается, но слушать дубль до конца не обязательно."""
 
 import json
 import os
@@ -40,6 +40,9 @@ from core.ui_dialogs import ui_confirm
 from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_render, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
+TTS_RECORDS_DIR = 'Записи'
+# Папки внутри проекта: выбрали одну из них — проект на уровень выше.
+TTS_INNER_DIRS = (TTS_RECORDS_DIR, 'Чанки', 'Проверенные', 'Фразы_Переменные', '_Корзина')
 TTS_STATE_VERSION = 3     # 3: фразы ищутся в сплошном потоке слов, а не по паузам
 TTS_CHUNKS_DIR = 'Чанки'
 TTS_DONE_DIR = 'Проверенные'
@@ -488,6 +491,68 @@ class TtsFlowMixin:
         self._tts_save()
         return self.tts_state()
 
+    @staticmethod
+    def tts_project_root(folder):
+        """Папка проекта по любой выбранной: «Записи», «Чанки», «Проверенные»… —
+        это папки внутри проекта, сам проект на уровень выше."""
+        folder = os.path.normpath(folder) if folder else folder
+        if not folder:
+            return folder
+        if os.path.exists(os.path.join(folder, TTS_STATE_FILE)):
+            return folder
+        if os.path.basename(folder) in TTS_INNER_DIRS:
+            return os.path.dirname(folder)
+        return folder
+
+    def _tts_attach_folder(self, folder):
+        """Работать в этой папке. Если там уже была работа (tts_project.json) —
+        подтягиваем её: дубли, сохранённое, где остановился суфлёр. Таблица —
+        та, что загружена сейчас, если это та же таблица. Возвращает сообщение
+        для экрана или None (папка новая)."""
+        st = self._tts()
+        root = self.tts_project_root(folder)
+        if not os.path.exists(os.path.join(root, TTS_STATE_FILE)):
+            st["work_dir"] = root
+            return None
+        if st.get("work_dir") and os.path.normpath(st["work_dir"]) == root:
+            return None                                   # уже работаем здесь
+        cur_excel, cur_sheet = st.get("excel_path"), st.get("sheet")
+        res = self.tts_open_project(root)
+        if res.get("error"):
+            st = self._tts()
+            st["work_dir"] = root
+            return None
+        st = self._tts()
+        note = ''
+        if cur_excel and os.path.exists(cur_excel):
+            prev = st.get("excel_path")
+            same = not prev or os.path.basename(prev).lower() == os.path.basename(cur_excel).lower()
+            if same:
+                # Та же таблица (могла переехать или измениться) — перечитываем
+                # её, дубли остаются у своих строк.
+                st["excel_path"] = cur_excel
+                self.tts_load_excel(cur_excel, cur_sheet or st.get("sheet"))
+            else:
+                note = f" В этой папке работа по таблице «{os.path.basename(prev)}» — открыл её."
+        st = self._tts()
+        n = len([t for t in st["takes"] if not t.get("rejected")])
+        saved = sum(1 for u in st["units"] if os.path.exists(self._tts_target(u)))
+        self._tts_save()
+        return f"Продолжаю прежнюю работу: дублей {n}, сохранено фраз {saved}.{note}"
+
+    def tts_pick_project(self):
+        """«Продолжить работу»: выбрать папку проекта (или «Записи» в ней)."""
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked if isinstance(picked, str) else picked[0]
+        root = self.tts_project_root(folder)
+        if not os.path.exists(os.path.join(root, TTS_STATE_FILE)):
+            return {"error": "В этой папке нет прежней работы TTS (нет файла tts_project.json). "
+                             "Выберите папку проекта или папку «Записи» внутри неё."}
+        msg = self._tts_attach_folder(root)
+        return {**self.tts_state(), "message": msg}
+
     def tts_open_project(self, path):
         """Продолжить TTS-проект (tts_project.json в папке)."""
         try:
@@ -500,6 +565,20 @@ class TtsFlowMixin:
         old = data.get("v") != TTS_STATE_VERSION
         st.update(data)
         st["work_dir"] = path
+        # Папку проекта перенесли (другой диск, другой компьютер) — исходные
+        # записи ищем в её «Записи» по имени файла.
+        def relink(raw):
+            if not raw or os.path.exists(raw):
+                return raw
+            alt = os.path.join(path, TTS_RECORDS_DIR, os.path.basename(raw.replace('\\', '/')))
+            return alt if os.path.exists(alt) else raw
+        for t in st["takes"]:
+            t["raw"] = relink(t.get("raw"))
+            for c in t.get("clips") or []:
+                c["raw"] = relink(c.get("raw"))
+            for c in t.get("clips_orig") or []:
+                c["raw"] = relink(c.get("raw"))
+        st["raw_path"] = relink(st.get("raw_path"))
         # Запись могла оборваться (закрыли программу во время записи).
         for raw in {t.get("raw") for t in st["takes"]} | {st.get("raw_path")}:
             if raw and os.path.exists(raw):
@@ -531,9 +610,14 @@ class TtsFlowMixin:
         path = picked if isinstance(picked, str) else picked[0]
         if getattr(self, '_tts_rec', None):
             return {"error": "Сейчас идёт запись с микрофона — сначала остановите её."}
+        # Запись лежит в «Записи» проекта — работаем в самом проекте и сначала
+        # подтягиваем прежнюю работу (чтобы не затереть её дубли молча).
+        note = self._tts_attach_folder(os.path.dirname(path))
+        st = self._tts()
         if st["takes"] and not ui_confirm("Запись уже нарезана и проверена. Нарезать заново?<br><br>"
                                           "Сохранённые фразы останутся на месте.", "Нарезать заново", "Отмена"):
-            return {"error": "cancel"}
+            # Отказались — но прежнюю работу из этой папки всё равно показываем.
+            return {"error": "cancel", "state": self.tts_state() if note else None, "message": note}
         threading.Thread(target=self._tts_process, args=(path,), daemon=True).start()
         return {"status": "started"}
 
@@ -570,7 +654,7 @@ class TtsFlowMixin:
         if not ranges:
             return {"error": "В записи не нашлось речи."}
 
-        work_dir = os.path.dirname(path)
+        work_dir = st.get("work_dir") or self.tts_project_root(os.path.dirname(path))
         chunks_dir = os.path.join(work_dir, TTS_CHUNKS_DIR)
         os.makedirs(chunks_dir, exist_ok=True)
         for f in os.listdir(chunks_dir):
@@ -870,8 +954,7 @@ class TtsFlowMixin:
         t = st["takes"][i]
         if t.get("unit") is None:
             return {"error": "Дубль не привязан к фразе — выберите фразу."}
-        if not t.get("listened"):
-            return {"need_listen": True}
+        # Сохранять можно и без прослушивания — вы сами решаете, что дубль верный.
         unit = st["units"][t["unit"]]
         target = self._tts_target(unit)
         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -1031,8 +1114,7 @@ class TtsFlowMixin:
                 "orig": orig, "audacity": bool(t.get("audacity")), "peaks": peaks, "bucket": EDIT_BUCKET_MS}
 
     def tts_editor_apply(self, i, a, b, cuts):
-        """Записать правку в файл дубля (из исходника, байт в байт). Правленый
-        дубль нужно прослушать заново — только потом его можно сохранить."""
+        """Записать правку в файл дубля (из исходника, байт в байт)."""
         st = self._tts()
         if not (0 <= i < len(st["takes"])):
             return {"error": "Нет такого дубля."}
@@ -1238,7 +1320,10 @@ class TtsFlowMixin:
         if ms >= total - 50:
             ms = 0
         import tempfile
-        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_from_{os.getpid()}.wav")
+        # Свой файл на каждый клик (по кругу из 4): не переписываем тот, что
+        # ещё играет или читается.
+        self._tts_from_n = (getattr(self, '_tts_from_n', 0) + 1) % 4
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_from_{os.getpid()}_{self._tts_from_n}.wav")
         play = tmp if ms > 0 and wav_slice(prev, tmp, ms, total + 1000) else prev
         st["index"] = i
         dur = (total - ms) / 1000.0

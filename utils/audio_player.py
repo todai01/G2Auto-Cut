@@ -1,4 +1,5 @@
 import struct
+import threading
 
 import winsound
 
@@ -6,12 +7,19 @@ import winsound
 class AudioPlayer:
     """Проигрывание файлов. По умолчанию — в устройство Windows по умолчанию
     (winsound). Если выбрано своё устройство вывода (наушники того, кто
-    слушает, а не гарнитура диктора) — через sounddevice прямо в него."""
+    слушает, а не гарнитура диктора) — через sounddevice прямо в него.
+
+    Звучит всегда только одно: «играть» и «стоп» идут по очереди (команды с
+    экрана приходят из разных потоков — клик по дорожке и кнопка «Слушать»
+    могли запустить два звука поверх друг друга). Если пока файл готовился,
+    пришла новая команда, — старый звук так и не начинается."""
 
     def __init__(self):
         self.is_playing = False
         self.device = None
-        self._sd = None
+        self._stream = None
+        self._lock = threading.Lock()
+        self._gen = 0
 
     def set_device(self, device):
         """device — номер устройства вывода sounddevice; None — по умолчанию."""
@@ -20,30 +28,51 @@ class AudioPlayer:
 
     def play(self, filepath):
         """Останавливает текущий звук и запускает новый файл асинхронно."""
-        self.stop()
+        with self._lock:
+            self._gen += 1
+            my = self._gen
+            self._stop_locked()
+        prepared = None
         if self.device is not None:
             try:
-                self._play_device(filepath)
-                self.is_playing = True
-                return
+                prepared = self._prepare(filepath)          # чтение и пересчёт — без блокировки
             except Exception:
-                pass                     # наушники отключили и т.п. — играем как раньше
-        winsound.PlaySound(filepath, winsound.SND_FILENAME | winsound.SND_ASYNC)
-        self.is_playing = True
+                prepared = None                            # наушники отключили и т.п. — как раньше
+        with self._lock:
+            if my != self._gen:
+                return                                     # уже попросили другое или «стоп»
+            self._stop_locked()
+            if prepared is not None:
+                try:
+                    self._start(*prepared)
+                    self.is_playing = True
+                    return
+                except Exception:
+                    pass
+            winsound.PlaySound(filepath, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            self.is_playing = True
 
     def stop(self):
         """Принудительно останавливает воспроизведение."""
-        if self.is_playing:
-            if self._sd is not None:
-                try:
-                    self._sd.stop()
-                except Exception:
-                    pass
-                self._sd = None
-            winsound.PlaySound(None, winsound.SND_PURGE)
-            self.is_playing = False
+        with self._lock:
+            self._gen += 1
+            self._stop_locked()
 
-    def _play_device(self, path):
+    def _stop_locked(self):
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+        try:
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+        self.is_playing = False
+
+    def _prepare(self, path):
         import numpy as np
         import sounddevice as sd
         data, rate = _read_audio(path)
@@ -59,8 +88,26 @@ class AudioPlayer:
             data = resample(data, rate, out_rate)
         if ch == 2 and data.shape[1] == 1:
             data = np.repeat(data, 2, axis=1)            # моно — в оба уха
-        sd.play(np.ascontiguousarray(data, dtype=np.float32), out_rate, device=self.device)
-        self._sd = sd
+        return np.ascontiguousarray(data, dtype=np.float32), out_rate
+
+    def _start(self, data, rate):
+        """Свой поток вывода (не общий sd.play): закрывается при следующем
+        «играть»/«стоп», двух сразу не бывает."""
+        import sounddevice as sd
+        pos = [0]
+
+        def callback(out, frames, t, status):
+            n = max(0, min(frames, len(data) - pos[0]))
+            out[:n] = data[pos[0]:pos[0] + n]
+            out[n:] = 0
+            pos[0] += n
+            if n < frames:
+                raise sd.CallbackStop
+
+        stream = sd.OutputStream(samplerate=rate, channels=data.shape[1], dtype='float32',
+                                 device=self.device, callback=callback)
+        stream.start()
+        self._stream = stream
 
 
 def _read_audio(path):

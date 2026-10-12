@@ -364,11 +364,14 @@ class TtsLiveMixin:
             return {"error": "Сначала загрузите таблицу."}
         if getattr(self, '_tts_rec', None):
             return {"error": "Запись уже идёт."}
+        note = None
         if not st.get("work_dir"):
             picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
             if not picked:
                 return {"error": "cancel"}
-            st["work_dir"] = picked if isinstance(picked, str) else picked[0]
+            # Выбрали папку прежней работы (или её «Записи») — продолжаем её.
+            note = self._tts_attach_folder(picked if isinstance(picked, str) else picked[0])
+            st = self._tts()
         # Модель на каждый язык таблицы (блоки <…_kz> / <…_ru>) — грузим сразу.
         models = {}
         for lg in self._tts_langs():
@@ -408,7 +411,8 @@ class TtsLiveMixin:
         self._tts_save()
         threading.Thread(target=self._tts_live_loop, daemon=True).start()
         return {"status": "ok", "device": rec.device_name, "rate": rec.rate,
-                "monitor": mon_name, "monitor_error": mon_err}
+                "monitor": mon_name, "monitor_error": mon_err, "restored": note,
+                "state": self.tts_state() if note else None}
 
     def _tts_live_expected(self):
         """С какой строки таблицы диктор, скорее всего, продолжит: после

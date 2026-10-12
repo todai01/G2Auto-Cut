@@ -5911,16 +5911,29 @@ let isProcessing = false;
         let tts = null;              // состояние с бэкенда (tts_state)
         let ttsPlayTimer = null;
         let ttsPlayingIdx = -1;
+        // Номер последнего «играть»/«стоп»: всё, что относится к прежнему
+        // запуску (ответ, бегунок, таймер), — не трогает экран.
+        let ttsPlayGen = 0, ttsPlayPending = false;
         let ttsListMode = 'all';
 
         async function openTts() {
             let st = await pywebview.api.tts_state();
             if (!st || !st.loaded) {
-                let ok = await showBeautifulConfirm('<b>TTS-проект</b><br><br>Загрузите таблицу: лист фраз с колонками '
+                let how = await showBeautifulChoice('<b>TTS-проект</b><br><br>Загрузите таблицу: лист фраз с колонками '
                     + '<code>&lt;phrase&gt;</code>, <code>&lt;name_phrase&gt;</code>, флаги <code>&lt;start&gt;</code> / '
-                    + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных (суммы, даты).',
-                    'Выбрать таблицу', 'Отмена');
-                if (!ok) return;
+                    + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных (суммы, даты).<br><br>'
+                    + '<b>Продолжить работу</b> — выберите папку прежнего проекта (или папку «Записи» в ней): '
+                    + 'подтяну дубли, сохранённое и место, где остановились.',
+                    'Выбрать таблицу', 'Продолжить работу', 'P', 'Отмена');
+                if (how === 'alt') {
+                    st = await pywebview.api.tts_pick_project();
+                    if (!st || st.error === 'cancel') return;
+                    if (st.error) { showBeautifulAlert('⚠️ ' + escapeHtml(st.error)); return; }
+                    openTtsScreen(st);
+                    if (st.message) showToast(st.message);
+                    return;
+                }
+                if (how !== 'ok') return;
                 st = await ttsPickExcelFlow();
                 if (!st) return;
             }
@@ -6011,6 +6024,8 @@ let isProcessing = false;
 
         async function ttsLoadRecording() {
             let res = await pywebview.api.tts_pick_recording();
+            if (res && res.state) { tts = res.state; ttsRender(); ttsLoadPrompt(); }
+            if (res && res.message) showToast(res.message);
             if (!res || res.error === 'cancel') return;
             if (res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
             ttsShowBusy('Режу запись на дубли…', 0);
@@ -6162,7 +6177,7 @@ let isProcessing = false;
                     <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()">${t.rejected ? 'Вернуть дубль' : 'Плохой дубль'} <kbd>Del</kbd></button>
                 </div>
-                ${t.listened ? '' : '<div class="tts-current__hint">Сохранить можно после прослушивания</div>'}`;
+`;
         }
 
         function ttsUnitTextHTML(u) {
@@ -6501,24 +6516,31 @@ let isProcessing = false;
             if (!ttsEd) return;
             await ttsStopPlay();
             let base = tlBase(), from = Math.max(0, Math.round(t - base));
+            let g = ++ttsPlayGen;
+            ttsPlayPending = true;
             let res = await pywebview.api.tts_play_from(ttsEd.i, from);
+            if (g === ttsPlayGen) ttsPlayPending = false;
+            if (g !== ttsPlayGen || !ttsEd) return;      // пока запускалось — нажали другое
             if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
             ttsPlayingIdx = ttsEd.i;
             ttsRenderRail(); ttsRenderCurrent();
-            ttsEditorPlayhead(res.duration, res.from);
+            ttsEditorPlayhead(res.duration, res.from, g);
             clearTimeout(ttsPlayTimer);
             let i = ttsEd.i;
             ttsPlayTimer = setTimeout(() => {
+                if (g !== ttsPlayGen) return;
                 ttsPlayingIdx = -1;
                 pywebview.api.tts_select(i).then(st => { tts = st; ttsRenderRail(); ttsRenderCurrent(); });
             }, res.duration * 1000 + 120);
         }
 
         // Бегунок по дорожке во время прослушки (время файла = время дорожки).
-        function ttsEditorPlayhead(duration, fromMs) {
+        function ttsEditorPlayhead(duration, fromMs, gen) {
             if (!ttsEd) return;
             let t0 = performance.now(), i = ttsEd.i, start = tlBase() + (fromMs || 0), end = start + duration * 1000;
+            let g = gen === undefined ? ttsPlayGen : gen;
             let step = () => {
+                if (g !== ttsPlayGen) return;            // бегунок прежнего запуска — тихо уходим
                 if (!ttsEd || ttsEd.i !== i || ttsPlayingIdx !== i) { if (ttsEd) { ttsEd.play = null; ttsEditorDraw(); } return; }
                 let pos = start + (performance.now() - t0);
                 if (pos > end) { ttsEd.play = null; ttsEditorDraw(); return; }
@@ -6565,7 +6587,10 @@ let isProcessing = false;
 
         async function ttsStopPlay() {
             clearTimeout(ttsPlayTimer);
-            if (ttsPlayingIdx >= 0) { ttsPlayingIdx = -1; await pywebview.api.tts_stop_audio(); }
+            let pending = ttsPlayPending;
+            ttsPlayGen++;                              // прежний запуск — уже не наш
+            ttsPlayPending = false;
+            if (ttsPlayingIdx >= 0 || pending) { ttsPlayingIdx = -1; await pywebview.api.tts_stop_audio(); }
         }
 
         async function ttsTogglePlay() {
@@ -6573,12 +6598,17 @@ let isProcessing = false;
             if (!t) return;
             if (ttsPlayingIdx === t.i) { await ttsStopPlay(); ttsRender(); return; }
             clearTimeout(ttsPlayTimer);
+            let g = ++ttsPlayGen;
+            ttsPlayPending = true;
             let res = await pywebview.api.tts_play(t.i);
+            if (g === ttsPlayGen) ttsPlayPending = false;
+            if (g !== ttsPlayGen) return;                // пока запускалось — нажали другое
             if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
             ttsPlayingIdx = t.i;
             ttsRenderRail(); ttsRenderCurrent();
-            ttsEditorPlayhead(res.duration);
+            ttsEditorPlayhead(res.duration, 0, g);
             ttsPlayTimer = setTimeout(() => {
+                if (g !== ttsPlayGen) return;
                 // Отыграл до конца — считаем прослушанным (бэкенд сверит по времени).
                 ttsPlayingIdx = -1;
                 pywebview.api.tts_select(t.i).then(st => { tts = st; ttsRender(); });
@@ -6595,11 +6625,10 @@ let isProcessing = false;
             let t = ttsCurTake();
             if (!t || ttsApproving) return;
             if (t.unit === null) { ttsOpenUnits('assign'); return; }
-            if (ttsPlayingIdx === t.i) { showToast('Дослушайте дубль до конца'); return; }
             ttsApproving = true;
             try {
+                await ttsStopPlay();                    // играет — останавливаем и сохраняем сразу
                 let res = await pywebview.api.tts_approve(t.i);
-                if (res && res.need_listen) { showToast('Сначала прослушайте дубль'); ttsTogglePlay(); return; }
                 if (res && res.error) { showToast(res.error); return; }
                 tts = res;
                 if (res.saved_kind === 'piece') ttsDropToVars(t.i);
@@ -6960,6 +6989,11 @@ let isProcessing = false;
             }
             ttsRec.on = true;
             ttsRec.device = res.device;
+            if (res.restored && res.state) {
+                // Выбрали папку прежней работы — подтянули её.
+                tts = res.state; ttsRender();
+                showToast(res.restored);
+            }
             await pywebview.api.tts_live_fast(ttsFastOn());
             ttsFastRender();
             ttsLiveSt.micOff = document.getElementById('stage4-tts').classList.contains('show-assembly');
@@ -7410,6 +7444,7 @@ let isProcessing = false;
         // ===== Клавиши во время записи =====
         async function ttsLiveAction(action) {
             if (!ttsRec.on) return;
+            if (action === 'play') { await ttsStopPlay(); ttsRenderRail(); }
             let res = await pywebview.api.tts_live_key(action);
             if (!res || res.error) { if (res && res.error) ttsLiveFlash('miss-msg', res.error); return; }
             if (res.cancelled || action === 'commit') { ttsLiveSt.busy = false; ttsLiveSt.holding = false; }
