@@ -4432,6 +4432,14 @@ let isProcessing = false;
         }
         document.addEventListener('keydown', e => {
             if (e.code === 'F11') { e.preventDefault(); toggleFullscreen(); }
+            // «Сборка» открыта: Ctrl+Z — отменить шаг, Ctrl+Y / Ctrl+Shift+Z — вернуть.
+            // По коду клавиши — работает и в русской раскладке (Ctrl+Я).
+            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.code === 'KeyY') && ttsEd
+                && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
+                && document.getElementById('stage4-tts').classList.contains('show-assembly')) {
+                e.preventDefault();
+                ttsEdUndo(e.code === 'KeyY' || e.shiftKey);
+            }
         });
 
         document.addEventListener('keydown', function(e) {
@@ -6228,7 +6236,9 @@ let isProcessing = false;
                     <div class="tts-ed__bar">
                         <span class="tts-ed__time" id="ttsEdTime"></span>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdCutBtn" onclick="ttsEditorCut()" disabled title="Вырезать выделенное (выделите мышью на клипе)">Вырезать <kbd>X</kbd></button>
-                        <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа">Сбросить</button>
+                        <button class="btn-ghost btn-ghost--compact" id="ttsEdUndo" onclick="ttsEdUndo()" disabled>&#8630; <kbd>Ctrl+Z</kbd></button>
+                        <button class="btn-ghost btn-ghost--compact" id="ttsEdRedo" onclick="ttsEdUndo(true)" disabled>&#8631;</button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа (тоже отменяется Ctrl+Z)">Сбросить</button>
                         <span class="tts-ed__zoom">
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(0.66)" title="Отдалить (Ctrl + колесо)">&minus;</button>
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(1.5)" title="Приблизить (Ctrl + колесо)">+</button>
@@ -6436,6 +6446,7 @@ let isProcessing = false;
             }
             let cut = document.getElementById('ttsEdCutBtn');
             if (cut) cut.disabled = !ttsEd.sel;
+            ttsEdHistButtons();
         }
 
         // Что под мышью: ручка края / полоска клипа / метка выреза / тело / пусто.
@@ -6485,7 +6496,10 @@ let isProcessing = false;
         window.addEventListener('mouseup', e => {
             if (!ttsEd || !ttsEd.drag) return;
             let d = ttsEd.drag; ttsEd.drag = null;
-            if ((d.kind === 'trim' || d.kind === 'move') && d.moved) { ttsEditorApply(); return; }
+            if ((d.kind === 'trim' || d.kind === 'move') && d.moved) {
+                ttsEdRemember(d.kind === 'move' ? `сдвиг клипа ${d.k + 1}` : 'подрезка края', d.snap);
+                ttsEditorApply(); return;
+            }
             if (d.kind === 'body' && d.moved && ttsEd.sel && Math.abs(ttsEd.sel.t1 - ttsEd.sel.t0) >= 15) { ttsEditorDraw(); return; }
             // Просто клик — слушать с этого места.
             ttsEd.sel = null;
@@ -6501,6 +6515,7 @@ let isProcessing = false;
                 e.preventDefault();
                 let { x, y } = ttsEdPos(e), t = tlT(x), h = tlHit(x, y);
                 if (h.kind === 'uncut') {
+                    ttsEdRemember('возврат выреза');
                     let c = ttsEd.clips[h.k], len0 = tlLen(c), at = tlTimeOfRaw(c, c.cuts[h.cutIdx][0]);
                     c.cuts.splice(h.cutIdx, 1); ttsEd.sel = null;
                     ttsEdRipple(c, at, tlLen(c) - len0);
@@ -6508,7 +6523,8 @@ let isProcessing = false;
                 }
                 let c = h.k !== undefined ? ttsEd.clips[h.k] : null;
                 ttsEd.drag = { kind: h.kind, side: h.side, k: h.k, x0: x, t0: t, moved: false,
-                               a0: c && c.a, b0: c && c.b, pos0: c && c.pos };
+                               a0: c && c.a, b0: c && c.b, pos0: c && c.pos,
+                               snap: (h.kind === 'trim' || h.kind === 'move') ? ttsEdSnap() : null };
                 if (h.kind !== 'body') ttsEd.sel = null;
             });
             canvas.addEventListener('mousemove', e => {
@@ -6532,10 +6548,53 @@ let isProcessing = false;
             let r0 = Math.round(tlRawAt(c, t0)), r1 = Math.round(tlRawAt(c, t1));
             ttsEd.sel = null;
             if (r1 - r0 < 15) { ttsEditorDraw(); return; }
+            ttsEdRemember(`вырез ${((r1 - r0) / 1000).toFixed(2)} с`);
             let len0 = tlLen(c);
             c.cuts = (c.cuts || []).concat([[r0, r1]]);
             ttsEdRipple(c, t1, tlLen(c) - len0);
             ttsEditorApply();
+        }
+
+        // ----- отмена по шагам в «Сборке»: Ctrl+Z — отменить, Ctrl+Y / Ctrl+Shift+Z — вернуть -----
+        // Своя история у каждого дубля (по файлу), до 100 шагов. Шаг — подрезка
+        // края, сдвиг клипа, вырез, возврат выреза, «Сбросить».
+        const ttsEdHist = {};
+        const TTS_ED_HIST_MAX = 100;
+        function ttsEdHistOf() {
+            let t = ttsEd && tts && tts.takes[ttsEd.i];
+            if (!t) return null;
+            return ttsEdHist[t.file] || (ttsEdHist[t.file] = { undo: [], redo: [] });
+        }
+        const ttsEdSnap = () => ttsEd.clips.map(c => ({ a: c.a, b: c.b, pos: c.pos, cuts: (c.cuts || []).map(x => [...x]) }));
+        function ttsEdRemember(label, snap) {
+            let h = ttsEdHistOf();
+            if (!h) return;
+            h.undo.push({ label, clips: snap || ttsEdSnap() });
+            if (h.undo.length > TTS_ED_HIST_MAX) h.undo.shift();
+            h.redo = [];                                 // новое действие — «вернуть» больше нечего
+            ttsEdHistButtons();
+        }
+        function ttsEdHistButtons() {
+            let h = ttsEdHistOf(), u = document.getElementById('ttsEdUndo'), r = document.getElementById('ttsEdRedo');
+            if (u) { u.disabled = !(h && h.undo.length); u.title = h && h.undo.length ? `Отменить: ${h.undo[h.undo.length - 1].label} (Ctrl+Z)` : 'Отменять нечего (Ctrl+Z)'; }
+            if (r) { r.disabled = !(h && h.redo.length); r.title = h && h.redo.length ? `Вернуть: ${h.redo[h.redo.length - 1].label} (Ctrl+Y)` : 'Возвращать нечего (Ctrl+Y)'; }
+        }
+        async function ttsEdUndo(redo) {
+            if (!ttsEd || ttsEd.drag) return;
+            let h = ttsEdHistOf();
+            let from = h && (redo ? h.redo : h.undo), to = h && (redo ? h.undo : h.redo);
+            if (!from || !from.length) { showToast(redo ? 'Возвращать нечего' : 'Отменять нечего'); return; }
+            let step = from.pop();
+            to.push({ label: step.label, clips: ttsEdSnap() });
+            step.clips.forEach((sn, k) => {
+                let c = ttsEd.clips[k];
+                if (c) { c.a = sn.a; c.b = sn.b; c.pos = sn.pos; c.cuts = sn.cuts.map(x => [...x]); }
+            });
+            ttsEd.sel = null;
+            ttsEditorDraw();
+            await ttsEditorApply();
+            ttsEdHistButtons();
+            showToast((redo ? 'Вернул: ' : 'Отменил: ') + step.label);
         }
 
         // Вырез/возврат куска сдвигает клипы после него — склейка не рвётся.
@@ -6558,6 +6617,7 @@ let isProcessing = false;
 
         async function ttsEditorReset() {
             if (!ttsEd) return;
+            ttsEdRemember('сброс');                      // и «Сбросить» можно отменить
             await ttsStopPlay();
             tts = await pywebview.api.tts_editor_reset(ttsEd.i);
             ttsEd = null;
