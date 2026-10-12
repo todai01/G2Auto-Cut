@@ -3236,3 +3236,20 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-mk-forms kbd{ font-size: 10px; opacity: .7; margin-right: 2px; }
 .tts-mk-done{ color: var(--accent-good); }
 .tts-mk-bar .btn-ghost[disabled]{ opacity: .35; pointer-events: none; }
+
+/* «Сборка» — одна карточка по центру: текст фразы, дорожка и кнопки дубля вместе */
+.stage-tts.is-prompter.show-assembly .tts-body{
+    display: block; position: absolute; left: 50%; top: 50%; bottom: auto; right: auto; transform: translate(-50%, -50%);
+    width: min(1240px, 96%); z-index: 60; margin: 0;
+}
+.stage-tts.is-prompter.show-assembly .tts-left{ display: none; }
+.stage-tts.is-prompter.show-assembly .tts-assembly{ max-height: 86vh; overflow: auto; }
+.tts-assembly__title .tts-pill{ margin-left: 6px; }
+.tts-asm-num{ font-family: var(--font-mono); font-size: 11px; }
+.tts-asm-heard{ font-size: var(--fs-sm); margin: 2px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tts-asm-actions{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.tts-asm-actions .btn-tile{ padding-top: 10px; padding-bottom: 10px; }
+.stage-tts:not(.show-assembly) .tts-asm-actions,
+.stage-tts:not(.show-assembly) .tts-asm-heard,
+.stage-tts:not(.show-assembly) .tts-assembly__title .tts-pill,
+.stage-tts:not(.show-assembly) .tts-asm-num{ display: none; }

@@ -6087,7 +6087,9 @@ let isProcessing = false;
                 if (p.error === 'need_model' || p.error === 'need_model_kz') { showAsrModel(p.error === 'need_model_kz' ? 'kz' : 'ru'); return; }
                 showBeautifulAlert('⚠️ ' + escapeHtml(p.error));
             } else if (p.stage === 'live') {
+                let before = tts ? tts.takes.length : 0;
                 ttsLiveUpdate(p.state, p.added);
+                ttsAutoAsm(tts.takes.length - before);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
             } else if (p.stage === 'synth') {
@@ -6102,7 +6104,9 @@ let isProcessing = false;
                 if (!p.busy) ttsLiveSt.waiting = !!p.waiting;
                 ttsLiveRender();
             } else if (p.stage === 'live_doubt') {
+                let before = tts ? tts.takes.length : 0;
                 ttsLiveUpdate(p.state, 0);
+                ttsAutoAsm(tts.takes.length - before);
                 ttsLiveFlash('miss-msg', p.message);
             } else if (p.stage === 'live_miss') {
                 ttsLiveFlash(p.paused ? 'pause-miss' : 'miss', p.heard);
@@ -6195,8 +6199,7 @@ let isProcessing = false;
                 return;
             }
             let u = ttsUnit(t.unit);
-            let [label, tone] = t.rejected ? ['Плохой дубль — пропущен', 'trash'] : (TTS_STATUS[t.status] || TTS_STATUS.none);
-            if (t.unit_saved && !t.rejected) [label, tone] = t.approved ? ['Сохранён этот дубль', 'good'] : ['Фраза уже сохранена другим дублем', 'good'];
+            let [label, tone] = ttsTakeStatus(t);
             let where = u ? (u.kind === 'piece' ? 'Фразы_Переменные' : 'Проверенные') : '';
             el.innerHTML = `
                 <div class="tts-current__head">
@@ -6214,6 +6217,11 @@ let isProcessing = false;
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль с дорожки. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>
 `;
+        }
+
+        function ttsTakeStatus(t) {
+            if (t.unit_saved) return t.approved ? ['Сохранён этот дубль', 'good'] : ['Фраза уже сохранена другим дублем', 'good'];
+            return TTS_STATUS[t.status] || TTS_STATUS.none;
         }
 
         function ttsUnitTextHTML(u) {
@@ -6246,10 +6254,14 @@ let isProcessing = false;
                     (k === 0 && p.var_before ? varBlock(p.var_before) : '') + block(p) + (p.var_after ? varBlock(p.var_after) : '')).join('')
                 : block(u);
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
+            let [label, tone] = ttsTakeStatus(t);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
                     ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span>
+                    <span class="tts-pill tts-pill--${tone}">${label}</span>
+                    <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-blocks">${blocks}</div>
+                <div class="tts-asm-heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
                 <div class="tts-ed">
                     <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
                     <div class="tts-ed__bar">
@@ -6268,6 +6280,12 @@ let isProcessing = false;
                         <button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsTakeFromAudacity()" title="Забрать правку из Audacity в этот дубль">Забрать из Audacity</button>
                     </div>
                     ${ttsSoundBarHTML(t)}
+                </div>
+                <div class="tts-asm-actions">
+                    <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
+                    <button class="btn-tile btn-tile--good" onclick="ttsApprove()">Сохранить <kbd>Enter</kbd></button>
+                    <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
+                    <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>`;
             ttsEditorLoad();
         }
@@ -6768,7 +6786,9 @@ let isProcessing = false;
                 if (res.saved_kind === 'piece') ttsDropToVars(t.i);
                 else showToast(`Сохранено: ${res.saved_name}.wav`);
                 ttsRender();
-                if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
+                // Идёт запись и дубль проверяли в «Сборке» — сохранили и сразу обратно к чтению.
+                if (ttsRec.on && document.getElementById('stage4-tts').classList.contains('show-assembly')) ttsShowAssembly(false);
+                else if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
             } finally { ttsApproving = false; }
         }
 
@@ -6846,6 +6866,7 @@ let isProcessing = false;
             if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
             tts = res;
             ttsDelSeqs.push(++ttsActSeq);
+            if (ttsRec.on && document.getElementById('stage4-tts').classList.contains('show-assembly')) ttsShowAssembly(false);
             ttsRender();
             ttsLoadPrompt();
             showToast(`Удалён: ${res.deleted} — Ctrl+Z вернёт`);
@@ -8040,6 +8061,7 @@ let isProcessing = false;
         async function ttsPtt(down) {
             if (!ttsRec.on || ttsPttDown === down) return;
             ttsPttDown = down;
+            if (!down && ttsAutoAsmPending) { let n = ttsAutoAsmPending; ttsAutoAsmPending = 0; setTimeout(() => ttsAutoAsm(n), 0); }
             ttsLiveSt.holding = down;
             if (!down) ttsLiveSt.busy = true;          // сразу «Распознаю…»
             document.getElementById('ttsRecBar').classList.toggle('is-holding', down);
@@ -8049,6 +8071,37 @@ let isProcessing = false;
             // «Не ждать»: суфлёр уже на следующей фразе.
             if (res && res.prompt) { ttsPromptKey = null; ttsRenderPrompt(res.prompt, 'next'); }
             else if (res && res.checking) ttsLiveFlash('partial', res.resuming ? 'Продолжение — проверяю, дочитана ли фраза…' : 'Похоже, фраза не дочитана — проверяю, что записано…');
+        }
+
+        // ----- «Проверять сразу»: записали фразу — «Сборка» открывается сама -----
+        // Дубль сразу звучит; подрезали → Enter сохраняет и возвращает к чтению.
+        let ttsAutoAsmPending = 0;
+        function ttsAutoAsmOn() {
+            try { return localStorage.getItem('gvox_tts_autoasm') !== '0'; } catch (e) { return true; }
+        }
+        function ttsAutoAsmRender() {
+            let b = document.getElementById('ttsAutoAsmBtn');
+            if (!b) return;
+            let on = ttsAutoAsmOn();
+            b.classList.toggle('is-on', on);
+            b.innerHTML = on ? '&#9986; Проверять сразу: вкл' : '&#9986; Проверять сразу: выкл';
+        }
+        function ttsAutoAsmToggle() {
+            let on = !ttsAutoAsmOn();
+            try { localStorage.setItem('gvox_tts_autoasm', on ? '1' : '0'); } catch (e) {}
+            ttsAutoAsmRender();
+            showToast(on ? 'Записали фразу — сразу открою «Сборку» для проверки' : 'Сборка — только по кнопке');
+        }
+        function ttsAutoAsm(added) {
+            if (!(added > 0) || !ttsRec.on || !ttsAutoAsmOn() || !tts || !tts.takes.length) return;
+            if (ttsPttDown) { ttsAutoAsmPending = added; return; }     // сейчас пишут — откроем, когда отпустят
+            let overlays = ['ttsVarsOverlay', 'ttsListOverlay', 'ttsMarkOverlay', 'customAlertOverlay'];
+            if (overlays.some(id => { let el = document.getElementById(id); return el && el.style.display === 'flex'; })) return;
+            tts.index = tts.takes.length - added;                       // первый из только что записанных
+            ttsRenderRail();
+            ttsRenderCurrent();
+            ttsShowAssembly(true);
+            ttsTogglePlay();
         }
 
         // ----- «Не ждать распознавания» (по умолчанию — для казахского) -----
@@ -8064,6 +8117,7 @@ let isProcessing = false;
             let on = ttsFastOn();
             b.classList.toggle('is-on', on);
             b.innerHTML = on ? '&#9889; Не ждать: вкл' : '&#9889; Не ждать: выкл';
+            ttsAutoAsmRender();
         }
         async function ttsFastToggle() {
             let on = !ttsFastOn();
