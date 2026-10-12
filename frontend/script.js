@@ -7039,7 +7039,7 @@ let isProcessing = false;
                 if (e.code === 'Escape') { e.preventDefault(); ttsCloseList(); }
                 return true;
             }
-            if (e.repeat && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') { e.preventDefault(); return true; }
+            if (e.repeat && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) { e.preventDefault(); return true; }
             if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
             // Во время записи: держите Space — пишу, Backspace — заново, P — прослушать последнее.
             let inAssembly = document.getElementById('stage4-tts').classList.contains('show-assembly');
@@ -7273,7 +7273,8 @@ let isProcessing = false;
                 + (s.overflows ? ` · ⚠ звук прерывался ${s.overflows} раз — компьютер не успевает` : '')
 ;
             if (s.error) showToast('Запись остановилась: ' + s.error);
-            if (s.prompt) ttsRenderPrompt(s.prompt, null, s.waiting);
+            // Только что листали — не перебиваем выбранную фразу старым ответом опроса.
+            if (s.prompt && performance.now() - ttsPromptNavAt > 600) ttsRenderPrompt(s.prompt, null, s.waiting);
             ttsSetPaused(s.paused);
             Object.assign(ttsLiveSt, { hearing: false, paused: false, waiting: false, busy: !!s.busy });
             if (!ttsPttDown) ttsLiveSt.holding = !!s.holding;
@@ -7293,7 +7294,65 @@ let isProcessing = false;
 
         // ----- суфлёр: какую фразу читать сейчас -----
         let ttsPromptKey = null;
-        function ttsRenderPrompt(pr, flash, waiting) {
+        // ----- листание фраз: ↑ / ↓ и колёсико мыши над суфлёром -----
+        // Ровно на одну фразу в обе стороны. Целевую фразу считаем сразу у себя,
+        // а ответ показываем только последний — при быстром листании без скачков.
+        let ttsPromptPos = null, ttsPromptTotal = 0, ttsPromptSeq = 0, ttsPromptNavAt = 0;
+        async function ttsPromptMove(step) {
+            ttsPromptNavAt = performance.now();
+            if (ttsPromptPos === null) {
+                let pr = await pywebview.api.tts_prompt_move(step);
+                if (pr) ttsRenderPrompt(pr, step < 0 ? 'up' : 'down', null, true);
+                return;
+            }
+            let target = Math.max(0, Math.min(ttsPromptTotal - 1, ttsPromptPos + step));
+            if (target === ttsPromptPos) { ttsPromptEdge(step); return; }
+            ttsPromptPos = target;
+            let seq = ++ttsPromptSeq;
+            let pr = await pywebview.api.tts_prompt_goto(target);
+            if (seq !== ttsPromptSeq || !pr) return;       // уже листнули дальше
+            ttsPromptNavAt = performance.now();
+            ttsRenderPrompt(pr, step < 0 ? 'up' : 'down', null, true);
+        }
+        // Дальше некуда — лёгкий толчок, чтобы было понятно, что это край списка.
+        function ttsPromptEdge(step) {
+            let text = document.getElementById('ttsPromptText');
+            if (!text || !motionOK()) return;
+            let d = step < 0 ? 1 : -1;
+            text.animate([{ transform: 'translateY(0)' }, { transform: `translateY(${8 * d}px)` }, { transform: 'translateY(0)' }],
+                         { duration: 220, easing: 'cubic-bezier(.3,.7,.4,1)' });
+        }
+        // Смена фразы: новая въезжает с той стороны, куда листаем.
+        function ttsPromptAnim(dir) {
+            if (!motionOK()) return;
+            let d = dir === 'up' ? -1 : 1;
+            let text = document.getElementById('ttsPromptText'), next = document.getElementById('ttsPromptNext');
+            [text, next].forEach(el => el && el.getAnimations().forEach(a => a.cancel()));
+            text.animate([{ opacity: 0, transform: `translateY(${34 * d}px) scale(.985)` },
+                          { opacity: 1, transform: 'translateY(0) scale(1)' }],
+                         { duration: 300, easing: 'cubic-bezier(.16,.84,.3,1)' });
+            if (next) next.animate([{ opacity: 0, transform: `translateY(${14 * d}px)` }, { opacity: 1, transform: 'none' }],
+                                   { duration: 360, delay: 40, easing: 'cubic-bezier(.16,.84,.3,1)', fill: 'backwards' });
+        }
+        (function ttsBindPromptWheel() {
+            let box = document.getElementById('ttsPrompter');
+            if (!box) return;
+            let acc = 0, at = 0;
+            box.addEventListener('wheel', e => {
+                if (!tts || !tts.loaded || ttsPttDown) return;
+                if (document.getElementById('stage4-tts').classList.contains('show-assembly')) return;
+                e.preventDefault();
+                acc += e.deltaY || e.deltaX;
+                let now = performance.now();
+                // Щелчок колёсика — одна фраза; тачпад шлёт много мелких — копим.
+                if (Math.abs(acc) < 40 || now - at < 110) return;
+                let dir = acc > 0 ? 1 : -1;
+                acc = 0; at = now;
+                ttsPromptMove(dir);
+            }, { passive: false });
+        })();
+
+        function ttsRenderPrompt(pr, flash, waiting, browse) {
             let text = document.getElementById('ttsPromptText');
             let meta = document.getElementById('ttsPromptMeta');
             let next = document.getElementById('ttsPromptNext');
@@ -7307,12 +7366,13 @@ let isProcessing = false;
                 meta.innerText = ''; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
                 return;
             }
-            if (!pr.done && !pr.left && pr.pending) {
+            if (pr && pr.total) { ttsPromptPos = pr.pos; ttsPromptTotal = pr.total; }
+            if (!browse && !pr.done && !pr.left && pr.pending) {
                 text.innerHTML = '<span class="tts-dim">Всё прочитано — дораспознаю…</span>';
                 meta.innerText = `в очереди ${pr.pending}`; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
                 return;
             }
-            if (pr.done) {
+            if (pr.done && !browse) {
                 text.innerHTML = 'Все фразы прочитаны 🎉';
                 meta.innerText = `${pr.total} из ${pr.total}`;
                 next.innerText = 'Сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить';
@@ -7326,12 +7386,13 @@ let isProcessing = false;
             if (key !== ttsPromptKey) {
                 ttsPromptKey = key;
                 text.innerHTML = pr.resume ? ttsResumeHTML(pr.current[0], pr.resume.k) : line(pr.current);
-                if (flash === 'next' && motionOK()) {
-                    text.classList.remove('is-in'); void text.offsetWidth; text.classList.add('is-in');
-                }
+                text.classList.toggle('is-recorded', pr.here === 'done');
+                if (flash === 'next' || flash === 'down' || flash === 'up') ttsPromptAnim(flash === 'up' ? 'up' : 'down');
             }
             let doneShare = pr.total ? Math.round((pr.total - pr.left) / pr.total * 100) : 0;
-            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}`
+            let here = pr.here === 'done' && !pr.redo_here ? '<span class="tts-here tts-here--done">записана ✓</span> '
+                : pr.here === 'pending' ? '<span class="tts-here tts-here--wait">распознаётся…</span> ' : '';
+            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
                 + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
@@ -7343,11 +7404,6 @@ let isProcessing = false;
                 box.classList.remove('is-restart'); void box.offsetWidth; box.classList.add('is-restart');
 
             }
-        }
-
-        async function ttsPromptMove(step) {
-            let pr = await pywebview.api.tts_prompt_move(step);
-            if (pr) ttsRenderPrompt(pr, 'next');
         }
 
         async function ttsRecStop() {

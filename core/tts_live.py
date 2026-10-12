@@ -898,6 +898,8 @@ class TtsLiveMixin:
             resume = {"unit": part["unit"], "k": part["k"], "word": toks[part["k"]] if part["k"] < len(toks) else ''}
         return {"pos": pos, "total": len(items), "left": left, "done": left == 0 and not pending, "resume": resume, "redo": redo, "pending": len(pending), "lang": self._tts_pos_lang(pos),
                 "redo_here": any(r["pos"] == pos for r in redo_l),
+                # эта фраза: уже записана / распознаётся / ещё читать
+                "here": "pending" if pos in pending else ("todo" if need[pos] else "done"),
                 "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
                 "current": show(items[pos]), "next": show(nxt) if nxt else None}
 
@@ -915,20 +917,14 @@ class TtsLiveMixin:
         return self.tts_prompt_info()
 
     def tts_prompt_move(self, step):
-        """«Назад» — на предыдущую фразу (в т.ч. уже записанную — перечитать);
-        «Пропустить» — на следующую, которую ещё нужно прочитать."""
+        """↑ / ↓ и колёсико: ровно на step фраз назад/вперёд — в обе стороны
+        одинаково, в том числе по уже записанным (раньше ↓ перепрыгивал их)."""
         st = self._tts()
         items = self._tts_prompt_items()
         if not items:
             return None
         pos = st.get("prompt_pos", 0)
-        if step < 0:
-            st["prompt_pos"] = max(0, pos - 1)
-        else:
-            good, pending = self._tts_good_units(), self._tts_pending_pos()
-            nxt = next((k for k in range(pos + 1, len(items))
-                        if k not in pending and self._tts_prompt_needed(items[k], good)), None)
-            st["prompt_pos"] = nxt if nxt is not None else min(len(items) - 1, pos + 1)
+        st["prompt_pos"] = max(0, min(len(items) - 1, pos + int(step)))
         live = getattr(self, '_tts_live', None)
         rec = getattr(self, '_tts_rec', None)
         if live and rec:

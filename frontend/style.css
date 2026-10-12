@@ -3181,3 +3181,11 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-snd__item b{ font-family: var(--font-mono); color: var(--text); min-width: 52px; }
 .tts-snd .btn-ghost[disabled]{ opacity: .4; pointer-events: none; }
 .tts-fs-btn kbd{ margin-left: 2px; }
+
+/* Листание фраз: где уже записано */
+.tts-here{ display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+    border-radius: 999px; padding: 1px 8px; margin-right: 4px; vertical-align: 1px; }
+.tts-here--done{ color: #06281a; background: var(--accent-good); }
+.tts-here--wait{ color: var(--accent-info); border: 1px solid rgba(77,149,234,0.5); }
+.stage-tts.is-prompter .tts-prompter__text.is-recorded{ color: #c9d3cf; }
+.tts-prompter__text{ will-change: transform, opacity; }
