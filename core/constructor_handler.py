@@ -1,10 +1,11 @@
 import os
+import re
 import time
 import json
 import webview
 from pydub import AudioSegment
 from utils.file_utils import FileUtils
-from core.variables_handler import SUM_TIER_ORDER, SUM_TIER_LABELS, SUM_TIER_DEFAULT_DIR, _numeric_sort_key
+from core.variables_handler import SUM_TIER_ORDER, SUM_TIER_LABELS, _numeric_sort_key
 
 
 class ConstructorMixin:
@@ -30,37 +31,127 @@ class ConstructorMixin:
 
         return self._constructor_state()
 
+    @staticmethod
+    def _constructor_detect_lang_dir(name):
+        """«Суммы RU» / «Суммы KZ» — отдельные подпапки для двух языков,
+        каждая со своим полным набором ярусов внутри. Слово RU/KZ ищем как
+        отдельное слово в названии (границы «_»/«-»/пробел), не как
+        подстроку — чтобы не зацепить случайное совпадение."""
+        parts = re.split(r'[_\-\s]+', name.lower())
+        if 'ru' in parts:
+            return 'ru'
+        if 'kz' in parts:
+            return 'kz'
+        return None
+
+    @staticmethod
+    def _constructor_autodetect_tier_dirs(base_dir):
+        """Ищет 5 ярусов внутри папки по словам-маркерам в названии
+        подпапки — так же, как основной режим «Суммы» ищет их в своей
+        папке (см. _build_sum_sequence в variables_handler.py), а не по
+        точному совпадению целой строки. Из-за этого не важно, как именно
+        написан ярус тысяч — «1 - 99 тыс» или «1 - 99 мың» (казахский) —
+        и не ломается, если название на диске чуть отличается от
+        эталонного (лишний пробел, дефис и т.п.)."""
+        try:
+            subdirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+        except OSError:
+            return {}
+
+        assigned = {}
+        remaining = list(subdirs)
+
+        def claim(tier, name):
+            assigned[tier] = name
+            remaining.remove(name)
+
+        match = next((d for d in remaining if 'млн' in d.lower() or 'миллион' in d.lower()), None)
+        if match:
+            claim('millions', match)
+
+        match = next((d for d in remaining if any(k in d.lower() for k in ('тенге', 'kzt', '₸'))), None)
+        if match:
+            claim('tenge', match)
+
+        # «тыс» — русское слово тысяч, «мың» — казахское. Число в названии
+        # отличает «Сотни тысяч» (100 и больше) от обычных «Тысяч».
+        for d in [d for d in remaining if any(k in d.lower() for k in ('тыс', 'мың', 'мын'))]:
+            nums = re.findall(r'\d+', d)
+            tier = 'hundred_thousands' if nums and int(nums[0]) >= 100 else 'thousands'
+            if tier not in assigned:
+                claim(tier, d)
+
+        if 'hundreds' not in assigned and len(remaining) == 1:
+            claim('hundreds', remaining[0])
+
+        return {tier: os.path.join(base_dir, name) for tier, name in assigned.items()}
+
+    def _constructor_scan_tiers(self, base_dir, lang=None):
+        dirs = self._constructor_autodetect_tier_dirs(base_dir)
+        tiers = {}
+        for tier in SUM_TIER_ORDER:
+            sub = dirs.get(tier)
+            files = []
+            if sub and os.path.isdir(sub):
+                files = [os.path.join(sub, f) for f in os.listdir(sub)
+                         if os.path.isfile(os.path.join(sub, f)) and f.lower().endswith(('.wav', '.mp3'))]
+                files.sort(key=_numeric_sort_key)
+            tiers[tier] = files
+        return tiers
+
     def constructor_pick_sum_folder(self):
-        """Шаг 1: папка «Суммы» — та же, что режим «Суммы» создаёт сам,
-        с подпапками-ярусами внутри (по одной на каждый ярус из
-        SUM_TIER_ORDER). Яруса без своей подпапки остаются
-        просто пустыми рулетками, а не ошибкой."""
+        """Шаг 1: папка «Суммы». Поддерживает два формата — либо яруса
+        лежат прямо в выбранной папке (как раньше), либо в ней есть
+        подпапки «Суммы RU» и «Суммы KZ» (по слову RU/KZ в названии), а уже
+        внутри них — яруса каждого языка отдельно. Во втором случае в
+        интерфейсе появляется переключатель RU/KZ (см. constructor_set_lang)."""
         folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not folder:
             return {"error": "cancel"}
 
         root = folder[0]
-        tiers = {}
-        for tier in SUM_TIER_ORDER:
-            sub = os.path.join(root, SUM_TIER_DEFAULT_DIR[tier])
-            files = []
-            if os.path.isdir(sub):
-                files = [os.path.join(sub, f) for f in os.listdir(sub)
-                         if os.path.isfile(os.path.join(sub, f)) and f.lower().endswith(('.wav', '.mp3'))]
-                files.sort(key=_numeric_sort_key)
-            tiers[tier] = files
+        try:
+            subdirs = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
+        except Exception as e:
+            return {"error": f"Ошибка чтения папки: {e}"}
+
+        lang_dirs = {}
+        for d in subdirs:
+            lang = self._constructor_detect_lang_dir(d)
+            if lang and lang not in lang_dirs:
+                lang_dirs[lang] = os.path.join(root, d)
+
+        if not lang_dirs:
+            lang_dirs = {'ru': root}
+
+        lang = 'ru' if 'ru' in lang_dirs else next(iter(lang_dirs))
+        tiers = self._constructor_scan_tiers(lang_dirs[lang], lang)
 
         if not any(tiers.values()):
-            return {"error": "В этой папке не нашлось ни одного яруса «Суммы» "
-                              "(1 - 100 млн, 100 - 900, 1 - 99 тыс, 1 - 100 тенге)."}
+            return {"error": "В этой папке не нашлось ни одного яруса «Суммы» — ни впрямую, ни внутри "
+                              "подпапок «Суммы RU» / «Суммы KZ» (1 - 100 млн, 100 - 900, 1 - 99 тыс/мың, "
+                              "1 - 100 тенге, 100 - 900 тыс/мың)."}
 
         self.constructor_root = root
+        self.constructor_lang_dirs = lang_dirs
+        self.constructor_lang = lang
         self.constructor_tier_files = tiers
         if not hasattr(self, 'constructor_start_file'):
             self.constructor_start_file = None
         if not hasattr(self, 'constructor_end_file'):
             self.constructor_end_file = None
 
+        return self._constructor_state()
+
+    def constructor_set_lang(self, lang):
+        """Переключатель RU/KZ — перечитывает те же 5 ярусов, но уже из
+        другой языковой подпапки, найденной при выборе папки."""
+        lang_dirs = getattr(self, 'constructor_lang_dirs', None) or {}
+        if lang not in lang_dirs:
+            return {"error": f"Папка «Суммы {lang.upper()}» не найдена в выбранной папке."}
+
+        self.constructor_lang = lang
+        self.constructor_tier_files = self._constructor_scan_tiers(lang_dirs[lang], lang)
         return self._constructor_state()
 
     def constructor_pick_start(self):
@@ -79,16 +170,13 @@ class ConstructorMixin:
         self.constructor_end_file = f[0]
         return self._constructor_state()
 
-    def constructor_skip_end(self):
-        """Записи может не быть окончания — тот же случай «только start»,
-        что и в остальном софте."""
-        self.constructor_end_file = None
-        return self._constructor_state()
-
     def _constructor_state(self):
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
+        lang_dirs = getattr(self, 'constructor_lang_dirs', None) or {}
         return {
             "root": getattr(self, 'constructor_root', None),
+            "lang": getattr(self, 'constructor_lang', 'ru'),
+            "lang_available": [l for l in ('ru', 'kz') if l in lang_dirs],
             "start": os.path.basename(self.constructor_start_file) if getattr(self, 'constructor_start_file', None) else None,
             "end": os.path.basename(self.constructor_end_file) if getattr(self, 'constructor_end_file', None) else None,
             "tiers": {
@@ -100,42 +188,78 @@ class ConstructorMixin:
             },
         }
 
-    def _constructor_selected_paths(self, indices):
-        """indices: {tier: int} -> {tier: filepath}, только для реально
-        существующих позиций (рулетка могла отдать индекс мимо списка)."""
+    def _constructor_ordered_segments(self, indices):
+        """Порядок сборки для прослушки/правки — строго как колонки в
+        загруженной таблице-словаре (var_template_columns), если она
+        есть: связки (start, start_2...) на своих местах между
+        категориями.
+
+        Со словарём собираем ОДНУ КОНКРЕТНУЮ СТРОКУ таблицы целиком
+        (_sum_stage2_current_row) — марка, год, суммы берутся ИЗ ОДНОЙ И
+        ТОЙ ЖЕ строки, а не независимо друг от друга: для каждой
+        категории ищем аудио под её значение в этой строке — либо уже
+        готовое (переиспользуем как есть), либо сырое, ещё не
+        сохранённое (_sum_stage2_resolve_value). indices тут не
+        используются — какая строка сейчас активна, решает
+        sum_stage2_jump_to_value/_sum_stage2_advance_row.
+
+        Без словаря (старый чистый «Конструктор» по папке «Суммы» без
+        Excel, ручной выбор на рулетках) — прежнее поведение по indices.
+
+        Возвращает список (key, filepath, saveable) — saveable=True у
+        всего, что нужно экспортировать при «Сохранить эталон» (сырое,
+        ещё не сохранённое для этого значения), False — у связок и у
+        уже готовых значений."""
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
-        result = {}
-        for tier in SUM_TIER_ORDER:
-            files = tiers.get(tier, [])
-            idx = (indices or {}).get(tier)
-            if files and isinstance(idx, int) and 0 <= idx < len(files):
-                result[tier] = files[idx]
-        return result
+        columns = getattr(self, 'var_template_columns', None)
+
+        if not columns:
+            segments = []
+            if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
+                segments.append(('start', self.constructor_start_file, False))
+            for tier in SUM_TIER_ORDER:
+                files = tiers.get(tier, [])
+                idx = (indices or {}).get(tier)
+                if files and isinstance(idx, int) and 0 <= idx < len(files):
+                    segments.append((tier, files[idx], True))
+            if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
+                segments.append(('end', self.constructor_end_file, False))
+            return segments
+
+        connectors_by_key = {c['key']: c.get('path') for c in getattr(self, 'var_connectors', [])}
+        row = self._sum_stage2_current_row()
+        segments = []
+        missing = []
+        for col in columns:
+            if col['type'] == 'connector':
+                path = connectors_by_key.get(col['key'])
+                if path and os.path.exists(path):
+                    segments.append((col['key'], path, False))
+                continue
+
+            key = col['key']
+            value = row.get(key)
+            path, saveable = self._sum_stage2_resolve_value(key, value)
+            if path:
+                segments.append((key, path, saveable))
+            elif value:
+                missing.append(f"{self._category_label(key)}: {value}")
+        self.sum_stage2_missing = missing
+        return segments
 
     def constructor_play(self, indices):
-        """«Играть»: start + выбранные на рулетках значения по всем ярусам
-        (Миллионы→Сотни→Тысячи→Тенге) + end — одной сплошной склейкой."""
-        selected = self._constructor_selected_paths(indices)
-        segments = []
-        if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
-            segments.append(self.constructor_start_file)
-        for tier in SUM_TIER_ORDER:
-            path = selected.get(tier)
-            if path and os.path.exists(path):
-                segments.append(path)
-        if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
-            segments.append(self.constructor_end_file)
-
+        """«Играть»: вся сборка по порядку таблицы одной сплошной склейкой."""
+        segments = self._constructor_ordered_segments(indices)
         if not segments:
             return {"playing": False, "duration": 0, "error": "Нечего проигрывать — выберите значения на рулетках."}
 
         try:
             self.player.stop()
             combined = None
-            for path in segments:
+            for _key, path, _saveable in segments:
                 seg = AudioSegment.from_file(path).set_frame_rate(8000)
                 combined = seg if combined is None else combined + seg
-            temp_path = os.path.join(self.constructor_root, "temp_constructor_preview.wav")
+            temp_path = os.path.join(self.constructor_root, f"temp_constructor_preview_{int(time.time() * 1000)}.wav")
             combined.export(temp_path, format="wav")
             duration = FileUtils.get_exact_audio_duration(temp_path)
             self.player.play(temp_path)
@@ -147,9 +271,13 @@ class ConstructorMixin:
         """«Обновить сумму»: та же сборка, что и «Играть», но кладётся на
         стол Audacity отдельными клипами для ручной правки, а не для
         прослушивания."""
-        selected = self._constructor_selected_paths(indices)
-        if not selected:
-            return {"error": "Выберите хотя бы одно значение на рулетках."}
+        segments = self._constructor_ordered_segments(indices)
+        if not segments:
+            missing = getattr(self, 'sum_stage2_missing', None)
+            if missing:
+                return {"error": "Нет аудио для этой строки таблицы: " + ', '.join(missing) +
+                                  ". Досортируйте сырьё для этих значений или переключитесь на другую строку."}
+            return {"error": "Нет ни одного значения для сборки — проверьте, что сырая сортировка что-то накопила."}
 
         if self._block_if_audacity_ambiguous():
             return {"error": "Открыто несколько окон Audacity — закройте лишние, чтобы продолжить."}
@@ -161,23 +289,13 @@ class ConstructorMixin:
         self.audacity.send_command('NewMonoTrack:')
 
         layout = []
-        cursor = 0.0
-        if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
-            cursor += self._import_clip_to_track0(self.constructor_start_file, cursor)
-            layout.append('start')
-
         active_paths = {}
-        for tier in SUM_TIER_ORDER:
-            path = selected.get(tier)
-            if path and os.path.exists(path):
-                cursor += self._import_clip_to_track0(path, cursor)
-                layout.append(tier)
-                active_paths[tier] = path
-
-        if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
-            self._import_clip_to_track0(self.constructor_end_file, cursor)
-            cursor += FileUtils.get_exact_audio_duration(self.constructor_end_file)
-            layout.append('end')
+        cursor = 0.0
+        for key, path, saveable in segments:
+            cursor += self._import_clip_to_track0(path, cursor)
+            layout.append(key)
+            if saveable:
+                active_paths[key] = path
 
         self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
         self.audacity.send_command(f'SelectTime: Start=0 End={cursor + 5.0} RelativeTo=ProjectStart')

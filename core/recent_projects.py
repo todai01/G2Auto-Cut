@@ -9,7 +9,7 @@ import json
 import os
 import time
 
-RECENTS_DIR = os.path.join(os.path.expanduser('~'), '.g2autocut')
+RECENTS_DIR = os.path.join(os.path.expanduser('~'), '.gvox')
 RECENTS_PATH = os.path.join(RECENTS_DIR, 'recent_projects.json')
 MAX_RECENTS = 8
 
@@ -48,3 +48,12 @@ def list_recent():
     """Отдаёт недавние проекты, чьи папки ещё реально существуют на диске —
     удалённые или перемещённые папки просто не показываем."""
     return [it for it in _read() if it.get('path') and os.path.isdir(it['path'])]
+
+
+def clear():
+    """Очищает список недавних проектов (сами папки проектов не трогает)."""
+    try:
+        if os.path.exists(RECENTS_PATH):
+            os.remove(RECENTS_PATH)
+    except Exception:
+        pass

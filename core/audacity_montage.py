@@ -4,8 +4,10 @@ import time
 import shutil
 import ctypes
 import webview
+from core.ui_dialogs import ui_alert, ui_toast
 from pydub import AudioSegment
 from utils.file_utils import FileUtils
+from utils.wav_io import export_like
 
 class MontageMixin:
     """Модуль работы с монтажным столом Audacity, склейкой и экспортом аудио."""
@@ -126,6 +128,7 @@ class MontageMixin:
         time.sleep(0.5)
         return True
 
+
     def _ensure_audacity_ready(self):
         """Если Audacity закрыт — запускает его и ждёт, пока он начнёт
         отвечать на команды. Без этого первая же команда уходила в пустоту:
@@ -166,12 +169,48 @@ class MontageMixin:
     SWP_NOZORDER = 0x0004
     SWP_FRAMECHANGED = 0x0020
     SWP_SHOWWINDOW = 0x0040
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SW_MINIMIZE = 6
 
     def _get_own_hwnd(self):
+        """Главное окно программы. Ищем по своему процессу, а не по точному
+        заголовку: окно может подхватить заголовок страницы (<title>), и тогда
+        FindWindowW по «GVox | Автосрезка» ничего не находит."""
         try:
-            return ctypes.windll.user32.FindWindowW(None, "G2Studio | Автосрезка")
+            user32 = ctypes.windll.user32
         except Exception:
             return None
+        cached = getattr(self, '_own_hwnd', None)
+        if cached and user32.IsWindow(cached):
+            return cached
+
+        hwnd = None
+        try:
+            from ctypes import wintypes
+            pid = ctypes.windll.kernel32.GetCurrentProcessId()
+            found = []
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def collect(h, _lparam):
+                owner = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(h, ctypes.byref(owner))
+                if owner.value == pid and user32.IsWindowVisible(h) and user32.GetWindowTextLengthW(h) > 0:
+                    r = wintypes.RECT()
+                    user32.GetWindowRect(h, ctypes.byref(r))
+                    found.append(((r.right - r.left) * (r.bottom - r.top), h))
+                return True
+
+            user32.EnumWindows(collect, 0)
+            if found:
+                hwnd = max(found, key=lambda x: x[0])[1]
+        except Exception:
+            hwnd = None
+
+        if not hwnd:
+            hwnd = user32.FindWindowW(None, "GVox | Автосрезка") or None
+        self._own_hwnd = hwnd
+        return hwnd
 
     def embed_audacity(self, x, y, width, height):
         # _embedded_hwnd переживает закрытие самого Audacity (Python-процесс
@@ -272,6 +311,42 @@ class MontageMixin:
         self._embed_orig_style = None
         return True
 
+    def minimize_audacity(self):
+        """При возврате в главное меню сворачивает Audacity, а не просто
+        отсоединяет — unembed_audacity() возвращал окно в обычный вид и
+        выводил его на передний план (нужно, когда пользователь сам жмёт
+        «Отсоединить»), а тут наоборот: не мешать на рабочем столе."""
+        user32 = ctypes.windll.user32
+        hwnd = getattr(self, '_embedded_hwnd', None)
+        if hwnd and user32.IsWindow(hwnd):
+            try:
+                user32.SetParent(hwnd, 0)
+                orig_style = getattr(self, '_embed_orig_style', None)
+                if orig_style is not None:
+                    user32.SetWindowLongW(hwnd, self.GWL_STYLE, orig_style)
+                # Тот же набор флагов, что и в unembed_audacity() (там это
+                # проверенно работает) — важен SWP_SHOWWINDOW: без него
+                # окно иногда оставалось перерисованным «как встроенное»
+                # и ShowWindow(..., SW_MINIMIZE) сразу за этим не срабатывал.
+                user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                                     self.SWP_NOZORDER | self.SWP_FRAMECHANGED |
+                                     self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_SHOWWINDOW)
+            except Exception:
+                pass
+            self._embedded_hwnd = None
+            self._embed_orig_style = None
+            user32.ShowWindow(hwnd, self.SW_MINIMIZE)
+            return {"status": "ok"}
+
+        # Не было вживлено — просто ищем любое открытое окно Audacity и
+        # сворачиваем его тоже, если оно есть.
+        for w in self.get_audacity_windows():
+            try:
+                user32.ShowWindow(w['hwnd'], self.SW_MINIMIZE)
+            except Exception:
+                pass
+        return {"status": "ok"}
+
     def _get_montage_track_idx(self):
         resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
         try:
@@ -338,11 +413,11 @@ class MontageMixin:
         self.audacity.send_command('SelectTracks: Track=1 Mode=Set')
         self.audacity.send_command(f'SelectTime: Start={insert_time} End={current_paste} RelativeTo=ProjectStart')
         self.audacity.send_command('ZoomSel:')
-        webview.windows[0].evaluate_js("alert('Файлы успешно импортированы на монтажную дорожку!');")
+        ui_toast('Файлы импортированы на монтажную дорожку')
 
     def save_separate_parts(self, parts_paths, add_silence):
         if not hasattr(self, 'last_montage_sequence') or not self.last_montage_sequence:
-            webview.windows[0].evaluate_js("alert('Нет данных о загруженных файлах!');")
+            ui_alert('ℹ️ <b>Нет данных о загруженных файлах</b><br><br>Сначала загрузите файлы на монтажную дорожку.')
             return False
 
         response = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
@@ -362,14 +437,14 @@ class MontageMixin:
                 if item.get('track') == m_idx: montage_clips.append(item)
 
         if not montage_clips:
-            webview.windows[0].evaluate_js("alert('Монтажная дорожка пуста!');")
+            ui_alert('ℹ️ <b>Монтажная дорожка пуста</b>')
             return False
 
         montage_clips.sort(key=lambda x: x['start'])
 
         if len(montage_clips) != len(self.last_montage_sequence):
-            webview.windows[0].evaluate_js(
-                f"alert('Ошибка! Вы закинули {len(self.last_montage_sequence)} фрагментов, а на дорожке их {len(montage_clips)}.\\n\\nНе разрезайте аудио на части, скрипт работает по позициям.');")
+            ui_alert(f'❌ <b>Не совпадает число фрагментов</b><br><br>Вы закинули {len(self.last_montage_sequence)}, '
+                     f'а на дорожке их {len(montage_clips)}.<br><br>Не разрезайте аудио на части — скрипт работает по позициям.')
             return False
 
         checked_dir = os.path.join(self.work_dir, 'Проверенные')
@@ -439,7 +514,7 @@ class MontageMixin:
                 try:
                     audio = AudioSegment.from_file(target_path).set_frame_rate(8000)
                     audio += AudioSegment.silent(duration=450, frame_rate=8000)
-                    audio.export(target_path, format="wav")
+                    export_like(audio, target_path, target_path)
                 except:
                     pass
 
@@ -449,8 +524,7 @@ class MontageMixin:
             self.audacity.send_command(f'SelectTracks: Track={m_idx} Mode=Set')
             self.audacity.send_command('SelectTime: Start=0 End=99999 RelativeTo=ProjectStart')
             self.audacity.send_command('Delete:')
-            webview.windows[0].evaluate_js(
-                "alert('Отредактированные фразы успешно вырезаны и сохранены в папку Проверенные (без переменной)!');")
+            ui_toast('Отредактированные фразы вырезаны и сохранены в «Проверенные» (без переменной)')
 
         return self.get_ui_state()
 
@@ -483,7 +557,7 @@ class MontageMixin:
             try:
                 audio = AudioSegment.from_file(target_path).set_frame_rate(8000)
                 audio += AudioSegment.silent(duration=450, frame_rate=8000)
-                audio.export(target_path, format="wav")
+                export_like(audio, target_path, target_path)
             except:
                 pass
         return True
@@ -535,7 +609,7 @@ class MontageMixin:
             else:
                 target_path = FileUtils.get_sorted_path(os.path.join(self.work_dir, 'Переменные'), save_name)
 
-            final_audio.export(target_path, format="wav")
+            export_like(final_audio, target_path, source_path)
 
             if self.phrases_data:
                 self.phrase_index += 1

@@ -1,4 +1,5 @@
 import os
+import time
 import webview
 import sys
 from pydub import AudioSegment
@@ -11,6 +12,13 @@ from core.audacity_montage import MontageMixin
 from core.converter import ConverterMixin
 from core.constructor_handler import ConstructorMixin
 from core.filename_match_handler import FilenameMatchMixin
+from core.table_to_pptx_handler import TableToPptxMixin
+from core.timing_editor import TimingEditorMixin
+from core.auto_check import AutoCheckMixin
+from core.audit_asr import AuditAsrMixin
+from core.tts_flow import TtsFlowMixin
+from core.tts_live import TtsLiveMixin
+from core.tts_synth import TtsSynthMixin
 from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
@@ -24,7 +32,7 @@ from utils.ffmpeg_setup import ensure_ffmpeg
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin):
     def __init__(self):
         super().__init__()
 
@@ -61,35 +69,14 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
 
         file_to_play = None
 
-        # 0. РЕЖИМ «СУММЫ»: проигрываем всю накопленную цепочку целиком —
-        # уже сохранённые ярусы + тот, над которым сейчас работаем — без
-        # пауз между ними, а не только то, что видно на экране сейчас.
-        # Работает и поверх обычной нарезки, и внутри конвейера «Готовые
-        # переменные», поэтому проверяем это раньше остальных режимов.
-        if getattr(self, 'sum_manual_active', False):
-            segments = self._sum_full_preview_segments()
-            if not segments:
-                return {"playing": False, "duration": 0}
-            try:
-                self.player.stop()
-                combined = None
-                markers = []
-                cursor = 0.0
-                for seg in segments:
-                    clip = AudioSegment.from_file(seg['path']).set_frame_rate(8000)
-                    dur = len(clip) / 1000.0
-                    if seg['label']:
-                        markers.append({"label": seg['label'], "start": cursor, "end": cursor + dur})
-                    combined = clip if combined is None else combined + clip
-                    cursor += dur
-                temp_path = os.path.join(self.work_dir, "temp_sum_preview.wav")
-                combined.export(temp_path, format="wav")
-                duration = FileUtils.get_exact_audio_duration(temp_path)
-                self.player.play(temp_path)
-                return {"playing": True, "duration": duration, "segments": markers, "source": "chain"}
-            except Exception as e:
-                print(f"Ошибка склейки превью (Суммы): {e}")
-                return {"playing": False, "duration": 0}
+        # Раньше здесь был отдельный блок для режима «Суммы»: Space/A/D
+        # проигрывали не текущий дубль, а склеенную цепочку из уже
+        # сохранённых ярусов — и пока не сохранён ни один ярус (самое
+        # начало разбора), играть было нечего, поэтому клавиши листали
+        # дубли молча. Прослушать собранную цепочку по-прежнему можно —
+        # кнопкой «Играть выбранное на рулетках» (constructor_play), у неё
+        # свой путь. Здесь же дубль должен звучать как в любом другом
+        # режиме — именно тот, что сейчас на экране.
 
         # 1. ЛОГИКА ДЛЯ РЕЖИМА ПЕРЕМЕННЫХ (VarBatch)
         if self.current_mode == 'VarBatch':
@@ -258,6 +245,15 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
             return {"playing": True, "duration": duration, "source": "saved"}
         return {"playing": False, "duration": 0}
 
+    def toggle_fullscreen(self):
+        """Полный экран (F11 или кнопка ⛶) — и обратно."""
+        try:
+            webview.windows[0].toggle_fullscreen()
+            self._fullscreen = not getattr(self, '_fullscreen', False)
+        except Exception as e:
+            return {"error": f"Не удалось переключить полный экран: {e}"}
+        return {"fullscreen": self._fullscreen}
+
     def stop_audio(self):
         """Остановка плеера"""
         self.player.stop()
@@ -372,17 +368,6 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
         # одного только Excel фронтенд получал пустой ответ (None) и ничего не обновлял.
         return state
 
-    def to_view(self):
-        """Единая точка получения состояния экрана.
-
-        Раньше фронтенд должен был знать, что для обычного режима нужен
-        get_ui_state(), а для режима переменных — свой отдельный сборщик.
-        Внутри всё та же логика (она пока не трогалась, чтобы ничего не
-        сломать), но теперь есть одно имя, за которым можно спрятать оба
-        сборщика и любые будущие. Поле "screen" в ответе говорит, какой
-        именно экран пришёл: "main" или "varbatch"."""
-        return self.get_ui_state()
-
     # Регистр действий основного рабочего экрана для dispatch(). Каждая
     # запись — это имя действия и функция, которая достаёт аргументы из
     # payload и вызывает уже существующий, проверенный метод. Сами методы
@@ -488,7 +473,7 @@ if __name__ == '__main__':
 
     html_path = resource_path('frontend/index.html')
 
-    window = webview.create_window('G2Studio | Автосрезка', html_path, js_api=api, width=1600, height=980)
+    window = webview.create_window('GVox | Автосрезка', html_path, js_api=api, width=1600, height=980)
     # Если Audacity был вживлён в окно софта, при закрытии его нужно вернуть
     # обратно отдельным окном — иначе он останется «сиротой» без родителя.
     window.events.closing += lambda: api.unembed_audacity()

@@ -222,6 +222,10 @@ class PhrasesMixin:
         self.excel_name = os.path.basename(self.pending_excel_path)
         self.phrases_data = parsed
         self.phrase_index = 0
+        # Откуда взяты фразы — для «таблицы недостающих» после аудита.
+        self.excel_path = self.pending_excel_path
+        self.excel_cols = [int(i) for i in indexes]
+        self.excel_header_row = header_row
 
         state = self.get_ui_state()
         if isinstance(state, dict):
