@@ -4435,11 +4435,20 @@ let isProcessing = false;
             if (e.code === 'F11') { e.preventDefault(); toggleFullscreen(); }
             // «Сборка» открыта: Ctrl+Z — отменить шаг, Ctrl+Y / Ctrl+Shift+Z — вернуть.
             // По коду клавиши — работает и в русской раскладке (Ctrl+Я).
-            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.code === 'KeyY') && ttsEd
+            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.code === 'KeyY')
                 && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
                 && document.getElementById('stage4-tts').classList.contains('show-assembly')) {
                 e.preventDefault();
-                ttsEdUndo(e.code === 'KeyY' || e.shiftKey);
+                if (e.code === 'KeyY' || e.shiftKey) { if (ttsEd) ttsEdUndo(true); }
+                else ttsUndoAny();               // срезка или удалённый дубль — что было последним
+            }
+            // Экран записи (не «Сборка»): Ctrl+Z — вернуть удалённый дубль.
+            else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && !e.shiftKey && tts && tts.loaded
+                && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
+                && isShown('stage4-tts') && !document.getElementById('stage4-tts').classList.contains('show-assembly')
+                && !['ttsVarsOverlay', 'ttsListOverlay', 'ttsMarkOverlay'].some(id => document.getElementById(id).style.display === 'flex')) {
+                e.preventDefault();
+                ttsUndoDelete();
             }
         });
 
@@ -6202,7 +6211,7 @@ let isProcessing = false;
                     <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
                     <button class="btn-tile btn-tile--good" onclick="ttsApprove()" ${u ? '' : 'disabled'}>Сохранить <kbd>Enter</kbd></button>
                     <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
-                    <button class="btn-tile btn-tile--sub" onclick="ttsReject()">${t.rejected ? 'Вернуть дубль' : 'Плохой дубль'} <kbd>Del</kbd></button>
+                    <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль с дорожки. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>
 `;
         }
@@ -6239,7 +6248,7 @@ let isProcessing = false;
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
                     ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span>
-                    <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc)">Закрыть <kbd>Esc</kbd></button></div>
+                    <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-blocks">${blocks}</div>
                 <div class="tts-ed">
                     <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
@@ -6579,7 +6588,7 @@ let isProcessing = false;
         function ttsEdRemember(label, snap) {
             let h = ttsEdHistOf();
             if (!h) return;
-            h.undo.push({ label, clips: snap || ttsEdSnap() });
+            h.undo.push({ label, clips: snap || ttsEdSnap(), seq: ++ttsActSeq });
             if (h.undo.length > TTS_ED_HIST_MAX) h.undo.shift();
             h.redo = [];                                 // новое действие — «вернуть» больше нечего
             ttsEdHistButtons();
@@ -6595,7 +6604,7 @@ let isProcessing = false;
             let from = h && (redo ? h.redo : h.undo), to = h && (redo ? h.undo : h.redo);
             if (!from || !from.length) { showToast(redo ? 'Возвращать нечего' : 'Отменять нечего'); return; }
             let step = from.pop();
-            to.push({ label: step.label, clips: ttsEdSnap() });
+            to.push({ label: step.label, clips: ttsEdSnap(), seq: ++ttsActSeq });
             step.clips.forEach((sn, k) => {
                 let c = ttsEd.clips[k];
                 if (c) { c.a = sn.a; c.b = sn.b; c.pos = sn.pos; c.cuts = sn.cuts.map(x => [...x]); }
@@ -6818,12 +6827,39 @@ let isProcessing = false;
             ], { duration: 520, easing: 'cubic-bezier(.4,0,.2,1)' }).onfinish = () => ghost.remove();
         }
 
+        // Удалить дубль с дорожки: файл и сохранённая из него фраза уходят,
+        // суфлёр — обратно к этой фразе. Ctrl+Z возвращает.
+        // Порядок действий для Ctrl+Z в «Сборке»: срезка и удаление дубля — по очереди, последнее первым.
+        let ttsActSeq = 0, ttsDelSeqs = [];
+        function ttsUndoAny() {
+            let h = ttsEd && ttsEdHistOf();
+            let edSeq = h && h.undo.length ? (h.undo[h.undo.length - 1].seq || 0) : -1;
+            let delSeq = ttsDelSeqs.length ? ttsDelSeqs[ttsDelSeqs.length - 1] : -1;
+            if (delSeq > edSeq || (edSeq < 0 && delSeq < 0)) ttsUndoDelete();
+            else ttsEdUndo(false);
+        }
         async function ttsReject() {
             let t = ttsCurTake();
             if (!t) return;
             await ttsStopPlay();
-            tts = await pywebview.api.tts_reject(t.i);
+            let res = await pywebview.api.tts_take_delete(t.i);
+            if (!res || res.error) { if (res && res.error) showToast(res.error); return; }
+            tts = res;
+            ttsDelSeqs.push(++ttsActSeq);
             ttsRender();
+            ttsLoadPrompt();
+            showToast(`Удалён: ${res.deleted} — Ctrl+Z вернёт`);
+        }
+        async function ttsUndoDelete() {
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_take_undo_delete();
+            if (!res) return;
+            if (res.error) { ttsDelSeqs = []; showToast(res.error); return; }
+            tts = res;
+            ttsDelSeqs.pop();
+            ttsRender();
+            ttsLoadPrompt();
+            showToast(`Вернул: ${res.restored}`);
         }
 
         // ----- список фраз: все / не найдено / привязка дубля / переменные -----
@@ -8087,6 +8123,17 @@ let isProcessing = false;
             ttsShowAssembly(true);
             ttsTogglePlay();
         }
+
+        // «Сборка» открыта: клик по пустому месту вне карточек — закрыть и вернуться к записи.
+        // Ловим нажатие раньше всех (capture), чтобы клик по суфлёру не начал запись.
+        document.addEventListener('mousedown', e => {
+            let stage = document.getElementById('stage4-tts');
+            if (e.button !== 0 || !stage || !stage.classList.contains('show-assembly') || !stage.contains(e.target)) return;
+            if (e.target.closest('.tts-current, .tts-assembly, .tts-rail-wrap, .tts-header, button, input, select, textarea, a, label')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            ttsShowAssembly(false);
+        }, true);
 
         function ttsShowAssembly(on) {
             let stage = document.getElementById('stage4-tts');

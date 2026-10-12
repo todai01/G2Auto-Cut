@@ -48,6 +48,7 @@ TTS_CHUNKS_DIR = 'Чанки'
 TTS_DONE_DIR = 'Проверенные'
 TTS_VAR_DIR = 'Фразы_Переменные'
 TTS_TRASH_DIR = '_Корзина'
+TTS_UNDO_DIR = '.gvox_undo'        # удалённые дубли — до Ctrl+Z (служебная, чистится при открытии)
 TTS_VALUES_DIR = 'Значения'   # готовые значения переменных: Значения/<лист>/<категория>/<значение>.wav
 TTS_CUT_PAD_MS = 150
 TTS_OK_SCORE = 0.80       # дубль «зелёный» — совпал с текстом
@@ -377,6 +378,8 @@ class TtsFlowMixin:
 
     def tts_state(self):
         st = self._tts()
+        if any(t.get("rejected") for t in st["takes"]):
+            self._tts_purge_rejected()
         units = st["units"]
         wd = st.get("work_dir")
         saved = {u["id"]: bool(wd) and os.path.exists(self._tts_target(u)) for u in units}
@@ -518,6 +521,8 @@ class TtsFlowMixin:
             return None
         if st.get("work_dir") and os.path.normpath(st["work_dir"]) == root:
             return None                                   # уже работаем здесь
+        self._tts_del_stack = []                          # другой проект — старые удалённые не вернуть
+        shutil.rmtree(os.path.join(root, TTS_UNDO_DIR), ignore_errors=True)
         cur_excel, cur_sheet = st.get("excel_path"), st.get("sheet")
         res = self.tts_open_project(root)
         if res.get("error"):
@@ -974,18 +979,90 @@ class TtsFlowMixin:
         return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"]}
 
     def tts_reject(self, i):
-        """«Плохой дубль» — убрать из очереди (файл чанка остаётся)."""
+        """Прежняя «Плохой дубль» — теперь удаление (Ctrl+Z возвращает)."""
+        return self.tts_take_delete(i)
+
+    def tts_take_delete(self, i):
+        """Удалить дубль с дорожки. Если фраза была сохранена именно из него —
+        сохранённый файл тоже уходит: фразу можно записать заново. Суфлёр
+        возвращается к этой фразе. Ctrl+Z — вернуть всё как было."""
         st = self._tts()
-        if 0 <= i < len(st["takes"]):
-            st["takes"][i]["rejected"] = not st["takes"][i].get("rejected")
-            if st["takes"][i]["rejected"]:
-                # Забраковали попытку — сразу предлагаем предыдущую попытку той же фразы.
-                uid = st["takes"][i].get("unit")
-                prev = [k for k in range(i) if uid is not None and st["takes"][k].get("unit") == uid
-                        and not st["takes"][k].get("rejected")]
-                st["index"] = prev[-1] if prev else self._tts_next(i)
-            self._tts_save()
-        return self.tts_state()
+        if not (0 <= i < len(st["takes"])):
+            return self.tts_state()
+        t = st["takes"][i]
+        wd = st.get("work_dir")
+        rec = {"take": dict(t), "i": i, "index": st.get("index", 0), "prompt_pos": st.get("prompt_pos"),
+               "moves": []}
+        stash = os.path.join(wd, TTS_UNDO_DIR) if wd else None
+
+        def hide(path):
+            if not stash or not path or not os.path.exists(path):
+                return
+            os.makedirs(stash, exist_ok=True)
+            self._tts_undo_n = getattr(self, '_tts_undo_n', 0) + 1
+            dst = os.path.join(stash, f"{self._tts_undo_n:05d}_{os.path.basename(path)}")
+            shutil.move(path, dst)
+            rec["moves"].append((path, dst))
+        if wd and t.get("file") and not any(o is not t and o.get("file") == t["file"] for o in st["takes"]):
+            hide(os.path.join(wd, t["file"]))
+        if wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
+            hide(self._tts_target(st["units"][t["unit"]]))
+        del st["takes"][i]
+        st["index"] = max(0, min(i, len(st["takes"]) - 1))
+        if t.get("unit") is not None and hasattr(self, '_tts_prompt_items'):
+            pos = next((k for k, ids in enumerate(self._tts_prompt_items()) if t["unit"] in ids), None)
+            if pos is not None:
+                self._tts_prompt_fix(start=pos)       # суфлёр — обратно к этой фразе
+        stack = self.__dict__.setdefault('_tts_del_stack', [])
+        stack.append(rec)
+        del stack[:-100]
+        self._tts_save()
+        u = st["units"][t["unit"]]["name"] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
+        return {**self.tts_state(), "deleted": u or 'дубль', "can_undo": True}
+
+    def tts_take_undo_delete(self):
+        """Ctrl+Z: вернуть последний удалённый дубль (и сохранённую из него фразу)."""
+        st = self._tts()
+        stack = getattr(self, '_tts_del_stack', None)
+        if not stack:
+            return {**self.tts_state(), "error": "Нечего возвращать."}
+        rec = stack.pop()
+        for orig, dst in reversed(rec["moves"]):
+            if os.path.exists(dst) and not os.path.exists(orig):
+                os.makedirs(os.path.dirname(orig), exist_ok=True)
+                shutil.move(dst, orig)
+        i = max(0, min(rec["i"], len(st["takes"])))
+        st["takes"].insert(i, rec["take"])
+        st["index"] = i
+        if rec.get("prompt_pos") is not None:
+            st["prompt_pos"] = rec["prompt_pos"]
+        self._tts_save()
+        t = rec["take"]
+        u = st["units"][t["unit"]]["name"] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
+        return {**self.tts_state(), "restored": u or 'дубль', "can_undo": bool(stack)}
+
+    def _tts_purge_rejected(self):
+        """Старые «зачёркнутые» дубли (прежняя «Плохой дубль») — убрать с
+        дорожки: файлы в «_Корзина», сохранённая из них фраза тоже."""
+        st = self._tts()
+        bad = [t for t in st["takes"] if t.get("rejected")]
+        if not bad:
+            return
+        wd = st.get("work_dir")
+        for t in bad:
+            try:
+                if wd and t.get("file") and os.path.exists(os.path.join(wd, t["file"])):
+                    self._tts_trash(os.path.join(wd, t["file"]))
+                if wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
+                    target = self._tts_target(st["units"][t["unit"]])
+                    if os.path.exists(target):
+                        self._tts_trash(target)
+            except OSError:
+                pass
+        cur = st["takes"][st["index"]] if st["takes"] and st.get("index", 0) < len(st["takes"]) else None
+        st["takes"] = [t for t in st["takes"] if not t.get("rejected")]
+        st["index"] = st["takes"].index(cur) if cur in st["takes"] else max(0, min(st.get("index", 0), len(st["takes"]) - 1))
+        self._tts_save()
 
     def tts_unapprove(self, unit_id):
         st = self._tts()
