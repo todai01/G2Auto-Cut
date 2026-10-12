@@ -1452,6 +1452,19 @@
         </div>
     </div>
 
+    <div id="ttsMarkOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsMkClose()">
+        <div class="custom-alert-box tts-mk-box">
+            <div class="modal-head">
+                <h3 class="modal-title" id="ttsMkTitle">Живые слова</h3>
+                <button class="modal-close" onclick="ttsMkClose()" title="Закрыть (Esc)">&times;</button>
+            </div>
+            <div class="tts-mk-hint">Выделите мышью слово на дорожке и нажмите, что это. Края выделения можно тянуть.</div>
+            <div class="tts-mk-wave" id="ttsMkWave"><canvas id="ttsMkCanvas"></canvas></div>
+            <div class="tts-mk-forms" id="ttsMkForms"></div>
+            <div class="tts-mk-bar" id="ttsMkBar"></div>
+        </div>
+    </div>
+
     <div id="ttsListOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsCloseList()">
         <div class="custom-alert-box tts-list-box">
             <div class="modal-head">

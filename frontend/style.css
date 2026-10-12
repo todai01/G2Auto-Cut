@@ -3223,3 +3223,16 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-syn__word.is-ok{ color: var(--accent-good); border-style: solid; border-color: color-mix(in srgb, var(--accent-good) 45%, transparent); padding: 1px 4px; }
 .tts-syn__word button{ font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 2px 5px; border-radius: 999px; }
 .tts-syn__word button:hover{ background: var(--screen); }
+
+/* разметка живых слов */
+.custom-alert-box.tts-mk-box{ width: min(1100px, 94vw); max-width: none; text-align: left; display: flex; flex-direction: column; gap: 12px; }
+.tts-mk-box .modal-head{ margin-bottom: 0; }
+.tts-mk-forms .chip-mode--active.tts-mk-done{ color: inherit; }
+.tts-mk-hint{ font-size: var(--fs-sm); color: var(--text-dim); }
+.tts-mk-wave{ border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--screen); }
+.tts-mk-wave canvas{ display: block; width: 100%; height: 170px; cursor: crosshair; }
+.tts-mk-forms, .tts-mk-bar{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.tts-mk-forms .chip[disabled]{ opacity: .45; pointer-events: none; }
+.tts-mk-forms kbd{ font-size: 10px; opacity: .7; margin-right: 2px; }
+.tts-mk-done{ color: var(--accent-good); }
+.tts-mk-bar .btn-ghost[disabled]{ opacity: .35; pointer-events: none; }

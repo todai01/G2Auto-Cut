@@ -11,8 +11,8 @@
   3. Робот открывает сервис (Chrome за краем экрана, как в G2Synth), вкладка
      «Клонирование»: язык, файл эталона, текст эталона, текст суммы →
      «Синтезировать» → скачивает результат.
-     Гибрид (по умолчанию): слова «миллион», «тысяча», «тенге» — живые, их
-     вырезаем из эталона (и из доп. записей); на сервис уходят только числа
+     Гибрид (по умолчанию): слова «миллион», «тысяча», «тенге» — живые: вы
+     сами выделяете их на дорожке эталона (и доп. записей); на сервис уходят только числа
      («два», «двести две», «два»), потом всё склеивается в одну сумму.
   4. Вы слушаете; не понравилось — пересинтез; понравилось — «Одобрить»:
      тишина по краям обрезается, файл ложится в «Синтез_суммы_RU/» (или _KZ).
@@ -24,7 +24,10 @@
 import collections
 import os
 import shutil
+import subprocess
+import tempfile
 import threading
+import wave
 import time
 
 import webview
@@ -32,6 +35,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_leading_silence
 
 from core.num_words import kz_words, ru_words
+from utils.audio_player import _read_audio, resample
 from utils.wav_io import wav_layout, wav_slice
 
 SYNTH_URL = 'http://ia-app5-lp3:3124/'
@@ -142,6 +146,56 @@ def synth_plan(text, lang, bank):
         else:
             plan.append(['synth', t])
     return plan
+
+
+def _write_pcm16(dst, x, rate):
+    """float [-1..1] (кадры или кадры×каналы) → обычный WAV 16 бит."""
+    import numpy as np
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 1:
+        x = x[:, None]
+    peak = float(np.abs(x).max()) if x.size else 0.0
+    if peak > 0.98:                                   # без перегруза
+        x = x * (0.98 / peak)
+    pcm = np.round(x * 32767).astype('<i2')
+    with wave.open(dst, 'wb') as w:
+        w.setnchannels(x.shape[1])
+        w.setsampwidth(2)
+        w.setframerate(int(rate))
+        w.writeframes(pcm.tobytes())
+
+
+def clean_wav(src, dst):
+    """Ответ сервиса → обычный WAV 16 бит без «сюрпризов». Сервисы синтеза
+    часто отдают WAV «потоком» (размер в заголовке 0 или FFFFFFFF), float
+    32 бит или MP3 — такой файл проигрыватель Windows читает с ошибками:
+    треск, обрывы, «робот». Декодирует ffmpeg; нет его — читаем сами."""
+    ff = getattr(AudioSegment, 'converter', None) or 'ffmpeg'
+    try:
+        subprocess.run([ff, '-y', '-v', 'error', '-i', src, '-c:a', 'pcm_s16le', dst], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), timeout=60)
+        if wav_layout(dst) and os.path.getsize(dst) > 100:
+            return
+    except Exception:
+        pass
+    x, rate = _read_audio(src)
+    _write_pcm16(dst, x, rate)
+
+
+def _mono(path):
+    """(float32 моно, частота)."""
+    x, rate = _read_audio(path)
+    return (x.mean(axis=1) if x.shape[1] > 1 else x[:, 0]).astype('float32'), rate
+
+
+def _frames_rms(x, rate, ms=5):
+    import numpy as np
+    n = max(1, int(rate * ms / 1000))
+    k = len(x) // n
+    if not k:
+        return np.zeros(0), n
+    return np.sqrt((x[:k * n].reshape(k, n) ** 2).mean(axis=1) + 1e-12), n
 
 
 class _SynthWorker(threading.Thread):
@@ -322,7 +376,7 @@ class TtsSynthMixin:
                     "approved": sum(1 for it in sy["items"] if it["status"] == "approved"),
                     "queue": len(w.jobs) + (1 if w and w.current is not None else 0) if w else 0,
                     "folder": self._synth_dir(), "hybrid": sy.get("hybrid", True),
-                    "words": self._synth_words_info(sy), "words_busy": bool(getattr(self, '_synth_words_busy', False))}
+                    "words": self._synth_words_info(sy)}
 
     def _synth_words_info(self, sy):
         """Нужные формы слов (по текстам сумм) и какие из них уже есть живыми."""
@@ -366,7 +420,6 @@ class TtsSynthMixin:
         with self._synth_lock():
             self._synth_lang(self._synth())["etalon"] = dst
         self._tts_save()
-        self.tts_synth_words_find()                       # сразу ищем в нём живые слова
         return self.tts_synth_state()
 
     def tts_synth_setup(self, lang=None, logic=None, etalon_text=None, hybrid=None):
@@ -558,56 +611,102 @@ class TtsSynthMixin:
                 page.remove_listener("download", handler)
             except Exception:
                 pass
-        if wav_layout(raw):
-            os.replace(raw, dst)                     # WAV — как есть, без перекодирования
-        else:
+        try:
+            clean_wav(raw, dst)
+        finally:
             try:
-                AudioSegment.from_file(raw).export(dst, format="wav")
-            finally:
-                try:
-                    os.remove(raw)
-                except OSError:
-                    pass
+                os.remove(raw)
+            except OSError:
+                pass
 
     # ---------------- гибрид: живые слова ----------------
 
     @staticmethod
-    def _seg_trim(seg, lead=15, tail=30):
+    def _trim_voice(x, rate, lead=15, tail=30):
         """Срезать тишину по краям синтезированного куска — почти вплотную."""
-        if not len(seg) or seg.max_dBFS == float('-inf'):
-            return seg
-        thr = max(-50.0, seg.max_dBFS - 35.0)
-        a = detect_leading_silence(seg, silence_threshold=thr, chunk_size=5)
-        b = len(seg) - detect_leading_silence(seg.reverse(), silence_threshold=thr, chunk_size=5)
-        if b - a < 40:
-            return seg
-        return seg[max(0, a - lead):min(len(seg), b + tail)]
+        import numpy as np
+        e, n = _frames_rms(x, rate)
+        if not len(e):
+            return x
+        db = 20 * np.log10(e)
+        thr = max(-50.0, float(db.max()) - 35.0)
+        on = np.nonzero(db > thr)[0]
+        if not len(on):
+            return x
+        a = max(0, on[0] * n - int(rate * lead / 1000))
+        b = min(len(x), (on[-1] + 1) * n + int(rate * tail / 1000))
+        return x[a:b] if b - a > rate * 0.04 else x
+
+    @staticmethod
+    def _rms_voice(x, rate):
+        """Громкость голоса (без пауз) — для выравнивания кусков между собой."""
+        import numpy as np
+        e, _n = _frames_rms(x, rate, 20)
+        if not len(e):
+            return 0.0
+        loud = e[e > e.max() * 0.1]
+        return float(np.sqrt((loud ** 2).mean())) if len(loud) else 0.0
 
     @classmethod
     def _synth_glue(cls, parts, dst):
-        """Склейка: синтезированные числа + живые слова. Числа приводим к
-        формату и громкости живых слов (голос диктора — эталон)."""
-        segs = [(kind, AudioSegment.from_file(path), gap) for kind, path, gap in parts]
-        live = [sg for kind, sg, _g in segs if kind == 'live' and len(sg) and sg.dBFS != float('-inf')]
-        ref = live[0] if live else segs[0][1]
-        target = sum(sg.dBFS for sg in live) / len(live) if live else None
-        out, prev = None, None
-        for kind, sg, gap in segs:
-            sg = sg.set_frame_rate(ref.frame_rate).set_channels(ref.channels).set_sample_width(ref.sample_width)
-            if kind == 'synth':
-                sg = cls._seg_trim(sg)
-                if target is not None and sg.dBFS != float('-inf'):
-                    sg = sg.apply_gain(max(-12.0, min(12.0, target - sg.dBFS)))
-            if out is None:
-                out = AudioSegment.silent(60, frame_rate=ref.frame_rate) + sg
-            elif prev[0] == 'synth' and kind == 'live':
-                out = out.append(sg, crossfade=max(1, min(GLUE_XFADE_MS, len(sg) // 4, len(out) // 4)))
+        """Склейка: синтезированные числа + живые слова. Без перекодирования
+        «на глаз»: частоту пересчитываем качественно (иначе — металл и
+        «робот»), числа подгоняем по громкости к живому голосу."""
+        import numpy as np
+        loaded = []
+        for kind, path, gap in parts:
+            x, rate = _mono(path)
+            loaded.append([kind, x, rate, gap])
+        live = [p for p in loaded if p[0] == 'live']
+        rate = (live[0] if live else loaded[0])[2]
+        for p in loaded:
+            if p[2] != rate:
+                p[1] = resample(p[1][:, None], p[2], rate)[:, 0]
+            if p[0] == 'synth':
+                p[1] = cls._trim_voice(p[1], rate)
+        target = np.mean([cls._rms_voice(p[1], rate) for p in live]) if live else 0.0
+        if target > 0:
+            for p in loaded:
+                if p[0] == 'synth':
+                    r = cls._rms_voice(p[1], rate)
+                    if r > 0:
+                        p[1] = p[1] * float(np.clip(target / r, 0.25, 4.0))
+        sil = lambda ms: np.zeros(int(rate * ms / 1000), dtype=np.float32)
+        out, prev = sil(60), None
+        for kind, x, _r, gap in loaded:
+            if prev is not None and prev[0] == 'synth' and kind == 'live':
+                n = int(min(rate * GLUE_XFADE_MS / 1000, len(x) // 4, len(out) // 4))
+                if n > 1:                             # перекрёстная склейка равной мощности
+                    t = np.linspace(0, np.pi / 2, n, dtype=np.float32)
+                    mix = out[-n:] * np.cos(t) + x[:n] * np.sin(t)
+                    out = np.concatenate([out[:-n], mix, x[n:]])
+                else:
+                    out = np.concatenate([out, x])
             else:
-                pause = prev[1] if prev[0] == 'live' and prev[1] is not None else GLUE_GAP_MS
-                out += AudioSegment.silent(int(pause), frame_rate=ref.frame_rate) + sg
+                if prev is not None:
+                    pause = prev[1] if prev[0] == 'live' and prev[1] is not None else GLUE_GAP_MS
+                    out = np.concatenate([out, sil(pause)])
+                out = np.concatenate([out, x])
             prev = (kind, gap)
-        out += AudioSegment.silent(90, frame_rate=ref.frame_rate)
-        out.export(dst, format="wav")
+        _write_pcm16(dst, np.concatenate([out, sil(90)]), rate)
+
+    @staticmethod
+    def _gap_after(x, rate, b_ms):
+        """Пауза диктора после слова: до начала следующего звука (не дальше 250 мс)."""
+        import numpy as np
+        e, n = _frames_rms(x, rate)
+        if not len(e):
+            return None
+        thr = e.max() * 10 ** (-30 / 20)
+        i0 = int(b_ms * rate / 1000) // n
+        win = e[i0:i0 + int(450 / 5)] > thr
+        quiet = np.nonzero(~win)[0]                  # сначала дослушать хвост самого слова
+        if not len(quiet):
+            return None
+        nxt = np.nonzero(win[quiet[0]:])[0]
+        if not len(nxt):
+            return None
+        return int(max(20, min(250, (quiet[0] + nxt[0]) * 5)))
 
     @staticmethod
     def _word_cut(seg, s_ms, e_ms):
@@ -628,77 +727,139 @@ class TtsSynthMixin:
         b = quiet_near(e_ms - 30, e_ms + 140, e_ms)
         return a, max(b, a + 60)
 
-    def tts_synth_words_find(self, extra=False):
-        """Найти живые слова: в эталоне или (extra) в любой другой записи
-        диктора, где сказаны нужные формы («миллиона», «тысяч»…). Распознавание
-        (Whisper) идёт в фоне — по готовности придёт событие."""
+    # ---------------- ручная разметка живых слов ----------------
+
+    def tts_synth_marker_open(self, extra=False):
+        """Открыть дорожку записи для ручной разметки: эталон или (extra)
+        другая запись диктора, где есть нужные формы слов."""
         with self._synth_lock():
             sy = self._synth()
             cur = self._synth_lang(sy)
             lang = sy["lang"]
-            if getattr(self, '_synth_words_busy', False):
-                return {"error": "Уже ищу слова — подождите."}
-            if extra:
-                picked = webview.windows[0].create_file_dialog(
-                    webview.FileDialog.OPEN, file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
-                if not picked:
-                    return {"error": "cancel"}
-                path, hint = (picked if isinstance(picked, str) else picked[0]), ''
-            else:
-                path, hint = cur.get("etalon"), cur.get("etalon_text", '')
-                if not path or not os.path.exists(path):
-                    return {"error": "Сначала выберите эталон."}
-            self._synth_words_busy = True
-        threading.Thread(target=self._synth_words_run, args=(path, hint, lang), daemon=True).start()
-        self._synth_push(message="Ищу живые слова в записи…")
-        return self.tts_synth_state()
+        if extra:
+            picked = webview.windows[0].create_file_dialog(
+                webview.FileDialog.OPEN, file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+            if not picked:
+                return {"error": "cancel"}
+            src = picked if isinstance(picked, str) else picked[0]
+            rec_dir = self._synth_dir(SYNTH_WORDS, '_записи', lang=lang)
+            os.makedirs(rec_dir, exist_ok=True)
+            path = os.path.join(rec_dir, os.path.basename(src))
+            if os.path.abspath(src) != os.path.abspath(path):
+                shutil.copy2(src, path)                  # чтобы не потерялась
+        else:
+            path = cur.get("etalon")
+            if not path or not os.path.exists(path):
+                return {"error": "Сначала выберите эталон."}
+        return self._synth_marker_load(path, lang)
 
-    def _synth_words_run(self, path, hint, lang):
-        try:
-            found = self._synth_words_extract(path, hint, lang)
-            if found:
-                msg = "Живые слова: " + ", ".join(found)
-            else:
-                msg = None
-                self._synth_push(error="В записи не нашёл ни «миллион», ни «тысяч», ни «тенге». "
-                                       "Проверьте язык и текст эталона.")
-        except Exception as e:
-            msg = None
-            self._synth_push(error=f"Не удалось найти слова: {e}")
-        finally:
-            self._synth_words_busy = False
-        self._tts_save()
-        self._synth_push(message=msg)
+    def tts_synth_marker_reopen(self, src):
+        """Открыть запись, из которой уже размечено слово (по имени файла)."""
+        with self._synth_lock():
+            sy = self._synth()
+            cur = self._synth_lang(sy)
+            for w in cur.get("words", {}).values():
+                if w.get("src") == src and os.path.exists(w.get("src_path", '')):
+                    return self._synth_marker_load(w["src_path"], sy["lang"])
+            if cur.get("etalon") and os.path.basename(cur["etalon"]) == src:
+                return self._synth_marker_load(cur["etalon"], sy["lang"])
+        return {"error": "Запись не найдена."}
 
-    def _synth_words_extract(self, path, hint, lang):
-        """Распознать запись, вырезать «миллион/тысяча/тенге» в «_слова/»."""
-        model, err = self._auto_check_model(lang)
-        if err:
-            raise RuntimeError(err)
-        samples, ms, _peak = self._asr_load(path)
-        forms = ' '.join(UNIT_FORMS[lang])
-        words = self._tts_transcribe_pack(model, [{"index": 0, "audio": samples, "ms": ms}],
-                                          'kk' if lang == 'kz' else 'ru',
-                                          hotwords=(hint + ' ' + forms).strip())[0]
-        seg = AudioSegment.from_file(path)
+    def _synth_marker_load(self, path, lang):
+        import numpy as np
+        x, rate = _mono(path)
+        cols = 1400
+        n = max(1, len(x) // cols)
+        k = len(x) // n
+        blk = np.abs(x[:k * n]).reshape(k, n).max(axis=1) if k else np.zeros(0)
+        top = float(blk.max()) if len(blk) else 0.0
+        peaks = [round(float(v) / top, 3) for v in blk] if top > 0 else [0.0] * len(blk)
+        self._synth_mark = {"path": path, "lang": lang}
+        return {"name": os.path.basename(path), "dur": int(len(x) * 1000 / rate), "peaks": peaks,
+                "forms": UNIT_FORMS[lang], "marks": self._synth_marks(path), "state": self.tts_synth_state()}
+
+    def _synth_marks(self, path):
+        cur = self._synth_lang(self._synth())
+        return [{"form": f, "a": w["a"], "b": w["b"]} for f, w in cur.get("words", {}).items()
+                if w.get("src_path") == path and w.get("a") is not None]
+
+    def tts_synth_marker_play(self, a_ms, b_ms=None):
+        """Прослушать выделенный кусок дорожки (или с a_ms до конца)."""
+        mk = getattr(self, '_synth_mark', None)
+        if not mk:
+            return {"error": "Дорожка не открыта."}
+        x, rate = _read_audio(mk["path"])
+        a = max(0, int(a_ms * rate / 1000))
+        b = len(x) if b_ms is None else min(len(x), int(b_ms * rate / 1000))
+        if b - a < rate * 0.02:
+            return {"error": "Слишком короткий кусок."}
+        self._synth_mark_n = getattr(self, '_synth_mark_n', 0) + 1
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_mark_{os.getpid()}_{self._synth_mark_n % 4}.wav")
+        _write_pcm16(tmp, x[a:b], rate)
+        self.player.play(tmp)
+        return {"playing": True, "duration": (b - a) / rate}
+
+    def tts_synth_marker_save(self, form, a_ms, b_ms):
+        """Выделенный кусок — это слово form: вырезаем (мягкие края) в «_слова/»."""
+        import numpy as np
+        mk = getattr(self, '_synth_mark', None)
+        if not mk:
+            return {"error": "Дорожка не открыта."}
+        lang = mk["lang"]
+        if form not in UNIT_FORMS[lang]:
+            return {"error": "Нет такого слова."}
+        a_ms, b_ms = sorted((float(a_ms), float(b_ms)))
+        if b_ms - a_ms < 60:
+            return {"error": "Выделите слово целиком (сейчас меньше 60 мс)."}
+        x, rate = _read_audio(mk["path"])
+        a, b = int(a_ms * rate / 1000), min(len(x), int(b_ms * rate / 1000))
+        piece = x[a:b].copy()
+        fi, fo = int(rate * 0.005), int(rate * 0.010)              # без щелчков на краях
+        piece[:fi] *= np.linspace(0, 1, fi, dtype=np.float32)[:, None]
+        piece[-fo:] *= np.linspace(1, 0, fo, dtype=np.float32)[:, None]
         wdir = self._synth_dir(SYNTH_WORDS, lang=lang)
         os.makedirs(wdir, exist_ok=True)
-        found = []
-        for i, (w, s, e) in enumerate(words):
+        out = os.path.join(wdir, f"{form}.wav")
+        _write_pcm16(out, piece, rate)
+        mono = x.mean(axis=1) if x.shape[1] > 1 else x[:, 0]
+        with self._synth_lock():
+            self._synth()["per"][lang]["words"][form] = {
+                "file": out, "src": os.path.basename(mk["path"]), "src_path": mk["path"],
+                "a": int(a_ms), "b": int(b_ms), "gap": self._gap_after(mono, rate, b_ms)}
+        self._tts_save()
+        return {"marks": self._synth_marks(mk["path"]), "state": self.tts_synth_state()}
+
+    def tts_synth_marker_remove(self, form):
+        mk = getattr(self, '_synth_mark', None)
+        self.tts_synth_word_remove(form)
+        return {"marks": self._synth_marks(mk["path"]) if mk else [], "state": self.tts_synth_state()}
+
+    def tts_synth_marker_auto(self):
+        """Подсказка: где слова, по распознаванию (Whisper). Ничего не
+        сохраняет — вы проверяете и подтверждаете сами."""
+        mk = getattr(self, '_synth_mark', None)
+        if not mk:
+            return {"error": "Дорожка не открыта."}
+        lang = mk["lang"]
+        model, err = self._auto_check_model(lang)
+        if err:
+            return {"error": err}
+        cur = self._synth_lang(self._synth())
+        hint = cur.get("etalon_text", '') if mk["path"] == cur.get("etalon") else ''
+        samples, ms, _peak = self._asr_load(mk["path"])
+        words = self._tts_transcribe_pack(model, [{"index": 0, "audio": samples, "ms": ms}],
+                                          'kk' if lang == 'kz' else 'ru',
+                                          hotwords=(hint + ' ' + ' '.join(UNIT_FORMS[lang])).strip())[0]
+        seg = AudioSegment.from_file(mk["path"])
+        out = []
+        for w, s0, e0 in words:
             f = unit_form(w, lang)
-            if not f:
-                continue
-            a, b = self._word_cut(seg, s * 1000, e * 1000)
-            gap = None
-            if i + 1 < len(words):                     # пауза после слова, как у диктора
-                gap = max(20, min(250, int(words[i + 1][1] * 1000 - b)))
-            out = os.path.join(wdir, f"{f}.wav")
-            seg[a:b].fade_in(5).fade_out(10).export(out, format="wav")
-            with self._synth_lock():
-                self._synth()["per"][lang]["words"][f] = {"file": out, "src": os.path.basename(path), "gap": gap}
-            if f not in found:
-                found.append(f)
-        return found
+            if f:
+                a, b = self._word_cut(seg, s0 * 1000, e0 * 1000)
+                out.append({"form": f, "a": a, "b": b})
+        if not out:
+            return {"error": "Не нашёл слов автоматически — выделите их мышью."}
+        return {"suggest": out}
 
     def tts_synth_word_play(self, form):
         w = self._synth_lang(self._synth()).get("words", {}).get(form)

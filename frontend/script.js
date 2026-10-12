@@ -4449,6 +4449,13 @@ let isProcessing = false;
             // РАЗРЕШАЕМ СТАНДАРТНЫЕ КОМБИНАЦИИ (Ctrl+C, Ctrl+A, и т.д.)
             if (e.ctrlKey || e.metaKey) return;
 
+            // Разметка живых слов (синтез сумм) — окно поверх всего.
+            let mkOverlay = document.getElementById('ttsMarkOverlay'), alertOn = document.getElementById('customAlertOverlay');
+            if (mkOverlay && mkOverlay.style.display === 'flex' && ttsMk && !(alertOn && alertOn.style.display === 'flex')) {
+                ttsMkKey(e);
+                return;
+            }
+
             // На заставке любая из клавиш Enter / Space открывает экран подготовки
             let splash = document.getElementById('stage0-splash');
             if (splash && splash.style.display !== 'none') {
@@ -6939,11 +6946,10 @@ let isProcessing = false;
                         <span class="tts-syn__lbl">Живые слова</span>
                         ${chip(sy.hybrid, 'Гибрид', 'ttsSynthSetup({hybrid: true})')}${chip(!sy.hybrid, 'Всё синтезом', 'ttsSynthSetup({hybrid: false})')}
                         ${sy.hybrid ? sy.words.map(w => w.ok
-                            ? `<span class="tts-syn__word is-ok" title="Живое, из «${escapeHtml(w.src || '')}»"><button type="button" onclick="ttsSynthWordPlay('${w.form}')">&#9654; ${escapeHtml(w.form)}</button><button type="button" title="Убрать — это слово пойдёт в синтез" onclick="ttsSynthWordRemove('${w.form}')">&times;</button></span>`
+                            ? `<span class="tts-syn__word is-ok" title="Живое, из «${escapeHtml(w.src || '')}»"><button type="button" onclick="ttsSynthWordPlay('${w.form}')">&#9654; ${escapeHtml(w.form)}</button><button type="button" title="Поправить на дорожке «${escapeHtml(w.src || '')}»" onclick="ttsMkReopen('${escapeHtml(w.src || '')}')">&#9998;</button><button type="button" title="Убрать — это слово пойдёт в синтез" onclick="ttsSynthWordRemove('${w.form}')">&times;</button></span>`
                             : `<span class="tts-syn__word" title="Нет живой записи этой формы — синтезируется вместе с числом. Добавьте запись, где диктор её говорит.">${escapeHtml(w.form)} — синтез</span>`).join('') : ''}
-                        ${sy.hybrid ? (sy.words_busy ? '<span class="tts-dim"><span class="lv-spin"></span> ищу слова…</span>'
-                            : `<button class="btn-ghost btn-ghost--compact" onclick="ttsSynthWordsFind(false)" ${sy.etalon_ok ? '' : 'disabled'} title="Найти «миллион», «тысяча», «тенге» в эталоне">Найти в эталоне</button>
-                               <button class="btn-ghost btn-ghost--compact" onclick="ttsSynthWordsFind(true)" title="Другая запись диктора, где есть недостающие формы (например «миллиона», «тысяч»)">+ запись со словами</button>`) : ''}
+                        ${sy.hybrid ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsMkOpen(false)" ${sy.etalon_ok ? '' : 'disabled'} title="Открыть дорожку эталона и выделить слова мышью">Разметить в эталоне</button>
+                               <button class="btn-ghost btn-ghost--compact" onclick="ttsMkOpen(true)" title="Другая запись диктора, где есть недостающие формы (например «миллиона», «тысяч»)">+ запись со словами</button>` : ''}
                     </div>
                     <div class="tts-syn__row">
                         <span class="tts-syn__lbl">Язык</span>
@@ -6968,11 +6974,13 @@ let isProcessing = false;
             ttsSynthCur = k;
             document.querySelectorAll('.tts-syn__item').forEach(el => el.classList.toggle('is-cur', +el.dataset.k === k));
         }
-        const ttsSynthPickEtalon = () => ttsSynthCall(pywebview.api.tts_synth_pick_etalon());
+        async function ttsSynthPickEtalon() {
+            let res = await ttsSynthCall(pywebview.api.tts_synth_pick_etalon());
+            if (res && res.hybrid) ttsMkOpen(false);          // гибрид: сразу размечаем слова в эталоне
+        }
         const ttsSynthPlayEtalon = () => ttsSynthCall(pywebview.api.tts_synth_play_etalon());
         const ttsSynthSetup = o => ttsSynthCall(pywebview.api.tts_synth_setup(o.lang || null, o.logic || null,
             o.etalon_text === undefined ? null : o.etalon_text, o.hybrid === undefined ? null : o.hybrid));
-        const ttsSynthWordsFind = extra => ttsSynthCall(pywebview.api.tts_synth_words_find(extra));
         const ttsSynthWordRemove = f => ttsSynthCall(pywebview.api.tts_synth_word_remove(f));
         async function ttsSynthWordPlay(f) {
             await ttsStopPlay();
@@ -7031,6 +7039,144 @@ let isProcessing = false;
             let it = p.k !== null && p.k !== undefined ? ttsSynth.items[p.k] : null;
             if (open && it && it.k === ttsSynthWaitPlay && it.status === 'ready') { ttsSynthWaitPlay = null; ttsSynthPlay(it.k); }
         }
+        // ----- разметка живых слов на дорожке записи -----
+        let ttsMk = null;
+        async function ttsMkOpen(extra) {
+            ttsMkShow(await pywebview.api.tts_synth_marker_open(extra));
+        }
+        async function ttsMkReopen(src) {
+            ttsMkShow(await pywebview.api.tts_synth_marker_reopen(src));
+        }
+        function ttsMkShow(res) {
+            if (!res || res.error) { if (res && res.error !== 'cancel') showToast(res.error); return; }
+            ttsMk = { ...res, sel: null, drag: null, head: null, suggest: [] };
+            if (res.state) ttsSynth = res.state;
+            document.getElementById('ttsMkTitle').textContent = 'Живые слова — ' + res.name;
+            document.getElementById('ttsMarkOverlay').style.display = 'flex';
+            let cv = document.getElementById('ttsMkCanvas');
+            cv.onmousedown = ttsMkDown;
+            ttsMkRender();
+        }
+        function ttsMkClose() {
+            document.getElementById('ttsMarkOverlay').style.display = 'none';
+            ttsMkStop();
+            ttsMk = null;
+            if (ttsSynth) ttsRenderVars();
+        }
+        const ttsMkX2ms = x => Math.max(0, Math.min(ttsMk.dur, x / document.getElementById('ttsMkCanvas').clientWidth * ttsMk.dur));
+        const ttsMkMs2x = (ms, w) => ms / ttsMk.dur * w;
+        function ttsMkDraw() {
+            let cv = document.getElementById('ttsMkCanvas'), dpr = window.devicePixelRatio || 1;
+            let w = cv.clientWidth, h = cv.clientHeight;
+            if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+            let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+            let css = getComputedStyle(document.documentElement), col = v => css.getPropertyValue(v).trim();
+            let box = (a, b, fill) => { g.fillStyle = fill; g.fillRect(ttsMkMs2x(a, w), 0, ttsMkMs2x(b - a, w), h); };
+            g.fillStyle = col('--text-dim') || '#999';
+            let p = ttsMk.peaks, mid = h / 2;
+            for (let i = 0; i < p.length; i++) {
+                let x = i / p.length * w, y = Math.max(1, p[i] * (mid - 18));
+                g.fillRect(x, mid - y, Math.max(1, w / p.length), y * 2);
+            }
+            // метки — поверх волны, полупрозрачно: волна под ними видна
+            ttsMk.suggest.forEach(m => box(m.a, m.b, 'rgba(200,200,200,.18)'));
+            ttsMk.marks.forEach(m => box(m.a, m.b, 'rgba(46,204,113,.35)'));
+            if (ttsMk.sel) box(ttsMk.sel.a, ttsMk.sel.b, 'rgba(90,150,255,.38)');
+            g.font = '600 11px sans-serif'; g.textBaseline = 'top';
+            let label = (m, color) => { g.fillStyle = color; g.fillText(m.form, ttsMkMs2x(m.a, w) + 4, 4); };
+            ttsMk.suggest.forEach(m => label(m, '#aaa'));
+            ttsMk.marks.forEach(m => label(m, '#2ecc71'));
+            if (ttsMk.sel) {
+                g.fillStyle = '#5a96ff';
+                [ttsMk.sel.a, ttsMk.sel.b].forEach(t => g.fillRect(ttsMkMs2x(t, w) - 1, 0, 2, h));
+            }
+            if (ttsMk.head !== null) { g.fillStyle = col('--accent-primary') || '#f5a623'; g.fillRect(ttsMkMs2x(ttsMk.head, w), 0, 2, h); }
+        }
+        function ttsMkRender() {
+            let done = new Set(ttsMk.marks.map(m => m.form));
+            let cur = ttsMk.sel && ttsMk.marks.find(m => m.a === ttsMk.sel.a && m.b === ttsMk.sel.b);
+            document.getElementById('ttsMkForms').innerHTML = ttsMk.forms.map((f, i) =>
+                `<button type="button" class="chip ${done.has(f) ? 'tts-mk-done' : ''} ${cur && cur.form === f ? 'chip-mode--active' : ''}"
+                    ${ttsMk.sel ? '' : 'disabled'} onclick="ttsMkAssign('${f}')" title="Клавиша ${i + 1}"><kbd>${i + 1}</kbd> ${escapeHtml(f)}${done.has(f) ? ' ✓' : ''}</button>`).join('');
+            let len = ttsMk.sel ? Math.round(ttsMk.sel.b - ttsMk.sel.a) : 0;
+            document.getElementById('ttsMkBar').innerHTML = `
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsMkPlay(true)" ${ttsMk.sel ? '' : 'disabled'}>&#9654; Выделенное <kbd>Space</kbd></button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsMkPlay(false)">&#9654; Всю запись</button>
+                ${cur ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsMkRemove('${cur.form}')">Убрать «${escapeHtml(cur.form)}»</button>` : ''}
+                <span class="tts-dim">${ttsMk.sel ? `выделено ${len} мс` : ''}</span>
+                <span class="tts-ed__spacer"></span>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsMkAuto()" title="Распознать (Whisper) и подсветить серым, где слова. Вы проверяете и подтверждаете сами">Подсказать</button>
+                <button class="custom-alert-btn" onclick="ttsMkClose()">Готово</button>`;
+            ttsMkDraw();
+        }
+        function ttsMkDown(e) {
+            let cv = e.currentTarget, r = cv.getBoundingClientRect(), x = e.clientX - r.left, w = cv.clientWidth;
+            let s = ttsMk.sel, mode = 'new', start = ttsMkX2ms(x);
+            if (s && Math.abs(ttsMkMs2x(s.a, w) - x) < 7) mode = 'a';
+            else if (s && Math.abs(ttsMkMs2x(s.b, w) - x) < 7) mode = 'b';
+            let moved = false;
+            let move = ev => {
+                let t = ttsMkX2ms(ev.clientX - r.left);
+                if (mode === 'new') { if (Math.abs(ev.clientX - e.clientX) < 3 && !moved) return; moved = true; ttsMk.sel = { a: Math.min(start, t), b: Math.max(start, t) }; }
+                else { moved = true; ttsMk.sel = { ...ttsMk.sel, [mode]: t }; if (ttsMk.sel.a > ttsMk.sel.b) ttsMk.sel = { a: ttsMk.sel.b, b: ttsMk.sel.a }; }
+                ttsMkDraw();
+            };
+            let up = () => {
+                window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+                if (!moved) {                     // клик: по метке — выделить её, иначе снять выделение
+                    let m = ttsMk.marks.find(m => start >= m.a && start <= m.b) || ttsMk.suggest.find(m => start >= m.a && start <= m.b);
+                    ttsMk.sel = m ? { a: m.a, b: m.b } : null;
+                }
+                if (ttsMk.sel) ttsMk.sel = { a: Math.round(ttsMk.sel.a), b: Math.round(ttsMk.sel.b) };
+                ttsMkRender();
+            };
+            window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+        }
+        let ttsMkTimer = null;
+        function ttsMkStop() { if (ttsMkTimer) cancelAnimationFrame(ttsMkTimer); ttsMkTimer = null; if (ttsMk) { ttsMk.head = null; ttsMkDraw(); } }
+        async function ttsMkPlay(sel) {
+            await ttsStopPlay(); ttsMkStop();
+            let a = sel && ttsMk.sel ? ttsMk.sel.a : 0, b = sel && ttsMk.sel ? ttsMk.sel.b : null;
+            let res = await pywebview.api.tts_synth_marker_play(a, b);
+            if (!res || res.error) { if (res) showToast(res.error); return; }
+            let t0 = performance.now(), dur = res.duration * 1000;
+            let step = () => {
+                if (!ttsMk) return;
+                let t = performance.now() - t0;
+                if (t > dur) { ttsMkStop(); return; }
+                ttsMk.head = a + t; ttsMkDraw(); ttsMkTimer = requestAnimationFrame(step);
+            };
+            ttsMkTimer = requestAnimationFrame(step);
+        }
+        async function ttsMkAssign(form) {
+            if (!ttsMk || !ttsMk.sel) return;
+            let res = await pywebview.api.tts_synth_marker_save(form, ttsMk.sel.a, ttsMk.sel.b);
+            if (!res || res.error) { if (res) showToast(res.error); return; }
+            ttsMk.marks = res.marks; ttsSynth = res.state;
+            ttsMk.suggest = ttsMk.suggest.filter(m => !(m.a === ttsMk.sel.a && m.b === ttsMk.sel.b) && m.form !== form);
+            ttsMkRender();
+        }
+        async function ttsMkRemove(form) {
+            let res = await pywebview.api.tts_synth_marker_remove(form);
+            if (!res || res.error) return;
+            ttsMk.marks = res.marks; ttsSynth = res.state; ttsMk.sel = null; ttsMkRender();
+        }
+        async function ttsMkAuto() {
+            showToast('Распознаю запись…');
+            let res = await pywebview.api.tts_synth_marker_auto();
+            if (!res || res.error) { if (res) showToast(res.error); return; }
+            ttsMk.suggest = res.suggest;
+            let first = res.suggest[0]; ttsMk.sel = first ? { a: first.a, b: first.b } : null;
+            showToast('Серым — где, похоже, слова. Кликните по метке, проверьте ▶ и нажмите, что это.');
+            ttsMkRender();
+        }
+        function ttsMkKey(e) {
+            if (e.code === 'Escape') { e.preventDefault(); ttsMkClose(); return; }
+            if (e.code === 'Space') { e.preventDefault(); ttsMkPlay(!!ttsMk.sel); return; }
+            let d = /^(Digit|Numpad)([1-9])$/.exec(e.code);
+            if (d && ttsMk.forms[+d[2] - 1]) { e.preventDefault(); ttsMkAssign(ttsMk.forms[+d[2] - 1]); }
+        }
+
         function ttsSynthKey(e) {
             let it = ttsSynth && ttsSynth.items[ttsSynthCur];
             if (!it) return false;
@@ -7217,6 +7363,7 @@ let isProcessing = false;
         }
 
         function ttsHandleKey(e) {
+            if (document.getElementById('ttsMarkOverlay').style.display === 'flex') { if (ttsMk) ttsMkKey(e); return true; }
             let vars = document.getElementById('ttsVarsOverlay');
             if (vars.style.display === 'flex') {
                 if (e.code === 'Escape') { e.preventDefault(); ttsCloseVars(); }
