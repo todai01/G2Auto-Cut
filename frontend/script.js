@@ -6094,6 +6094,8 @@ let isProcessing = false;
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
             } else if (p.stage === 'synth') {
                 ttsSynthEvent(p);
+            } else if (p.stage === 'take_synth') {
+                ttsTakeSynthEvent(p);
             } else if (p.stage === 'marks') {
                 ttsShowMarksPending(p.pending, p.error);
             } else if (p.stage === 'live_partial') {
@@ -6261,6 +6263,7 @@ let isProcessing = false;
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-blocks">${blocks}</div>
+                <div class="tts-tsyn" id="ttsTsyn" style="display:none"></div>
                 <div class="tts-asm-heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
                 <div class="tts-ed">
                     <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
@@ -6270,6 +6273,7 @@ let isProcessing = false;
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdUndo" onclick="ttsEdUndo()" disabled>&#8630; <kbd>Ctrl+Z</kbd></button>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdRedo" onclick="ttsEdUndo(true)" disabled>&#8631;</button>
                         <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа (тоже отменяется Ctrl+Z)">Сбросить</button>
+                        <button class="btn-ghost btn-ghost--compact" id="ttsTsynBtn" onclick="ttsTsynToggle()" title="Добить конец фразы синтезом (если не выговаривается) — ляжет на дорожку отдельным клипом">Синтез…</button>
                         <span class="tts-ed__zoom">
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(0.66)" title="Отдалить (Ctrl + колесо)">&minus;</button>
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(1.5)" title="Приблизить (Ctrl + колесо)">+</button>
@@ -6288,6 +6292,100 @@ let isProcessing = false;
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>`;
             ttsEditorLoad();
+            if (ttsTS && ttsTS.i === t.i) ttsTsynRender(); else ttsTS = null;
+        }
+
+        // ----- «Синтез…» в «Сборке»: добить фразу синтезом -----
+        // Нажимаете слово, с которого начинается синтез. Синтезируется остаток
+        // фразы, начиная на пару слов раньше (перекрытие): на стыке выбираете,
+        // где резать — так склейка живого голоса и синтеза звучит естественно.
+        let ttsTS = null;
+        async function ttsTsynToggle() {
+            let t = ttsCurTake();
+            if (!t) return;
+            if (ttsTS && ttsTS.i === t.i) { ttsTS = null; ttsTsynRender(); return; }
+            let r = await pywebview.api.tts_take_synth_info(t.i);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            ttsTS = { i: t.i, words: r.words, start: r.start, overlap: 2, text: null, mode: 'take',
+                      lang: r.lang, has_etalon: r.has_etalon, busy: r.busy };
+            ttsTsynRender();
+        }
+        const ttsTsynText = () => ttsTS.text !== null ? ttsTS.text
+            : ttsTS.words.slice(Math.max(0, ttsTS.start - ttsTS.overlap)).join(' ');
+        function ttsTsynRender() {
+            let el = document.getElementById('ttsTsyn');
+            if (!el) return;
+            if (!ttsTS) { el.style.display = 'none'; el.innerHTML = ''; return; }
+            el.style.display = '';
+            let s = ttsTS, ov0 = Math.max(0, s.start - s.overlap);
+            let words = s.words.map((w, k) => {
+                let cls = k >= s.start ? 'is-syn' : (k >= ov0 ? 'is-ovl' : 'is-rec');
+                return `<button type="button" class="tts-tsyn__w ${cls}" onclick="ttsTsynSet({start: ${k}})" title="Синтез — с этого слова">${escapeHtml(w)}</button>`;
+            }).join('');
+            let chip = (on, label, js, dis) => `<button type="button" class="chip ${on ? 'chip-mode--active' : ''}" onclick="${js}" ${dis ? 'disabled' : ''}>${label}</button>`;
+            el.innerHTML = `
+                <div class="tts-tsyn__head"><b>Добить синтезом</b>
+                    <span class="tts-dim">нажмите слово, с которого начинается синтез ·
+                    <span class="tts-tsyn__lg is-rec">записано</span> <span class="tts-tsyn__lg is-ovl">перекрытие</span> <span class="tts-tsyn__lg is-syn">синтез</span></span></div>
+                <div class="tts-tsyn__words">${words}</div>
+                <div class="tts-tsyn__row">
+                    <span class="tts-dim">Перекрытие</span>
+                    ${[0, 1, 2, 3].map(n => chip(s.overlap === n, n === 0 ? 'нет' : `${n} сл.`, `ttsTsynSet({overlap: ${n}})`)).join('')}
+                    <span class="tts-dim" style="margin-left:14px">Образец голоса</span>
+                    ${chip(s.mode === 'take' && s.start > 0, 'этот дубль', "ttsTsynSet({mode: 'take'})", s.start === 0)}
+                    ${chip(s.mode !== 'take' || s.start === 0, s.has_etalon ? 'эталон «Синтеза сумм»' : 'сохранённая фраза', "ttsTsynSet({mode: 'auto'})")}
+                    ${chip(s.start === 0, 'всю фразу', 'ttsTsynSet({start: 0})')}
+                </div>
+                <div class="tts-tsyn__row">
+                    <input class="tts-tsyn__text" id="ttsTsynText" value="${escapeHtml(ttsTsynText())}" title="Что синтезировать — можно поправить"
+                        oninput="ttsTS.text = this.value">
+                    ${s.busy ? '<span class="tts-dim"><span class="lv-spin"></span> синтез…</span>'
+                        : '<button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsTsynRun()">Синтезировать</button>'}
+                    <button class="btn-ghost btn-ghost--compact" onclick="ttsTS = null; ttsTsynRender()">Закрыть</button>
+                </div>`;
+        }
+        function ttsTsynSet(o) {
+            if (!ttsTS || ttsTS.busy) return;
+            if (o.start !== undefined || o.overlap !== undefined) ttsTS.text = null;     // текст — заново по словам
+            Object.assign(ttsTS, o);
+            ttsTsynRender();
+        }
+        async function ttsTsynRun() {
+            if (!ttsTS || ttsTS.busy) return;
+            let mode = ttsTS.start === 0 ? 'auto' : ttsTS.mode;
+            let r = await pywebview.api.tts_take_synth(ttsTS.i, ttsTS.start, ttsTS.overlap, ttsTsynText(), mode);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            ttsTS.busy = true;
+            ttsTsynRender();
+            showToast(`Синтезирую (${r.lang === 'kz' ? 'казахский' : 'русский'}, образец — ${r.ref})…`);
+        }
+        async function ttsPromptSynth() {
+            if (!tts || !tts.loaded) return;
+            let r = await pywebview.api.tts_prompt_synth(null);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            showToast(`Синтезирую фразу${r.count > 1 ? ` (${r.count} кусочка)` : ''}, образец — ${r.ref}…`);
+        }
+        async function ttsTakeSynthEvent(p) {
+            if (ttsTS) ttsTS.busy = false;
+            if (p.error) { showToast('Синтез: ' + p.error); ttsTsynRender(); return; }
+            if (p.state) tts = p.state;
+            if (p.new) {
+                // фраза целиком синтезом — сразу в «Сборку»
+                let k = tts.takes.findIndex(t => t.file === p.file);
+                if (k >= 0) tts.index = k;
+                ttsRender();
+                ttsShowAssembly(true);
+                ttsTogglePlay();
+            } else {
+                let cur = ttsCurTake();
+                ttsRenderRail();
+                if (cur && cur.file === p.file) {
+                    ttsTS = null; ttsTsynRender();
+                    await ttsEditorLoad(true);
+                    if (ttsEd) { ttsEdFit(); ttsEditorDraw(); }          // новый клип — сразу виден целиком
+                }
+            }
+            if (p.message) showToast(p.message, 5000);
         }
 
         // ----- громкость и темп дубля -----

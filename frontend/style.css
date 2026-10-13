@@ -3253,3 +3253,18 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .stage-tts:not(.show-assembly) .tts-asm-heard,
 .stage-tts:not(.show-assembly) .tts-assembly__title .tts-pill,
 .stage-tts:not(.show-assembly) .tts-asm-num{ display: none; }
+
+/* «Синтез…» в «Сборке» */
+.tts-tsyn{ border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--screen); padding: 10px 12px; margin: 6px 0 8px;
+    display: flex; flex-direction: column; gap: 8px; }
+.tts-tsyn__head{ display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: var(--fs-sm); }
+.tts-tsyn__words{ display: flex; flex-wrap: wrap; gap: 4px; }
+.tts-tsyn__w{ font: inherit; font-size: 14px; border: 1px solid transparent; border-radius: 6px; padding: 3px 7px; cursor: pointer; background: none; color: var(--text); }
+.tts-tsyn__w:hover{ border-color: var(--border); }
+.tts-tsyn__w.is-rec, .tts-tsyn__lg.is-rec{ color: var(--text-faint); }
+.tts-tsyn__w.is-ovl, .tts-tsyn__lg.is-ovl{ color: var(--accent-var); background: var(--tint-var); }
+.tts-tsyn__w.is-syn, .tts-tsyn__lg.is-syn{ color: var(--accent-info); background: rgba(77,149,234,0.12); }
+.tts-tsyn__lg{ border-radius: 4px; padding: 0 5px; }
+.tts-tsyn__row{ display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tts-tsyn__row .chip[disabled]{ opacity: .4; pointer-events: none; }
+.tts-tsyn__text{ flex: 1; min-width: 260px; font: inherit; font-size: var(--fs-sm); color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; }

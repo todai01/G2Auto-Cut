@@ -23,6 +23,7 @@
 
 import collections
 import os
+import struct
 import shutil
 import subprocess
 import tempfile
@@ -36,7 +37,7 @@ from pydub.silence import detect_leading_silence
 
 from core.num_words import kz_words, ru_words
 from utils.audio_player import _read_audio, resample
-from utils.wav_io import wav_layout, wav_slice
+from utils.wav_io import _write_wav, wav_kind, wav_layout, wav_slice
 
 SYNTH_URL = 'http://ia-app5-lp3:3124/'
 # Шаги на сайте — селекторы из вашей инструкции. Сайт поменяется — правим здесь.
@@ -183,6 +184,43 @@ def clean_wav(src, dst):
     _write_pcm16(dst, x, rate)
 
 
+def write_like(dst, x, rate, like):
+    """float-звук → WAV ровно в формате файла like (частота, каналы,
+    разрядность, float/int) — чтобы склейка на дорожке шла байт в байт."""
+    import numpy as np
+    lay = wav_layout(like)
+    kind = wav_kind(like)
+    if not lay or not kind:
+        raise RuntimeError("Не понял формат записи дубля.")
+    fmt, _pos, _size, block, out_rate = lay
+    ch = struct.unpack('<H', fmt[2:4])[0] if len(fmt) >= 4 else 1
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 1:
+        x = x[:, None]
+    if rate != out_rate:
+        x = resample(x, rate, out_rate)
+    x = x.mean(axis=1, keepdims=True) if x.shape[1] != ch else x
+    if x.shape[1] != ch:
+        x = np.repeat(x[:, :1], ch, axis=1)
+    peak = float(np.abs(x).max()) if x.size else 0.0
+    if peak > 0.98:
+        x = x * (0.98 / peak)
+    flt, bits = kind
+    if flt == 'float':
+        data = x.astype('<f4' if bits == 32 else '<f8').tobytes()
+    elif bits == 8:
+        data = np.clip(np.round(x * 127 + 128), 0, 255).astype(np.uint8).tobytes()
+    elif bits == 16:
+        data = np.round(x * 32767).astype('<i2').tobytes()
+    elif bits == 24:
+        v = np.round(x * 8388607).astype('<i4').reshape(-1)
+        data = np.stack([v & 255, (v >> 8) & 255, (v >> 16) & 255], axis=1).astype(np.uint8).tobytes()
+    else:
+        data = np.round(x * 2147483647.0).astype('<i4').tobytes()
+    _write_wav(dst, fmt, data)
+    return int(len(x) * 1000 / out_rate)
+
+
 def _mono(path):
     """(float32 моно, частота)."""
     x, rate = _read_audio(path)
@@ -236,10 +274,14 @@ class _SynthWorker(threading.Thread):
                 k = self.jobs.popleft()
                 self.current = k
             try:
-                self.owner._synth_job(k, self)
+                if callable(k):
+                    k(self)                          # разовое задание (синтез для дубля)
+                else:
+                    self.owner._synth_job(k, self)
             except Exception as e:                   # браузер упал и т.п. — начнём заново
                 self._close()
-                self.owner._synth_failed(k, str(e))
+                if not callable(k):
+                    self.owner._synth_failed(k, str(e))
             finally:
                 with self.cv:
                     self.current = None
@@ -971,3 +1013,206 @@ class TtsSynthMixin:
             return {"error": "Пока нет ни одной одобренной суммы."}
         self.tts_synth_stop()
         return {"folder": folder}
+
+    # ---------------- синтез в «Сборке»: добить фразу синтезом ----------------
+    # Диктор прочитал начало, а конец (например, казахский) не выговаривается:
+    # синтезируем остаток фразы, начиная на пару слов раньше (перекрытие) —
+    # синтез ложится на дорожку отдельным клипом, стык выбираете сами.
+    # Образец голоса — сам этот дубль (тот же тон и микрофон), или эталон
+    # «Синтеза сумм», или любая сохранённая фраза на этом языке.
+
+    def _take_synth_ref(self, lang, t=None, start=0, words=None, mode='take'):
+        st = self._tts()
+        wd = st.get("work_dir")
+        if mode == 'take' and t is not None and start > 0 and wd:
+            path = os.path.join(wd, t["file"])
+            if os.path.exists(path):
+                return path, ' '.join(words[:start]), 'этот дубль'
+        sy = self._synth()
+        cur = sy["per"].get(lang) or {}
+        if cur.get("etalon") and os.path.exists(cur["etalon"]) and cur.get("etalon_text"):
+            return cur["etalon"], cur["etalon_text"], 'эталон «Синтеза сумм»'
+        best = None
+        for k in st["takes"]:
+            uid = k.get("unit")
+            if not k.get("approved") or uid is None or uid >= len(st["units"]):
+                continue
+            if self._tts_unit_lang(uid) != lang or k is t:
+                continue
+            path = os.path.join(wd, k["file"]) if wd else None
+            if path and os.path.exists(path) and (best is None or k.get("ms", 0) > best[2]):
+                best = (path, st["units"][uid]["text"], k.get("ms", 0))
+        if best:
+            return best[0], best[1], 'сохранённая фраза'
+        raise RuntimeError("Нет образца голоса на этом языке: сохраните хотя бы одну фразу "
+                           "или выберите эталон во вкладке «Синтез сумм».")
+
+    def tts_take_synth_info(self, i):
+        """Что показать в панели синтеза: слова фразы, язык, откуда образец."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        t = st["takes"][i]
+        if t.get("unit") is None:
+            return {"error": "Дубль не привязан к фразе — сначала выберите фразу (F)."}
+        u = st["units"][t["unit"]]
+        words = str(u["text"]).split()
+        lang = self._tts_unit_lang(t["unit"])
+        # Где, примерно, кончилась запись: ~14 знаков в секунду речи.
+        said = int(max(0, t.get("ms", 0) - 300) / 1000 * 14)
+        start, n = 0, 0
+        for k, w in enumerate(words):
+            if n + len(w) / 2 > said:
+                break
+            n += len(w) + 1
+            start = k + 1
+        start = max(1, min(len(words) - 1, start)) if len(words) > 1 else 0
+        sy = self._synth()
+        cur = sy["per"].get(lang) or {}
+        return {"words": words, "lang": lang, "start": start, "busy": bool(getattr(self, '_take_synth_busy', None)),
+                "has_etalon": bool(cur.get("etalon") and os.path.exists(cur["etalon"]))}
+
+    def tts_take_synth(self, i, start, overlap=2, text=None, mode='take'):
+        """Синтезировать остаток фразы с слова start (с перекрытием overlap
+        слов) и положить клипом на дорожку дубля i. start=0 — вся фраза."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        if getattr(self, '_take_synth_busy', None):
+            return {"error": "Синтез уже идёт — подождите."}
+        t = st["takes"][i]
+        if t.get("unit") is None:
+            return {"error": "Дубль не привязан к фразе."}
+        words = str(st["units"][t["unit"]]["text"]).split()
+        start = max(0, min(int(start), len(words)))
+        lang = self._tts_unit_lang(t["unit"])
+        text = (text or '').strip() or ' '.join(words[max(0, start - int(overlap or 0)):])
+        if not text:
+            return {"error": "Нечего синтезировать."}
+        try:
+            ref, ref_text, ref_name = self._take_synth_ref(lang, t, start, words, mode)
+        except RuntimeError as e:
+            return {"error": str(e)}
+        key = t["file"]
+        self._take_synth_busy = key
+
+        def job(worker):
+            try:
+                self._take_synth_job(worker, key, ref, ref_text, lang, text)
+            except Exception as e:
+                worker._close()
+                self._tts_push({"stage": "take_synth", "file": key, "error": str(e)})
+            finally:
+                self._take_synth_busy = None
+        self._synth_worker_get().add(job, front=True)
+        return {"queued": True, "text": text, "ref": ref_name, "lang": lang}
+
+    def _take_synth_job(self, worker, key, ref, ref_text, lang, text):
+        import numpy as np
+        st = self._tts()
+        sdir = os.path.join(st["work_dir"], 'Чанки', '_синтез')
+        os.makedirs(sdir, exist_ok=True)
+        n = len([f for f in os.listdir(sdir) if f.endswith('.wav')]) + 1
+        base = os.path.splitext(os.path.basename(key))[0]
+        got = os.path.join(sdir, f"{base}_синтез{n}_сервис.wav")
+        self._synth_request(worker, ref, ref_text, lang, text, got)
+        t = next((k for k in st["takes"] if k["file"] == key), None)
+        if t is None:
+            raise RuntimeError("Пока синтезировали, дубль удалили.")
+        clips = self._tts_clips(t)
+        like = clips[-1]["raw"]
+        x, rate = _mono(got)
+        x = self._trim_voice(x, rate, lead=20, tail=60)
+        # громкость — как у голоса в этом дубле
+        take_path = os.path.join(st["work_dir"], t["file"])
+        if os.path.exists(take_path):
+            y, yr = _mono(take_path)
+            r_take, r_syn = self._rms_voice(y, yr), self._rms_voice(x, rate)
+            if r_take > 0 and r_syn > 0:
+                x = x * float(np.clip(r_take / r_syn, 0.25, 4.0))
+        dst = os.path.join(sdir, f"{base}_синтез{n}.wav")
+        length = write_like(dst, x, rate, like)
+        try:
+            os.remove(got)
+        except OSError:
+            pass
+        end = 0
+        for c in clips:
+            end = max(end, int(c["pos"]) + sum(b - a for a, b in self._clip_ranges(c)))
+        if not t.get("clips_orig"):
+            t["clips_orig"] = [dict(c) for c in clips]
+        clips.append({"raw": dst, "a": 0, "b": length, "cuts": [], "pos": end + 40})
+        self._tts_orig(t)
+        self._tts_render_clips(t, clips)
+        t["clips"] = clips
+        t.pop("edit", None)
+        t["listened"] = False
+        t.setdefault("synth", []).append({"file": dst, "text": text})
+        self._tts_save()
+        self._tts_push({"stage": "take_synth", "file": key, "state": self.tts_state(),
+                        "message": f"Синтез «{text[:40]}{'…' if len(text) > 40 else ''}» — на дорожке. "
+                                   f"Сдвиньте клип и срежьте перекрытие."})
+
+    def tts_prompt_synth(self, text=None):
+        """Фразу на суфлёре целиком — синтезом (не выговаривается совсем).
+        Каждый кусочек фразы с переменными — отдельным дублем."""
+        st = self._tts()
+        if getattr(self, '_take_synth_busy', None):
+            return {"error": "Синтез уже идёт — подождите."}
+        if not st.get("work_dir"):
+            return {"error": "Сначала выберите папку проекта (начните запись или откройте проект)."}
+        items = self._tts_prompt_items()
+        pos = st.get("prompt_pos", 0)
+        ids = items[pos] if 0 <= pos < len(items) else []
+        if not ids:
+            return {"error": "На суфлёре нет фразы."}
+        jobs = []
+        for uid in ids:
+            lang = self._tts_unit_lang(uid)
+            try:
+                ref, ref_text, ref_name = self._take_synth_ref(lang, mode='auto')
+            except RuntimeError as e:
+                return {"error": str(e)}
+            body = (text if (text and len(ids) == 1) else st["units"][uid]["text"]).strip()
+            jobs.append((uid, lang, ref, ref_text, body))
+        self._take_synth_busy = 'prompt'
+
+        def job(worker):
+            try:
+                for uid, lang, ref, ref_text, body in jobs:
+                    self._prompt_synth_one(worker, uid, lang, ref, ref_text, body, pos)
+            except Exception as e:
+                worker._close()
+                self._tts_push({"stage": "take_synth", "file": None, "error": str(e)})
+            finally:
+                self._take_synth_busy = None
+        self._synth_worker_get().add(job, front=True)
+        return {"queued": True, "count": len(jobs), "ref": ref_name}
+
+    def _prompt_synth_one(self, worker, uid, lang, ref, ref_text, body, pos):
+        st = self._tts()
+        sdir = os.path.join(st["work_dir"], 'Чанки', '_синтез')
+        os.makedirs(sdir, exist_ok=True)
+        n = max([k.get("chunk", 0) for k in st["takes"]] + [0]) + 1
+        got = os.path.join(sdir, f"{n:04d}_фраза_сервис.wav")
+        self._synth_request(worker, ref, ref_text, lang, body, got)
+        x, rate = _mono(got)
+        x = self._trim_voice(x, rate, lead=40, tail=80)
+        raw = os.path.join(sdir, f"{n:04d}_фраза.wav")
+        _write_pcm16(raw, x, rate)
+        try:
+            os.remove(got)
+        except OSError:
+            pass
+        length = int(len(x) * 1000 / rate)
+        name = f"{n:04d}.wav"
+        take = {"file": os.path.join('Чанки', name), "start_ms": 0, "ms": length, "orig": [0, length],
+                "raw": raw, "heard": "(синтез)", "listened": False, "chunk": n, "unit": uid,
+                "score": 1.0, "status": "manual", "synth": [{"file": raw, "text": body}]}
+        shutil.copy2(raw, os.path.join(st["work_dir"], take["file"]))
+        st["takes"].append(take)
+        st["index"] = len(st["takes"]) - 1
+        self._tts_save()
+        self._tts_push({"stage": "take_synth", "file": take["file"], "new": True, "state": self.tts_state(),
+                        "message": f"Синтез фразы «{st['units'][uid]['name']}» — проверьте и сохраните (Enter)."})
+
