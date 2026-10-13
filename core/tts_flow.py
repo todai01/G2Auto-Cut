@@ -480,19 +480,40 @@ class TtsFlowMixin:
         return [(n, self._tts_target(by_name[n])) for n, srcn in (st.get("twin_copies") or {}).items()
                 if srcn == name and n in by_name]
 
-    # ---------------- «Из записанного»: фраза на 80%+ уже есть ----------------
-    # Новая фраза начинается (или заканчивается) так же, как уже сохранённая:
-    # «Ваш платёж принят» → «Ваш платёж принят, спасибо». Читать нужно только
-    # остаток, а сохранённую часть программа сама подставит на дорожку.
+    # ---------------- «Из записанного»: собрать фразу из уже записанных ----------------
+    # Новая фраза разбирается на куски, которые уже звучат в сохранённых
+    # фразах (из разных фраз, в начале, середине и конце), и то, что нужно
+    # дописать. Целое предложение берётся даже коротким («Спасибо!»), если и
+    # в записанной фразе оно отдельное предложение (там пауза — режется
+    # чисто); обрывок внутри предложения — от 3 слов. Из вариантов
+    # выбирается тот, где записанного больше, а стыков меньше.
 
-    REUSE_MIN = 0.8
+    REUSE_MIN = 0.4           # сколько текста фразы должно уже быть записано
+    REUSE_MIN_RUN = 3         # обрывок (не целое предложение) — от стольких слов
+    REUSE_SEAM = 6            # «цена» одного стыка, в знаках
+    REUSE_MARGIN_MS = 150     # запас при оценке, где в записи нужные слова
 
     @staticmethod
     def _tts_wnorm(w):
         return re.sub(r"[^\w'-]", '', str(w).lower().replace('ё', 'е')).strip("'-")
 
+    @classmethod
+    def _tts_words(cls, text):
+        """Слова текста: [(норм. слово, исходный токен, № токена, конец предложения?)]."""
+        raw = str(text or '').split()
+        out = []
+        for i, w in enumerate(raw):
+            n = cls._tts_wnorm(w)
+            if n:
+                out.append((n, w, i, bool(re.search(r'[.!?…]["»)]*$', w))))
+            elif out and re.search(r'[.!?…]', w):
+                out[-1] = out[-1][:3] + (True,)
+        if out:
+            out[-1] = out[-1][:3] + (True,)
+        return out, raw
+
     def _tts_reuse_index(self):
-        """Сохранённые фразы по словам: слово → [(фраза, позиция)]; по языку."""
+        """Сохранённые фразы по словам: язык → слово → [(фраза, позиция)]."""
         st = self._tts()
         wd = st.get("work_dir")
         idx, words = {}, {}
@@ -501,63 +522,97 @@ class TtsFlowMixin:
         for u in st["units"]:
             if u["kind"] == "piece" or not os.path.exists(self._tts_target(u)):
                 continue
-            ws = [x for x in (self._tts_wnorm(w) for w in str(u["text"]).split()) if x]
+            ws, _raw = self._tts_words(u["text"])
             words[u["id"]] = ws
             d = idx.setdefault(self._tts_unit_lang(u["id"]), {})
             for j, w in enumerate(ws):
-                d.setdefault(w, []).append((u["id"], j))
+                d.setdefault(w[0], []).append((u["id"], j))
         return idx, words
 
     def _tts_reuse_for(self, uid, index=None):
-        """Лучшее совпадение начала или конца фразы с сохранённой (≥80% текста)."""
+        """Как собрать фразу из записанного: куски «есть» и «дописать»."""
         st = self._tts()
         u = st["units"][uid]
         if u["kind"] == "piece" or (st.get("work_dir") and os.path.exists(self._tts_target(u))):
             return None
         idx, xwords = index or self._tts_reuse_index()
         d = idx.get(self._tts_unit_lang(uid)) or {}
-        raw = str(u["text"]).split()
-        pos = [i for i, w in enumerate(raw) if self._tts_wnorm(w)]
-        Y = [self._tts_wnorm(raw[i]) for i in pos]
+        Y, raw = self._tts_words(u["text"])
         m = len(Y)
-        if m < 2:
+        if m < 2 or not d:
             return None
-        total = sum(len(w) for w in Y)
-        best = None
-        for mode in ('prefix', 'suffix'):
-            anchor = Y[0] if mode == 'prefix' else Y[-1]
-            for x, j in d.get(anchor, []):
+        ylen = [len(w[0]) for w in Y]
+        total = sum(ylen)
+        ystart = [k == 0 or Y[k - 1][3] for k in range(m)]
+        # кандидаты: (начало в Y, длина, фраза-источник, начало в ней, целое предложение?)
+        cands = [[] for _ in range(m)]
+        for i in range(m):
+            for x, j in d.get(Y[i][0], []):
                 if x == uid:
                     continue
                 X = xwords[x]
                 k = 0
-                if mode == 'prefix':
-                    while j + k < len(X) and k < m and X[j + k] == Y[k]:
-                        k += 1
-                    y0, y1, x0, x1 = 0, k, j, j + k
+                while i + k < m and j + k < len(X) and X[j + k][0] == Y[i + k][0]:
+                    k += 1
+                if k == m and len(X) == m:
+                    continue                                   # тот же текст — это «одинаковые»
+                xstart = j == 0 or X[j - 1][3]
+                lens = {k}
+                lens.update(L for L in range(1, k) if Y[i + L - 1][3])     # обрезать по концу предложения
+                for L in lens:
+                    whole = (ystart[i] and Y[i + L - 1][3] and xstart and X[j + L - 1][3])
+                    if L >= self.REUSE_MIN_RUN or whole:
+                        cands[i].append((L, x, j, whole))
+        # лучшая раскладка: больше записанного, меньше стыков
+        best = [(-1e9, None)] * (m + 1)
+        best[0] = (0.0, None)
+        for i in range(m):
+            sc, _ = best[i]
+            if sc <= -1e9:
+                continue
+            if sc > best[i + 1][0]:
+                best[i + 1] = (sc, (i, None))                  # слово i — дописать
+            for L, x, j, whole in cands[i]:
+                v = sc + sum(ylen[i:i + L]) - self.REUSE_SEAM + (2 if whole else 0)
+                if v > best[i + L][0]:
+                    best[i + L] = (v, (i, (L, x, j, whole)))
+        segs, k = [], m
+        while k > 0:
+            i, c = best[k][1]
+            segs.append((i, c))
+            k = i
+        segs.reverse()
+        pieces = []
+        for i, c in segs:
+            if c is None:
+                if pieces and pieces[-1]["kind"] == "rec":
+                    pieces[-1]["y1"] = i + 1
                 else:
-                    while j - k >= 0 and m - 1 - k >= 0 and X[j - k] == Y[m - 1 - k]:
-                        k += 1
-                    y0, y1, x0, x1 = m - k, m, j - k + 1, j + 1
-                if x1 - x0 == len(X) and k == m:
-                    continue                                   # тот же текст — это «одинаковые», не сюда
-                cov = sum(len(w) for w in Y[y0:y1]) / total if total else 0
-                if cov >= self.REUSE_MIN and (best is None or cov > best[0]):
-                    best = (cov, mode, x, y0, y1, x0, x1)
-        if not best:
+                    pieces.append({"kind": "rec", "y0": i, "y1": i + 1})
+            else:
+                L, x, j, whole = c
+                pieces.append({"kind": "have", "y0": i, "y1": i + L, "src": x, "src_name": st["units"][x]["name"],
+                               "x0": j, "x1": j + L, "whole": whole})
+        cov = sum(sum(ylen[p["y0"]:p["y1"]]) for p in pieces if p["kind"] == "have") / total if total else 0
+        if cov < self.REUSE_MIN or not any(p["kind"] == "have" for p in pieces):
             return None
-        cov, mode, x, y0, y1, x0, x1 = best
-        if mode == 'prefix':
-            rest = ' '.join(raw[pos[y1 - 1] + 1:]) if y1 < m else ''
-            k0, k1 = 0, pos[y1 - 1] + 1
-        else:
-            rest = ' '.join(raw[:pos[y0]]) if y0 > 0 else ''
-            k0, k1 = pos[y0], len(raw)
-        xs = st["units"][x]
-        xraw = [w for w in str(xs["text"]).split() if self._tts_wnorm(w)]
-        extra = ' '.join(xraw[:x0] + ['…'] + xraw[x1:]) if (x0 > 0 or x1 < len(xraw)) else ''
-        return {"unit": uid, "src": x, "src_name": xs["name"], "mode": mode, "pct": round(cov * 100),
-                "k0": k0, "k1": k1, "rest": rest, "trim": bool(extra), "extra": extra,
+        for p in pieces:                                       # индексы → токены исходного текста
+            p["k0"] = Y[p["y0"]][2]
+            p["k1"] = Y[p["y1"] - 1][2] + 1
+        # токены-«хвосты» (тире, знаки отдельным словом) — к соседнему куску
+        for a_, b_ in zip(pieces, pieces[1:]):
+            b_["k0"] = a_["k1"]
+        pieces[0]["k0"] = 0
+        pieces[-1]["k1"] = len(raw)
+        for p in pieces:
+            p["text"] = ' '.join(raw[p["k0"]:p["k1"]])
+        rec = [p for p in pieces if p["kind"] == "rec"]
+        srcs = []
+        for p in pieces:
+            if p["kind"] == "have" and p["src_name"] not in srcs:
+                srcs.append(p["src_name"])
+        return {"unit": uid, "pct": round(cov * 100), "pieces": pieces, "srcs": srcs,
+                "src_name": srcs[0], "rest": ' … '.join(p["text"] for p in rec),
                 "skip": u["name"] in (st.get("reuse_skip") or [])}
 
     def tts_reuse_list(self):
@@ -572,6 +627,7 @@ class TtsFlowMixin:
             if r:
                 out.append({**r, "pos": p, "name": self._tts()["units"][ids[0]]["name"],
                             "text": self._tts()["units"][ids[0]]["text"]})
+        out.sort(key=lambda r: -r["pct"])
         return {"items": out}
 
     def _tts_reuse_count(self, saved):
@@ -593,33 +649,99 @@ class TtsFlowMixin:
         self._tts_save()
         return {"ok": True}
 
-    def _tts_reuse_clips(self, rem_clips, plan):
-        """Дорожка: сохранённая часть (из её дубля, байт в байт) + новый остаток."""
+    def _tts_reuse_source(self, src_uid, like):
+        """Звук записанной фразы: клипы её дубля (байт в байт) или сохранённый файл."""
         st = self._tts()
-        src_u = st["units"][plan["src"]]
-        src_take = next((k for k in reversed(st["takes"]) if k.get("unit") == plan["src"] and k.get("approved")), None)
-        if src_take is not None and all(os.path.exists(c["raw"]) for c in self._tts_clips(src_take)):
-            src = self._tts_clips(src_take)
-        else:
-            # дубля нет (сохранено давно) — берём сам сохранённый файл в формате записи
-            from core.tts_synth import write_like
-            from utils.audio_player import _read_audio
-            x, rate = _read_audio(self._tts_target(src_u))
-            rdir = os.path.join(st["work_dir"], TTS_CHUNKS_DIR, '_повтор')
-            os.makedirs(rdir, exist_ok=True)
-            path = os.path.join(rdir, f"{src_u['name']}.wav")
-            ln = write_like(path, x, rate, rem_clips[0]["raw"])
-            src = [{"raw": path, "a": 0, "b": ln, "cuts": [], "pos": 0}]
-        def span(cl):
-            p0 = min(int(c["pos"]) for c in cl)
-            return p0, max(int(c["pos"]) + sum(b - a for a, b in self._clip_ranges(c)) for c in cl)
-        s0, s1 = span(src)
-        src = [dict(c, pos=int(c["pos"]) - s0, cuts=[list(x) for x in c.get("cuts", [])]) for c in src]
-        r0, r1 = span(rem_clips)
-        rem = [dict(c, pos=int(c["pos"]) - r0) for c in rem_clips]
-        if plan["mode"] == 'prefix':
-            return src + [dict(c, pos=c["pos"] + (s1 - s0) + 60) for c in rem]
-        return rem + [dict(c, pos=c["pos"] + (r1 - r0) + 60) for c in src]
+        src_u = st["units"][src_uid]
+        take = next((k for k in reversed(st["takes"]) if k.get("unit") == src_uid and k.get("approved")), None)
+        if take is not None:
+            clips = self._tts_clips(take)
+            if all(os.path.exists(c["raw"]) for c in clips):
+                return clips
+        from core.tts_synth import write_like
+        from utils.audio_player import _read_audio
+        x, rate = _read_audio(self._tts_target(src_u))
+        rdir = os.path.join(st["work_dir"], TTS_CHUNKS_DIR, '_повтор')
+        os.makedirs(rdir, exist_ok=True)
+        path = os.path.join(rdir, f"{src_u['name']}.wav")
+        ln = write_like(path, x, rate, like)
+        return [{"raw": path, "a": 0, "b": ln, "cuts": [], "pos": 0}]
+
+    def _tts_char_span(self, words, w0, w1):
+        """Доля текста до слова w0 и до конца слова w1-1 (для оценки времени)."""
+        lens = [len(w[1]) + 1 for w in words]
+        tot = sum(lens) or 1
+        return sum(lens[:w0]) / tot, sum(lens[:w1]) / tot
+
+    def _tts_reuse_clips(self, rem_clips, plan):
+        """Дорожка по раскладке: куски записанных фраз (оценка по доле текста,
+        с запасом — край подровняете) и новые куски из этой записи."""
+        st = self._tts()
+        M = self.REUSE_MARGIN_MS
+        like = rem_clips[0]["raw"]
+        out, pos = [], 0
+        _idx, xwords = self._tts_reuse_index()
+        recs = [p for p in plan["pieces"] if p["kind"] == "rec"]
+        rec_chars = [len(p["text"]) + 1 for p in recs]
+        rtot = sum(rec_chars) or 1
+        r_a, r_b = int(rem_clips[0]["a"]), int(rem_clips[-1]["b"])
+        r_done = 0
+        for p in plan["pieces"]:
+            if p["kind"] == "have":
+                src = self._tts_reuse_source(p["src"], like)
+                X = xwords.get(p["src"]) or []
+                cut = []
+                if len(src) == 1 and X and not (p["x0"] == 0 and p["x1"] == len(X)):
+                    c = dict(src[0], cuts=[list(x) for x in src[0].get("cuts", [])])
+                    a0, b0 = int(c["a"]), int(c["b"])
+                    f0, f1 = self._tts_char_span(X, p["x0"], p["x1"])
+                    c["a"] = max(a0, int(a0 + f0 * (b0 - a0)) - (M if p["x0"] > 0 else 0))
+                    c["b"] = min(b0, int(a0 + f1 * (b0 - a0)) + (M if p["x1"] < len(X) else 0))
+                    cut = [c]
+                else:
+                    cut = [dict(c, cuts=[list(x) for x in c.get("cuts", [])]) for c in src]
+            else:
+                share = rec_chars[recs.index(p)]
+                f0, f1 = r_done / rtot, (r_done + share) / rtot
+                r_done += share
+                if len(recs) == 1:
+                    cut = [dict(c) for c in rem_clips]
+                else:
+                    c = dict(rem_clips[0], cuts=[])
+                    c["a"] = max(r_a, int(r_a + f0 * (r_b - r_a)) - (M if f0 > 0 else 0))
+                    c["b"] = min(r_b, int(r_a + f1 * (r_b - r_a)) + (M if f1 < 1 else 0))
+                    cut = [c]
+            p0 = min(int(c["pos"]) for c in cut)
+            span = max(int(c["pos"]) + sum(b - a for a, b in self._clip_ranges(c)) for c in cut) - p0
+            for c in cut:
+                out.append(dict(c, pos=int(c["pos"]) - p0 + pos))
+            pos += span + 60
+        return out
+
+    def tts_reuse_build(self, uid):
+        """Фраза целиком есть в записанном — собрать дубль без новой записи."""
+        st = self._tts()
+        plan = self._tts_reuse_for(uid)
+        if not plan or plan["rest"]:
+            return {"error": "Эту фразу нельзя собрать только из записанного."}
+        first = next(p for p in plan["pieces"] if p["kind"] == "have")
+        take0 = next((k for k in reversed(st["takes"]) if k.get("unit") == first["src"] and k.get("approved")), None)
+        like = self._tts_clips(take0)[0]["raw"] if take0 else self._tts_target(st["units"][first["src"]])
+        dummy = [{"raw": like, "a": 0, "b": 1, "cuts": [], "pos": 0}]
+        clips = self._tts_reuse_clips(dummy, plan)
+        n = max([t.get("chunk", 0) for t in st["takes"]] + [0]) + 1
+        take = {"file": os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav"), "start_ms": 0, "ms": 0, "orig": [0, 0],
+                "raw": clips[0]["raw"], "heard": "(из записанного)", "listened": False, "chunk": n, "unit": uid,
+                "score": 1.0, "status": "manual",
+                "reuse": {"srcs": plan["srcs"], "rec": 0, "pieces": len(plan["pieces"])}}
+        os.makedirs(os.path.join(st["work_dir"], TTS_CHUNKS_DIR), exist_ok=True)
+        self._tts_render_clips(take, clips)
+        take["clips"] = clips
+        take["clips_orig"] = [dict(c) for c in clips]
+        st["takes"].append(take)
+        st["index"] = len(st["takes"]) - 1
+        self._tts_save()
+        return {**self.tts_state(), "built": st["units"][uid]["name"]}
 
     def tts_twins_info(self):
         """Группы одинаковых фраз: что записано, что можно заполнить копией."""

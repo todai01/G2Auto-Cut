@@ -789,7 +789,8 @@ class TtsLiveMixin:
                 "orig": [a0, b1], "raw": rec.path, "heard": heard, "listened": False, "chunk": n,
                 "unit": uid, "score": score, "status": status or ("ok" if score >= 0.85 else "doubt")}
         if reuse:
-            take["reuse"] = {"src": reuse["src_name"], "mode": reuse["mode"], "trim": reuse["trim"]}
+            take["reuse"] = {"srcs": reuse["srcs"], "rec": sum(1 for x in reuse["pieces"] if x["kind"] == "rec"),
+                             "pieces": len(reuse["pieces"])}
         if len(clips) > 1:
             take["clips"] = clips
             take["clips_orig"] = [dict(c) for c in clips]
