@@ -6316,7 +6316,7 @@ let isProcessing = false;
             if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
             ttsTS = { i: t.i, words: r.words, start: r.start, overlap: 2, text: null,
                       mode: r.refs.length ? r.refs[0].mode : 'auto', refs: r.refs, fake: r.fake,
-                      tail_word: r.tail_word, lang: r.lang, busy: r.busy };
+                      tail_word: r.tail_word, noise: r.noise, lang: r.lang, busy: r.busy };
             ttsTsynRender();
         }
         const ttsTsynText = () => ttsTS.text !== null ? ttsTS.text
@@ -6355,6 +6355,8 @@ let isProcessing = false;
                     <span class="tts-dim" style="margin-left:14px">В конце</span>
                     ${chip(ttsSynTailOn(), `+ «${escapeHtml(s.tail_word)}» (запас, срежете)`, 'ttsSynTailToggle()')}
                 </div>
+                <div class="tts-tsyn__row">${ttsNoiseChips(s.noise, 'ttsTsynNoise')}
+                </div>
                 <div class="tts-tsyn__row">
                     <input class="tts-tsyn__text" id="ttsTsynText" value="${escapeHtml(ttsTsynText())}" title="Что синтезировать — можно поправить"
                         oninput="ttsTS.text = this.value">
@@ -6362,6 +6364,25 @@ let isProcessing = false;
                         : '<button class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsTsynRun()">Синтезировать</button>'}
                     <button class="btn-ghost btn-ghost--compact" onclick="ttsTS = null; ttsTsynRender()">Закрыть</button>
                 </div>`;
+        }
+        // Фон комнаты под синтезом: шум из пауз образца голоса — синтез звучит
+        // «из той же комнаты», что и живые фразы, стык при склейке незаметнее.
+        function ttsNoiseChips(n, fn) {
+            n = n || { on: true, db: 0 };
+            let chip = (on, label, js, tip) => `<button type="button" class="chip ${on ? 'chip-mode--active' : ''}" onclick="${js}" title="${tip}">${label}</button>`;
+            return `<span class="tts-dim" title="Шум комнаты и микрофона из пауз образца голоса подкладывается под синтез — для реализма">Фон комнаты</span>`
+                + chip(!n.on, 'выкл', `${fn}(false, 0)`, 'Синтез без фона — «студийно чистый»')
+                + chip(n.on && n.db < 0, 'тише', `${fn}(true, -6)`, 'Фон на 6 дБ тише, чем в образце')
+                + chip(n.on && n.db === 0, 'как в записи', `${fn}(true, 0)`, 'Фон того же уровня, что в вашей записи')
+                + chip(n.on && n.db > 0, 'громче', `${fn}(true, 6)`, 'Фон на 6 дБ громче, чем в образце');
+        }
+        async function ttsTsynNoise(on, db) {
+            let r = await pywebview.api.tts_synth_noise(on, db);
+            if (ttsTS) { ttsTS.noise = r; ttsTsynRender(); }
+        }
+        async function ttsSynthNoise(on, db) {
+            await pywebview.api.tts_synth_noise(on, db);
+            ttsSynthLoad(true);
         }
         function ttsTsynSet(o) {
             if (!ttsTS || ttsTS.busy) return;
@@ -7138,6 +7159,10 @@ let isProcessing = false;
                             : `<span class="tts-syn__word" title="Нет живой записи этой формы — синтезируется вместе с числом. Добавьте запись, где диктор её говорит.">${escapeHtml(w.form)} — синтез</span>`).join('') : ''}
                         ${sy.hybrid ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsMkOpen(false)" ${sy.etalon_ok ? '' : 'disabled'} title="Открыть дорожку эталона и выделить слова мышью">Разметить в эталоне</button>
                                <button class="btn-ghost btn-ghost--compact" onclick="ttsMkOpen(true)" title="Другая запись диктора, где есть недостающие формы (например «миллиона», «тысяч»)">+ запись со словами</button>` : ''}
+                    </div>
+                    <div class="tts-syn__row">
+                        <span class="tts-syn__lbl">Фон</span>
+                        ${ttsNoiseChips(sy.noise, 'ttsSynthNoise').replace('<span class="tts-dim"', '<span class="tts-dim" style="display:none"')}
                     </div>
                     <div class="tts-syn__row">
                         <span class="tts-syn__lbl">Язык</span>

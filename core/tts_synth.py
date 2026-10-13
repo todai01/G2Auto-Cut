@@ -237,6 +237,81 @@ def _frames_rms(x, rate, ms=5):
     return np.sqrt((x[:k * n].reshape(k, n) ** 2).mean(axis=1) + 1e-12), n
 
 
+def _pink(n, seed=None):
+    """Розовый шум (как «шипение» комнаты/микрофона, без резкого верха)."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    w = rng.standard_normal(n)
+    f = np.fft.rfft(w)
+    k = np.arange(len(f))
+    k[0] = 1
+    y = np.fft.irfft(f / np.sqrt(k), n=n)
+    return (y / (np.sqrt((y ** 2).mean()) + 1e-12)).astype('float32')
+
+
+def room_noise(ref_path, rate, n, seed=None):
+    """Фон «как в записи»: тихие места образца (между словами, до и после
+    речи) — шум комнаты и микрофона — склеиваются и подкладываются под
+    синтез нужной длины. Тихих мест мало — розовый шум того же уровня.
+    None — в образце нет шума (цифровая тишина)."""
+    import numpy as np
+    try:
+        x, r = _mono(ref_path)
+    except Exception:
+        return None
+    e, hop = _frames_rms(x, r, 20)
+    if len(e) < 5:
+        return None
+    floor = float(np.percentile(e, 10))
+    if floor <= 10 ** (-85 / 20):
+        return None
+    quiet = e <= floor * 2.0
+    parts, k = [], 0
+    while k < len(e):
+        if quiet[k]:
+            j = k
+            while j < len(e) and quiet[j]:
+                j += 1
+            if j - k >= 4:                                    # от 80 мс, без краёв речи
+                parts.append(x[(k + 1) * hop:(j - 1) * hop])
+            k = j
+        else:
+            k += 1
+    fade = max(1, int(r * 0.010))
+    bed = np.zeros(0, dtype='float32')
+    for p in parts:
+        if len(p) <= 2 * fade:
+            continue
+        if len(bed) >= fade:
+            t = np.linspace(0, np.pi / 2, fade, dtype='float32')
+            bed = np.concatenate([bed[:-fade], bed[-fade:] * np.cos(t) + p[:fade] * np.sin(t), p[fade:]])
+        else:
+            bed = p.astype('float32')
+    if len(bed) < 0.25 * r:
+        bed = _pink(r, seed) * floor                      # тишины мало — синтетический фон того же уровня
+    if r != rate:
+        bed = resample(bed[:, None], r, rate)[:, 0]
+    rng = np.random.default_rng(seed)
+    out = np.zeros(n, dtype='float32')
+    xf = max(1, min(int(rate * 0.030), len(bed) // 4))
+    pos, first = 0, True
+    while pos < n:
+        start = int(rng.integers(0, max(1, len(bed) // 2))) if first else 0
+        chunk = bed[start:]
+        m = min(len(chunk), n - pos)
+        seg = chunk[:m].copy()
+        if not first and m > xf and pos >= xf:            # стык повторов — плавно
+            t = np.linspace(0, 1, xf, dtype='float32')
+            out[pos - xf:pos] = out[pos - xf:pos] * (1 - t) + seg[:xf] * t
+            out[pos:pos + m - xf] = seg[xf:]
+            pos += m - xf
+        else:
+            out[pos:pos + m] = seg
+            pos += m
+        first = False
+    return out
+
+
 class _SynthWorker(threading.Thread):
     """Очередь заданий на синтез и один браузер с открытым сервисом."""
 
@@ -368,6 +443,45 @@ class TtsSynthMixin:
     def _synth_lang(sy):
         return sy["per"][sy["lang"]]
 
+    # ---------------- фон комнаты под синтезом ----------------
+
+    def _synth_noise_cfg(self):
+        sy = self._synth()
+        return sy.setdefault("noise", {"on": True, "db": 0})
+
+    def tts_synth_noise(self, on=None, db=None):
+        """Фон под синтезом: on — включён, db — громче/тише фона образца."""
+        with self._synth_lock():
+            cfg = self._synth_noise_cfg()
+            if on is not None:
+                cfg["on"] = bool(on)
+            if db is not None:
+                cfg["db"] = max(-12, min(12, int(db)))
+        self._tts_save()
+        return dict(cfg)
+
+    def _add_noise(self, x, rate, ref):
+        """Подложить под синтез фон из образца голоса (если включено)."""
+        cfg = self._synth_noise_cfg()
+        if not cfg.get("on") or not ref or not os.path.exists(ref) or not len(x):
+            return x
+        bed = room_noise(ref, rate, len(x))
+        if bed is None:
+            return x
+        if x.ndim > 1:
+            bed = bed[:, None]
+        return x + bed * float(10 ** (cfg.get("db", 0) / 20))
+
+    def _noise_file(self, path, ref):
+        """То же для готового файла синтеза (перезаписывает его, WAV 16 бит)."""
+        cfg = self._synth_noise_cfg()
+        if not cfg.get("on"):
+            return
+        x, rate = _mono(path)
+        y = self._add_noise(x, rate, ref)
+        if y is not x:
+            _write_pcm16(path, y, rate)
+
     def _synth_lock(self):
         lock = getattr(self, '_synth_lk', None)
         if lock is None:
@@ -419,6 +533,7 @@ class TtsSynthMixin:
                     "approved": sum(1 for it in sy["items"] if it["status"] == "approved"),
                     "queue": len(w.jobs) + (1 if w and w.current is not None else 0) if w else 0,
                     "folder": self._synth_dir(), "hybrid": sy.get("hybrid", True),
+                    "noise": dict(sy.get("noise") or {"on": True, "db": 0}),
                     "words": self._synth_words_info(sy)}
 
     def _synth_words_info(self, sy):
@@ -587,6 +702,7 @@ class TtsSynthMixin:
         if not any(kind == 'live' for kind, _t in plan):
             plan = [['synth', text]]
             self._synth_request(worker, etalon, etalon_text, lang, text, dst)
+            self._noise_file(dst, etalon)
         else:
             parts = []
             for i, (kind, t) in enumerate(plan):
@@ -595,6 +711,7 @@ class TtsSynthMixin:
                 else:
                     piece = os.path.join(vdir, f"{k + 1:04d}_v{tries}_{i + 1}.wav")
                     self._synth_request(worker, etalon, etalon_text, lang, t, piece)
+                    self._noise_file(piece, etalon)
                     parts.append(('synth', piece, None))
             self._synth_glue(parts, dst)
         with self._synth_lock():
@@ -1116,7 +1233,7 @@ class TtsSynthMixin:
         if self._synth_etalon_ref(lang):
             refs.append({"mode": "etalon", "label": 'эталон «Синтеза сумм»'})
         return {"words": words, "lang": lang, "start": start, "fake": fake, "refs": refs,
-                "tail_word": SYNTH_TAIL.get(lang, SYNTH_TAIL['ru']),
+                "tail_word": SYNTH_TAIL.get(lang, SYNTH_TAIL['ru']), "noise": dict(self._synth_noise_cfg()),
                 "busy": bool(getattr(self, '_take_synth_busy', None))}
 
     def tts_take_synth(self, i, start, overlap=2, text=None, mode='auto', tail=True):
@@ -1178,6 +1295,7 @@ class TtsSynthMixin:
             r_take, r_syn = self._rms_voice(y, yr), self._rms_voice(x, rate)
             if r_take > 0 and r_syn > 0:
                 x = x * float(np.clip(r_take / r_syn, 0.25, 4.0))
+        x = self._add_noise(x, rate, ref)                  # фон комнаты — как в образце
         dst = os.path.join(sdir, f"{base}_синтез{n}.wav")
         length = write_like(dst, x, rate, like)
         try:
@@ -1248,6 +1366,7 @@ class TtsSynthMixin:
         self._synth_request(worker, ref, ref_text, lang, body, got)
         x, rate = _mono(got)
         x = self._trim_voice(x, rate, lead=40, tail=80)
+        x = self._add_noise(x, rate, ref)                  # фон комнаты — как в образце
         raw = os.path.join(sdir, f"{n:04d}_фраза.wav")
         _write_pcm16(raw, x, rate)
         try:
