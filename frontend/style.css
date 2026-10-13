@@ -3312,3 +3312,30 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
     color: var(--accent-var); border: 1px solid color-mix(in srgb, var(--accent-var) 50%, transparent); border-radius: 6px; padding: 2px 8px; }
 .tts-ctx{ color: var(--text-faint); font-weight: 400; font-size: .62em; }
 #ttsPromptMeta .tts-reuse-chip + .tts-pmode, #ttsPromptMeta .tts-reuse-chip{ margin-right: 8px; }
+
+/* «Ярусы»: строка переменных → эталоны ярусов */
+.stage-tts:not(.show-assembly) .tts-tiers{ display: none; }
+.tts-tiers{ margin: 10px 0 4px; }
+.tts-tiers__title{ font-size: var(--fs-sm); font-weight: 600; margin-bottom: 6px; }
+.tts-tiers__wave{ position: relative; height: 64px; border-radius: 9px; background: var(--screen); border: 1px solid var(--border-soft);
+    color: var(--text-dim); overflow: hidden; user-select: none; }
+.tts-tiers__wave canvas{ position: absolute; inset: 0; width: 100%; height: 100%; }
+.tts-tiers__seg{ position: absolute; top: 0; bottom: 0; cursor: pointer; border-left: 1px solid transparent;
+    background: color-mix(in srgb, var(--accent-var) 9%, transparent); }
+.tts-tiers__seg:nth-of-type(even){ background: color-mix(in srgb, var(--accent-var) 18%, transparent); }
+.tts-tiers__seg:hover{ background: color-mix(in srgb, var(--accent-var) 28%, transparent); }
+.tts-tiers__seg.is-skip{ background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--text-faint) 18%, transparent) 6px 8px); }
+.tts-tiers__seg span{ position: absolute; top: 3px; left: 5px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text); opacity: .75; white-space: nowrap; }
+.tts-tiers__cut{ position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; z-index: 2; }
+.tts-tiers__cut::after{ content: ''; position: absolute; left: 5px; top: 0; bottom: 0; width: 2px; background: var(--accent-var); }
+.tts-tiers__chips{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.tts-tiers__chip{ display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-soft); font-size: var(--fs-sm); }
+.tts-tiers__chip.is-skip{ opacity: .6; }
+.tts-tiers__play{ border: 0; background: var(--tint-var); color: var(--accent-var); border-radius: 6px; width: 24px; height: 24px; cursor: pointer; }
+.tts-tiers__lbl{ color: var(--text-dim); }
+.tts-tiers__exists, .tts-tiers__ok{ font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 3px; }
+.tts-tiers__ok{ color: var(--accent-good); }
+.tts-tiersep{ display: inline-block; width: 2px; height: .8em; margin: 0 .28em; vertical-align: -0.05em; border-radius: 1px;
+    background: color-mix(in srgb, var(--accent-var) 55%, transparent); }

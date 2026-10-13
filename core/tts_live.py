@@ -18,7 +18,7 @@ import webview
 from pydub import AudioSegment
 
 from core.auto_check import _lat_to_cyr, _norm, _ratio
-from core.tts_flow import FIND_SCORE, LEAD_S, TTS_CHUNKS_DIR, align_stream, end_word_ok, var_label
+from core.tts_flow import FIND_SCORE, LEAD_S, TTS_CHUNKS_DIR, TTS_DONE_DIR, align_stream, end_word_ok, var_label
 from utils.wav_io import wav_concat
 
 LIVE_RATE = 16000          # копия для распознавания
@@ -871,7 +871,7 @@ class TtsLiveMixin:
         st = self._tts()
         items, seen = [], set()
         mode = st.get("prompt_mode", "phrases")
-        if mode != "phrases" and not any(u["kind"] == "value" for u in st["units"]):
+        if mode != "phrases" and not any(u.get("tiers") for u in st["units"]):
             self._tts_ensure_value_units()        # проект из старой версии — значений ещё нет
         for u in st["units"]:
             if u["id"] in seen:
@@ -880,10 +880,9 @@ class TtsLiveMixin:
             if (u["kind"] == "value") != (mode != "phrases") or (u["kind"] == "value" and u.get("sheet") != mode):
                 continue
             if u["kind"] == "value":
-                # лист сумм — целые суммы выбранной логики; ярусы по отдельности — не читаем
-                is_sum = str(u.get("cat", '')).startswith('sum_l')
-                sheet_sum = self._tts_is_sum_sheet(st["var_sheets"].get(u["sheet"]) or {"categories": []})
-                if sheet_sum and (not is_sum or u.get("logic") != st.get("sum_logic", 1)):
+                # читаем строками: сумма целиком (выбранной логики), дата — «первого января»;
+                # ярусы по отдельности не читаем — они вырезаются из строки в «Сборке»
+                if not u.get("tiers") or (u.get("logic") and u["logic"] != st.get("sum_logic", 1)):
                     continue
             ch = st["chains"][u["chain"]] if u.get("chain") is not None and u["chain"] < len(st.get("chains", [])) else None
             if ch and ch.get("values"):
@@ -993,6 +992,7 @@ class TtsLiveMixin:
         def show(ids):
             return [{"id": i, "name": units[i]["name"], "text": units[i]["text"], "role": units[i]["role"],
                      "kind": units[i]["kind"], "cat_label": units[i].get("cat_label"),
+                     "tiers": [x["text"] for x in units[i]["tiers"]] if units[i].get("tiers") else None,
                      "vars": units[i].get("vars", []),
                      "var_before": units[i].get("var_before") if k == 0 else None,
                      "var_after": units[i].get("var_after")} for k, i in enumerate(ids)]
@@ -1024,7 +1024,8 @@ class TtsLiveMixin:
                 "context": self._tts_value_context(st.get("prompt_mode")) if st.get("prompt_mode", "phrases") != "phrases" else None,
                 "sum_logic": st.get("sum_logic", 1) if st.get("prompt_mode", "phrases") != "phrases"
                 and self._tts_is_sum_sheet((st.get("var_sheets") or {}).get(st.get("prompt_mode")) or {"categories": []}) else None,
-                "sum_folder": self._tts_sum_dir(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
+                "sum_folder": os.path.join(st["work_dir"], TTS_DONE_DIR, 'Суммы') if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
+                "tiers_done": self._tts_tiers_done(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "modes": [{"key": "phrases", "label": "Фразы"}] + [{"key": k, "label": sh["label"]}
                                                                    for k, sh in (st.get("var_sheets") or {}).items()],
                 "value_n": self._tts_item_value_n(items[pos])}

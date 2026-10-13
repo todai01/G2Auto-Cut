@@ -6527,11 +6527,12 @@ let isProcessing = false;
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             let [label, tone] = ttsTakeStatus(t);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
-                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span>
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : 'обычная фраза'}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-blocks">${blocks}</div>
+                ${u.tiers ? '<div class="tts-tiers" id="ttsTiers"></div>' : ''}
                 <div class="tts-tsyn" id="ttsTsyn" style="display:none"></div>
                 ${t.reuse ? `<div class="tts-asm-heard tts-asm-reuse">Собрано из записанного: ${(t.reuse.srcs || [t.reuse.src]).map(n => '«' + escapeHtml(n) + '»').join(', ')}${t.reuse.rec ? ` + ${t.reuse.rec === 1 ? 'новый кусок' : 'новые куски'} из этой записи` : ''}. Границы кусков оценены по тексту — подровняйте стыки.</div>` : ''}
                 <div class="tts-asm-heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
@@ -6563,7 +6564,83 @@ let isProcessing = false;
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>`;
             ttsEditorLoad();
+            if (u.tiers) ttsTiersLoad(t.i);
             if (ttsTS && ttsTS.i === t.i) ttsTsynRender(); else ttsTS = null;
+        }
+
+        // ----- «Ярусы»: строка переменных режется на эталоны ярусов -----
+        // Границы ставятся сами (в паузы), их можно двигать мышью. Клик по
+        // ярусу — послушать, как он сохранится. Enter — каждый ярус ложится
+        // своим финальным файлом; готовые ярусы не трогаются (если не
+        // отмечено «перезаписать»).
+        let ttsTR = null;
+        async function ttsTiersLoad(i) {
+            let r = await pywebview.api.tts_tier_marks(i);
+            let t = ttsCurTake();
+            if (!t || t.i !== i) return;
+            ttsTR = r && r.tiers ? r : null;
+            ttsTiersRender();
+        }
+        function ttsTiersRender() {
+            let el = document.getElementById('ttsTiers');
+            if (!el) return;
+            if (!ttsTR) { el.innerHTML = '<div class="tts-dim">Ярусы: не удалось прочитать дубль</div>'; return; }
+            let r = ttsTR, L = r.length || 1;
+            let pct = ms => (100 * ms / L).toFixed(3) + '%';
+            let segs = r.tiers.map(x => `<div class="tts-tiers__seg ${x.exists && !x.write ? 'is-skip' : ''}" style="left:${pct(x.a)};width:${pct(x.b - x.a)}"
+                    onclick="ttsTierPlay(${x.k})" title="Послушать: ${escapeHtml(x.text)}"><span>${escapeHtml(x.label)}</span></div>`).join('');
+            let handles = r.tiers.slice(0, -1).map(x => `<div class="tts-tiers__cut" style="left:${pct(x.b)}"
+                    onpointerdown="ttsTierDrag(event, ${x.k})" title="Граница — перетащите"></div>`).join('');
+            let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${x.exists && !x.write ? 'is-skip' : ''}">
+                    <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
+                    <span class="tts-tiers__lbl">${escapeHtml(x.label)} <b>${escapeHtml(x.value)}</b></span>
+                    <span class="tts-tiers__txt">${escapeHtml(x.text)}</span>
+                    ${x.exists ? `<label class="tts-tiers__exists" title="Этот эталон уже сохранён из другой строки — по умолчанию не трогаем">
+                        <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> уже есть · перезаписать</label>`
+                      : x.mine ? '<span class="tts-tiers__ok">сохранён ✓</span>' : ''}</div>`).join('');
+            el.innerHTML = `<div class="tts-tiers__title">Ярусы <span class="tts-dim">— Enter сохранит каждый отдельным эталоном, строка целиком не сохраняется</span></div>
+                <div class="tts-tiers__wave" id="ttsTiersWave"><canvas id="ttsTiersCanvas"></canvas>${segs}${handles}</div>
+                <div class="tts-tiers__chips">${chips}</div>`;
+            let cv = document.getElementById('ttsTiersCanvas'), box = cv.parentElement;
+            cv.width = box.clientWidth * (window.devicePixelRatio || 1); cv.height = box.clientHeight * (window.devicePixelRatio || 1);
+            let g = cv.getContext('2d'), n = r.peaks.length, mid = cv.height / 2;
+            g.fillStyle = getComputedStyle(box).color;
+            for (let k = 0; k < n; k++) {
+                let h = Math.max(1, r.peaks[k] * mid * 0.95), x = k / n * cv.width;
+                g.fillRect(x, mid - h, Math.max(1, cv.width / n), 2 * h);
+            }
+        }
+        function ttsTierDrag(e, k) {
+            e.preventDefault(); e.stopPropagation();
+            let r = ttsTR;
+            let cuts = r.tiers.slice(0, -1).map(x => x.b);
+            let move = ev => {
+                let rc = document.getElementById('ttsTiersWave').getBoundingClientRect();   // полоса перерисовывается
+                if (!rc.width) return;
+                let ms = Math.round((ev.clientX - rc.left) / rc.width * r.length);
+                let lo = (k > 0 ? cuts[k - 1] : 0) + 30, hi = (k < cuts.length - 1 ? cuts[k + 1] : r.length) - 30;
+                cuts[k] = Math.max(lo, Math.min(hi, ms));
+                r.tiers[k].b = r.tiers[k + 1].a = cuts[k];
+                ttsTiersRender();
+            };
+            let up = async () => {
+                window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+                let i = ttsCurTake() && ttsCurTake().i;
+                let res = await pywebview.api.tts_tier_set(i, cuts, null);
+                if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+            };
+            window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+        }
+        async function ttsTierWrite(k, on) {
+            let w = {};
+            ttsTR.tiers.forEach(x => { w[x.k] = x.k === k ? on : x.write; });
+            let res = await pywebview.api.tts_tier_set(ttsCurTake().i, null, w);
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+        }
+        async function ttsTierPlay(k) {
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, k);
+            if (r && r.error) showToast(r.error);
         }
 
         // ----- «Синтез…» в «Сборке»: добить фразу синтезом -----
@@ -7184,7 +7261,11 @@ let isProcessing = false;
                 let res = await pywebview.api.tts_approve(t.i);
                 if (res && res.error) { showToast(res.error); return; }
                 tts = res;
-                if (res.saved_kind === 'piece') ttsDropToVars(t.i);
+                if (res.tiers_saved) {
+                    let w = res.tiers_saved.written.length, sk = res.tiers_saved.skipped;
+                    showToast(`Сохранено эталонов: ${w}${sk.length ? ` · уже были: ${sk.join(', ')}` : ''}`, 4000);
+                }
+                else if (res.saved_kind === 'piece') ttsDropToVars(t.i);
                 else if (res.twins && res.twins.length)
                     showToast(`Сохранено: ${res.saved_name}.wav — и под ${res.twins.length === 1 ? 'названием' : 'названиями'} с тем же текстом: ${res.twins.slice(0, 4).join(', ')}${res.twins.length > 4 ? ` и ещё ${res.twins.length - 4}` : ''}`, 5000);
                 else showToast(`Сохранено: ${res.saved_name}.wav`);
@@ -8192,7 +8273,7 @@ let isProcessing = false;
             if (pr.done && !browse) {
                 let vals = pr.mode && pr.mode !== 'phrases';
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
-                text.innerHTML = vals ? 'Все значения прочитаны 🎉' : 'Все фразы прочитаны 🎉';
+                text.innerHTML = vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов — и здесь: дальше можно записывать значения переменных
                 meta.innerHTML = `<span>${ttsModesHTML(pr)}${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
@@ -8206,7 +8287,9 @@ let isProcessing = false;
             let pill = v => v ? ` <span class="tts-slot" title="${escapeHtml(ttsVarLabel(v))}: прочитайте любое значение">${escapeHtml(ttsSlotLabel(v))}</span> ` : '';
             let line = (parts, tail) => parts.map(p => pill(p.var_before)
                 + (p.kind === 'value' ? `<span class="tts-vcat">${escapeHtml(p.cat_label || '')}</span> ` : '')
-                + (p.role === 'var' ? `<span class="tts-ivar" title="Значение переменной — сохранится отдельно">${escapeHtml(p.text)}</span>` : escapeHtml(p.text))
+                + (p.role === 'var' ? `<span class="tts-ivar" title="Значение переменной — сохранится отдельно">${escapeHtml(p.text)}</span>`
+                   : p.tiers ? p.tiers.map(escapeHtml).join('<span class="tts-tiersep" title="Здесь программа разрежет на ярусы — небольшая пауза поможет"></span>')
+                   : escapeHtml(p.text))
                 + pill(p.var_after)).join(' ')
                 + (tail ? ` <span class="tts-tail" title="Только начало продолжения — целиком прочитаете с последним значением">${escapeHtml(tail)}</span>` : '');
             let ru = pr.reuse && !pr.reuse.skip && pr.reuse.rest ? pr.reuse : null;
@@ -8234,10 +8317,9 @@ let isProcessing = false;
             let modes = ttsModesHTML(pr);
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
-            if (pr.sum_logic) modes += ` <button type="button" class="tts-pmode ${pr.sum_logic === 1 ? 'is-on' : ''}" onclick="ttsSumLogic(1)" title="миллионы + сотни + тысячи + тенге">1 101 001</button><button type="button" class="tts-pmode ${pr.sum_logic === 2 ? 'is-on' : ''}" onclick="ttsSumLogic(2)" title="миллионы + сотни тысяч + тенге">1 100 001</button>`
-                + ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsSumsOpen()" title="Открыть режим «Суммы» на записанных суммах — нарезка на ярусы">Режим «Суммы» →</button>`;
+            if (pr.sum_logic) modes += ` <button type="button" class="tts-pmode ${pr.sum_logic === 1 ? 'is-on' : ''}" onclick="ttsSumLogic(1)" title="миллионы + сотни + тысячи + тенге">1 101 001</button><button type="button" class="tts-pmode ${pr.sum_logic === 2 ? 'is-on' : ''}" onclick="ttsSumLogic(2)" title="миллионы + сотни тысяч + тенге">1 100 001</button>`;
             let valN = pr.value_n ? ` <span class="tts-reuse-chip is-on" title="Значения переменной из таблицы читаются по очереди; продолжение фразы — целиком с последним">значение ${pr.value_n.k} из ${pr.value_n.n}</span>` : '';
-            meta.innerHTML = `<span>${modes}${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}${pr.mode && pr.mode !== 'phrases' ? 'Значение' : 'Фраза'} <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}${valN}`
+            meta.innerHTML = `<span>${modes}${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}${pr.mode && pr.mode !== 'phrases' ? 'Строка' : 'Фраза'} <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${pr.tiers_done ? ` · <span title="Сохранённые эталоны ярусов этого листа (одинаковые значения в разных строках — один файл)">эталонов ${pr.tiers_done[0]} из ${pr.tiers_done[1]}</span>` : ''}${reuseChip}${valN}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
                 + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
@@ -8673,8 +8755,8 @@ let isProcessing = false;
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
-                : r.prompt && r.prompt.sum_logic ? 'Записываем суммы целиком, по строкам таблицы — в «Запись_суммы», оттуда режим «Суммы» нарежет на ярусы'
-                : 'Записываем значения по порядку строк таблицы — каждое сохранится отдельным файлом в «Значения»');
+                : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Проверенные/Суммы»'
+                : 'Читаем строки таблицы — Enter в «Сборке» сохранит каждое значение эталоном в «Значения»', 5000);
         }
 
         // Фраза на 80%+ уже записана: записанное — тихо, остаток — крупно.

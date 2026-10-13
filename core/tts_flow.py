@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import openpyxl
 import webview
+import numpy as np
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
@@ -427,9 +428,10 @@ class TtsFlowMixin:
             pass
 
     def _tts_target(self, unit):
+        if unit.get("tiers"):                        # строка переменных — файлы ярусов
+            paths = [self._tts_tier_path(unit, t) for t in unit["tiers"]]
+            return next((p for p in paths if not os.path.exists(p)), paths[-1])
         if unit["kind"] == "value":                  # значение переменной — в «Значения/<лист>/<категория>/»
-            if str(unit.get("cat", '')).startswith('sum_l'):   # сумма целиком — для режима «Суммы»
-                return os.path.join(self._tts_sum_dir(unit["sheet"]), f"{unit['name']}.wav")
             return self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         if unit.get("subdir"):                       # значение переменной из ячейки — в папку своей фразы
@@ -456,14 +458,16 @@ class TtsFlowMixin:
         groups = {}
         for u in self._tts()["units"]:
             k = self._tts_text_key(u)
-            if k:
+            if k and not u.get("tiers"):
                 groups.setdefault(k, []).append(u["id"])
         return [ids for ids in groups.values() if len(ids) > 1]
 
     def _tts_twins(self, uid):
         st = self._tts()
         k = self._tts_text_key(st["units"][uid])
-        return [u["id"] for u in st["units"] if u["id"] != uid and k and self._tts_text_key(u) == k]
+        if st["units"][uid].get("tiers"):
+            return []
+        return [u["id"] for u in st["units"] if u["id"] != uid and k and not u.get("tiers") and self._tts_text_key(u) == k]
 
     def _tts_twin_spread(self, uid):
         """Сохранённую фразу — под названия всех её «близнецов» (кроме тех, что
@@ -806,6 +810,7 @@ class TtsFlowMixin:
         wd = st.get("work_dir")
         saved = {u["id"]: bool(wd) and os.path.exists(self._tts_target(u)) for u in units}
         main_units = [u for u in units if u["kind"] != "value"]       # значения переменных — свой счёт
+        rows_now = [u for u in units if u.get("tiers") and u.get("logic") in (None, st.get("sum_logic", 1))]
         takes_by_unit = {}
         for i, t in enumerate(st["takes"]):
             if t.get("unit") is not None:
@@ -836,8 +841,8 @@ class TtsFlowMixin:
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
             "prompt_mode": st.get("prompt_mode", "phrases"), "sum_logic": st.get("sum_logic", 1),
             "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
-                      "values": len(units) - len(main_units),
-                      "values_saved": sum(saved[u["id"]] for u in units if u["kind"] == "value"),
+                      "values": len(rows_now),
+                      "values_saved": sum(saved[u["id"]] for u in rows_now),
                       "pieces": len(pieces), "pieces_saved": sum(1 for u in pieces if saved[u["id"]]),
                       "chains": len(st.get("chains", [])),
                       "missing": sum(1 for u in main_units if not saved[u["id"]] and u["id"] not in takes_by_unit),
@@ -1398,11 +1403,16 @@ class TtsFlowMixin:
             return {"error": "Дубль не привязан к фразе — выберите фразу."}
         # Сохранять можно и без прослушивания — вы сами решаете, что дубль верный.
         unit = st["units"][t["unit"]]
-        target = self._tts_target(unit)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        if os.path.exists(target):
-            self._tts_trash(target)
-        self._tts_render_final(os.path.join(st["work_dir"], t["file"]), target, *self._tts_sound(t))
+        tiers_out = None
+        if unit.get("tiers"):                          # строка переменных — каждый ярус своим эталоном
+            written, skipped = self._tts_tier_save(t, unit)
+            tiers_out = {"written": [os.path.relpath(p, st["work_dir"]) for p in written], "skipped": skipped}
+        else:
+            target = self._tts_target(unit)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            if os.path.exists(target):
+                self._tts_trash(target)
+            self._tts_render_final(os.path.join(st["work_dir"], t["file"]), target, *self._tts_sound(t))
         for other in st["takes"]:
             if other.get("unit") == t["unit"]:
                 other["approved"] = False
@@ -1411,7 +1421,8 @@ class TtsFlowMixin:
         twins = self._tts_twin_spread(t["unit"])
         st["index"] = self._tts_next(i)
         self._tts_save()
-        return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"], "twins": twins}
+        return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"], "twins": twins,
+                "tiers_saved": tiers_out}
 
     def tts_reject(self, i):
         """Прежняя «Плохой дубль» — теперь удаление (Ctrl+Z возвращает)."""
@@ -1440,7 +1451,10 @@ class TtsFlowMixin:
             rec["moves"].append((path, dst))
         if wd and t.get("file") and not any(o is not t and o.get("file") == t["file"] for o in st["takes"]):
             hide(os.path.join(wd, t["file"]))
-        if wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
+        if wd and t.get("tier_files"):                 # ярусы, сохранённые из этого дубля
+            for p in t["tier_files"]:
+                hide(p)
+        elif wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
             hide(self._tts_target(st["units"][t["unit"]]))
             copies = st.setdefault("twin_copies", {})
             rec["twin_copies"] = {}
@@ -1494,7 +1508,11 @@ class TtsFlowMixin:
             try:
                 if wd and t.get("file") and os.path.exists(os.path.join(wd, t["file"])):
                     self._tts_trash(os.path.join(wd, t["file"]))
-                if wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
+                for p in t.get("tier_files") or []:
+                    if os.path.exists(p):
+                        self._tts_trash(p)
+                if wd and t.get("approved") and not t.get("tier_files") and t.get("unit") is not None \
+                        and t["unit"] < len(st["units"]) and not st["units"][t["unit"]].get("tiers"):
                     target = self._tts_target(st["units"][t["unit"]])
                     if os.path.exists(target):
                         self._tts_trash(target)
@@ -1508,6 +1526,15 @@ class TtsFlowMixin:
     def tts_unapprove(self, unit_id):
         st = self._tts()
         if not (0 <= unit_id < len(st["units"])):
+            return self.tts_state()
+        if st["units"][unit_id].get("tiers"):          # строка: убираем ярусы, сохранённые из её дублей
+            for t in st["takes"]:
+                if t.get("unit") == unit_id:
+                    for p in t.pop("tier_files", None) or []:
+                        if os.path.exists(p):
+                            self._tts_trash(p)
+                    t["approved"] = False
+            self._tts_save()
             return self.tts_state()
         target = self._tts_target(st["units"][unit_id])
         if os.path.exists(target):
@@ -1937,8 +1964,8 @@ class TtsFlowMixin:
     # Лист сумм читается целыми суммами (как в «Синтезе сумм»): строка k —
     # каждый ярус берёт своё k-е значение (дошедший до конца — остаётся на
     # последнем). Логика 1: миллионы + сотни + тысячи + тенге (1 101 001),
-    # логика 2: миллионы + сотни тысяч + тенге (1 100 001). Запись — в
-    # «Запись_суммы_RU/» → оттуда режим «Суммы» режет на ярусы.
+    # логика 2: миллионы + сотни тысяч + тенге (1 100 001). Сохраняются
+    # ярусы — см. «Конвейер» ниже.
     SUM_LOGICS = {1: ('million', 'hundred', 'thousand', 'tenge'), 2: ('million', 'hundred_thousand', 'tenge')}
 
     @staticmethod
@@ -1946,22 +1973,29 @@ class TtsFlowMixin:
         bases = {re.sub(r'_(ru|kz|kk)$', '', c["key"]) for c in sh["categories"]}
         return {'million', 'tenge'} <= bases
 
-    def _tts_sum_rows(self, sh, logic):
+    def _tts_sum_row_parts(self, sh, logic):
+        """Строки суммы по ярусам: [{ярус: (ключ категории, значение из таблицы, число)}]."""
         tiers = self.SUM_LOGICS.get(int(logic), self.SUM_LOGICS[1])
-        by_base = {re.sub(r'_(ru|kz|kk)$', '', c["key"]): c["values"] for c in sh["categories"]}
+        by_base = {re.sub(r'_(ru|kz|kk)$', '', c["key"]): c for c in sh["categories"]}
         cols = []
         for t in tiers:
-            vals = [int(re.sub(r'\D', '', v)) for v in by_base.get(t, []) if re.sub(r'\D', '', v)]
+            c = by_base.get(t)
+            vals = [(re.sub(r'\D', '', v), int(re.sub(r'\D', '', v))) for v in (c or {}).get("values", [])
+                    if re.sub(r'\D', '', v)]
             if vals:
-                cols.append((t, vals))
+                cols.append((t, c["key"], vals))
         if not cols:
             return []
-        out = []
-        for k in range(max(len(v) for _t, v in cols)):
-            parts = {t: v[min(k, len(v) - 1)] for t, v in cols}
-            group = parts.get('hundred', 0) + parts.get('hundred_thousand', 0) + parts.get('thousand', 0)
-            out.append(parts.get('million', 0) * 1_000_000 + group * 1000 + parts.get('tenge', 0))
-        return out
+        return [{t: (ck, *v[min(k, len(v) - 1)]) for t, ck, v in cols}
+                for k in range(max(len(v) for _t, _c, v in cols))]
+
+    @staticmethod
+    def _tts_sum_number(parts):
+        g = lambda t: parts[t][2] if t in parts else 0
+        return g('million') * 1_000_000 + (g('hundred') + g('hundred_thousand') + g('thousand')) * 1000 + g('tenge')
+
+    def _tts_sum_rows(self, sh, logic):
+        return [self._tts_sum_number(p) for p in self._tts_sum_row_parts(sh, logic)]
 
     def _tts_sum_dir(self, key):
         lm = re.search(r'_(ru|kz|kk)$', key)
@@ -1978,47 +2012,277 @@ class TtsFlowMixin:
         return {"prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
                 "state": self.tts_state()}
 
+    # Конвейер «один раз — и готово»: читается строка целиком («один миллион
+    # сто одна тысяча один тенге», «первого января»), в «Сборке» дубль сам
+    # размечается на ярусы, Enter сохраняет каждый ярус сразу финальным
+    # эталоном — суммы в «Проверенные/Суммы/<ярус>/» (их берёт режим
+    # «Суммы»), даты — в «Значения/<лист>/<категория>/». Целиком строка не
+    # сохраняется. Уже готовые ярусы не перезаписываются, строка, где готово
+    # всё, — пропускается.
+    SUM_TIER_DIRS = {'million': '1 - 100 млн', 'hundred_thousand': '100 - 900 тыс', 'hundred': '100 - 900',
+                     'thousand': '1 - 99 тыс', 'tenge': '1 - 100 тенге'}
+    SUM_TIER_LABELS = {'million': 'Миллионы', 'hundred_thousand': 'Сотни тысяч', 'hundred': 'Сотни',
+                       'thousand': 'Тысячи', 'tenge': 'Тенге'}
+
+    def _tts_sum_piece(self, tier, n, lang):
+        from core.num_words import kz_words, ru_words
+        w = kz_words if lang == 'kz' else ru_words
+        mult = {'million': 1_000_000, 'hundred_thousand': 1000, 'thousand': 1000}.get(tier, 1)
+        text = w(n * mult)
+        return f"{text} {'теңге' if lang == 'kz' else 'тенге'}" if tier == 'tenge' else text
+
+    def _tts_tier_path(self, unit, tier):
+        if str(unit.get("cat", '')).startswith('sum_l'):
+            return os.path.join(self._tts()["work_dir"] or '', TTS_DONE_DIR, 'Суммы',
+                                self.SUM_TIER_DIRS.get(tier["tier"], tier["tier"]), f"{tier['value']}.wav")
+        return self._tts_value_file(unit["sheet"], tier["cat"], tier["value"])
+
+    def _tts_row_units(self, sheet=None):
+        return [u for u in self._tts()["units"] if u.get("tiers") and (sheet is None or u.get("sheet") == sheet)]
+
     def _tts_ensure_value_units(self):
         st = self._tts()
         have = {(u.get("sheet"), u.get("cat"), u.get("value")): u for u in st["units"] if u["kind"] == "value"}
         changed = False
-        from core.num_words import kz_words, ru_words
+
+        def put(key, cat, value, fields):
+            nonlocal changed
+            u = have.get((key, cat, value))
+            if u:
+                for f in ("text", "tiers", "name", "row"):
+                    if u.get(f) != fields[f]:
+                        u[f] = fields[f]
+                        changed = True
+                return
+            st["units"].append({"id": len(st["units"]), "kind": "value", "role": None, "vars": [],
+                                "var_before": None, "var_after": None, "chain": None, "sheet": key,
+                                "cat": cat, "value": value, **fields})
+            have[(key, cat, value)] = st["units"][-1]
+            changed = True
         for key, sh in (st.get("var_sheets") or {}).items():
             lm = re.search(r'_(ru|kz|kk)$', key)
             lang = ('kz' if lm.group(1) in ('kz', 'kk') else 'ru') if lm else None
             if self._tts_is_sum_sheet(sh):
                 for logic in (1, 2):
-                    for k, n in enumerate(self._tts_sum_rows(sh, logic)):
-                        cat = f"sum_l{logic}"
-                        text = f"{kz_words(n)} теңге" if lang == 'kz' else f"{ru_words(n)} тенге"
-                        if (key, cat, str(n)) in have:
-                            continue
-                        uid = len(st["units"])
-                        st["units"].append({"id": uid, "kind": "value", "name": f"{k + 1:04d}_{n}", "text": text,
-                                            "role": None, "row": f"{key}:sum{logic}:{k}", "vars": [],
-                                            "var_before": None, "var_after": None, "chain": None, "lang": lang,
-                                            "sheet": key, "cat": cat, "value": str(n), "logic": logic,
-                                            "cat_label": f"Сумма · логика {logic}"})
-                        have[(key, cat, str(n))] = st["units"][-1]
-                        changed = True
+                    for k, parts in enumerate(self._tts_sum_row_parts(sh, logic)):
+                        n = self._tts_sum_number(parts)
+                        tiers = [{"tier": t, "cat": ck, "value": raw, "label": self.SUM_TIER_LABELS.get(t, t),
+                                  "text": self._tts_sum_piece(t, num, lang)}
+                                 for t in self.SUM_LOGICS[logic] if t in parts for ck, raw, num in [parts[t]]]
+                        put(key, f"sum_l{logic}", str(n),
+                            {"name": f"{k + 1:04d}_{n}", "text": ' '.join(x["text"] for x in tiers),
+                             "row": f"{key}:sum{logic}:{k}", "tiers": tiers, "lang": lang, "logic": logic,
+                             "cat_label": f"Сумма · логика {logic}"})
                 continue
             order = sh.get("order") or [[c["key"], v, 0] for c in sh["categories"] for v in c["values"]]
-            for cat, v, row in order:
+            for cat, v, row in order:              # отдельные значения (экран «Переменные», старые дубли)
                 text = self._tts_value_text(key, cat, v)[0]
-                u = have.get((key, cat, v))
-                if u:
-                    if u["text"] != text:
-                        u["text"] = text
-                        changed = True
-                    continue
-                uid = len(st["units"])
-                st["units"].append({"id": uid, "kind": "value", "name": clean_name(v), "text": text, "role": None,
-                                    "row": f"{key}:{row}:{cat}", "vars": [], "var_before": None, "var_after": None,
-                                    "chain": None, "lang": lang, "sheet": key, "cat": cat, "value": v,
-                                    "cat_label": var_label(cat)})
-                changed = True
+                put(key, cat, v, {"name": clean_name(v), "text": text, "row": f"{key}:{row}:{cat}", "tiers": None,
+                                  "lang": lang, "cat_label": var_label(cat)})
+            cats = [c for c in sh["categories"] if c["values"]]
+            for k in range(max((len(c["values"]) for c in cats), default=0)):
+                tiers = []
+                for c in cats:
+                    v = c["values"][min(k, len(c["values"]) - 1)]
+                    tiers.append({"tier": c["key"], "cat": c["key"], "value": v, "label": var_label(c["key"]),
+                                  "text": self._tts_value_text(key, c["key"], v)[0]})
+                put(key, "rows", str(k), {"name": f"{k + 1:04d}_" + '_'.join(clean_name(x["value"]) for x in tiers),
+                                          "text": ' '.join(x["text"] for x in tiers), "row": f"{key}:rows:{k}",
+                                          "tiers": tiers, "lang": lang, "cat_label": "Строка таблицы"})
         if changed:
             self._tts_save()
+
+    def _tts_tiers_done(self, sheet):
+        """Сколько эталонов ярусов листа уже готово (уникальные файлы)."""
+        paths = {self._tts_tier_path(u, t) for u in self._tts_row_units(sheet)
+                 if not (u.get("logic") and u["logic"] != self._tts().get("sum_logic", 1)) for t in u["tiers"]}
+        return sum(1 for p in paths if os.path.exists(p)), len(paths)
+
+    # ---- разметка ярусов в дубле строки ----
+    TIER_FRAME_MS = 10
+    TIER_SNAP_MS = 120        # граница ищет самую тихую точку в ± стольких мс
+    TIER_PAD_MS = 60          # тишины по краям каждого яруса
+
+    def _tts_take_frames(self, t):
+        """RMS дубля по кадрам 10 мс + длина в мс."""
+        seg = AudioSegment.from_file(os.path.join(self._tts()["work_dir"], t["file"]))
+        seg = seg.set_channels(1).set_sample_width(2)
+        x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
+        per = max(1, seg.frame_rate * self.TIER_FRAME_MS // 1000)
+        n = len(x) // per
+        rms = np.sqrt((x[:n * per].reshape(n, per) ** 2).mean(axis=1)) if n else np.zeros(0)
+        return rms, len(seg)
+
+    def _tts_tier_auto(self, unit, rms, length):
+        """Границы ярусов: ожидаемое место — по доле букв внутри звучащей
+        части; граница ставится в ближайшую паузу (по порядку, без пропусков
+        назад), нет паузы рядом — в самую тихую точку."""
+        tiers = unit["tiers"]
+        if len(tiers) < 2 or not len(rms):
+            return []
+        f = self.TIER_FRAME_MS
+        thr = max(float(rms.max()) * 0.08, 1e-4)
+        voiced = np.nonzero(rms > thr)[0]
+        v0, v1 = (int(voiced[0]) * f, int(voiced[-1] + 1) * f) if len(voiced) else (0, length)
+        chars = [max(1, len(re.sub(r'\W', '', x["text"]))) for x in tiers]
+        total, acc, guess = sum(chars), 0, []
+        for c in chars[:-1]:
+            acc += c
+            guess.append(v0 + (v1 - v0) * acc / total)
+        # паузы внутри речи: тихие отрезки от 40 мс
+        quiet = rms <= thr
+        pauses, k = [], int(voiced[0]) if len(voiced) else 0
+        end = int(voiced[-1]) if len(voiced) else len(rms) - 1
+        while k <= end:
+            if quiet[k]:
+                j = k
+                while j <= end and quiet[j]:
+                    j += 1
+                if (j - k) * f >= 40:
+                    pauses.append((k + j) * f / 2)
+                k = j
+            else:
+                k += 1
+        # по порядку: каждой границе — своя пауза или «нет паузы» (штраф)
+        n, m, miss = len(guess), len(pauses), max(250.0, (v1 - v0) * 0.25)
+        # выравнивание как у строк: пауза пропущена / граница без паузы / граница в паузе
+        best = [[0.0] * (m + 1) for _ in range(n + 1)]
+        how = [[None] * (m + 1) for _ in range(n + 1)]
+        for gi in range(n + 1):
+            for pj in range(m + 1):
+                if gi == 0 and pj == 0:
+                    continue
+                opts = []
+                if pj > 0:
+                    opts.append((best[gi][pj - 1], 'skip'))
+                if gi > 0:
+                    opts.append((best[gi - 1][pj] + miss, 'miss'))
+                if gi > 0 and pj > 0:
+                    opts.append((best[gi - 1][pj - 1] + abs(pauses[pj - 1] - guess[gi - 1]), 'use'))
+                best[gi][pj], how[gi][pj] = min(opts, key=lambda o: o[0])
+        chosen, gi, pj = [None] * n, n, m
+        while gi > 0:
+            op = how[gi][pj]
+            if op == 'skip':
+                pj -= 1
+                continue
+            if op == 'use':
+                chosen[gi - 1] = pauses[pj - 1]
+                pj -= 1
+            gi -= 1
+        cuts = []
+        for gi, c in enumerate(chosen):
+            if c is None:
+                lo = max(int((guess[gi] - self.TIER_SNAP_MS) / f), (cuts[-1] // f + 3) if cuts else 1)
+                hi = min(int((guess[gi] + self.TIER_SNAP_MS) / f), len(rms) - 2)
+                kk = lo + int(np.argmin(rms[lo:hi + 1])) if hi >= lo else int(guess[gi] / f)
+                c = kk * f + f // 2
+            cuts.append(int(max(c, cuts[-1] + 3 * f) if cuts else c))
+        return cuts
+
+    def _tts_tier_cuts(self, t, unit):
+        """Границы ярусов дубля (свои или автоматические), длина, RMS."""
+        rms, length = self._tts_take_frames(t)
+        n = len(unit["tiers"])
+        cuts = t.get("tier_cuts")
+        if not cuts or len(cuts) != n - 1 or t.get("tier_len") != length:
+            cuts = self._tts_tier_auto(unit, rms, length)
+            t["tier_cuts"], t["tier_len"] = cuts, length
+        return cuts, length, rms
+
+    def tts_tier_marks(self, i):
+        """Для «Сборки»: волна дубля строки и куски-ярусы с границами."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])) or st["takes"][i].get("unit") is None:
+            return {"tiers": None}
+        t = st["takes"][i]
+        unit = st["units"][t["unit"]]
+        if not unit.get("tiers") or not st.get("work_dir"):
+            return {"tiers": None}
+        try:
+            cuts, length, rms = self._tts_tier_cuts(t, unit)
+        except Exception as e:
+            return {"tiers": None, "error": str(e)}
+        bounds = [0] + list(cuts) + [length]
+        write = t.get("tier_write") or {}
+        mine = set(t.get("tier_files") or [])
+        out = []
+        for k, x in enumerate(unit["tiers"]):
+            path = self._tts_tier_path(unit, x)
+            out.append({"k": k, "label": x["label"], "value": x["value"], "text": x["text"],
+                        "a": bounds[k], "b": bounds[k + 1], "exists": os.path.exists(path) and path not in mine,
+                        "mine": path in mine, "write": bool(write.get(str(k)))})
+        top = float(rms.max()) if len(rms) else 0
+        peaks = [round(min(1.0, float(v) / top), 3) if top > 1e-6 else 0 for v in rms]
+        return {"i": i, "tiers": out, "length": length, "peaks": peaks, "frame": self.TIER_FRAME_MS,
+                "row": unit["text"]}
+
+    def tts_tier_set(self, i, cuts=None, write=None):
+        """Сдвинули границу / отметили «перезаписать» готовый ярус."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"tiers": None}
+        t = st["takes"][i]
+        if cuts is not None:
+            c = sorted(int(x) for x in cuts)
+            t["tier_cuts"] = [max(0, min(int(t.get("tier_len") or 10 ** 9), x)) for x in c]
+        if write is not None:
+            t["tier_write"] = {str(k): bool(v) for k, v in dict(write).items()}
+        self._tts_save()
+        return self.tts_tier_marks(i)
+
+    def tts_tier_play(self, i, k):
+        """Прослушать один ярус — ровно так, как он сохранится."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"playing": False}
+        t = st["takes"][i]
+        unit = st["units"][t["unit"]]
+        import tempfile
+        dst = os.path.join(tempfile.gettempdir(), f"gvox_tier_{os.getpid()}.wav")
+        self._tts_tier_render(t, unit, int(k), dst)
+        self._tts_mark_listened()
+        self.player.play(dst)
+        return {"playing": True, "duration": len(AudioSegment.from_file(dst)) / 1000.0}
+
+    def _tts_tier_render(self, t, unit, k, dst):
+        cuts, length, rms = self._tts_tier_cuts(t, unit)
+        bounds = [0] + list(cuts) + [length]
+        a, b = bounds[k], bounds[k + 1]
+        f = self.TIER_FRAME_MS
+        seg_rms = rms[a // f:max(a // f + 1, b // f)]
+        if len(seg_rms) and float(seg_rms.max()) > 1e-4:          # края куска — без лишней тишины
+            thr = max(float(rms.max()) * 0.05, 1e-4)
+            v = np.nonzero(seg_rms > thr)[0]
+            if len(v):
+                a, b = max(a, a + int(v[0]) * f - self.TIER_PAD_MS), min(b, a + int(v[-1] + 1) * f + self.TIER_PAD_MS)
+        seg = AudioSegment.from_file(os.path.join(self._tts()["work_dir"], t["file"]))[a:b]
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tier_src_{os.getpid()}.wav")
+        seg.export(tmp, format="wav")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        self._tts_render_final(tmp, dst, *self._tts_sound(t))
+
+    def _tts_tier_save(self, t, unit, resave=False):
+        """Сохранить ярусы дубля финальными эталонами. Готовые (не из этого
+        дубля) — не трогаем, если не отмечено «перезаписать»."""
+        write = t.get("tier_write") or {}
+        mine = set(t.get("tier_files") or [])
+        out, skipped = [], []
+        for k, x in enumerate(unit["tiers"]):
+            path = self._tts_tier_path(unit, x)
+            if os.path.exists(path) and path not in mine and not write.get(str(k)):
+                skipped.append(x["label"])
+                continue
+            if resave and path not in mine:
+                continue
+            if os.path.exists(path):
+                self._tts_trash(path)
+            self._tts_tier_render(t, unit, k, path)
+            out.append(path)
+        t["tier_files"] = sorted(set(out) | (mine if resave else set()))
+        t["tier_write"] = {}
+        return out, skipped
 
     def _tts_value_context(self, sheet):
         """Начало и продолжение фразы вокруг переменной этого листа: цепочка,
@@ -2299,6 +2563,10 @@ class TtsFlowMixin:
             src = os.path.join(st["work_dir"], t["file"])
             target = self._tts_target(st["units"][t["unit"]])
             try:
+                if st["units"][t["unit"]].get("tiers"):
+                    self._tts_tier_save(t, st["units"][t["unit"]], resave=True)
+                    self._tts_save()
+                    return {**self.tts_state(), "resaved": True}
                 self._tts_render_final(src, target, g, k)
                 self._tts_twin_spread(t["unit"])          # одинаковые фразы — с теми же настройками
                 resaved = True
