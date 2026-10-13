@@ -4433,6 +4433,10 @@ let isProcessing = false;
         }
         document.addEventListener('keydown', e => {
             if (e.code === 'F11') { e.preventDefault(); toggleFullscreen(); }
+            if (aEd && (e.ctrlKey || e.metaKey) && document.getElementById('auditEdOverlay').style.display === 'flex') {
+                if (e.code === 'KeyZ') { e.preventDefault(); auditEdUndo(); return; }
+                if (e.code === 'KeyS') { e.preventDefault(); auditEdSave(); return; }
+            }
             // «Сборка» открыта: Ctrl+Z — отменить шаг, Ctrl+Y / Ctrl+Shift+Z — вернуть.
             // По коду клавиши — работает и в русской раскладке (Ctrl+Я).
             if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.code === 'KeyY')
@@ -4458,6 +4462,12 @@ let isProcessing = false;
             // РАЗРЕШАЕМ СТАНДАРТНЫЕ КОМБИНАЦИИ (Ctrl+C, Ctrl+A, и т.д.)
             if (e.ctrlKey || e.metaKey) return;
 
+            // Правка записи из аудита — окно поверх всего.
+            let aEdOv = document.getElementById('auditEdOverlay');
+            if (aEdOv && aEdOv.style.display === 'flex' && aEd && !((document.getElementById('customAlertOverlay') || {}).style || {}).display?.includes('flex')) {
+                auditEdKey(e);
+                return;
+            }
             // Разметка живых слов (синтез сумм) — окно поверх всего.
             let mkOverlay = document.getElementById('ttsMarkOverlay'), alertOn = document.getElementById('customAlertOverlay');
             if (mkOverlay && mkOverlay.style.display === 'flex' && ttsMk && !(alertOn && alertOn.style.display === 'flex')) {
@@ -5396,7 +5406,7 @@ let isProcessing = false;
                     : '';
                 let note = voice && f.fixed ? `<div class="audit-file__heard">распознано: «${escapeHtml(f.heard || '—')}» · исправлено вами</div>` : '';
                 return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + (f.text || '') + ' ' + (f.match || '')).toLowerCase())}">
-                    <button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button>
+                    <span class="audit-file__btns"><button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button><button type="button" class="audit-file__play" onclick="auditEdOpen(${k})" title="Править запись: срезать края, вырезать лишнее">&#9986;</button></span>
                     <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
                     ${editable
                         ? `<input class="audit-file__text" data-k="${k}" value="${escapeHtml(f.text || '')}" placeholder="${voice ? 'что сказано — впишите' : 'текст фразы'}"
@@ -5433,6 +5443,159 @@ let isProcessing = false;
             if (was) { was.classList.add('is-playing'); was.innerHTML = '&#9632;'; }
             auditPlayTimer = setTimeout(() => { if (was) { was.classList.remove('is-playing'); was.innerHTML = '&#9654;'; } }, r.duration * 1000 + 100);
         }
+        // ----- правка записи прямо из аудита -----
+        // Правка = какие куски исходника оставить; сохраняется байт в байт,
+        // исходник лежит в «_до_правок/» рядом — его можно вернуть.
+        let aEd = null;
+        async function auditEdOpen(k) {
+            let f = (window.auditRes.files || [])[k];
+            if (!f) return;
+            await pywebview.api.audit_play_stop();
+            let r = await pywebview.api.audit_edit_load(f.path);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            aEd = { ...r, k, sel: null, cur: 0, head: null, hist: [], saved: JSON.stringify(r.ranges) };
+            document.getElementById('auditEdTitle').textContent = 'Правка записи — ' + r.name;
+            document.getElementById('auditEdOverlay').style.display = 'flex';
+            document.getElementById('auditEdCanvas').onmousedown = auditEdDown;
+            auditEdRender();
+        }
+        const aEdLen = () => aEd.ranges.reduce((s, [a, b]) => s + b - a, 0);
+        const aEdDirty = () => aEd && JSON.stringify(aEd.ranges) !== aEd.saved;
+        async function auditEdClose(force) {
+            if (!aEd) return;
+            if (!force && aEdDirty() && !(await showBeautifulConfirm('Правка не сохранена. Закрыть без сохранения?', 'Закрыть', 'Остаться'))) return;
+            auditEdStop();
+            pywebview.api.audit_play_stop();
+            document.getElementById('auditEdOverlay').style.display = 'none';
+            aEd = null;
+        }
+        function auditEdDraw() {
+            let cv = document.getElementById('auditEdCanvas'), dpr = window.devicePixelRatio || 1;
+            let w = cv.clientWidth, h = cv.clientHeight;
+            if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+            let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+            let L = aEdLen() || 1, x = ms => ms / L * w, mid = h / 2;
+            let css = getComputedStyle(document.documentElement);
+            g.fillStyle = css.getPropertyValue('--text-dim').trim() || '#999';
+            let pos = 0, joins = [];
+            aEd.ranges.forEach(([a, b]) => {
+                for (let t = a; t < b; t += aEd.bucket) {
+                    let p = aEd.peaks[Math.floor(t / aEd.bucket)] || 0, y = Math.max(1, p * (mid - 10));
+                    g.fillRect(x(pos + t - a), mid - y, Math.max(1, w * aEd.bucket / L), y * 2);
+                }
+                pos += b - a; joins.push(pos);
+            });
+            g.fillStyle = 'rgba(239,91,80,.8)';
+            joins.slice(0, -1).forEach(j => g.fillRect(x(j) - 1, 0, 2, h));        // места склеек
+            if (aEd.sel) { g.fillStyle = 'rgba(90,150,255,.32)'; g.fillRect(x(aEd.sel.a), 0, x(aEd.sel.b) - x(aEd.sel.a), h); }
+            g.fillStyle = '#5a96ff'; g.fillRect(x(aEd.cur) - 1, 0, 2, h);
+            if (aEd.head !== null) { g.fillStyle = css.getPropertyValue('--accent-primary').trim() || '#f5a623'; g.fillRect(x(aEd.head), 0, 2, h); }
+        }
+        function auditEdRender() {
+            let L = aEdLen(), sel = aEd.sel ? Math.round(aEd.sel.b - aEd.sel.a) : 0;
+            document.getElementById('auditEdBar').innerHTML = `
+                <button class="btn-ghost btn-ghost--compact" onclick="auditEdPlay(false)">&#9654; С места <kbd>Space</kbd></button>
+                <button class="btn-ghost btn-ghost--compact" onclick="auditEdPlay(true)" ${aEd.sel ? '' : 'disabled'}>&#9654; Выделенное</button>
+                <button class="btn-ghost btn-ghost--compact" onclick="auditEdCut()" ${aEd.sel ? '' : 'disabled'} title="Убрать выделенное">Вырезать <kbd>Del</kbd></button>
+                <button class="btn-ghost btn-ghost--compact" onclick="auditEdKeep()" ${aEd.sel ? '' : 'disabled'} title="Срезать всё до и после выделенного">Оставить выделенное</button>
+                <button class="btn-ghost btn-ghost--compact" onclick="auditEdUndo()" ${aEd.hist.length ? '' : 'disabled'}>&#8630; <kbd>Ctrl+Z</kbd></button>
+                <button class="btn-ghost btn-ghost--compact" onclick="auditEdReset()" title="Вернуть всю исходную запись (до сохранения — можно отменить)">Как было</button>
+                <span class="tts-dim">${(L / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}${aEd.has_backup ? ' · исходник в «_до_правок»' : ''}</span>
+                <span class="tts-ed__spacer"></span>
+                ${aEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="auditEdRestore()" title="Записать обратно исходную запись (до всех правок)">Вернуть исходник</button>' : ''}
+                <button class="custom-alert-btn" onclick="auditEdSave()" ${aEdDirty() ? '' : 'disabled'}>Сохранить <kbd>Ctrl+S</kbd></button>`;
+            auditEdDraw();
+        }
+        function auditEdDown(e) {
+            let cv = e.currentTarget, r = cv.getBoundingClientRect(), L = aEdLen();
+            let toMs = cx => Math.max(0, Math.min(L, (cx - r.left) / cv.clientWidth * L));
+            let start = toMs(e.clientX), moved = false;
+            let move = ev => {
+                if (!moved && Math.abs(ev.clientX - e.clientX) < 3) return;
+                moved = true;
+                let t = toMs(ev.clientX);
+                aEd.sel = { a: Math.min(start, t), b: Math.max(start, t) };
+                auditEdDraw();
+            };
+            let up = () => {
+                window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+                if (!moved) { aEd.sel = null; aEd.cur = start; }
+                else aEd.cur = aEd.sel.a;
+                auditEdRender();
+            };
+            window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+        }
+        // вырезать [s, e] дорожки (в мс после правок) → новые куски исходника
+        function aEdRemove(s, e) {
+            let out = [], pos = 0;
+            aEd.ranges.forEach(([a, b]) => {
+                let p0 = pos, p1 = pos + b - a;
+                if (e <= p0 || s >= p1) out.push([a, b]);
+                else {
+                    if (s > p0) out.push([a, a + (s - p0)]);
+                    if (e < p1) out.push([a + (e - p0), b]);
+                }
+                pos = p1;
+            });
+            return out.filter(([a, b]) => b - a >= 5).map(([a, b]) => [Math.round(a), Math.round(b)]);
+        }
+        function auditEdPush() { aEd.hist.push(JSON.stringify(aEd.ranges)); if (aEd.hist.length > 100) aEd.hist.shift(); }
+        function auditEdCut() {
+            if (!aEd.sel) return;
+            let n = aEdRemove(aEd.sel.a, aEd.sel.b);
+            if (!n.length) { showToast('Нельзя вырезать всё'); return; }
+            auditEdPush(); aEd.ranges = n; aEd.cur = aEd.sel.a; aEd.sel = null; auditEdRender();
+        }
+        function auditEdKeep() {
+            if (!aEd.sel) return;
+            let L = aEdLen(), s = aEd.sel;
+            auditEdPush();
+            aEd.ranges = aEdRemove(s.b, L);
+            aEd.ranges = aEdRemove(0, s.a);
+            aEd.sel = null; aEd.cur = 0; auditEdRender();
+        }
+        function auditEdUndo() { if (!aEd.hist.length) return; aEd.ranges = JSON.parse(aEd.hist.pop()); aEd.sel = null; aEd.cur = 0; auditEdRender(); }
+        function auditEdReset() { auditEdPush(); aEd.ranges = [[0, aEd.dur]]; aEd.sel = null; aEd.cur = 0; auditEdRender(); }
+        let aEdTimer = null;
+        function auditEdStop() { if (aEdTimer) cancelAnimationFrame(aEdTimer); aEdTimer = null; if (aEd) { aEd.head = null; auditEdDraw(); } }
+        async function auditEdPlay(sel) {
+            if (aEd.head !== null) { auditEdStop(); pywebview.api.audit_play_stop(); return; }
+            let from = sel && aEd.sel ? aEd.sel.a : aEd.cur, to = sel && aEd.sel ? aEd.sel.b : null;
+            let r = await pywebview.api.audit_edit_play(aEd.path, aEd.ranges, from, to);
+            if (!r || r.error) { if (r) showToast(r.error); return; }
+            let t0 = performance.now(), d = r.duration * 1000;
+            let step = () => {
+                if (!aEd) return;
+                let t = performance.now() - t0;
+                if (t > d) { auditEdStop(); return; }
+                aEd.head = from + t; auditEdDraw(); aEdTimer = requestAnimationFrame(step);
+            };
+            aEdTimer = requestAnimationFrame(step);
+        }
+        async function auditEdSave() {
+            if (!aEdDirty()) return;
+            auditEdStop();
+            let r = await pywebview.api.audit_edit_save(aEd.path, aEd.ranges);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            aEd.saved = JSON.stringify(aEd.ranges); aEd.has_backup = true;
+            auditEdRender();
+            showToast(`Сохранено: ${aEd.name} (${(r.ms / 1000).toFixed(2)} с). Исходник — в «_до_правок»`);
+        }
+        async function auditEdRestore() {
+            if (!(await showBeautifulConfirm(`Вернуть исходную запись «${escapeHtml(aEd.name)}»? Все правки этой записи пропадут.`, 'Вернуть', 'Отмена'))) return;
+            auditEdStop();
+            let r = await pywebview.api.audit_edit_restore(aEd.path);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            aEd = { ...aEd, ...r, sel: null, cur: 0, hist: [], saved: JSON.stringify(r.ranges) };
+            auditEdRender();
+            showToast('Исходная запись возвращена');
+        }
+        function auditEdKey(e) {
+            if (e.code === 'Escape') { e.preventDefault(); auditEdClose(); return; }
+            if (e.code === 'Space') { e.preventDefault(); auditEdPlay(false); return; }
+            if (e.code === 'Delete' || e.code === 'Backspace' || e.code === 'KeyX') { e.preventDefault(); auditEdCut(); return; }
+        }
+
         async function auditFix(k, text) {
             let res = window.auditRes, f = (res.files || [])[k];
             if (!f) return;

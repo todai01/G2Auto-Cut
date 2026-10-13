@@ -3297,3 +3297,8 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .audit-file__heard{ grid-column: 3 / 5; font-size: 11px; color: var(--text-faint); padding: 0 6px; }
 .custom-alert-box.audit-box{ width: min(1080px, 94vw); max-width: none; }
 .audit-box .audit-details{ max-height: 52vh; }
+.audit-file{ grid-template-columns: 62px minmax(120px, 220px) 1fr auto; }
+.audit-file__btns{ display: inline-flex; gap: 4px; }
+#auditEdOverlay .tts-mk-wave canvas{ height: 190px; }
+#auditEdOverlay .btn-ghost[disabled], #auditEdOverlay .custom-alert-btn[disabled]{ opacity: .35; pointer-events: none; }
+#auditEdBar .custom-alert-btn{ width: auto; flex: none; padding: 8px 20px; }

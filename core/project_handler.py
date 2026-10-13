@@ -539,8 +539,8 @@ class ProjectMixin:
         found_files = {}
         all_disk_files = set()
         for root_dir, _, files in os.walk(scan_dir):
-            if 'trash' in root_dir.lower():
-                continue
+            if 'trash' in root_dir.lower() or '_до_правок' in root_dir.lower():
+                continue                                      # корзина и исходники правок из аудита
             for file in files:
                 if file.lower().endswith(('.wav', '.mp3')):
                     f_low = file.lower()

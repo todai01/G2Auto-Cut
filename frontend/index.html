@@ -644,6 +644,18 @@
     </div>
 
     <!-- Модальное окно: выбор колонок таблицы -->
+    <div id="auditEdOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box tts-mk-box">
+            <div class="modal-head">
+                <h3 class="modal-title" id="auditEdTitle">Правка записи</h3>
+                <button class="modal-close" onclick="auditEdClose()" title="Закрыть (Esc)">&times;</button>
+            </div>
+            <div class="tts-mk-hint">Выделите мышью лишнее и нажмите <kbd>Del</kbd> — вырежу; «Оставить выделенное» — срезать всё вокруг. Клик — с этого места играет <kbd>Space</kbd>. <kbd>Ctrl</kbd>+<kbd>Z</kbd> — отменить шаг.</div>
+            <div class="tts-mk-wave"><canvas id="auditEdCanvas"></canvas></div>
+            <div class="tts-mk-bar" id="auditEdBar"></div>
+        </div>
+    </div>
+
     <div id="excelOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">
             <div class="modal-head">

@@ -20,7 +20,7 @@ import webview
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
-from utils.wav_io import slice_or_export
+from utils.wav_io import slice_or_export, wav_concat
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, score_candidates)
 
@@ -303,3 +303,121 @@ class AuditAsrMixin:
         self.player.stop()
         self._audit_playing = None
         return {"ok": True}
+
+    # ---------------- правка записи прямо в аудите ----------------
+    # Правка = какие куски исходного файла оставить [(начало_мс, конец_мс)].
+    # Сохраняется байт в байт (без перекодирования); исходник — в
+    # «_до_правок/» рядом, его можно вернуть.
+
+    AUDIT_EDIT_BUCKET = 10
+
+    @staticmethod
+    def _audit_backup(path):
+        return os.path.join(os.path.dirname(path), '_до_правок', os.path.basename(path))
+
+    def _audit_src(self, path):
+        """Исходник для правки: копия «до правок», если запись уже правилась."""
+        b = self._audit_backup(path)
+        return b if os.path.exists(b) else path
+
+    def audit_edit_load(self, path):
+        """Волна записи для правки: пики по 10 мс, длительность."""
+        import numpy as np
+        from utils.audio_player import _read_audio
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        src = self._audit_src(path)
+        x, rate = _read_audio(src)
+        mono = np.abs(x).max(axis=1) if x.ndim > 1 else np.abs(x)
+        n = max(1, int(rate * self.AUDIT_EDIT_BUCKET / 1000))
+        k = len(mono) // n
+        peaks = mono[:k * n].reshape(k, n).max(axis=1) if k else np.zeros(0)
+        top = float(peaks.max()) if len(peaks) else 0.0
+        norm = min(40.0, 0.95 / top) if top > 1e-4 else 1.0
+        dur = int(len(mono) * 1000 / rate)
+        ranges = [[0, dur]]
+        try:                                                   # прошлая правка — куски, что оставили
+            with open(self._audit_backup(path) + '.json', 'r', encoding='utf-8') as f:
+                saved = json.load(f)
+            if saved and all(0 <= a < b <= dur for a, b in saved):
+                ranges = saved
+        except (OSError, ValueError, TypeError):
+            pass
+        return {"path": path, "name": os.path.basename(path), "dur": dur, "ranges": ranges,
+                "bucket": self.AUDIT_EDIT_BUCKET, "peaks": [round(min(1.0, float(v) * norm), 3) for v in peaks],
+                "has_backup": src != path}
+
+    def _audit_render(self, path, ranges, dst):
+        ranges = [(int(a), int(b)) for a, b in ranges if int(b) - int(a) > 0]
+        if not ranges:
+            raise ValueError("Ничего не осталось.")
+        if not wav_concat(path, dst, ranges):
+            seg = AudioSegment.from_file(path)
+            out = sum((seg[a:b] for a, b in ranges[1:]), seg[ranges[0][0]:ranges[0][1]])
+            out.export(dst, format="wav")
+        return sum(b - a for a, b in ranges)
+
+    def audit_edit_play(self, path, ranges, from_ms=0, to_ms=None):
+        """Прослушать запись с правками (весь звук или с места / кусок)."""
+        import tempfile
+        self.player.stop()
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        # кусок [from, to] на дорожке после правок → куски исходника
+        out, pos = [], 0
+        lo, hi = int(from_ms or 0), (int(to_ms) if to_ms is not None else 10 ** 9)
+        for a, b in ranges:
+            a, b = int(a), int(b)
+            s, e = max(lo, pos), min(hi, pos + b - a)
+            if e > s:
+                out.append((a + s - pos, a + e - pos))
+            pos += b - a
+        self._audit_tmp_n = getattr(self, '_audit_tmp_n', 0) + 1
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_audit_{os.getpid()}_{self._audit_tmp_n % 3}.wav")
+        try:
+            dur = self._audit_render(self._audit_src(path), out, tmp)
+        except ValueError:
+            return {"error": "Нечего играть."}
+        self._audit_playing = None
+        self.player.play(tmp)
+        return {"playing": True, "duration": dur / 1000.0}
+
+    def audit_edit_save(self, path, ranges):
+        """Записать правку в файл (исходник — в «_до_правок/», один раз)."""
+        import shutil
+        import tempfile
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        self.player.stop()
+        backup = self._audit_backup(path)
+        try:
+            if not os.path.exists(backup):
+                os.makedirs(os.path.dirname(backup), exist_ok=True)
+                shutil.copy2(path, backup)
+            src = backup                                      # правка всегда от исходника — без накопления
+            tmp = os.path.join(tempfile.gettempdir(), f"gvox_audit_save_{os.getpid()}.wav")
+            ms = self._audit_render(src, ranges, tmp)
+            shutil.move(tmp, path)
+            with open(backup + '.json', 'w', encoding='utf-8') as f:
+                json.dump([[int(a), int(b)] for a, b in ranges], f)
+        except PermissionError:
+            return {"error": "Файл занят (открыт в другой программе) — закройте и повторите."}
+        except Exception as e:
+            return {"error": f"Не удалось сохранить: {e}"}
+        return {"ok": True, "ms": ms, "has_backup": True}
+
+    def audit_edit_restore(self, path):
+        """Вернуть исходную запись (до правок)."""
+        import shutil
+        backup = self._audit_backup(path)
+        if not os.path.exists(backup):
+            return {"error": "Исходника нет — запись не правилась."}
+        self.player.stop()
+        shutil.copy2(backup, path)
+        for f in (backup + '.json', backup):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        return self.audit_edit_load(path)
+
