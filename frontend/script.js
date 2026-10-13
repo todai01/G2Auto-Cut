@@ -5161,6 +5161,7 @@ let isProcessing = false;
 
         function closeAudit() {
             document.getElementById('auditOverlay').style.display = 'none';
+            pywebview.api.audit_play_stop();
         }
 
         function closeAuditCategoryPicker() {
@@ -5283,8 +5284,9 @@ let isProcessing = false;
             renderAuditResult(res);
         }
 
-        function renderAuditResult(res) {
+        function renderAuditResult(res, quiet) {
             // Показываем красивое модальное окно
+            window.auditRes = res;
             let voice = !!res.by_voice;
             let unknown = res.unknown || [];
             let categoryNote = res.category ? ` — категория «${res.category_label}»` : '';
@@ -5297,11 +5299,10 @@ let isProcessing = false;
             document.querySelector('#auditOverlay .stat-card--lost .stat-card__label').textContent = voice ? 'Не хватает' : 'Потеряно';
             document.querySelector('#auditOverlay .stat-card--dups .stat-card__label').textContent = voice ? 'Не распознано' : 'Дубликаты';
 
-            // Запускаем анимацию счетчиков (на 1200 миллисекунд)
-            animateValue(document.getElementById('auditTotalExcel'), 0, res.total_excel, 1200);
-            animateValue(document.getElementById('auditTotalDisk'), 0, res.total_disk, 1200);
-            animateValue(document.getElementById('auditMissing'), 0, res.missing_count, 1200);
-            animateValue(document.getElementById('auditDups'), 0, voice ? unknown.length : res.duplicates_count, 1200);
+            // Запускаем анимацию счетчиков (на 1200 миллисекунд); после правки текста — сразу числа
+            let counts = [['auditTotalExcel', res.total_excel], ['auditTotalDisk', res.total_disk],
+                          ['auditMissing', res.missing_count], ['auditDups', voice ? unknown.length : res.duplicates_count]];
+            counts.forEach(([id, v]) => quiet ? (document.getElementById(id).innerHTML = v) : animateValue(document.getElementById(id), 0, v, 1200));
 
             // Генерируем детальные списки и чистый текст для копирования
             let detailsHtml = '';
@@ -5345,7 +5346,7 @@ let isProcessing = false;
                         window.lastAuditReportText += `- ${u.filename}: «${u.heard}» ~ ${u.guess} (${Math.round(u.score * 100)}%)\n`;
                     });
                 }
-                document.getElementById('auditDetails').innerHTML = detailsHtml;
+                auditSetDetails(detailsHtml + auditFilesHTML(res), quiet);
                 document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
                 return;
             }
@@ -5367,8 +5368,86 @@ let isProcessing = false;
                 detailsHtml += `<div class="audit-ok">Дубликатов не обнаружено</div>`;
             }
 
-            document.getElementById('auditDetails').innerHTML = detailsHtml;
+            auditSetDetails(auditFilesHTML(res) + detailsHtml, quiet);
             document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
+        }
+
+        // ----- Записи в аудите: послушать и поправить текст -----
+        let auditFilter = '';
+        function auditSetDetails(html, quiet) {
+            let box = document.getElementById('auditDetails');
+            let top = quiet ? box.scrollTop : 0;
+            let focus = quiet && document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.k : null;
+            box.innerHTML = html;
+            if (quiet) box.scrollTop = top;
+            if (focus) { let el = box.querySelector(`.audit-file__text[data-k="${focus}"]`); if (el) el.focus(); }
+            auditApplyFilter();
+        }
+        function auditFilesHTML(res) {
+            let files = res.files || [];
+            if (!files.length) return '';
+            let voice = !!res.by_voice;
+            let editable = voice || (!res.category && res.can_edit);
+            let rows = files.map((f, k) => {
+                let badge = voice
+                    ? (f.match ? `<span class="audit-file__badge is-ok" title="Совпало со значением таблицы">✓ ${escapeHtml(f.match)}</span>`
+                               : f.text ? `<span class="audit-file__badge" title="Не совпало ни с одним значением уверенно">? ${escapeHtml(f.guess || '')}</span>`
+                                        : '<span class="audit-file__badge">тишина</span>')
+                    : '';
+                let note = voice && f.fixed ? `<div class="audit-file__heard">распознано: «${escapeHtml(f.heard || '—')}» · исправлено вами</div>` : '';
+                return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + (f.text || '') + ' ' + (f.match || '')).toLowerCase())}">
+                    <button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button>
+                    <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
+                    ${editable
+                        ? `<input class="audit-file__text" data-k="${k}" value="${escapeHtml(f.text || '')}" placeholder="${voice ? 'что сказано — впишите' : 'текст фразы'}"
+                             onkeydown="if (event.key === 'Enter') this.blur(); if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
+                             onchange="auditFix(${k}, this.value)" title="${voice ? 'Исправьте, если распознано неверно — сверка пересчитается' : 'Исправленный текст запишется в таблицу Excel'}">`
+                        : `<span class="audit-file__text is-ro">${escapeHtml(f.text || '')}</span>`}
+                    ${badge}${note}
+                </div>`;
+            }).join('');
+            return `<h4 class="audit-group-title">Записи — ${files.length}
+                    <input class="audit-files__filter" placeholder="найти по названию или тексту" value="${escapeHtml(auditFilter)}" oninput="auditFilter = this.value; auditApplyFilter()"></h4>
+                <div class="tts-dim audit-files__hint">${voice
+                    ? '▶ — послушать. Распознано неверно — исправьте текст и нажмите Enter: сверка с таблицей пересчитается, правка запомнится в папке чанков.'
+                    : editable ? '▶ — послушать. Текст фразы можно исправить — он запишется в таблицу Excel (перед первой правкой сохраню её копию «… .до_правок»).'
+                               : '▶ — послушать запись.'}</div>
+                <div class="audit-files">${rows}</div>`;
+        }
+        function auditApplyFilter() {
+            let q = auditFilter.trim().toLowerCase();
+            document.querySelectorAll('#auditDetails .audit-file').forEach(el => el.style.display = !q || el.dataset.q.includes(q) ? '' : 'none');
+        }
+        let auditPlayTimer = null;
+        async function auditPlay(k) {
+            let f = (window.auditRes.files || [])[k];
+            if (!f) return;
+            let btns = document.querySelectorAll('.audit-file__play');
+            let was = document.querySelector(`.audit-file__play[data-k="${k}"]`);
+            let replay = was && was.classList.contains('is-playing');
+            btns.forEach(b => { b.classList.remove('is-playing'); b.innerHTML = '&#9654;'; });
+            clearTimeout(auditPlayTimer);
+            let r = await pywebview.api.audit_play(f.path);
+            if (!r || r.error) { if (r && r.error) showToast(r.error); return; }
+            if (!r.playing || replay) return;
+            if (was) { was.classList.add('is-playing'); was.innerHTML = '&#9632;'; }
+            auditPlayTimer = setTimeout(() => { if (was) { was.classList.remove('is-playing'); was.innerHTML = '&#9654;'; } }, r.duration * 1000 + 100);
+        }
+        async function auditFix(k, text) {
+            let res = window.auditRes, f = (res.files || [])[k];
+            if (!f) return;
+            if (res.by_voice) {
+                let r = await pywebview.api.audit_voice_fix(f.filename, text);
+                if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+                renderAuditResult(r, true);
+                let nf = r.files[k];
+                showToast(nf && nf.match ? `«${f.filename}» → ${nf.match}` : 'Правка сохранена');
+            } else {
+                let r = await pywebview.api.audit_text_fix(f.i, text);
+                if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+                f.text = r.text;
+                showToast(r.excel_saved ? 'Текст исправлен и записан в таблицу' : 'Текст исправлен в программе');
+            }
         }
 
         // Таблица в формате словаря, только с недостающими строками.

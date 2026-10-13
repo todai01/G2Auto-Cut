@@ -590,6 +590,7 @@ class ProjectMixin:
 
         missing_list = []
         duplicates_list = []
+        files = []                 # найденные записи — послушать и поправить текст
 
         valid_excel_count = 0
         for i, p in enumerate(self.phrases_data):
@@ -607,6 +608,9 @@ class ProjectMixin:
                     "filename": expected_wav,
                     "text": p.get("text", "")
                 })
+            else:
+                files.append({"i": i, "filename": os.path.basename(found_files[expected_wav][0]),
+                              "path": found_files[expected_wav][0], "text": p.get("text", "")})
 
         for f_low, paths in found_files.items():
             if len(paths) > 1:
@@ -626,8 +630,54 @@ class ProjectMixin:
             "missing_count": len(missing_list),
             "duplicates_count": len(duplicates_list),
             "missing": missing_list,
-            "duplicates": duplicates_list
+            "duplicates": duplicates_list,
+            "files": files,
+            "can_edit": self._excel_source_ok(),
         }
+
+    def audit_text_fix(self, i, text):
+        """Поправить текст фразы из аудита: в программе и в исходной таблице
+        Excel (ячейка с прежним текстом в отмеченных колонках). Перед первой
+        правкой — резервная копия таблицы рядом: «<имя>.до_правок.xlsx»."""
+        i = int(i)
+        if not (0 <= i < len(self.phrases_data or [])):
+            return {"error": "Нет такой фразы."}
+        text = str(text or '').strip()
+        if not text:
+            return {"error": "Пустой текст — оставил как было."}
+        old = str(self.phrases_data[i].get("text") or '').strip()
+        if text == old:
+            return {"ok": True, "text": text}
+        excel_saved = False
+        if self._excel_source_ok():
+            import shutil
+            import openpyxl
+            path = self.excel_path
+            base, ext = os.path.splitext(path)
+            backup = f"{base}.до_правок{ext}"
+            try:
+                if not os.path.exists(backup):
+                    shutil.copy2(path, backup)
+                wb = openpyxl.load_workbook(path)
+                ws = wb.active
+                first = int(getattr(self, 'excel_header_row', 0) or 0) + 1
+                for r in range(first, ws.max_row + 1):
+                    for c in self.excel_cols:
+                        cell = ws.cell(row=r, column=c + 1)
+                        if cell.value not in (None, '') and str(cell.value).strip() == old:
+                            cell.value = text
+                            excel_saved = True
+                            break
+                    if excel_saved:
+                        break
+                if excel_saved:
+                    wb.save(path)
+            except PermissionError:
+                return {"error": "Таблица открыта в Excel — закройте её и повторите."}
+            except Exception as e:
+                return {"error": f"Не удалось записать в таблицу: {e}"}
+        self.phrases_data[i]["text"] = text
+        return {"ok": True, "text": text, "excel_saved": excel_saved}
 
     def _audit_by_category(self, category):
         """Сверяет с папкой не основной Excel, а список значений ОДНОЙ
@@ -648,11 +698,16 @@ class ProjectMixin:
         found_files, all_disk_files = self._audit_scan_folder(scan_dir)
 
         missing_list = []
+        files = []
         for i, value in enumerate(values):
             clean_value = re.sub(r'[<>:"/\\|?*]', '', value).strip()
             name_base = re.sub(r'\D', '', clean_value) if category in SUM_TIER_ORDER else clean_value
             name_base = (name_base or clean_value).lower()
             expected = {f"{name_base}.wav", f"{name_base}.mp3"}
+            have = expected & all_disk_files
+            if have:
+                path = found_files[sorted(have)[0]][0]
+                files.append({"filename": os.path.basename(path), "path": path, "text": value})
             if not expected & all_disk_files:
                 missing_list.append({
                     "index": i + 1,
@@ -677,7 +732,8 @@ class ProjectMixin:
             "missing_count": len(missing_list),
             "duplicates_count": len(duplicates_list),
             "missing": missing_list,
-            "duplicates": duplicates_list
+            "duplicates": duplicates_list,
+            "files": files,
         }
 
     def _excel_source_ok(self):

@@ -3279,3 +3279,21 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-tail{ color: var(--text-faint); }
 .tts-tsyn__row > .tts-dim{ font-size: var(--fs-xs); font-weight: 700; }
 .tts-reuse-parts .tts-done{ opacity: .6; } .tts-reuse-parts .tts-rest{ color: var(--accent-info); font-weight: 650; }
+
+/* Аудит: записи — послушать и поправить текст */
+.audit-files{ display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.audit-files__hint{ font-size: var(--fs-xs); margin: -4px 0 8px; }
+.audit-files__filter{ float: right; font: inherit; font-size: 12px; font-weight: 500; color: var(--text); background: var(--screen); border: 1px solid var(--border); border-radius: 7px; padding: 3px 8px; width: 240px; }
+.audit-file{ display: grid; grid-template-columns: 30px minmax(120px, 220px) 1fr auto; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--border-soft); }
+.audit-file:hover{ background: var(--screen); }
+.audit-file__play{ width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; font-size: 11px; }
+.audit-file__play.is-playing{ background: var(--accent-primary); color: #111; border-color: var(--accent-primary); }
+.audit-file__name{ font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-file__text{ font: inherit; font-size: 13px; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; min-width: 0; }
+.audit-file__text:hover, .audit-file__text:focus{ border-color: var(--border); background: var(--panel); outline: none; }
+.audit-file__text.is-ro{ border: 0; }
+.audit-file__badge{ font-size: 11px; font-weight: 700; color: var(--text-faint); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.audit-file__badge.is-ok{ color: var(--accent-good); }
+.audit-file__heard{ grid-column: 3 / 5; font-size: 11px; color: var(--text-faint); padding: 0 6px; }
+.custom-alert-box.audit-box{ width: min(1080px, 94vw); max-width: none; }
+.audit-box .audit-details{ max-height: 52vh; }

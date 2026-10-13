@@ -30,6 +30,7 @@ AUDIT_SURE_SCORE = 0.92       # почти дословное совпадени
                               # (в один чанк могли слипнуться две марки)
 AUDIT_CUT_PAD_MS = 150
 AUDIO_EXT = ('.wav', '.mp3', '.flac', '.ogg')
+AUDIT_FIX_FILE = '_аудит_текст.json'   # ваши правки распознанного текста — рядом с чанками
 
 
 def _natural_key(name):
@@ -136,6 +137,7 @@ class AuditAsrMixin:
 
             # 2) Распознаём (как автопроверка: окнами, параллельно).
             transcripts = (getattr(self, 'var_transcripts', None) or {}).get(category, {})
+            fixes = self._audit_fixes_load(scan_dir)
             total = len(chunks)
             heard_by = {}
             state = {"done": 0}
@@ -179,48 +181,125 @@ class AuditAsrMixin:
             stopped = self._auto_check_stop
 
             # 3) Сверяем каждый чанк со всеми значениями категории.
-            found = {}       # значение -> чанк, где услышали
-            unknown = []     # речь есть, но ни на что уверенно не похожа
-            for k, (name, _) in enumerate(chunks):
+            rows = []
+            for k, (name, src) in enumerate(chunks):
                 heard = heard_by.get(k, '')
-                if not heard:
-                    continue
-                scored = score_candidates(heard, values, transcripts)
-                best, best_score = scored[0]
-                second = scored[1][1] if len(scored) > 1 else 0.0
-                hit = False
-                if best_score >= AUDIT_FOUND_SCORE and best_score - second >= AUDIT_FOUND_MARGIN:
-                    found.setdefault(best, name)
-                    hit = True
-                for v, sc in scored:
-                    if sc < AUDIT_SURE_SCORE:
-                        break
-                    found.setdefault(v, name)
-                    hit = True
-                if not hit and best_score >= SPEECH_MIN_SCORE:
-                    unknown.append({"filename": name, "heard": heard, "guess": best,
-                                    "score": round(best_score, 2)})
-
-            missing_list = [{"index": i + 1, "filename": "не услышано", "text": v}
-                            for i, v in enumerate(values) if v not in found]
-            self._audit_last = {"category": category, "missing": {m["text"] for m in missing_list}}
-            template = getattr(self, 'var_template_path', None)
-            can_export = self._excel_source_ok() if category == 'excel' else bool(template and os.path.exists(template))
-            return {
-                "category": category,
-                "category_label": "Текст из Excel" if category == 'excel' else self._category_label(category),
-                "by_voice": True,
-                "stopped": stopped,
-                "scan_dir": scan_dir,
-                "chunks_total": total,
-                "can_export": bool(missing_list and can_export),
-                "total_excel": len(values),
-                "total_disk": len(found),
-                "missing_count": len(missing_list),
-                "duplicates_count": 0,
-                "missing": missing_list,
-                "duplicates": [],
-                "unknown": unknown,
-            }
+                path = src if isinstance(src, str) else os.path.join(scan_dir, name)
+                rows.append({"filename": name, "path": path, "heard": heard,
+                             "text": fixes.get(name, heard), "fixed": name in fixes})
+            self._audit_voice = {"category": category, "values": values, "transcripts": transcripts,
+                                 "rows": rows, "scan_dir": scan_dir, "stopped": stopped, "total": total}
+            return self._audit_voice_result()
         finally:
             lock.release()
+
+    # ---------------- правка распознанного текста и прослушка ----------------
+
+    @staticmethod
+    def _audit_fixes_load(scan_dir):
+        try:
+            with open(os.path.join(scan_dir, AUDIT_FIX_FILE), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    @staticmethod
+    def _audit_match(text, values, transcripts):
+        """(уверенно найденные значения, лучшая догадка, её оценка)."""
+        if not text:
+            return [], None, 0.0
+        scored = score_candidates(text, values, transcripts)
+        best, best_score = scored[0]
+        second = scored[1][1] if len(scored) > 1 else 0.0
+        hits = []
+        if best_score >= AUDIT_FOUND_SCORE and best_score - second >= AUDIT_FOUND_MARGIN:
+            hits.append(best)
+        for v, sc in scored:
+            if sc < AUDIT_SURE_SCORE:
+                break
+            if v not in hits:
+                hits.append(v)
+        return hits, best, best_score
+
+    def _audit_voice_result(self):
+        """Итог аудита по голосу из текущих текстов чанков (с вашими правками)."""
+        av = self._audit_voice
+        values, transcripts, category = av["values"], av["transcripts"], av["category"]
+        found, unknown, files = {}, [], []
+        for r in av["rows"]:
+            hits, best, sc = self._audit_match(r["text"], values, transcripts)
+            for v in hits:
+                found.setdefault(v, r["filename"])
+            if r["text"] and not hits and sc >= SPEECH_MIN_SCORE:
+                unknown.append({"filename": r["filename"], "heard": r["text"], "guess": best, "score": round(sc, 2)})
+            files.append({"filename": r["filename"], "path": r["path"], "heard": r["heard"], "text": r["text"],
+                          "fixed": r["fixed"], "match": hits[0] if hits else None,
+                          "guess": best if not hits else None, "score": round(sc, 2)})
+        missing_list = [{"index": i + 1, "filename": "не услышано", "text": v}
+                        for i, v in enumerate(values) if v not in found]
+        self._audit_last = {"category": category, "missing": {m["text"] for m in missing_list}}
+        template = getattr(self, 'var_template_path', None)
+        can_export = self._excel_source_ok() if category == 'excel' else bool(template and os.path.exists(template))
+        return {
+            "category": category,
+            "category_label": "Текст из Excel" if category == 'excel' else self._category_label(category),
+            "by_voice": True,
+            "stopped": av["stopped"],
+            "scan_dir": av["scan_dir"],
+            "chunks_total": av["total"],
+            "can_export": bool(missing_list and can_export),
+            "total_excel": len(values),
+            "total_disk": len(found),
+            "missing_count": len(missing_list),
+            "duplicates_count": 0,
+            "missing": missing_list,
+            "duplicates": [],
+            "unknown": unknown,
+            "files": files,
+        }
+
+    def audit_voice_fix(self, filename, text):
+        """Исправить распознанный текст чанка: сверка пересчитывается сразу,
+        правка запоминается в папке чанков (и в следующем аудите)."""
+        av = getattr(self, '_audit_voice', None)
+        if not av:
+            return {"error": "Сначала запустите аудит по голосу."}
+        row = next((r for r in av["rows"] if r["filename"] == filename), None)
+        if row is None:
+            return {"error": "Нет такого чанка."}
+        text = str(text or '').strip()
+        fixes = self._audit_fixes_load(av["scan_dir"])
+        if text and text != row["heard"]:
+            fixes[filename] = text
+            row["text"], row["fixed"] = text, True
+        else:                                                  # вернули как было — правку убираем
+            fixes.pop(filename, None)
+            row["text"], row["fixed"] = row["heard"], False
+        try:
+            with open(os.path.join(av["scan_dir"], AUDIT_FIX_FILE), 'w', encoding='utf-8') as f:
+                json.dump(fixes, f, ensure_ascii=False, indent=1)
+        except OSError:
+            pass
+        return self._audit_voice_result()
+
+    def audit_play(self, path):
+        """Прослушать запись из аудита (повторный вызов того же файла — стоп)."""
+        self.player.stop()
+        if getattr(self, '_audit_playing', None) == path:
+            self._audit_playing = None
+            return {"playing": False}
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        self._audit_playing = path
+        self.player.play(path)
+        try:
+            dur = len(AudioSegment.from_file(path)) / 1000.0
+        except Exception:
+            dur = 0
+        return {"playing": True, "duration": dur}
+
+    def audit_play_stop(self):
+        self.player.stop()
+        self._audit_playing = None
+        return {"ok": True}
