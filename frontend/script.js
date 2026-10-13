@@ -8186,13 +8186,19 @@ let isProcessing = false;
             if (pr && pr.total) { ttsPromptPos = pr.pos; ttsPromptTotal = pr.total; }
             if (!browse && !pr.done && !pr.left && pr.pending) {
                 text.innerHTML = '<span class="tts-dim">Всё прочитано — дораспознаю…</span>';
-                meta.innerText = `в очереди ${pr.pending}`; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}в очереди ${pr.pending}</span>`; next.innerText = ''; ttsPromptKey = null; ttsRenderMarks(null);
                 return;
             }
             if (pr.done && !browse) {
-                text.innerHTML = 'Все фразы прочитаны 🎉';
-                meta.innerText = `${pr.total} из ${pr.total}`;
-                next.innerText = 'Сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить';
+                let vals = pr.mode && pr.mode !== 'phrases';
+                let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
+                text.innerHTML = vals ? 'Все значения прочитаны 🎉' : 'Все фразы прочитаны 🎉';
+                // переключатель режимов — и здесь: дальше можно записывать значения переменных
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${pr.total} из ${pr.total}</span>`;
+                next.innerHTML = other.length
+                    ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
+                       <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
+                    : 'Сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить';
                 ttsPromptKey = 'done';
                 return;
             }
@@ -8225,9 +8231,7 @@ let isProcessing = false;
                     ? ` <button type="button" class="tts-reuse-chip" onclick="ttsReuseSkip(${pr.reuse.unit}, false)" title="Читать только выделенное, остальное подставлю из ${srcs}">${pr.reuse.pct}% уже записано · подставить</button>`
                     : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseSkip(${pr.reuse.unit}, true)" title="Серое возьмётся из ${srcs} и склеится с новым в «Сборке». Нажмите, чтобы читать фразу целиком">${pr.reuse.pct}% из ${srcs} · читать целиком</button>`)
                 : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseBuild(${pr.reuse.unit})" title="Вся фраза уже звучит в ${srcs} — собрать без записи">целиком из записанного · собрать</button>`) : '';
-            let modes = (pr.modes || []).length > 1 ? ` <span class="tts-pmodes">${pr.modes.map(m =>
-                `<button type="button" class="tts-pmode ${m.key === pr.mode ? 'is-on' : ''}" onclick="ttsPromptModeSet('${m.key}')"
-                    title="${m.key === 'phrases' ? 'Читать фразы таблицы' : 'Записать значения листа «' + escapeHtml(m.label) + '» по порядку строк таблицы — каждое отдельным файлом'}">${escapeHtml(m.label)}</button>`).join('')}</span>` : '';
+            let modes = ttsModesHTML(pr);
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
             if (pr.sum_logic) modes += ` <button type="button" class="tts-pmode ${pr.sum_logic === 1 ? 'is-on' : ''}" onclick="ttsSumLogic(1)" title="миллионы + сотни + тысячи + тенге">1 101 001</button><button type="button" class="tts-pmode ${pr.sum_logic === 2 ? 'is-on' : ''}" onclick="ttsSumLogic(2)" title="миллионы + сотни тысяч + тенге">1 100 001</button>`
@@ -8633,6 +8637,13 @@ let isProcessing = false;
 
         // Длинная фраза, диктор сбился: верное начало — подсвечено, дальше —
         // «продолжите отсюда». Слова — как на экране (по пробелам), как и на бэкенде.
+        // Переключатель «Фразы / Сумма RU / Дата RU» — на суфлёре всегда, и когда всё прочитано.
+        function ttsModesHTML(pr) {
+            return (pr.modes || []).length > 1 ? ` <span class="tts-pmodes">${pr.modes.map(m =>
+                `<button type="button" class="tts-pmode ${m.key === (pr.mode || 'phrases') ? 'is-on' : ''}" onclick="ttsPromptModeSet('${m.key}')"
+                    title="${m.key === 'phrases' ? 'Читать фразы таблицы' : 'Записать значения листа «' + escapeHtml(m.label) + '» по порядку строк таблицы'}">${escapeHtml(m.label)}</button>`).join('')}</span>` : '';
+        }
+
         // Начало фразы (перед записью суммы) / сумма в фразе (в «Сборке»).
         async function ttsCtxPlay(which, takeI) {
             await ttsStopPlay();
