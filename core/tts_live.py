@@ -616,8 +616,11 @@ class TtsLiveMixin:
             lo, hi = self._tts_voice_bounds(rec, a_ms, b_ms)
             for uid in ids or [None]:
                 clips = [{"raw": rec.path, "a": lo, "b": hi, "cuts": [], "pos": 0}]
+                plan = self._tts_reuse_for(uid) if uid is not None and len(ids) == 1 else None
+                if plan and (plan["skip"] or not plan["rest"]):
+                    plan = None
                 self._tts_live_make_take(rec, uid, clips, '', 1.0 if uid is not None else 0.0, pos,
-                                         status="manual" if uid is not None else "none", move=False)
+                                         status="manual" if uid is not None else "none", move=False, reuse=plan)
             last["outcome"] = "take"
 
     def tts_live_no_asr(self, on):
@@ -761,7 +764,7 @@ class TtsLiveMixin:
                         "message": f"Начало записано — продолжите с «{word}»"})
         return "partial"
 
-    def _tts_live_make_take(self, rec, uid, clips, heard, score, pos, status=None, move=True):
+    def _tts_live_make_take(self, rec, uid, clips, heard, score, pos, status=None, move=True, reuse=None):
         """Дубль из клипов исходной записи (байт в байт). Фраза из кусочков —
         несколько клипов на дорожке «Сборки»: их можно двигать и подрезать."""
         st = self._tts()
@@ -770,9 +773,16 @@ class TtsLiveMixin:
         name = f"{n:04d}.wav"
         a0 = min(c["a"] for c in clips)
         b1 = max(c["b"] for c in clips)
+        if reuse:
+            try:
+                clips = self._tts_reuse_clips(clips, reuse)     # записанная часть + новый остаток
+            except Exception:
+                reuse = None
         take = {"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": a0, "ms": 0,
                 "orig": [a0, b1], "raw": rec.path, "heard": heard, "listened": False, "chunk": n,
                 "unit": uid, "score": score, "status": status or ("ok" if score >= 0.85 else "doubt")}
+        if reuse:
+            take["reuse"] = {"src": reuse["src_name"], "mode": reuse["mode"], "trim": reuse["trim"]}
         if len(clips) > 1:
             take["clips"] = clips
             take["clips_orig"] = [dict(c) for c in clips]
@@ -947,7 +957,12 @@ class TtsLiveMixin:
         if part and items[pos] == [part["unit"]]:
             toks, _ = tok_norms(units[part["unit"]]["text"])
             resume = {"unit": part["unit"], "k": part["k"], "word": toks[part["k"]] if part["k"] < len(toks) else ''}
+        # «Без распознавания»: фраза на 80%+ уже записана — читать только остаток.
+        reuse = None
+        if len(items[pos]) == 1 and need[pos] and getattr(self, '_tts_no_asr', False):
+            reuse = self._tts_reuse_for(items[pos][0])
         return {"pos": pos, "total": len(items), "left": left, "done": left == 0 and not pending, "resume": resume, "redo": redo, "pending": len(pending), "lang": self._tts_pos_lang(pos),
+                "reuse": reuse,
                 "redo_here": any(r["pos"] == pos for r in redo_l),
                 # эта фраза: уже записана / распознаётся / ещё читать
                 "here": "pending" if pos in pending else ("todo" if need[pos] else "done"),

@@ -3268,3 +3268,8 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-tsyn__row{ display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .tts-tsyn__row .chip[disabled]{ opacity: .4; pointer-events: none; }
 .tts-tsyn__text{ flex: 1; min-width: 260px; font: inherit; font-size: var(--fs-sm); color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; }
+
+.tts-reuse-chip{ font: inherit; font-size: 11px; font-weight: 650; margin-left: 8px; padding: 1px 8px; border-radius: 999px; cursor: pointer;
+    border: 1px dashed var(--border); background: none; color: var(--text-dim); }
+.tts-reuse-chip.is-on{ border-style: solid; border-color: rgba(47,191,125,0.45); color: var(--accent-good); }
+.tts-asm-reuse{ color: var(--accent-good); white-space: normal; }

@@ -6147,6 +6147,7 @@ let isProcessing = false;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
             document.getElementById('ttsStatMissing').innerText = s.missing;
             document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;
+            ttsRenderHintBtns();
             let cats = Object.values(tts.var_sheets || {}).map(v => v.label).join(', ');
             document.getElementById('ttsVarDesc').innerText = cats ? `Фразы с переменными · ${cats}` : 'Фразы с переменными';
             ttsRenderRail();
@@ -6264,6 +6265,7 @@ let isProcessing = false;
                     <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-blocks">${blocks}</div>
                 <div class="tts-tsyn" id="ttsTsyn" style="display:none"></div>
+                ${t.reuse ? `<div class="tts-asm-heard tts-asm-reuse">${t.reuse.mode === 'prefix' ? 'Начало' : 'Конец'} — из «${escapeHtml(t.reuse.src)}», остаток — новая запись. Подровняйте стык${t.reuse.trim ? `; в «${escapeHtml(t.reuse.src)}» есть лишние слова — срежьте их` : ''}.</div>` : ''}
                 <div class="tts-asm-heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
                 <div class="tts-ed">
                     <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
@@ -7889,17 +7891,24 @@ let isProcessing = false;
             // Место переменной — тихая пометка, чтобы не перебивать текст.
             let pill = v => v ? ` <span class="tts-slot" title="${escapeHtml(ttsVarLabel(v))}: прочитайте любое значение">${escapeHtml(ttsSlotLabel(v))}</span> ` : '';
             let line = parts => parts.map(p => pill(p.var_before) + escapeHtml(p.text) + pill(p.var_after)).join(' ');
-            let key = JSON.stringify(pr.current) + '|' + pr.pos + '|' + JSON.stringify(pr.resume || null);
+            let ru = pr.reuse && !pr.reuse.skip && pr.reuse.rest ? pr.reuse : null;
+            let key = JSON.stringify(pr.current) + '|' + pr.pos + '|' + JSON.stringify(pr.resume || null) + '|' + JSON.stringify(pr.reuse || null);
             if (key !== ttsPromptKey) {
                 ttsPromptKey = key;
-                text.innerHTML = pr.resume ? ttsResumeHTML(pr.current[0], pr.resume.k) : line(pr.current);
+                text.innerHTML = pr.resume ? ttsResumeHTML(pr.current[0], pr.resume.k)
+                    : ru ? ttsReuseHTML(pr.current[0], ru) : line(pr.current);
                 text.classList.toggle('is-recorded', pr.here === 'done');
                 if (flash === 'next' || flash === 'down' || flash === 'up') ttsPromptAnim(flash === 'up' ? 'up' : 'down');
             }
             let doneShare = pr.total ? Math.round((pr.total - pr.left) / pr.total * 100) : 0;
             let here = pr.here === 'done' && !pr.redo_here ? '<span class="tts-here tts-here--done">записана ✓</span> '
                 : pr.here === 'pending' ? '<span class="tts-here tts-here--wait">распознаётся…</span> ' : '';
-            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}`
+            let reuseChip = pr.reuse ? (pr.reuse.rest
+                ? (pr.reuse.skip
+                    ? ` <button type="button" class="tts-reuse-chip" onclick="ttsReuseSkip(${pr.reuse.unit}, false)" title="Читать только остаток, записанную часть подставлю из «${escapeHtml(pr.reuse.src_name)}»">${pr.reuse.pct}% есть в «${escapeHtml(pr.reuse.src_name)}» · подставить</button>`
+                    : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseSkip(${pr.reuse.unit}, true)" title="Записанная часть возьмётся из «${escapeHtml(pr.reuse.src_name)}» и склеится с остатком в «Сборке». Нажмите, чтобы читать фразу целиком">${pr.reuse.pct}% из «${escapeHtml(pr.reuse.src_name)}» · читать целиком</button>`)
+                : ` <span class="tts-reuse-chip is-on" title="Вся фраза уже есть внутри «${escapeHtml(pr.reuse.src_name)}»">целиком есть в «${escapeHtml(pr.reuse.src_name)}»</span>`) : '';
+            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
                 + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
@@ -8299,6 +8308,38 @@ let isProcessing = false;
 
         // Длинная фраза, диктор сбился: верное начало — подсвечено, дальше —
         // «продолжите отсюда». Слова — как на экране (по пробелам), как и на бэкенде.
+        // Фраза на 80%+ уже записана: записанное — тихо, остаток — крупно.
+        function ttsReuseHTML(p, r) {
+            let toks = String(p.text || '').split(/\s+/).filter(Boolean);
+            let have = toks.slice(r.k0, r.k1).map(escapeHtml).join(' ');
+            let tip = `title="Уже записано в «${escapeHtml(r.src_name)}» — подставлю сам"`;
+            if (r.mode === 'prefix')
+                return `<span class="tts-done" ${tip}>${have}</span> <span class="tts-resume">дочитайте</span> <span class="tts-rest">${escapeHtml(r.rest)}</span>`;
+            return `<span class="tts-resume">прочитайте</span> <span class="tts-rest">${escapeHtml(r.rest)}</span> <span class="tts-done" ${tip}>${have}</span>`;
+        }
+        async function ttsReuseSkip(uid, skip) {
+            await pywebview.api.tts_reuse_skip(uid, skip);
+            ttsPromptKey = null;
+            ttsLoadPrompt();
+        }
+        // Список: какие фразы почти целиком уже есть в записанном.
+        async function ttsShowReuse() {
+            let r = await pywebview.api.tts_reuse_list();
+            if (!r) return;
+            ttsOpenListOverlay(r.items.length ? `Из записанного: ${r.items.length}` : 'Совпадений нет', false);
+            let rows = r.items.map(x => `<button type="button" class="audit-category-item tts-redo-row" data-pos="${x.pos}">
+                    <b>${escapeHtml(x.name)}</b> — ${x.pct}% есть в <b>${escapeHtml(x.src_name)}</b>
+                    <span class="audit-choice-desc">${x.rest ? `${x.mode === 'prefix' ? 'дописать в конце' : 'дописать в начале'}: «${escapeHtml(x.rest)}»` : 'целиком внутри — вырежьте в «Сборке»'}${x.trim ? ` · в «${escapeHtml(x.src_name)}» лишнее: «${escapeHtml(x.extra)}» — срежьте` : ''}</span></button>`).join('');
+            document.getElementById('ttsList').innerHTML =
+                (r.items.length ? `<div class="tts-dim tts-mon-hint">Эти фразы почти целиком уже записаны в других. В режиме «Без распознавания» суфлёр попросит прочитать только остаток, а записанная часть сама встанет на дорожку «Сборки» — останется подровнять стык. Клик — суфлёр на эту фразу.</div>` : '<div class="tts-dim tts-mon-hint">Пока нет фраз, которые на 80% совпадают с уже записанными.</div>')
+                + rows + `<div class="modal-actions"><button class="custom-alert-btn btn-secondary" onclick="ttsCloseList()">Закрыть</button></div>`;
+            document.querySelectorAll('#ttsList [data-pos]').forEach(b => b.onclick = async () => {
+                ttsCloseList();
+                let pr = await pywebview.api.tts_prompt_goto(+b.dataset.pos);
+                if (pr) { ttsPromptKey = null; ttsRenderPrompt(pr, 'next'); }
+            });
+        }
+
         function ttsResumeHTML(p, k) {
             let toks = String(p.text || '').split(/\s+/).filter(Boolean);
             let done = toks.slice(0, k).map(escapeHtml).join(' ');
@@ -8317,6 +8358,12 @@ let isProcessing = false;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
             document.getElementById('ttsStatMissing').innerText = s.missing;
             document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;
+            ttsRenderHintBtns();
+        }
+        // Кнопки-подсказки в шапке: «Из записанного: N», «Одинаковые: N».
+        function ttsRenderHintBtns() {
+            let ru = document.getElementById('ttsReuseBtn');
+            if (ru) { ru.style.display = tts.reuse_n ? '' : 'none'; document.getElementById('ttsReuseN').innerText = tts.reuse_n || 0; }
             let tw = document.getElementById('ttsTwinsBtn');
             if (tw) { tw.style.display = tts.twins_fill ? '' : 'none'; document.getElementById('ttsTwinsN').innerText = tts.twins_fill || 0; }
         }
