@@ -6509,7 +6509,7 @@ let isProcessing = false;
             let chain = u.chain !== null && u.chain !== undefined ? (tts.chains || [])[u.chain] : null;
             let block = p => `<div class="tts-block ${p.id === u.id ? 'is-current' : ''} ${p.saved ? 'is-saved' : ''}"
                     ${p.saved ? `onclick="ttsPlayUnit(${p.id})" title="Слушать сохранённое"` : ''}>
-                    <span class="tts-block__role">${p.role || 'фраза'}${p.saved ? ' ✓' : ''}</span>
+                    <span class="tts-block__role">${p.kind === 'value' ? escapeHtml(p.cat_label || 'значение') : (p.role || 'фраза')}${p.saved ? ' ✓' : ''}</span>
                     <span class="tts-block__name">${escapeHtml(p.name)}</span>
                     <span class="tts-block__text">${escapeHtml(p.text)}</span></div>`;
             let varBlock = v => `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
@@ -7793,7 +7793,9 @@ let isProcessing = false;
 
         function ttsRenderList() {
             let q = document.getElementById('ttsListSearch').value.trim().toLowerCase();
+            let pm = tts.prompt_mode || 'phrases';
             let units = tts.units.filter(u =>
+                (pm === 'phrases' ? u.kind !== 'value' : (u.kind === 'value' && u.sheet === pm)) &&
                 (ttsListMode !== 'missing' || (!u.saved && !u.takes.length)) &&
                 ((ttsListMode !== 'vars' && ttsListMode !== 'assign-var') || u.kind === 'piece') &&
                 (!q || u.text.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)));
@@ -8195,6 +8197,7 @@ let isProcessing = false;
             // Место переменной — тихая пометка, чтобы не перебивать текст.
             let pill = v => v ? ` <span class="tts-slot" title="${escapeHtml(ttsVarLabel(v))}: прочитайте любое значение">${escapeHtml(ttsSlotLabel(v))}</span> ` : '';
             let line = (parts, tail) => parts.map(p => pill(p.var_before)
+                + (p.kind === 'value' ? `<span class="tts-vcat">${escapeHtml(p.cat_label || '')}</span> ` : '')
                 + (p.role === 'var' ? `<span class="tts-ivar" title="Значение переменной — сохранится отдельно">${escapeHtml(p.text)}</span>` : escapeHtml(p.text))
                 + pill(p.var_after)).join(' ')
                 + (tail ? ` <span class="tts-tail" title="Только начало продолжения — целиком прочитаете с последним значением">${escapeHtml(tail)}</span>` : '');
@@ -8216,8 +8219,11 @@ let isProcessing = false;
                     ? ` <button type="button" class="tts-reuse-chip" onclick="ttsReuseSkip(${pr.reuse.unit}, false)" title="Читать только выделенное, остальное подставлю из ${srcs}">${pr.reuse.pct}% уже записано · подставить</button>`
                     : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseSkip(${pr.reuse.unit}, true)" title="Серое возьмётся из ${srcs} и склеится с новым в «Сборке». Нажмите, чтобы читать фразу целиком">${pr.reuse.pct}% из ${srcs} · читать целиком</button>`)
                 : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseBuild(${pr.reuse.unit})" title="Вся фраза уже звучит в ${srcs} — собрать без записи">целиком из записанного · собрать</button>`) : '';
+            let modes = (pr.modes || []).length > 1 ? ` <span class="tts-pmodes">${pr.modes.map(m =>
+                `<button type="button" class="tts-pmode ${m.key === pr.mode ? 'is-on' : ''}" onclick="ttsPromptModeSet('${m.key}')"
+                    title="${m.key === 'phrases' ? 'Читать фразы таблицы' : 'Записать значения листа «' + escapeHtml(m.label) + '» по порядку строк таблицы — каждое отдельным файлом'}">${escapeHtml(m.label)}</button>`).join('')}</span>` : '';
             let valN = pr.value_n ? ` <span class="tts-reuse-chip is-on" title="Значения переменной из таблицы читаются по очереди; продолжение фразы — целиком с последним">значение ${pr.value_n.k} из ${pr.value_n.n}</span>` : '';
-            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}${valN}`
+            meta.innerHTML = `<span>${modes}${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}${pr.mode && pr.mode !== 'phrases' ? 'Значение' : 'Фраза'} <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}${valN}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
                 + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
@@ -8617,6 +8623,18 @@ let isProcessing = false;
 
         // Длинная фраза, диктор сбился: верное начало — подсвечено, дальше —
         // «продолжите отсюда». Слова — как на экране (по пробелам), как и на бэкенде.
+        // Что читать: фразы таблицы или значения листа переменных по порядку строк.
+        async function ttsPromptModeSet(mode) {
+            let r = await pywebview.api.tts_prompt_mode(mode);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            tts = r.state;
+            ttsRender();
+            ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+            showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
+                : 'Записываем значения по порядку строк таблицы — каждое сохранится отдельным файлом в «Значения»');
+        }
+
         // Фраза на 80%+ уже записана: записанное — тихо, остаток — крупно.
         function ttsReuseHTML(p, r) {
             // серое — уже записано (подставлю сам), яркое — прочитать; несколько мест — с паузой между ними

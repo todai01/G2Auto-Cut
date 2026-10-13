@@ -3303,3 +3303,10 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 #auditEdOverlay .btn-ghost[disabled], #auditEdOverlay .custom-alert-btn[disabled]{ opacity: .35; pointer-events: none; }
 #auditEdBar .custom-alert-btn{ width: auto; flex: none; padding: 8px 20px; }
 .audit-file__phrase{ resize: none; overflow: hidden; line-height: 1.4; white-space: pre-wrap; }
+
+/* режим суфлёра: фразы / значения переменных */
+.tts-pmodes{ display: inline-flex; gap: 2px; margin-right: 10px; padding: 2px; border: 1px solid var(--border); border-radius: 999px; vertical-align: middle; }
+.tts-pmode{ font: inherit; font-size: 11px; font-weight: 650; padding: 1px 9px; border-radius: 999px; border: 0; background: none; color: var(--text-dim); cursor: pointer; }
+.tts-pmode.is-on{ background: var(--accent-var); color: #1b1305; }
+.tts-vcat{ display: inline-block; font-size: 0.32em; vertical-align: middle; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent-var); border: 1px solid color-mix(in srgb, var(--accent-var) 50%, transparent); border-radius: 6px; padding: 2px 8px; }

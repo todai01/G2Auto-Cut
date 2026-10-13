@@ -870,8 +870,14 @@ class TtsLiveMixin:
     def _tts_prompt_items(self):
         st = self._tts()
         items, seen = [], set()
+        mode = st.get("prompt_mode", "phrases")
+        if mode != "phrases" and not any(u["kind"] == "value" for u in st["units"]):
+            self._tts_ensure_value_units()        # проект из старой версии — значений ещё нет
         for u in st["units"]:
             if u["id"] in seen:
+                continue
+            # режим суфлёра: фразы таблицы или значения одного листа переменных
+            if (u["kind"] == "value") != (mode != "phrases") or (u["kind"] == "value" and u.get("sheet") != mode):
                 continue
             ch = st["chains"][u["chain"]] if u.get("chain") is not None and u["chain"] < len(st.get("chains", [])) else None
             if ch and ch.get("values"):
@@ -980,6 +986,7 @@ class TtsLiveMixin:
 
         def show(ids):
             return [{"id": i, "name": units[i]["name"], "text": units[i]["text"], "role": units[i]["role"],
+                     "kind": units[i]["kind"], "cat_label": units[i].get("cat_label"),
                      "vars": units[i].get("vars", []),
                      "var_before": units[i].get("var_before") if k == 0 else None,
                      "var_after": units[i].get("var_after")} for k, i in enumerate(ids)]
@@ -1007,6 +1014,9 @@ class TtsLiveMixin:
                 "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
                 "current": show(items[pos]), "next": show(nxt) if nxt else None,
                 "tail": self._tts_item_tail(items[pos]), "next_tail": self._tts_item_tail(nxt) if nxt else None,
+                "mode": st.get("prompt_mode", "phrases"),
+                "modes": [{"key": "phrases", "label": "Фразы"}] + [{"key": k, "label": sh["label"]}
+                                                                   for k, sh in (st.get("var_sheets") or {}).items()],
                 "value_n": self._tts_item_value_n(items[pos])}
 
     def _tts_item_value_n(self, ids):

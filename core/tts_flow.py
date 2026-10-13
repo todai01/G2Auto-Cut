@@ -161,6 +161,8 @@ def parse_tts_workbook(path):
         if not cols:
             continue
         cats = []
+        seen_by = {key: set() for _c, key in cols}
+        order = []                         # порядок чтения: строка за строкой, слева направо
         for c, key in cols:
             seen, values = set(), []
             for r in rows[1:]:
@@ -174,8 +176,19 @@ def parse_tts_workbook(path):
                     seen.add(s)
                     values.append(s)
             cats.append({"key": key, "label": var_label(key), "values": values})
+        for ri, r in enumerate(rows[1:], start=2):
+            for c, key in cols:
+                v = r[c] if c < len(r) else None
+                if v is None or str(v).strip() == '':
+                    continue
+                if isinstance(v, float) and v.is_integer():
+                    v = int(v)
+                s = str(v).strip()
+                if s not in seen_by[key]:
+                    seen_by[key].add(s)
+                    order.append([key, s, ri])
         var_sheets[_tag(ws.title) or ws.title.strip().lower()] = {
-            "title": ws.title, "label": var_label(_tag(ws.title) or ws.title), "categories": cats}
+            "title": ws.title, "label": var_label(_tag(ws.title) or ws.title), "categories": cats, "order": order}
     wb.close()
     return {"phrase_sheets": sheets, "var_sheets": var_sheets}
 
@@ -414,6 +427,8 @@ class TtsFlowMixin:
             pass
 
     def _tts_target(self, unit):
+        if unit["kind"] == "value":                  # значение переменной — в «Значения/<лист>/<категория>/»
+            return self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         if unit.get("subdir"):                       # значение переменной из ячейки — в папку своей фразы
             return os.path.join(self._tts()["work_dir"], folder, unit["subdir"], f"{unit['name']}.wav")
@@ -520,7 +535,7 @@ class TtsFlowMixin:
         if not wd:
             return idx, words
         for u in st["units"]:
-            if u["kind"] == "piece" or not os.path.exists(self._tts_target(u)):
+            if u["kind"] in ("piece", "value") or not os.path.exists(self._tts_target(u)):
                 continue
             ws, _raw = self._tts_words(u["text"])
             words[u["id"]] = ws
@@ -533,7 +548,7 @@ class TtsFlowMixin:
         """Как собрать фразу из записанного: куски «есть» и «дописать»."""
         st = self._tts()
         u = st["units"][uid]
-        if u["kind"] == "piece" or (st.get("work_dir") and os.path.exists(self._tts_target(u))):
+        if u["kind"] in ("piece", "value") or (st.get("work_dir") and os.path.exists(self._tts_target(u))):
             return None
         idx, xwords = index or self._tts_reuse_index()
         d = idx.get(self._tts_unit_lang(uid)) or {}
@@ -788,6 +803,7 @@ class TtsFlowMixin:
         units = st["units"]
         wd = st.get("work_dir")
         saved = {u["id"]: bool(wd) and os.path.exists(self._tts_target(u)) for u in units}
+        main_units = [u for u in units if u["kind"] != "value"]       # значения переменных — свой счёт
         takes_by_unit = {}
         for i, t in enumerate(st["takes"]):
             if t.get("unit") is not None:
@@ -816,10 +832,13 @@ class TtsFlowMixin:
                            for k, v in st["var_sheets"].items()},
             "twins_fill": self.tts_twins_info()["fill"] if units else 0,
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
-            "stats": {"units": len(units), "saved": sum(saved.values()),
+            "prompt_mode": st.get("prompt_mode", "phrases"),
+            "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
+                      "values": len(units) - len(main_units),
+                      "values_saved": sum(saved[u["id"]] for u in units if u["kind"] == "value"),
                       "pieces": len(pieces), "pieces_saved": sum(1 for u in pieces if saved[u["id"]]),
                       "chains": len(st.get("chains", [])),
-                      "missing": sum(1 for u in units if not saved[u["id"]] and u["id"] not in takes_by_unit),
+                      "missing": sum(1 for u in main_units if not saved[u["id"]] and u["id"] not in takes_by_unit),
                       "doubt": sum(1 for t in st["takes"] if t.get("status") == "doubt"
                                    and not saved.get(t.get("unit"), False))},
         }
@@ -848,28 +867,34 @@ class TtsFlowMixin:
                                      for s in sheets]}
         chosen = next((s for s in sheets if s["title"] == sheet), sheets[0])
         st = self._tts()
+        old = st["units"]
+        rebind = False
         if st["takes"] and st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
             st["takes"] = []      # другая таблица — старая привязка дублей неверна
         elif st["takes"] and st["units"]:
-            # Та же таблица перечитана — номера фраз могли сдвинуться (строки-метки
-            # <…_kz> больше не фразы, добавили строки): дубли — к той же строке Excel.
-            by_row = {(u["row"], u["name"]): u["id"] for u in chosen["units"]}
-            by_name = {}
-            for u in chosen["units"]:
-                by_name.setdefault(u["name"], u["id"])
-            old = st["units"]
-            for t in st["takes"]:
-                uid = t.get("unit")
-                if uid is None or uid >= len(old):
-                    continue
-                ou = old[uid]
-                t["unit"] = by_row.get((ou.get("row"), ou["name"]), by_name.get(ou["name"]))
+            rebind = True
         st.update({"excel_path": path, "sheet": chosen["title"], "lang": chosen["lang"],
                    "units": chosen["units"], "chains": chosen["chains"], "v": TTS_STATE_VERSION,
                    "lines": chosen["lines"], "mark_cols": chosen["mark_cols"], "var_cols": chosen["var_keys"],
                    "head_row": chosen["head_row"], "marks_dirty": [],
                    "var_sheets": {k: v for k, v in parsed["var_sheets"].items()
                                   if k in chosen["var_keys"] or not chosen["var_keys"]}})
+        self._tts_ensure_value_units()               # значения переменных — тоже «фразы» для записи
+        if rebind:
+            # Та же таблица перечитана — номера фраз могли сдвинуться (строки-метки
+            # <…_kz> больше не фразы, добавили строки): дубли — к той же строке Excel.
+            by_row = {(u["row"], u["name"]): u["id"] for u in st["units"]}
+            by_name = {}
+            for u in st["units"]:
+                if u["kind"] != "value":
+                    by_name.setdefault(u["name"], u["id"])
+            for t in st["takes"]:
+                uid = t.get("unit")
+                if uid is None or uid >= len(old):
+                    continue
+                ou = old[uid]
+                t["unit"] = by_row.get((ou.get("row"), ou["name"]),
+                                       None if ou.get("kind") == "value" else by_name.get(ou["name"]))
         st["index"] = 0
         self._tts_save()
         return self.tts_state()
@@ -1900,6 +1925,56 @@ class TtsFlowMixin:
     def _tts_value_text(self, sheet, cat, value):
         custom = (self._tts().get("var_texts") or {}).get(f"{sheet}|{cat}|{value}")
         return custom or synth_text(cat, value), bool(custom)
+
+    # ---------------- запись значений переменных голосом ----------------
+    # Каждое значение листа переменных — «фраза» для суфлёра (kind 'value'):
+    # текст — как на экране «Переменные» («пять миллионов», «первого»),
+    # файл — «Значения/<лист>/<категория>/<значение>.wav». Порядок — как в
+    # таблице: строка за строкой, в строке слева направо.
+
+    def _tts_ensure_value_units(self):
+        st = self._tts()
+        have = {(u.get("sheet"), u.get("cat"), u.get("value")): u for u in st["units"] if u["kind"] == "value"}
+        changed = False
+        for key, sh in (st.get("var_sheets") or {}).items():
+            lm = re.search(r'_(ru|kz|kk)$', key)
+            lang = ('kz' if lm.group(1) in ('kz', 'kk') else 'ru') if lm else None
+            order = sh.get("order") or [[c["key"], v, 0] for c in sh["categories"] for v in c["values"]]
+            for cat, v, row in order:
+                text = self._tts_value_text(key, cat, v)[0]
+                u = have.get((key, cat, v))
+                if u:
+                    if u["text"] != text:
+                        u["text"] = text
+                        changed = True
+                    continue
+                uid = len(st["units"])
+                st["units"].append({"id": uid, "kind": "value", "name": clean_name(v), "text": text, "role": None,
+                                    "row": f"{key}:{row}:{cat}", "vars": [], "var_before": None, "var_after": None,
+                                    "chain": None, "lang": lang, "sheet": key, "cat": cat, "value": v,
+                                    "cat_label": var_label(cat)})
+                changed = True
+        if changed:
+            self._tts_save()
+
+    def tts_prompt_mode(self, mode):
+        """Что читать на суфлёре: 'phrases' — фразы таблицы, или ключ листа
+        переменных ('sum_ru', 'date_ru') — его значения по порядку строк.
+        У каждого режима своя позиция суфлёра."""
+        st = self._tts()
+        if mode != 'phrases' and mode not in (st.get("var_sheets") or {}):
+            return {"error": "Нет такого листа переменных."}
+        self._tts_ensure_value_units()
+        cur = st.get("prompt_mode", "phrases")
+        pos_by = st.setdefault("prompt_pos_by_mode", {})
+        pos_by[cur] = st.get("prompt_pos", 0)
+        st["prompt_mode"] = mode
+        st["prompt_pos"] = pos_by.get(mode, 0)
+        if hasattr(self, '_tts_prompt_fix'):
+            self._tts_prompt_fix()
+        self._tts_save()
+        return {"prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
+                "state": self.tts_state()}
 
     def tts_vars_state(self):
         st = self._tts()
