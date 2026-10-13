@@ -613,6 +613,13 @@ class TtsLiveMixin:
                 return
             items = self._tts_prompt_items()
             ids = items[pos] if 0 <= pos < len(items) else []
+            # Уже есть (сохранено или хороший дубль) — второй раз не нужен:
+            # start общий для всех значений, его хватит с первого чтения.
+            if len(ids) > 1:
+                good = self._tts_good_units()
+                need = [i for i in ids if i not in good
+                        and not (st.get("work_dir") and os.path.exists(self._tts_target(st["units"][i])))]
+                ids = need or ids
             lo, hi = self._tts_voice_bounds(rec, a_ms, b_ms)
             for uid in ids or [None]:
                 clips = [{"raw": rec.path, "a": lo, "b": hi, "cuts": [], "pos": 0}]
@@ -866,10 +873,37 @@ class TtsLiveMixin:
             if u["id"] in seen:
                 continue
             ch = st["chains"][u["chain"]] if u.get("chain") is not None and u["chain"] < len(st.get("chains", [])) else None
+            if ch and ch.get("values"):
+                # Значения из ячейки: по одному — start + значение (+ пара слов end),
+                # у последнего — вся фраза до конца.
+                parts, vals = ch["parts"], ch["values"]
+                k = parts.index(ch["inline_at"]) + (1 if ch.get("inline_after") else 0)
+                before, after = parts[:k], parts[k:]
+                for n, vid in enumerate(vals):
+                    items.append(before + [vid] + (after if n == len(vals) - 1 else []))
+                seen.update(parts + vals)
+                continue
             ids = ch["parts"] if ch else [u["id"]]
             seen.update(ids)
             items.append(ids)
         return items
+
+    def _tts_item_tail(self, ids):
+        """Пара первых слов продолжения — подсказка, как закончить чтение
+        значения (само продолжение прочитается целиком с последним значением)."""
+        st = self._tts()
+        if not ids:
+            return None
+        u = st["units"][ids[-1]]
+        if u.get("role") != "var":
+            return None
+        ch = st["chains"][u["chain"]]
+        parts = ch["parts"]
+        k = parts.index(ch["inline_at"]) + (1 if ch.get("inline_after") else 0)
+        if k >= len(parts):
+            return None
+        words = str(st["units"][parts[k]]["text"]).split()
+        return ' '.join(words[:2]) + (' …' if len(words) > 2 else '')
 
     # Дубль, который засчитывается: не забракован и не «сомнительный» (тот —
     # к перезаписи: суфлёр вернётся к фразе, когда дойдёт до конца).
@@ -905,10 +939,13 @@ class TtsLiveMixin:
         tried = {t["unit"]: t for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
         out = []
         for pos, ids in enumerate(items):
-            if pos in pending or not any(i in tried for i in ids):
+            # пробовали записать именно то, чего не хватает (общий start значений — не в счёт)
+            needy = [i for i in ids if i not in good
+                     and not (st.get("work_dir") and os.path.exists(self._tts_target(st["units"][i])))]
+            if pos in pending or not any(i in tried for i in needy):
                 continue
             if self._tts_prompt_needed(ids, good):
-                t = next(tried[i] for i in ids if i in tried)
+                t = next(tried[i] for i in needy if i in tried)
                 u = st["units"][ids[0]]
                 out.append({"pos": pos, "name": u["name"], "text": ' '.join(st["units"][i]["text"] for i in ids),
                             "heard": t.get("heard", ''), "take": st["takes"].index(t)})
@@ -967,7 +1004,21 @@ class TtsLiveMixin:
                 # эта фраза: уже записана / распознаётся / ещё читать
                 "here": "pending" if pos in pending else ("todo" if need[pos] else "done"),
                 "var_cols": [{"key": k, "label": var_label(k)} for k in (st.get("var_cols") or [])],
-                "current": show(items[pos]), "next": show(nxt) if nxt else None}
+                "current": show(items[pos]), "next": show(nxt) if nxt else None,
+                "tail": self._tts_item_tail(items[pos]), "next_tail": self._tts_item_tail(nxt) if nxt else None,
+                "value_n": self._tts_item_value_n(items[pos])}
+
+    def _tts_item_value_n(self, ids):
+        """«значение 2 из 3» — для фраз со значениями из ячейки."""
+        st = self._tts()
+        if not ids:
+            return None
+        u = st["units"][ids[-1]] if st["units"][ids[-1]].get("role") == "var" else \
+            next((st["units"][i] for i in ids if st["units"][i].get("role") == "var"), None)
+        if not u:
+            return None
+        vals = st["chains"][u["chain"]]["values"]
+        return {"k": vals.index(u["id"]) + 1, "n": len(vals)}
 
     def tts_prompt_goto(self, pos):
         """Суфлёр — на эту фразу (из списка «к перезаписи»)."""

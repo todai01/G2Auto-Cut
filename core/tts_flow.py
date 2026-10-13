@@ -79,6 +79,22 @@ def _flag(v):
     return v not in (None, '', 0, '0') and str(v).strip() not in ('', '0')
 
 
+def _inline_values(v):
+    """Ячейка колонки переменной со значениями прямо в ней («к ограниченной
+    категории» / «к ограниченному бренду» / … — по строке на значение), а не
+    просто отметка 1/x/+. Возвращает список значений или None."""
+    s = str(v or '').strip()
+    if not re.search(r'[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]{2}', s) or s.lower() in ('да', 'yes', 'var'):
+        return None
+    out, seen = [], set()
+    for x in re.split(r'[\n\r;]+', s):
+        x = re.sub(r'\s+', ' ', x).strip()
+        if x and x.lower() not in seen:
+            seen.add(x.lower())
+            out.append(x)
+    return out or None
+
+
 def _lang_of(name):
     low = (name or '').lower()
     if re.search(r'(^|[_\s-])(kz|kk|kaz)([_\s>-]|$)', low):
@@ -215,10 +231,12 @@ def _parse_phrase_sheet(title, rows, head_idx):
         name = clean_name(cell(r, name_c) or '')
         role = next((f for f in FLAG_COLS if _flag(cell(r, col.get(f)))), None)
         vars_ = [t for t, c in var_cols if _flag(cell(r, c))]
+        inline = next(({"key": t, "values": vals} for t, c in var_cols
+                       for vals in [_inline_values(cell(r, c))] if vals), None)
         if not text and not name and not role:
             continue
         lines.append({"row": i, "text": text, "name": name or f"фраза_{i:04d}", "role": role, "vars": vars_,
-                      "lang": cur_lang})
+                      "lang": cur_lang, "inline": inline})
     units, chains = build_units(lines)
     # Колонки разметки (1-based, как в Excel) — чтобы дописывать отметки в таблицу.
     mark_cols = {t: c + 1 for t, c in col.items() if t in FLAG_COLS or t in dict(var_cols)}
@@ -245,7 +263,7 @@ def build_units(lines):
         units.append({"id": uid, "kind": "piece" if ln["role"] else "phrase", "name": ln["name"],
                       "text": ln["text"] or ln["name"], "role": ln["role"], "row": ln["row"],
                       "vars": list(ln["vars"]), "var_before": None, "var_after": None, "chain": None,
-                      "lang": ln.get("lang")})
+                      "lang": ln.get("lang"), "inline": ln.get("inline")})
         if ln["role"] == 'start' or (ln["role"] and cur is None):
             close()
             cur = {"id": len(chains), "parts": [uid]}
@@ -272,6 +290,29 @@ def build_units(lines):
                 u["var_before"] = u["vars"][0]
         ch["name"] = _common_name([u["name"] for u in parts])
         ch["vars"] = [u["var_after"] for u in parts if u["var_after"]]
+
+    # Значения переменной прямо в ячейке (колонка <var>): каждое — свой кусочек
+    # «…/Фразы_Переменные/<цепочка>/<значение>.wav». Читаются по очереди:
+    # start + значение + пара слов end, а у последнего значения — end целиком.
+    for ch in chains:
+        parts = [units[i] for i in ch["parts"]]
+        host = next((u for u in parts if u.get("inline")), None)
+        if not host:
+            continue
+        for u in parts:                                   # пометки-«слоты» тут не нужны: значения видны сами
+            u["var_after"] = u["var_before"] = None
+        vals = []
+        for v in host["inline"]["values"]:
+            uid = len(units)
+            units.append({"id": uid, "kind": "piece", "name": clean_name(v) or f"значение_{len(vals) + 1}",
+                          "text": v, "role": "var", "row": host["row"], "vars": [], "var_before": None,
+                          "var_after": None, "chain": ch["id"], "lang": host.get("lang"), "inline": None,
+                          "subdir": clean_name(ch["name"]) or "переменная", "var_key": host["inline"]["key"]})
+            vals.append(uid)
+        ch["values"] = vals
+        ch["inline_at"] = host["id"]
+        ch["inline_after"] = host["role"] in ('start', 'start_2')   # у start значение после, у end — перед
+        ch["vars"] = []
     return units, chains
 
 
@@ -374,6 +415,8 @@ class TtsFlowMixin:
 
     def _tts_target(self, unit):
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
+        if unit.get("subdir"):                       # значение переменной из ячейки — в папку своей фразы
+            return os.path.join(self._tts()["work_dir"], folder, unit["subdir"], f"{unit['name']}.wav")
         return os.path.join(self._tts()["work_dir"], folder, f"{unit['name']}.wav")
 
     # ---------------- одинаковые фразы под разными названиями ----------------

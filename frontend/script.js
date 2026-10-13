@@ -6252,7 +6252,13 @@ let isProcessing = false;
                     <span class="tts-block__text">${escapeHtml(p.text)}</span></div>`;
             let varBlock = v => `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
                     <span class="tts-block__name">${escapeHtml(ttsVarLabel(v))}</span></div>`;
-            let blocks = chain
+            let blocks;
+            if (chain && chain.values && chain.values.length) {
+                // значение из ячейки: start, это значение (или первое), продолжение
+                let k = chain.parts.indexOf(chain.inline_at) + (chain.inline_after ? 1 : 0);
+                let val = chain.values.includes(u.id) ? u.id : chain.values[0];
+                blocks = chain.parts.slice(0, k).concat([val], chain.parts.slice(k)).map(id => block(tts.units[id])).join('');
+            } else blocks = chain
                 ? chain.parts.map(id => tts.units[id]).map((p, k) =>
                     (k === 0 && p.var_before ? varBlock(p.var_before) : '') + block(p) + (p.var_after ? varBlock(p.var_after) : '')).join('')
                 : block(u);
@@ -7890,13 +7896,16 @@ let isProcessing = false;
             }
             // Место переменной — тихая пометка, чтобы не перебивать текст.
             let pill = v => v ? ` <span class="tts-slot" title="${escapeHtml(ttsVarLabel(v))}: прочитайте любое значение">${escapeHtml(ttsSlotLabel(v))}</span> ` : '';
-            let line = parts => parts.map(p => pill(p.var_before) + escapeHtml(p.text) + pill(p.var_after)).join(' ');
+            let line = (parts, tail) => parts.map(p => pill(p.var_before)
+                + (p.role === 'var' ? `<span class="tts-ivar" title="Значение переменной — сохранится отдельно">${escapeHtml(p.text)}</span>` : escapeHtml(p.text))
+                + pill(p.var_after)).join(' ')
+                + (tail ? ` <span class="tts-tail" title="Только начало продолжения — целиком прочитаете с последним значением">${escapeHtml(tail)}</span>` : '');
             let ru = pr.reuse && !pr.reuse.skip && pr.reuse.rest ? pr.reuse : null;
             let key = JSON.stringify(pr.current) + '|' + pr.pos + '|' + JSON.stringify(pr.resume || null) + '|' + JSON.stringify(pr.reuse || null);
             if (key !== ttsPromptKey) {
                 ttsPromptKey = key;
                 text.innerHTML = pr.resume ? ttsResumeHTML(pr.current[0], pr.resume.k)
-                    : ru ? ttsReuseHTML(pr.current[0], ru) : line(pr.current);
+                    : ru ? ttsReuseHTML(pr.current[0], ru) : line(pr.current, pr.tail);
                 text.classList.toggle('is-recorded', pr.here === 'done');
                 if (flash === 'next' || flash === 'down' || flash === 'up') ttsPromptAnim(flash === 'up' ? 'up' : 'down');
             }
@@ -7908,11 +7917,12 @@ let isProcessing = false;
                     ? ` <button type="button" class="tts-reuse-chip" onclick="ttsReuseSkip(${pr.reuse.unit}, false)" title="Читать только остаток, записанную часть подставлю из «${escapeHtml(pr.reuse.src_name)}»">${pr.reuse.pct}% есть в «${escapeHtml(pr.reuse.src_name)}» · подставить</button>`
                     : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseSkip(${pr.reuse.unit}, true)" title="Записанная часть возьмётся из «${escapeHtml(pr.reuse.src_name)}» и склеится с остатком в «Сборке». Нажмите, чтобы читать фразу целиком">${pr.reuse.pct}% из «${escapeHtml(pr.reuse.src_name)}» · читать целиком</button>`)
                 : ` <span class="tts-reuse-chip is-on" title="Вся фраза уже есть внутри «${escapeHtml(pr.reuse.src_name)}»">целиком есть в «${escapeHtml(pr.reuse.src_name)}»</span>`) : '';
-            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}`
+            let valN = pr.value_n ? ` <span class="tts-reuse-chip is-on" title="Значения переменной из таблицы читаются по очереди; продолжение фразы — целиком с последним">значение ${pr.value_n.k} из ${pr.value_n.n}</span>` : '';
+            meta.innerHTML = `<span>${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}Фраза <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}${valN}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
                 + `<span class="tts-prompter__progress" title="Прочитано ${doneShare}%"><i style="width:${doneShare}%"></i></span>`
 ;
-            next.innerHTML = pr.next ? `<span class="tts-prompter__next-label">Дальше</span> ${line(pr.next)}` : '';
+            next.innerHTML = pr.next ? `<span class="tts-prompter__next-label">Дальше</span> ${line(pr.next, pr.next_tail)}` : '';
             ttsRenderMarks(pr);
             ttsFitPrompt();
             if (flash === 'restart') {
