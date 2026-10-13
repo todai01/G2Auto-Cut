@@ -6581,16 +6581,54 @@ let isProcessing = false;
             ttsTR = r && r.tiers ? r : null;
             ttsTiersRender();
         }
+        // Две дорожки, как в режиме «Суммы»: «Дубль» — откуда взят каждый ярус
+        // (края тянутся), «Сборка» — ярусы друг за другом, как склеятся файлы,
+        // с концом начала фразы и началом продолжения; клип яруса тянется
+        // вправо/влево — пауза перед ним. Готовый ярус (из другой строки) —
+        // в сборке своим файлом, серый.
+        function ttsTiersLayout() {
+            let r = ttsTR, x = 0, out = [];
+            if (r.ctx.start) { out.push({ ctx: 'start', x, w: r.ctx.start.len, peaks: r.ctx.start.peaks, name: r.ctx.start.name }); x += r.ctx.start.len; }
+            r.tiers.forEach(t => {
+                let fixed = t.exists && !t.write && t.file_len;
+                let pre = fixed ? 0 : t.pre;
+                out.push({ k: t.k, x: x + pre, w: fixed ? t.file_len : t.b - t.a, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, t });
+                x += pre + (fixed ? t.file_len : t.b - t.a);
+            });
+            if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name }); x += r.ctx.end.len; }
+            return { clips: out, total: x };
+        }
+        function ttsDrawPeaks(cv, peaks) {
+            if (!cv) return;
+            let dpr = window.devicePixelRatio || 1;
+            cv.width = Math.max(1, cv.clientWidth * dpr); cv.height = Math.max(1, cv.clientHeight * dpr);
+            let g = cv.getContext('2d'), n = peaks.length, mid = cv.height / 2;
+            g.fillStyle = getComputedStyle(cv).color;
+            for (let k = 0; k < n; k++) {
+                let h = Math.max(1, peaks[k] * mid * 0.92);
+                g.fillRect(k / n * cv.width, mid - h, Math.max(1, cv.width / n), 2 * h);
+            }
+        }
         function ttsTiersRender() {
             let el = document.getElementById('ttsTiers');
             if (!el) return;
             if (!ttsTR) { el.innerHTML = '<div class="tts-dim">Ярусы: не удалось прочитать дубль</div>'; return; }
-            let r = ttsTR, L = r.length || 1;
-            let pct = ms => (100 * ms / L).toFixed(3) + '%';
-            let segs = r.tiers.map(x => `<div class="tts-tiers__seg ${x.exists && !x.write ? 'is-skip' : ''}" style="left:${pct(x.a)};width:${pct(x.b - x.a)}"
-                    onclick="ttsTierPlay(${x.k})" title="Послушать: ${escapeHtml(x.text)}"><span>${escapeHtml(x.label)}</span></div>`).join('');
-            let handles = r.tiers.slice(0, -1).map(x => `<div class="tts-tiers__cut" style="left:${pct(x.b)}"
-                    onpointerdown="ttsTierDrag(event, ${x.k})" title="Граница — перетащите"></div>`).join('');
+            let r = ttsTR, lay = ttsTiersLayout();
+            let span = Math.max(r.length, lay.total) || 1;
+            let pct = ms => (100 * ms / span).toFixed(3) + '%';
+            let regions = r.tiers.map(t => `<div class="tts-tiers__reg ${t.exists && !t.write ? 'is-skip' : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
+                    title="${escapeHtml(t.label)}: ${escapeHtml(t.text)} — края тяните мышью">
+                    <span>${escapeHtml(t.label)}</span>
+                    <i class="tts-tiers__edge is-l" onpointerdown="ttsTierEdge(event, ${t.k}, 'a')"></i>
+                    <i class="tts-tiers__edge is-r" onpointerdown="ttsTierEdge(event, ${t.k}, 'b')"></i></div>`).join('');
+            let clips = lay.clips.map((c, n) => c.ctx
+                ? `<div class="tts-tiers__clip is-ctx" style="left:${pct(c.x)};width:${pct(c.w)}" title="${c.ctx === 'start' ? 'Конец начала фразы' : 'Начало продолжения'} «${escapeHtml(c.name)}»">
+                     <canvas data-n="${n}"></canvas><span>${c.ctx === 'start' ? '… ' + escapeHtml(c.name) : escapeHtml(c.name) + ' …'}</span></div>`
+                : `${c.pre ? `<div class="tts-tiers__gap" style="left:${pct(c.x - c.pre)};width:${pct(c.pre)}">${c.pre}</div>` : ''}
+                   <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
+                     ${c.fixed ? `onclick="ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
+                       : `onpointerdown="ttsTierMove(event, ${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — тяните: пауза перед ярусом; клик — послушать"`}>
+                     <canvas data-n="${n}"></canvas><span>${escapeHtml(c.t.label)} <b>${escapeHtml(c.t.value)}</b></span></div>`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${x.exists && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
                     <span class="tts-tiers__lbl">${escapeHtml(x.label)} <b>${escapeHtml(x.value)}</b></span>
@@ -6598,36 +6636,52 @@ let isProcessing = false;
                     ${x.exists ? `<label class="tts-tiers__exists" title="Этот эталон уже сохранён из другой строки — по умолчанию не трогаем">
                         <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> уже есть · перезаписать</label>`
                       : x.mine ? '<span class="tts-tiers__ok">сохранён ✓</span>' : ''}</div>`).join('');
-            el.innerHTML = `<div class="tts-tiers__title">Ярусы <span class="tts-dim">— Enter сохранит каждый отдельным эталоном, строка целиком не сохраняется</span></div>
-                <div class="tts-tiers__wave" id="ttsTiersWave"><canvas id="ttsTiersCanvas"></canvas>${segs}${handles}</div>
+            el.innerHTML = `<div class="tts-tiers__title">Ярусы
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1)" title="Начало фразы + ярусы + продолжение — как склеятся файлы">&#9654; Вся сумма</button>
+                    <span class="tts-dim">Enter сохранит каждый ярус отдельным эталоном, строка целиком не сохраняется</span></div>
+                <div class="tts-tiers__row"><span class="tts-tiers__name">Дубль</span>
+                    <div class="tts-tiers__wave" id="ttsTiersWave"><canvas id="ttsTiersCanvas" style="width:${pct(r.length)}"></canvas>${regions}</div></div>
+                <div class="tts-tiers__row"><span class="tts-tiers__name">Сборка</span>
+                    <div class="tts-tiers__asm" id="ttsTiersAsm">${clips}</div></div>
                 <div class="tts-tiers__chips">${chips}</div>`;
-            let cv = document.getElementById('ttsTiersCanvas'), box = cv.parentElement;
-            cv.width = box.clientWidth * (window.devicePixelRatio || 1); cv.height = box.clientHeight * (window.devicePixelRatio || 1);
-            let g = cv.getContext('2d'), n = r.peaks.length, mid = cv.height / 2;
-            g.fillStyle = getComputedStyle(box).color;
-            for (let k = 0; k < n; k++) {
-                let h = Math.max(1, r.peaks[k] * mid * 0.95), x = k / n * cv.width;
-                g.fillRect(x, mid - h, Math.max(1, cv.width / n), 2 * h);
-            }
+            ttsDrawPeaks(document.getElementById('ttsTiersCanvas'), r.peaks);
+            el.querySelectorAll('.tts-tiers__clip canvas').forEach(cv => ttsDrawPeaks(cv, lay.clips[+cv.dataset.n].peaks || []));
         }
-        function ttsTierDrag(e, k) {
+        const ttsTiersSpan = () => Math.max(ttsTR.length, ttsTiersLayout().total) || 1;
+        async function ttsTiersSend() {
+            let i = ttsCurTake() && ttsCurTake().i;
+            let res = await pywebview.api.tts_tier_set(i, ttsTR.tiers.map(t => ({ a: t.a, b: t.b, pre: t.pre })), null);
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+        }
+        // край клипа на дорожке «Дубль»: откуда и докуда берётся ярус
+        function ttsTierEdge(e, k, side) {
             e.preventDefault(); e.stopPropagation();
-            let r = ttsTR;
-            let cuts = r.tiers.slice(0, -1).map(x => x.b);
+            let span = ttsTiersSpan(), t = ttsTR.tiers[k];
             let move = ev => {
-                let rc = document.getElementById('ttsTiersWave').getBoundingClientRect();   // полоса перерисовывается
+                let rc = document.getElementById('ttsTiersWave').getBoundingClientRect();
                 if (!rc.width) return;
-                let ms = Math.round((ev.clientX - rc.left) / rc.width * r.length);
-                let lo = (k > 0 ? cuts[k - 1] : 0) + 30, hi = (k < cuts.length - 1 ? cuts[k + 1] : r.length) - 30;
-                cuts[k] = Math.max(lo, Math.min(hi, ms));
-                r.tiers[k].b = r.tiers[k + 1].a = cuts[k];
+                let ms = Math.round((ev.clientX - rc.left) / rc.width * span);
+                if (side === 'a') t.a = Math.max(0, Math.min(t.b - 40, ms));
+                else t.b = Math.min(ttsTR.length, Math.max(t.a + 40, ms));
                 ttsTiersRender();
             };
-            let up = async () => {
+            let up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ttsTiersSend(); };
+            window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+        }
+        // клип на дорожке «Сборка»: тянуть — пауза перед ярусом, просто клик — послушать
+        function ttsTierMove(e, k) {
+            e.preventDefault();
+            let span = ttsTiersSpan(), t = ttsTR.tiers[k], x0 = e.clientX, pre0 = t.pre, moved = false;
+            let move = ev => {
+                let rc = document.getElementById('ttsTiersAsm').getBoundingClientRect();
+                if (!rc.width || Math.abs(ev.clientX - x0) < 3 && !moved) return;
+                moved = true;
+                t.pre = Math.max(0, Math.min(3000, Math.round(pre0 + (ev.clientX - x0) / rc.width * span)));
+                ttsTiersRender();
+            };
+            let up = () => {
                 window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-                let i = ttsCurTake() && ttsCurTake().i;
-                let res = await pywebview.api.tts_tier_set(i, cuts, null);
-                if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+                if (moved) ttsTiersSend(); else ttsTierPlay(k);
             };
             window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
         }
@@ -6639,7 +6693,7 @@ let isProcessing = false;
         }
         async function ttsTierPlay(k) {
             await ttsStopPlay();
-            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, k);
+            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, k < 0 ? null : k);
             if (r && r.error) showToast(r.error);
         }
 

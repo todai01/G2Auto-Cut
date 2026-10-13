@@ -3317,18 +3317,28 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .stage-tts:not(.show-assembly) .tts-tiers{ display: none; }
 .tts-tiers{ margin: 10px 0 4px; }
 .tts-tiers__title{ font-size: var(--fs-sm); font-weight: 600; margin-bottom: 6px; }
-.tts-tiers__wave{ position: relative; height: 64px; border-radius: 9px; background: var(--screen); border: 1px solid var(--border-soft);
-    color: var(--text-dim); overflow: hidden; user-select: none; }
-.tts-tiers__wave canvas{ position: absolute; inset: 0; width: 100%; height: 100%; }
-.tts-tiers__seg{ position: absolute; top: 0; bottom: 0; cursor: pointer; border-left: 1px solid transparent;
-    background: color-mix(in srgb, var(--accent-var) 9%, transparent); }
-.tts-tiers__seg:nth-of-type(even){ background: color-mix(in srgb, var(--accent-var) 18%, transparent); }
-.tts-tiers__seg:hover{ background: color-mix(in srgb, var(--accent-var) 28%, transparent); }
-.tts-tiers__seg.is-skip{ background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--text-faint) 18%, transparent) 6px 8px); }
-.tts-tiers__seg span{ position: absolute; top: 3px; left: 5px; font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .04em; color: var(--text); opacity: .75; white-space: nowrap; }
-.tts-tiers__cut{ position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; z-index: 2; }
-.tts-tiers__cut::after{ content: ''; position: absolute; left: 5px; top: 0; bottom: 0; width: 2px; background: var(--accent-var); }
+.tts-tiers__title .btn-ghost{ margin: 0 8px; }
+.tts-tiers__row{ display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tts-tiers__name{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+.tts-tiers__wave, .tts-tiers__asm{ position: relative; height: 62px; border-radius: 9px; background: var(--screen);
+    border: 1px solid var(--border-soft); color: var(--text-dim); overflow: hidden; user-select: none; touch-action: none; }
+.tts-tiers__wave > canvas{ position: absolute; left: 0; top: 0; height: 100%; }
+.tts-tiers__reg{ position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent-var) 16%, transparent);
+    border-left: 2px solid var(--accent-var); border-right: 2px solid var(--accent-var); }
+.tts-tiers__reg.is-skip{ border-color: var(--text-faint); background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--text-faint) 18%, transparent) 6px 8px); }
+.tts-tiers__reg span, .tts-tiers__clip span{ position: absolute; top: 3px; left: 5px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text); opacity: .8; white-space: nowrap; pointer-events: none; }
+.tts-tiers__edge{ position: absolute; top: 0; bottom: 0; width: 12px; cursor: ew-resize; z-index: 2; }
+.tts-tiers__edge.is-l{ left: -7px; }
+.tts-tiers__edge.is-r{ right: -7px; }
+.tts-tiers__clip{ position: absolute; top: 6px; bottom: 6px; border-radius: 6px; cursor: grab; overflow: hidden;
+    background: color-mix(in srgb, var(--accent-var) 22%, var(--screen)); border: 1px solid var(--accent-var); color: var(--accent-var); }
+.tts-tiers__clip:active{ cursor: grabbing; }
+.tts-tiers__clip.is-fixed{ cursor: pointer; background: color-mix(in srgb, var(--text-faint) 16%, var(--screen)); border-color: var(--text-faint); color: var(--text-dim); }
+.tts-tiers__clip.is-ctx{ cursor: default; background: transparent; border: 1px dashed var(--border-soft); color: var(--text-faint); }
+.tts-tiers__clip canvas{ position: absolute; inset: 0; width: 100%; height: 100%; }
+.tts-tiers__gap{ position: absolute; top: 50%; transform: translateY(-50%); font: 10px var(--font-mono); color: var(--text-faint);
+    text-align: center; overflow: hidden; border-top: 1px dotted var(--text-faint); padding-top: 2px; }
 .tts-tiers__chips{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .tts-tiers__chip{ display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; border-radius: var(--radius-sm);
     border: 1px solid var(--border-soft); font-size: var(--fs-sm); }
