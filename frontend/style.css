@@ -3358,3 +3358,9 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-tiers__knob b{ min-width: 34px; text-align: center; font: 600 11px var(--font-mono); color: var(--text); }
 .tts-tiers__head{ position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); display: none; pointer-events: none; z-index: 3; }
 .tts-tiers__asm{ cursor: pointer; }
+.tts-tiers__phrase{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-sm); margin: 2px 0 4px; }
+.tts-tiers__phrase > .btn-ghost:last-child{ margin-left: auto; }
+.tts-tiers__pname{ font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+.tts-tiers__ctxrow{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-sm); margin-bottom: 4px; }
+.tts-tiers__cl{ width: 62px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+.tts-tiers__ctxt{ font-family: var(--font-mono); font-size: 11px; }

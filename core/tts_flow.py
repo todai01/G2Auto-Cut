@@ -2299,33 +2299,199 @@ class TtsFlowMixin:
     TIER_CTX_MS = 2500        # сколько начала/продолжения фразы показывать и играть рядом
 
     def _tts_tier_ctx(self, unit):
-        ctx = self._tts_value_context(unit.get("sheet"))
-        if not ctx:
+        """Выбранная фраза вокруг суммы: (файл начала, True, имя), (файл конца, False, имя)."""
+        ch, _p, _n = self._tts_tier_chain(unit)
+        if not ch:
             return None, None
-        st = self._tts()
-        out = []
-        for key, keep_tail in (("start", True), ("end", False)):
-            uid = ctx.get(key)
-            path = self._tts_target(st["units"][uid]) if uid is not None else None
-            out.append((path, keep_tail, st["units"][uid]["name"]) if path and os.path.exists(path) else None)
-        return out[0], out[1]
+        return ((ch["start_path"], True, ch["start_name"]) if ch["start_path"] else None,
+                (ch["end_path"], False, ch["end_from"] or ch["end_name"]) if ch["end_path"] else None)
 
     def _tts_tier_opts(self):
         return {"noise": True, "level": True, **(self._tts().get("tier_opts") or {})}
 
-    def _tts_ctx_level(self, unit):
-        """Громкость речи начала и продолжения фразы (средняя), дБ; None — их нет."""
+    # ---- громкость «на слух» (как LUFS: K-фильтр + отсечка тишины) ----
+    # Сумма должна звучать так же, как фраза в месте стыка: в конце фразы
+    # голос обычно тише, чем в её начале, — поэтому меряем не всю фразу, а
+    # полторы секунды голоса у самого стыка (конец начала, начало продолжения),
+    # медиана по всем фразам с этой переменной. Вся строка получает одну
+    # поправку — ярусы между собой звучат как записаны.
+    TIER_JOIN_MS = 1500
+
+    @staticmethod
+    def _k_weight(x, rate):
+        import math
+
+        def biquad(x, b, a):
+            b0, b1, b2 = (v / a[0] for v in b)
+            a1, a2 = a[1] / a[0], a[2] / a[0]
+            y = [0.0] * len(x)
+            x1 = x2 = y1 = y2 = 0.0
+            for n, v in enumerate(x):
+                o = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+                x2, x1, y2, y1 = x1, v, y1, o
+                y[n] = o
+            return y
+        w0 = 2 * math.pi * 1500 / rate                              # полка +4 дБ выше 1.5 кГц
+        A, al = 10 ** (4 / 40), math.sin(w0) / (2 / math.sqrt(2))
+        c, sa = math.cos(w0), 2 * math.sqrt(10 ** (4 / 40)) * math.sin(w0) / (2 / math.sqrt(2))
+        b = (A * ((A + 1) + (A - 1) * c + sa), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - sa))
+        a = ((A + 1) - (A - 1) * c + sa, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - sa)
+        y = biquad(x.tolist(), b, a)
+        w0 = 2 * math.pi * 38 / rate                                # срез низа ниже 38 Гц
+        al, c = math.sin(w0) / (2 * 0.5), math.cos(w0)
+        y = biquad(y, ((1 + c) / 2, -(1 + c), (1 + c) / 2), (1 + al, -2 * c, 1 - al))
+        return np.asarray(y, dtype=np.float64)
+
+    @classmethod
+    def _loudness(cls, seg):
+        """Громкость голоса на слух, дБ (LUFS-подобно); None — тишина."""
+        seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float64) / 32768
+        if len(x) < 1600:
+            return None
+        y = cls._k_weight(x, 16000)
+        blk, hop = 1600, 400                                        # окна 100 мс, шаг 25 мс
+        ms = np.array([np.mean(y[k:k + blk] ** 2) for k in range(0, len(y) - blk + 1, hop)])
+        ms = ms[ms > 10 ** ((-70 + 0.691) / 10)]
+        if not len(ms):
+            return None
+        ms = ms[ms > np.mean(ms) * 10 ** (-10 / 10)]                # без пауз и хвостов
+        return round(-0.691 + 10 * np.log10(np.mean(ms)), 1) if len(ms) else None
+
+    def _tts_join_loud(self, path, tail):
+        """Громкость голоса у стыка: последние (tail) / первые полторы секунды речи."""
         cache = self.__dict__.setdefault('_tts_lvl_cache', {})
+        key = (path, os.path.getmtime(path), tail)
+        if key not in cache:
+            seg = AudioSegment.from_file(path)
+            spans = detect_nonsilent(seg, min_silence_len=80, silence_thresh=seg.dBFS - 18) if seg.dBFS > -90 else []
+            if spans:
+                v0, v1 = spans[0][0], spans[-1][1]
+                seg = seg[max(v0, v1 - self.TIER_JOIN_MS):v1] if tail else seg[v0:min(v1, v0 + self.TIER_JOIN_MS)]
+            cache[key] = self._loudness(seg)
+        return cache[key]
+
+    def _tts_ctx_level(self, unit):
+        """Целевая громкость ярусов листа: медиана громкости у стыков всех
+        записанных фраз с этой переменной."""
         lv = []
-        for c in self._tts_tier_ctx(unit):
-            if not c:
-                continue
-            key = (c[0], os.path.getmtime(c[0]))
-            if key not in cache:
-                cache[key] = self._tts_speech_db(AudioSegment.from_file(c[0]))
-            if cache[key] is not None:
-                lv.append(cache[key])
-        return round(sum(lv) / len(lv), 1) if lv else None
+        for ch in self._tts_var_chains(unit.get("sheet")):
+            for path, tail in ((ch["start_path"], True), (ch["own_end_path"], False)):
+                if path:
+                    v = self._tts_join_loud(path, tail)
+                    if v is not None:
+                        lv.append(v)
+        return round(float(np.median(lv)), 1) if lv else None
+
+    def _tts_row_loud(self, t, unit):
+        """Громкость голоса всей строки дубля (все клипы ярусов подряд)."""
+        clips, _l, _r = self._tts_tier_clips(t, unit)
+        path = os.path.join(self._tts()["work_dir"], t["file"])
+        key = ('row', path, os.path.getmtime(path), tuple((c["a"], c["b"]) for c in clips))
+        cache = self.__dict__.setdefault('_tts_lvl_cache', {})
+        if key not in cache:
+            src = AudioSegment.from_file(path)
+            seg = AudioSegment.empty().set_frame_rate(src.frame_rate)
+            for c in clips:
+                seg += src[c["a"]:c["b"]]
+            cache[key] = self._loudness(seg)
+        return cache[key]
+
+    # ---- фразы с этой переменной: по очереди, с началом и концом ----
+    def _tts_var_chains(self, sheet):
+        """Все фразы, где стоит переменная листа: начало (кусочек перед ней) и
+        продолжение. Нет своего записанного продолжения — берётся из
+        ближайшей прошлой готовой фразы (нет прошлых — из следующей)."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        saved = lambda u: bool(u and wd and os.path.exists(self._tts_target(u)))
+        out = []
+        for ch in st.get("chains") or []:
+            parts = [st["units"][i] for i in ch["parts"]]
+            for k, u in enumerate(parts):
+                if u.get("var_after") != sheet:
+                    continue
+                nxt = parts[k + 1] if k + 1 < len(parts) else None
+                out.append({"chain": ch["id"], "name": ch.get("name") or u["name"], "start": u["id"], "start_name": u["name"],
+                            "start_text": u["text"], "start_path": self._tts_target(u) if saved(u) else None,
+                            "end": nxt["id"] if nxt else None, "end_name": nxt["name"] if nxt else None,
+                            "end_text": nxt["text"] if nxt else '', "own_end_path": self._tts_target(nxt) if saved(nxt) else None})
+        last = None
+        for c in out:                                      # конец — из прошлой готовой фразы
+            if c["own_end_path"]:
+                last = c
+            c["end_path"], c["end_from"] = (c["own_end_path"], None) if c["own_end_path"] else \
+                ((last["own_end_path"], last["end_name"]) if last else (None, None))
+        nxt_ready = None
+        for c in reversed(out):                            # прошлых нет — из следующей
+            if c["own_end_path"]:
+                nxt_ready = c
+            elif not c["end_path"] and nxt_ready:
+                c["end_path"], c["end_from"] = nxt_ready["own_end_path"], nxt_ready["end_name"]
+        return out
+
+    def _tts_tier_chain(self, unit):
+        chains = self._tts_var_chains(unit.get("sheet"))
+        if not chains:
+            return None, 0, 0
+        pos_by = self._tts().setdefault("tier_ctx_pos", {})
+        pos = pos_by.get(unit.get("sheet"))
+        if pos is None:                                    # сначала — первая фраза, где записано начало
+            pos = next((k for k, c in enumerate(chains) if c["start_path"]), 0)
+        pos = max(0, min(int(pos), len(chains) - 1))
+        return chains[pos], pos, len(chains)
+
+    def tts_tier_ctx_nav(self, i, delta=0, pos=None):
+        """◀ ▶ — следующая/прошлая фраза с этой переменной вокруг суммы."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])) or st["takes"][i].get("unit") is None:
+            return {"tiers": None}
+        unit = st["units"][st["takes"][i]["unit"]]
+        _c, cur, n = self._tts_tier_chain(unit)
+        if n:
+            st.setdefault("tier_ctx_pos", {})[unit["sheet"]] = (int(pos) if pos is not None else cur + int(delta)) % n
+            self._tts_save()
+        return self.tts_tier_marks(i)
+
+    def _tts_unit_take(self, uid):
+        """Дубль, из которого сохранена фраза (для правки громкости/темпа)."""
+        st = self._tts()
+        return next((k for k in range(len(st["takes"]) - 1, -1, -1)
+                     if st["takes"][k].get("unit") == uid and st["takes"][k].get("approved")), None)
+
+    def tts_tier_ctx_sound(self, i, which, gain_db=None, tempo=None):
+        """Громкость/темп начала или продолжения фразы прямо отсюда:
+        меняется её дубль, сохранённый файл пересобирается."""
+        st = self._tts()
+        t = st["takes"][i] if 0 <= i < len(st["takes"]) else None
+        if not t or t.get("unit") is None:
+            return {"tiers": None}
+        ch, _p, _n = self._tts_tier_chain(st["units"][t["unit"]])
+        uid = (ch or {}).get("start" if which == "start" else "end")
+        k = self._tts_unit_take(uid) if uid is not None else None
+        if k is None:
+            return {**self.tts_tier_marks(i), "error": "Эта фраза сохранена не из дубля — правьте её в «Фразах»."}
+        g0, t0 = self._tts_sound(st["takes"][k])
+        r = self.tts_take_sound(k, g0 if gain_db is None else gain_db, t0 if tempo is None else tempo)
+        if r.get("error"):
+            return {**self.tts_tier_marks(i), "error": r["error"]}
+        return self.tts_tier_marks(i)
+
+    def tts_tier_resave_all(self):
+        """Пересохранить все готовые ярусы листа (новая громкость/фон)."""
+        st = self._tts()
+        mode = st.get("prompt_mode", "phrases")
+        n = 0
+        for t in st["takes"]:
+            u = st["units"][t["unit"]] if t.get("unit") is not None else None
+            if u and u.get("tiers") and u.get("sheet") == mode and t.get("tier_files"):
+                try:
+                    out, _s = self._tts_tier_save(t, u, resave=True)
+                    n += len(out)
+                except Exception:
+                    pass
+        self._tts_save()
+        return {"resaved": n}
 
     def tts_tier_marks(self, i):
         """Для «Сборки»: дубль строки (волна) и ярусы клипами — где взят каждый
@@ -2365,10 +2531,24 @@ class TtsFlowMixin:
             if c:
                 r, ln = self._tts_file_rms(c[0], self.TIER_CTX_MS, tail=c[1])
                 ctx[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r)}
+        ch, cpos, cn = self._tts_tier_chain(unit)
+        phrase = None
+        if ch:
+            sk, ek = self._tts_unit_take(ch["start"]), (self._tts_unit_take(ch["end"]) if ch["end"] is not None else None)
+            phrase = {"pos": cpos, "total": cn, "name": ch["name"], "start_name": ch["start_name"], "start_text": ch["start_text"],
+                      "end_name": ch["end_name"], "end_text": ch["end_text"], "end_from": ch["end_from"],
+                      "start_saved": bool(ch["start_path"]), "end_saved": bool(ch["end_path"]),
+                      "start_take": sk, "end_take": ek if not ch["end_from"] else None,
+                      "start_sound": self._tts_sound(st["takes"][sk]) if sk is not None else None,
+                      "end_sound": self._tts_sound(st["takes"][ek]) if ek is not None and not ch["end_from"] else None}
+        level = self._tts_ctx_level(unit) if ctx else None
+        row_l = self._tts_row_loud(t, unit) if level is not None else None
         tpl = self._tts_tier_tpl(unit)
         return {"i": i, "tiers": out, "length": length, "peaks": self._tts_peaks(rms), "frame": f,
                 "row": unit["text"], "ctx": ctx, "take_tempo": self._tts_sound(t)[1],
-                "opts": self._tts_tier_opts(), "ctx_level": self._tts_ctx_level(unit) if ctx else None,
+                "opts": self._tts_tier_opts(), "ctx_level": level, "row_level": row_l, "phrase": phrase,
+                "resave_n": sum(len(x.get("tier_files") or []) for x in st["takes"] if x.get("unit") is not None
+                                and st["units"][x["unit"]].get("sheet") == unit.get("sheet")),
                 "tpl": {"from": tpl["from"], "auto": bool(tpl.get("auto")), "used": bool(t.get("tier_by_tpl"))} if tpl else None}
 
     def tts_tier_set(self, i, clips=None, write=None, opts=None):
@@ -2461,9 +2641,13 @@ class TtsFlowMixin:
         gain, tempo = self._tts_sound(t)
         opts = self._tts_tier_opts()
         level = self._tts_ctx_level(unit) if opts["level"] else None
-        seg = AudioSegment.from_file(os.path.join(self._tts()["work_dir"], t["file"]))[c["a"]:c["b"]]
-        seg = self._tts_normalized(seg)
-        seg = self._tts_gain_limited(seg, gain + float(c.get("gain") or 0) + ((level - OUT_SPEECH_DB) if level is not None else 0))
+        row = self._tts_row_loud(t, unit) if level is not None else None
+        seg = AudioSegment.from_file(os.path.join(self._tts()["work_dir"], t["file"]))[c["a"]:c["b"]].set_channels(1)
+        if level is not None and row is not None:          # вся строка — к громкости фразы у стыка
+            base = level - row
+        else:
+            seg, base = self._tts_normalized(seg), 0.0
+        seg = self._tts_gain_limited(seg, gain + float(c.get("gain") or 0) + base)
         tmp = os.path.join(tempfile.gettempdir(), f"gvox_tier_src_{os.getpid()}.wav")
         self._tts_export_8k(seg, tmp, tempo * float(c.get("tempo") or 1.0))
         x, rate = _mono(tmp)

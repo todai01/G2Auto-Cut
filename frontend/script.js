@@ -6652,6 +6652,7 @@ let isProcessing = false;
                       <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierTpl()" title="Края, паузы, темп и громкость ярусов этой строки — для следующих строк">Шаблон из этой строки</button>
                       ${tp ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierTplApply()" title="Разметить этот дубль заново по шаблону">По шаблону</button>
                       <button type="button" class="tts-reuse-chip ${tp.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!tp.auto})" title="Записали строку — ярусы сохраняются сами, «Сборка» не открывается">сохранять сразу${tp.auto ? ' ✓' : ''}</button>` : ''}</span></div>
+                ${ttsTierPhraseHTML(r)}
                 <div class="tts-tiers__row"><span class="tts-tiers__name">Дубль</span>
                     <div class="tts-tiers__wave" id="ttsTiersWave"><canvas id="ttsTiersCanvas" style="width:${pct(r.length)}"></canvas>${regions}</div></div>
                 <div class="tts-tiers__row"><span class="tts-tiers__name">Сборка</span>
@@ -6697,6 +6698,56 @@ let isProcessing = false;
                 if (moved) ttsTiersSend(); else ttsTierPlay(k);
             };
             window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+        }
+        // Фразы с этой переменной — по очереди: начало и продолжение вокруг
+        // суммы; их громкость/темп правятся прямо здесь (меняется их дубль).
+        function ttsTierPhraseHTML(r) {
+            let ph = r.phrase;
+            if (!ph) return '<div class="tts-tiers__phrase tts-dim">Эта переменная не стоит ни в одной фразе таблицы</div>';
+            let knobs = (which, snd, take) => snd ? `<span class="tts-tiers__knob" title="Громкость фразы (её дубль пересохранится)">дБ
+                    <button type="button" onclick="ttsTierCtxSound('${which}', 'gain', -1)">&minus;</button><b>${snd[0] > 0 ? '+' : ''}${snd[0]}</b><button type="button" onclick="ttsTierCtxSound('${which}', 'gain', 1)">+</button></span>
+                  <span class="tts-tiers__knob" title="Темп фразы">темп
+                    <button type="button" onclick="ttsTierCtxSound('${which}', 'tempo', -0.03)">&minus;</button><b>${Math.round(snd[1] * 100)}%</b><button type="button" onclick="ttsTierCtxSound('${which}', 'tempo', 0.03)">+</button></span>
+                  <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierOpenTake(${take})" title="Открыть дубль фразы в «Сборке»: края, вырезать, Audacity">✎</button>` : '';
+            let lv = r.ctx_level !== null && r.ctx_level !== undefined
+                ? `<span class="tts-dim" title="Громкость голоса на слух у стыков фраз с этой переменной (медиана) и у этой строки до выравнивания">фраза ${r.ctx_level} · строка ${r.row_level ?? '—'} LUFS</span>` : '';
+            return `<div class="tts-tiers__phrase">
+                <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierNav(-1)" title="Прошлая фраза с этой переменной">&#9664;</button>
+                <b>Фраза ${ph.pos + 1} / ${ph.total}</b>
+                <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierNav(1)" title="Следующая фраза с этой переменной">&#9654;</button>
+                <span class="tts-tiers__pname">${escapeHtml(ph.name)}</span> ${lv}
+                <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierResaveAll()" title="Пересобрать все уже сохранённые ярусы этого листа — с нынешней громкостью и фоном">Пересохранить готовые (${r.resave_n})</button>
+              </div>
+              <div class="tts-tiers__ctxrow"><span class="tts-tiers__cl">Начало</span>
+                ${ph.start_saved ? `<span class="tts-tiers__ctxt" title="${escapeHtml(ph.start_text)}">${escapeHtml(ph.start_name)}</span>${knobs('start', ph.start_sound, ph.start_take)}`
+                  : `<span class="tts-dim">«${escapeHtml(ph.start_name)}» ещё не записано</span>`}</div>
+              <div class="tts-tiers__ctxrow"><span class="tts-tiers__cl">Конец</span>
+                ${!ph.end_name && !ph.end_from && !ph.end_saved ? '<span class="tts-dim">у фразы нет продолжения, и взять не из чего</span>'
+                  : ph.end_from ? `<span class="tts-tiers__ctxt">взят из «${escapeHtml(ph.end_from)}»</span> <span class="tts-dim">— ${ph.end_name ? `своё «${escapeHtml(ph.end_name)}» ещё не записано` : 'у этой фразы продолжения нет'}</span>`
+                  : ph.end_saved ? `<span class="tts-tiers__ctxt" title="${escapeHtml(ph.end_text)}">${escapeHtml(ph.end_name)}</span>${knobs('end', ph.end_sound, ph.end_take)}`
+                  : `<span class="tts-dim">«${escapeHtml(ph.end_name)}» ещё не записано</span>`}</div>`;
+        }
+        async function ttsTierNav(d) {
+            await ttsTierStop();
+            let res = await pywebview.api.tts_tier_ctx_nav(ttsCurTake().i, d, null);
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); ttsTierPlay(-1); }
+        }
+        async function ttsTierCtxSound(which, field, d) {
+            let ph = ttsTR.phrase, snd = which === 'start' ? ph.start_sound : ph.end_sound;
+            let g = field === 'gain' ? Math.max(-12, Math.min(12, snd[0] + d)) : null;
+            let tp = field === 'tempo' ? Math.round(Math.max(0.7, Math.min(1.4, snd[1] + d)) * 100) / 100 : null;
+            let res = await pywebview.api.tts_tier_ctx_sound(ttsCurTake().i, which, g, tp);
+            if (res && res.error) showToast(res.error);
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); ttsTierPlay(-1); }
+        }
+        async function ttsTierOpenTake(k) {
+            if (k === null || k === undefined) return;
+            await ttsSelect(k);
+        }
+        async function ttsTierResaveAll() {
+            let r = await pywebview.api.tts_tier_resave_all();
+            showToast(`Пересохранено эталонов: ${r.resaved}`);
+            let t = ttsCurTake(); if (t) ttsTiersLoad(t.i);
         }
         async function ttsTierKnob(k, field, d) {
             let t = ttsTR.tiers[k];
