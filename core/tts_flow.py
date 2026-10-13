@@ -428,6 +428,8 @@ class TtsFlowMixin:
 
     def _tts_target(self, unit):
         if unit["kind"] == "value":                  # значение переменной — в «Значения/<лист>/<категория>/»
+            if str(unit.get("cat", '')).startswith('sum_l'):   # сумма целиком — для режима «Суммы»
+                return os.path.join(self._tts_sum_dir(unit["sheet"]), f"{unit['name']}.wav")
             return self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         if unit.get("subdir"):                       # значение переменной из ячейки — в папку своей фразы
@@ -832,7 +834,7 @@ class TtsFlowMixin:
                            for k, v in st["var_sheets"].items()},
             "twins_fill": self.tts_twins_info()["fill"] if units else 0,
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
-            "prompt_mode": st.get("prompt_mode", "phrases"),
+            "prompt_mode": st.get("prompt_mode", "phrases"), "sum_logic": st.get("sum_logic", 1),
             "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
                       "values": len(units) - len(main_units),
                       "values_saved": sum(saved[u["id"]] for u in units if u["kind"] == "value"),
@@ -1932,13 +1934,74 @@ class TtsFlowMixin:
     # файл — «Значения/<лист>/<категория>/<значение>.wav». Порядок — как в
     # таблице: строка за строкой, в строке слева направо.
 
+    # Лист сумм читается целыми суммами (как в «Синтезе сумм»): строка k —
+    # каждый ярус берёт своё k-е значение (дошедший до конца — остаётся на
+    # последнем). Логика 1: миллионы + сотни + тысячи + тенге (1 101 001),
+    # логика 2: миллионы + сотни тысяч + тенге (1 100 001). Запись — в
+    # «Запись_суммы_RU/» → оттуда режим «Суммы» режет на ярусы.
+    SUM_LOGICS = {1: ('million', 'hundred', 'thousand', 'tenge'), 2: ('million', 'hundred_thousand', 'tenge')}
+
+    @staticmethod
+    def _tts_is_sum_sheet(sh):
+        bases = {re.sub(r'_(ru|kz|kk)$', '', c["key"]) for c in sh["categories"]}
+        return {'million', 'tenge'} <= bases
+
+    def _tts_sum_rows(self, sh, logic):
+        tiers = self.SUM_LOGICS.get(int(logic), self.SUM_LOGICS[1])
+        by_base = {re.sub(r'_(ru|kz|kk)$', '', c["key"]): c["values"] for c in sh["categories"]}
+        cols = []
+        for t in tiers:
+            vals = [int(re.sub(r'\D', '', v)) for v in by_base.get(t, []) if re.sub(r'\D', '', v)]
+            if vals:
+                cols.append((t, vals))
+        if not cols:
+            return []
+        out = []
+        for k in range(max(len(v) for _t, v in cols)):
+            parts = {t: v[min(k, len(v) - 1)] for t, v in cols}
+            group = parts.get('hundred', 0) + parts.get('hundred_thousand', 0) + parts.get('thousand', 0)
+            out.append(parts.get('million', 0) * 1_000_000 + group * 1000 + parts.get('tenge', 0))
+        return out
+
+    def _tts_sum_dir(self, key):
+        lm = re.search(r'_(ru|kz|kk)$', key)
+        lg = ('KZ' if lm.group(1) in ('kz', 'kk') else 'RU') if lm else 'RU'
+        return os.path.join(self._tts()["work_dir"] or '', f"Запись_суммы_{lg}")
+
+    def tts_sum_logic(self, logic):
+        st = self._tts()
+        st["sum_logic"] = 2 if int(logic) == 2 else 1
+        self._tts_ensure_value_units()
+        if hasattr(self, '_tts_prompt_fix'):
+            self._tts_prompt_fix(0)
+        self._tts_save()
+        return {"prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
+                "state": self.tts_state()}
+
     def _tts_ensure_value_units(self):
         st = self._tts()
         have = {(u.get("sheet"), u.get("cat"), u.get("value")): u for u in st["units"] if u["kind"] == "value"}
         changed = False
+        from core.num_words import kz_words, ru_words
         for key, sh in (st.get("var_sheets") or {}).items():
             lm = re.search(r'_(ru|kz|kk)$', key)
             lang = ('kz' if lm.group(1) in ('kz', 'kk') else 'ru') if lm else None
+            if self._tts_is_sum_sheet(sh):
+                for logic in (1, 2):
+                    for k, n in enumerate(self._tts_sum_rows(sh, logic)):
+                        cat = f"sum_l{logic}"
+                        text = f"{kz_words(n)} теңге" if lang == 'kz' else f"{ru_words(n)} тенге"
+                        if (key, cat, str(n)) in have:
+                            continue
+                        uid = len(st["units"])
+                        st["units"].append({"id": uid, "kind": "value", "name": f"{k + 1:04d}_{n}", "text": text,
+                                            "role": None, "row": f"{key}:sum{logic}:{k}", "vars": [],
+                                            "var_before": None, "var_after": None, "chain": None, "lang": lang,
+                                            "sheet": key, "cat": cat, "value": str(n), "logic": logic,
+                                            "cat_label": f"Сумма · логика {logic}"})
+                        have[(key, cat, str(n))] = st["units"][-1]
+                        changed = True
+                continue
             order = sh.get("order") or [[c["key"], v, 0] for c in sh["categories"] for v in c["values"]]
             for cat, v, row in order:
                 text = self._tts_value_text(key, cat, v)[0]
@@ -1956,6 +2019,64 @@ class TtsFlowMixin:
                 changed = True
         if changed:
             self._tts_save()
+
+    def _tts_value_context(self, sheet):
+        """Начало и продолжение фразы вокруг переменной этого листа: цепочка,
+        где после переменной не стоит то же «тенге» (сумма читается целиком)."""
+        st = self._tts()
+        best = None
+        for ch in st.get("chains") or []:
+            parts = [st["units"][i] for i in ch["parts"]]
+            for k, u in enumerate(parts):
+                if u.get("var_after") != sheet:
+                    continue
+                nxt = parts[k + 1] if k + 1 < len(parts) else None
+                first = (str(nxt["text"]).split() or [''])[0].lower() if nxt else ''
+                score = 0 if first.startswith(('тенге', 'теңге')) else 1
+                if best is None or score > best[0]:
+                    best = (score, u, nxt)
+        if not best:
+            return None
+        _s, a, b = best
+        wd = self._tts().get("work_dir")
+        sv = lambda u: bool(u and wd and os.path.exists(self._tts_target(u)))
+        aw, bw = str(a["text"]).split(), str(b["text"]).split() if b else []
+        return {"before": ('… ' if len(aw) > 7 else '') + ' '.join(aw[-7:]), "after": ' '.join(bw[:7]) + (' …' if len(bw) > 7 else ''),
+                "start": a["id"], "end": b["id"] if b else None, "start_name": a["name"], "end_name": b["name"] if b else None,
+                "start_saved": sv(a), "end_saved": sv(b)}
+
+    def tts_value_context_play(self, which, take_i=None):
+        """Послушать в контексте: 'start' — сохранённое начало фразы (перед
+        записью суммы), 'whole' — начало + этот дубль + продолжение."""
+        import tempfile
+        st = self._tts()
+        mode = st.get("prompt_mode", "phrases")
+        if take_i is not None and 0 <= take_i < len(st["takes"]) and st["takes"][take_i].get("unit") is not None:
+            mode = st["units"][st["takes"][take_i]["unit"]].get("sheet") or mode
+        ctx = self._tts_value_context(mode)
+        if not ctx:
+            return {"error": "Эта переменная не стоит ни в одной фразе таблицы."}
+        a, b = st["units"][ctx["start"]], (st["units"][ctx["end"]] if ctx["end"] is not None else None)
+        if not ctx["start_saved"]:
+            return {"error": f"Начало фразы «{a['name']}» ещё не сохранено — запишите его в «Фразах»."}
+        segs = [AudioSegment.from_file(self._tts_target(a))]
+        if which == 'whole':
+            if take_i is None or not (0 <= take_i < len(st["takes"])):
+                return {"error": "Нет дубля."}
+            t = st["takes"][take_i]
+            mid = self._tts_normalized(AudioSegment.from_file(os.path.join(st["work_dir"], t["file"])))
+            segs.append(mid)
+            if b is not None and ctx["end_saved"]:
+                segs.append(AudioSegment.from_file(self._tts_target(b)))
+        rate = segs[0].frame_rate
+        out = None
+        for sg in segs:
+            sg = sg.set_frame_rate(rate).set_channels(1)
+            out = sg if out is None else out + AudioSegment.silent(120, frame_rate=rate) + sg
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_ctx_{os.getpid()}.wav")
+        out.export(tmp, format="wav")
+        self.player.play(tmp)
+        return {"playing": True, "duration": len(out) / 1000.0, "end_missing": which == 'whole' and b is not None and not ctx["end_saved"]}
 
     def tts_prompt_mode(self, mode):
         """Что читать на суфлёре: 'phrases' — фразы таблицы, или ключ листа

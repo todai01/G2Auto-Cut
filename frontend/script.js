@@ -6543,6 +6543,7 @@ let isProcessing = false;
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdUndo" onclick="ttsEdUndo()" disabled>&#8630; <kbd>Ctrl+Z</kbd></button>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdRedo" onclick="ttsEdUndo(true)" disabled>&#8631;</button>
                         <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа (тоже отменяется Ctrl+Z)">Сбросить</button>
+                        ${u.kind === 'value' ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsCtxPlay('whole', ${t.i})" title="Послушать в фразе: начало + этот дубль + продолжение">&#9654; В фразе</button>` : ''}
                         <button class="btn-ghost btn-ghost--compact" id="ttsTsynBtn" onclick="ttsTsynToggle()" title="Добить конец фразы синтезом (если не выговаривается) — ляжет на дорожку отдельным клипом">Синтез…</button>
                         <span class="tts-ed__zoom">
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(0.66)" title="Отдалить (Ctrl + колесо)">&minus;</button>
@@ -7795,7 +7796,8 @@ let isProcessing = false;
             let q = document.getElementById('ttsListSearch').value.trim().toLowerCase();
             let pm = tts.prompt_mode || 'phrases';
             let units = tts.units.filter(u =>
-                (pm === 'phrases' ? u.kind !== 'value' : (u.kind === 'value' && u.sheet === pm)) &&
+                (pm === 'phrases' ? u.kind !== 'value' : (u.kind === 'value' && u.sheet === pm
+                    && (!u.logic || u.logic === tts.sum_logic) && !(tts.units.some(x => x.sheet === pm && x.logic) && !u.logic))) &&
                 (ttsListMode !== 'missing' || (!u.saved && !u.takes.length)) &&
                 ((ttsListMode !== 'vars' && ttsListMode !== 'assign-var') || u.kind === 'piece') &&
                 (!q || u.text.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)));
@@ -8205,8 +8207,12 @@ let isProcessing = false;
             let key = JSON.stringify(pr.current) + '|' + pr.pos + '|' + JSON.stringify(pr.resume || null) + '|' + JSON.stringify(pr.reuse || null);
             if (key !== ttsPromptKey) {
                 ttsPromptKey = key;
+                let ctx = pr.context && pr.current[0] && pr.current[0].kind === 'value' ? pr.context : null;
                 text.innerHTML = pr.resume ? ttsResumeHTML(pr.current[0], pr.resume.k)
-                    : ru ? ttsReuseHTML(pr.current[0], ru) : line(pr.current, pr.tail);
+                    : ru ? ttsReuseHTML(pr.current[0], ru)
+                    : ctx ? `<span class="tts-ctx" title="Начало фразы «${escapeHtml(ctx.start_name)}» — для интонации, не читать">${escapeHtml(ctx.before)}</span> ${line(pr.current, pr.tail)}`
+                        + (ctx.after ? ` <span class="tts-ctx" title="Продолжение «${escapeHtml(ctx.end_name || '')}» — не читать">${escapeHtml(ctx.after)}</span>` : '')
+                    : line(pr.current, pr.tail);
                 text.classList.toggle('is-recorded', pr.here === 'done');
                 if (flash === 'next' || flash === 'down' || flash === 'up') ttsPromptAnim(flash === 'up' ? 'up' : 'down');
             }
@@ -8222,6 +8228,10 @@ let isProcessing = false;
             let modes = (pr.modes || []).length > 1 ? ` <span class="tts-pmodes">${pr.modes.map(m =>
                 `<button type="button" class="tts-pmode ${m.key === pr.mode ? 'is-on' : ''}" onclick="ttsPromptModeSet('${m.key}')"
                     title="${m.key === 'phrases' ? 'Читать фразы таблицы' : 'Записать значения листа «' + escapeHtml(m.label) + '» по порядку строк таблицы — каждое отдельным файлом'}">${escapeHtml(m.label)}</button>`).join('')}</span>` : '';
+            if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
+                    title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
+            if (pr.sum_logic) modes += ` <button type="button" class="tts-pmode ${pr.sum_logic === 1 ? 'is-on' : ''}" onclick="ttsSumLogic(1)" title="миллионы + сотни + тысячи + тенге">1 101 001</button><button type="button" class="tts-pmode ${pr.sum_logic === 2 ? 'is-on' : ''}" onclick="ttsSumLogic(2)" title="миллионы + сотни тысяч + тенге">1 100 001</button>`
+                + ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsSumsOpen()" title="Открыть режим «Суммы» на записанных суммах — нарезка на ярусы">Режим «Суммы» →</button>`;
             let valN = pr.value_n ? ` <span class="tts-reuse-chip is-on" title="Значения переменной из таблицы читаются по очереди; продолжение фразы — целиком с последним">значение ${pr.value_n.k} из ${pr.value_n.n}</span>` : '';
             meta.innerHTML = `<span>${modes}${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}${pr.mode && pr.mode !== 'phrases' ? 'Значение' : 'Фраза'} <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${reuseChip}${valN}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
@@ -8623,6 +8633,26 @@ let isProcessing = false;
 
         // Длинная фраза, диктор сбился: верное начало — подсвечено, дальше —
         // «продолжите отсюда». Слова — как на экране (по пробелам), как и на бэкенде.
+        // Начало фразы (перед записью суммы) / сумма в фразе (в «Сборке»).
+        async function ttsCtxPlay(which, takeI) {
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_value_context_play(which, takeI === undefined ? null : takeI);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            if (r.end_missing) showToast('Продолжение фразы ещё не записано — звучит начало и сумма');
+        }
+        async function ttsSumLogic(l) {
+            let r = await pywebview.api.tts_sum_logic(l);
+            if (!r) return;
+            tts = r.state; ttsRender(); ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+        }
+        async function ttsSumsOpen() {
+            let pr = await pywebview.api.tts_prompt_info();
+            if (!pr || !pr.sum_folder) return;
+            if (ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            startPremadeSumMode(pr.sum_folder);
+        }
+
         // Что читать: фразы таблицы или значения листа переменных по порядку строк.
         async function ttsPromptModeSet(mode) {
             let r = await pywebview.api.tts_prompt_mode(mode);
@@ -8632,6 +8662,7 @@ let isProcessing = false;
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
+                : r.prompt && r.prompt.sum_logic ? 'Записываем суммы целиком, по строкам таблицы — в «Запись_суммы», оттуда режим «Суммы» нарежет на ярусы'
                 : 'Записываем значения по порядку строк таблицы — каждое сохранится отдельным файлом в «Значения»');
         }
 

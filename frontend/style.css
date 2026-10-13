@@ -3310,3 +3310,5 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-pmode.is-on{ background: var(--accent-var); color: #1b1305; }
 .tts-vcat{ display: inline-block; font-size: 0.32em; vertical-align: middle; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
     color: var(--accent-var); border: 1px solid color-mix(in srgb, var(--accent-var) 50%, transparent); border-radius: 6px; padding: 2px 8px; }
+.tts-ctx{ color: var(--text-faint); font-weight: 400; font-size: .62em; }
+#ttsPromptMeta .tts-reuse-chip + .tts-pmode, #ttsPromptMeta .tts-reuse-chip{ margin-right: 8px; }

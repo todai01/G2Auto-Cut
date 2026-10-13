@@ -879,6 +879,12 @@ class TtsLiveMixin:
             # режим суфлёра: фразы таблицы или значения одного листа переменных
             if (u["kind"] == "value") != (mode != "phrases") or (u["kind"] == "value" and u.get("sheet") != mode):
                 continue
+            if u["kind"] == "value":
+                # лист сумм — целые суммы выбранной логики; ярусы по отдельности — не читаем
+                is_sum = str(u.get("cat", '')).startswith('sum_l')
+                sheet_sum = self._tts_is_sum_sheet(st["var_sheets"].get(u["sheet"]) or {"categories": []})
+                if sheet_sum and (not is_sum or u.get("logic") != st.get("sum_logic", 1)):
+                    continue
             ch = st["chains"][u["chain"]] if u.get("chain") is not None and u["chain"] < len(st.get("chains", [])) else None
             if ch and ch.get("values"):
                 # Значения из ячейки: по одному — start + значение (+ пара слов end),
@@ -1015,6 +1021,10 @@ class TtsLiveMixin:
                 "current": show(items[pos]), "next": show(nxt) if nxt else None,
                 "tail": self._tts_item_tail(items[pos]), "next_tail": self._tts_item_tail(nxt) if nxt else None,
                 "mode": st.get("prompt_mode", "phrases"),
+                "context": self._tts_value_context(st.get("prompt_mode")) if st.get("prompt_mode", "phrases") != "phrases" else None,
+                "sum_logic": st.get("sum_logic", 1) if st.get("prompt_mode", "phrases") != "phrases"
+                and self._tts_is_sum_sheet((st.get("var_sheets") or {}).get(st.get("prompt_mode")) or {"categories": []}) else None,
+                "sum_folder": self._tts_sum_dir(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "modes": [{"key": "phrases", "label": "Фразы"}] + [{"key": k, "label": sh["label"]}
                                                                    for k, sh in (st.get("var_sheets") or {}).items()],
                 "value_n": self._tts_item_value_n(items[pos])}
