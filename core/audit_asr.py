@@ -241,6 +241,8 @@ class AuditAsrMixin:
         self._audit_last = {"category": category, "missing": {m["text"] for m in missing_list}}
         template = getattr(self, 'var_template_path', None)
         can_export = self._excel_source_ok() if category == 'excel' else bool(template and os.path.exists(template))
+        files = self._audit_attach_phrases(files, fresh=not av.get("pm_done"))
+        av["pm_done"] = True
         return {
             "category": category,
             "category_label": "Текст из Excel" if category == 'excel' else self._category_label(category),

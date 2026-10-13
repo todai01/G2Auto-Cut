@@ -3302,3 +3302,4 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 #auditEdOverlay .tts-mk-wave canvas{ height: 190px; }
 #auditEdOverlay .btn-ghost[disabled], #auditEdOverlay .custom-alert-btn[disabled]{ opacity: .35; pointer-events: none; }
 #auditEdBar .custom-alert-btn{ width: auto; flex: none; padding: 8px 20px; }
+.audit-file__phrase{ resize: none; overflow: hidden; line-height: 1.4; white-space: pre-wrap; }

@@ -5331,8 +5331,8 @@ let isProcessing = false;
                         <div class="audit-row__meta">Строка ${m.index}: не услышано ни в одном чанке</div>
                     </div>` : `
                     <div class="audit-row">
-                        <span class="audit-row__name audit-row__name--lost">${m.filename}</span>
-                        <div class="audit-row__meta">Строка ${m.index}: ${m.text}</div>
+                        <span class="audit-row__name audit-row__name--lost">${escapeHtml(m.filename)}</span>
+                        <div class="audit-row__meta">Строка ${m.index}: ${escapeHtml(m.phrase || m.text)}</div>
                     </div>`;
                     window.lastAuditReportText += `- ${m.filename} (Строка ${m.index}: ${m.text})\n`;
                 });
@@ -5391,6 +5391,7 @@ let isProcessing = false;
             box.innerHTML = html;
             if (quiet) box.scrollTop = top;
             if (focus) { let el = box.querySelector(`.audit-file__text[data-k="${focus}"]`); if (el) el.focus(); }
+            box.querySelectorAll('.audit-file__phrase').forEach(t => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; });
             auditApplyFilter();
         }
         function auditFilesHTML(res) {
@@ -5405,6 +5406,17 @@ let isProcessing = false;
                                         : '<span class="audit-file__badge">тишина</span>')
                     : '';
                 let note = voice && f.fixed ? `<div class="audit-file__heard">распознано: «${escapeHtml(f.heard || '—')}» · исправлено вами</div>` : '';
+                if (voice && f.phrase) note += `<div class="audit-file__heard">фраза: «${escapeHtml(f.phrase)}»</div>`;
+                // по названиям: текст фразы из таблицы (по названию файла) — видно и правится в своей ячейке
+                if (!voice && f.phrase) return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + f.phrase).toLowerCase())}">
+                    <span class="audit-file__btns"><button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button><button type="button" class="audit-file__play" onclick="auditEdOpen(${k})" title="Править запись: срезать края, вырезать лишнее">&#9986;</button></span>
+                    <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
+                    <textarea class="audit-file__text audit-file__phrase" data-k="${k}" rows="1" title="Текст фразы — исправленный запишется в ту же ячейку таблицы Excel"
+                        onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.blur(); } if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
+                        oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"
+                        onchange="auditPhraseFix(${k}, this.value)">${escapeHtml(f.phrase)}</textarea>
+                    <span></span>
+                </div>`;
                 return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + (f.text || '') + ' ' + (f.match || '')).toLowerCase())}">
                     <span class="audit-file__btns"><button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button><button type="button" class="audit-file__play" onclick="auditEdOpen(${k})" title="Править запись: срезать края, вырезать лишнее">&#9986;</button></span>
                     <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
@@ -5596,6 +5608,14 @@ let isProcessing = false;
             if (e.code === 'Delete' || e.code === 'Backspace' || e.code === 'KeyX') { e.preventDefault(); auditEdCut(); return; }
         }
 
+        async function auditPhraseFix(k, text) {
+            let f = (window.auditRes.files || [])[k];
+            if (!f) return;
+            let r = await pywebview.api.audit_phrase_fix(f.filename, text);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            f.phrase = r.text;
+            showToast('Текст фразы исправлен и записан в таблицу');
+        }
         async function auditFix(k, text) {
             let res = window.auditRes, f = (res.files || [])[k];
             if (!f) return;

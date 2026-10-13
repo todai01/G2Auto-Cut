@@ -621,6 +621,11 @@ class ProjectMixin:
                 })
 
         self._audit_last = {"category": "excel", "missing": {m["text"] for m in missing_list}}
+        files = self._audit_attach_phrases(files)
+        pm = getattr(self, '_audit_pmap', None) or {}
+        for m in missing_list:                                 # недостающее — с текстом фразы
+            hit = pm.get(re.sub(r'\.(wav|mp3)$', '', m["filename"].lower()))
+            m["phrase"] = hit["text"] if hit else None
 
         return {
             "can_export": bool(missing_list and self._excel_source_ok()),
@@ -634,6 +639,106 @@ class ProjectMixin:
             "files": files,
             "can_edit": self._excel_source_ok(),
         }
+
+    # ---------------- текст фразы для записи по её названию ----------------
+
+    def _audit_phrase_map(self):
+        """Название файла → текст фразы и ячейка таблицы, где он лежит.
+        Ищем в загруженной таблице (и в таблице экрана записи): строка, где
+        стоит название, а текст — в колонке <phrase…> (без тегов — самая
+        длинная фраза в этой строке)."""
+        import openpyxl
+        from core.tts_flow import _tag, _text_tag
+        paths = []
+        for pth in (getattr(self, 'excel_path', None), (getattr(self, 'tts', None) or {}).get("excel_path")):
+            if pth and os.path.exists(pth) and pth not in paths:
+                paths.append(pth)
+        out = {}
+        for pth in paths:
+            try:
+                wb = openpyxl.load_workbook(pth, read_only=True, data_only=True)
+            except Exception:
+                continue
+            for ws in wb.worksheets:
+                text_col = None
+                for r, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                    cells = list(row)
+                    tags = [_tag(v) for v in cells]
+                    if any(_text_tag(t) for t in tags if t):
+                        text_col = next(c for c, t in enumerate(tags) if t and _text_tag(t))
+                        continue
+                    strs = [str(v).strip() if v not in (None, '') else '' for v in cells]
+                    for c, v in enumerate(strs):
+                        if not v or ' ' in v or len(v) > 120:
+                            continue                           # название — одним «словом»
+                        key = re.sub(r'\.(wav|mp3)$', '', v.lower())
+                        if key in out:
+                            continue
+                        tc = text_col if text_col is not None and text_col != c and text_col < len(strs) \
+                            and strs[text_col] else None
+                        if tc is None:
+                            cands = [(len(t), k) for k, t in enumerate(strs) if k != c and t and ' ' in t]
+                            tc = max(cands)[1] if cands else None
+                        if tc is not None:
+                            out[key] = {"text": strs[tc], "path": pth, "sheet": ws.title, "row": r, "col": tc + 1}
+            wb.close()
+        return out
+
+    def _audit_attach_phrases(self, files, fresh=True):
+        """К каждой записи — текст её фразы (если нашли по названию)."""
+        pm = getattr(self, '_audit_pmap', None)
+        if fresh or pm is None:
+            try:
+                pm = self._audit_pmap = self._audit_phrase_map()
+            except Exception:
+                pm = self._audit_pmap = {}
+        for f in files:
+            key = re.sub(r'\.(wav|mp3)$', '', f["filename"].lower())
+            hit = pm.get(key)
+            f["phrase"] = hit["text"] if hit else None
+        return files
+
+    def audit_phrase_fix(self, filename, text):
+        """Исправить текст фразы записи — в той ячейке таблицы, где он лежит
+        (резервная копия таблицы — один раз), и в программе."""
+        import shutil
+        import openpyxl
+        key = re.sub(r'\.(wav|mp3)$', '', str(filename).lower())
+        hit = (getattr(self, '_audit_pmap', None) or {}).get(key)
+        text = str(text or '').strip()
+        if not hit:
+            return {"error": "Не нашёл, где в таблице текст этой фразы."}
+        if not text:
+            return {"error": "Пустой текст — оставил как было."}
+        if text == hit["text"]:
+            return {"ok": True, "text": text}
+        pth = hit["path"]
+        base, ext = os.path.splitext(pth)
+        try:
+            if not os.path.exists(f"{base}.до_правок{ext}"):
+                shutil.copy2(pth, f"{base}.до_правок{ext}")
+            wb = openpyxl.load_workbook(pth)
+            wb[hit["sheet"]].cell(row=hit["row"], column=hit["col"]).value = text
+            wb.save(pth)
+        except PermissionError:
+            return {"error": "Таблица открыта в Excel — закройте её и повторите."}
+        except Exception as e:
+            return {"error": f"Не удалось записать в таблицу: {e}"}
+        old = hit["text"]
+        hit["text"] = text
+        for p in getattr(self, 'phrases_data', None) or []:      # и в программе
+            if str(p.get("text") or '').strip() == old:
+                p["text"] = text
+        st = getattr(self, 'tts', None)
+        if st:
+            for u in st.get("units") or []:
+                if str(u.get("name") or '').lower() == key:
+                    u["text"] = text
+            try:
+                self._tts_save()
+            except Exception:
+                pass
+        return {"ok": True, "text": text, "excel_saved": True}
 
     def audit_text_fix(self, i, text):
         """Поправить текст фразы из аудита: в программе и в исходной таблице
@@ -733,7 +838,7 @@ class ProjectMixin:
             "duplicates_count": len(duplicates_list),
             "missing": missing_list,
             "duplicates": duplicates_list,
-            "files": files,
+            "files": self._audit_attach_phrases(files),
         }
 
     def _excel_source_ok(self):
