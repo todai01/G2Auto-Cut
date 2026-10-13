@@ -800,6 +800,9 @@ class TtsLiveMixin:
         self._tts_render_clips(take, clips)
         cur = st["takes"][st["index"]] if st["takes"] and st["index"] < len(st["takes"]) else None
         st["takes"].append(take)
+        auto = None
+        if uid is not None and take["status"] in ("ok", "manual"):
+            auto = self._tts_tier_autosave(take)           # строка переменных «по шаблону сразу»
         live.setdefault("history", []).append({"takes": [take["file"]], "pos": pos})
         if uid is not None:
             live["expected"] = uid + 1
@@ -810,7 +813,8 @@ class TtsLiveMixin:
         live["added"] += 1
         self._tts_save()
         self._tts_push({"stage": "live", "state": self.tts_state(), "added": 1,
-                        "prompt": self.tts_prompt_info(), "advanced": move})
+                        "prompt": self.tts_prompt_info(), "advanced": move,
+                        "tier_auto": len(auto) if auto is not None else None})
 
     def tts_ptt(self, down):
         """Space / кнопка зажата — пишем; отпустили — отрезок в разбор."""
@@ -1026,9 +1030,20 @@ class TtsLiveMixin:
                 and self._tts_is_sum_sheet((st.get("var_sheets") or {}).get(st.get("prompt_mode")) or {"categories": []}) else None,
                 "sum_folder": os.path.join(st["work_dir"], TTS_DONE_DIR, 'Суммы') if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "tiers_done": self._tts_tiers_done(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
+                "tier_tpl": self._tts_mode_tpl(),
                 "modes": [{"key": "phrases", "label": "Фразы"}] + [{"key": k, "label": sh["label"]}
                                                                    for k, sh in (st.get("var_sheets") or {}).items()],
                 "value_n": self._tts_item_value_n(items[pos])}
+
+    def _tts_mode_tpl(self):
+        """Шаблон ярусов текущего листа (для суфлёра): от какой строки, «сразу» ли."""
+        st = self._tts()
+        mode = st.get("prompt_mode", "phrases")
+        if mode == "phrases":
+            return None
+        unit = next((u for u in self._tts_row_units(mode) if u.get("logic") in (None, st.get("sum_logic", 1))), None)
+        tpl = self._tts_tier_tpl(unit) if unit else None
+        return {"from": tpl["from"], "auto": bool(tpl.get("auto"))} if tpl else {"from": None, "auto": False}
 
     def _tts_item_value_n(self, ids):
         """«значение 2 из 3» — для фраз со значениями из ячейки."""

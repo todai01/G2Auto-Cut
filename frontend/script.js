@@ -6351,7 +6351,8 @@ let isProcessing = false;
             } else if (p.stage === 'live') {
                 let before = tts ? tts.takes.length : 0;
                 ttsLiveUpdate(p.state, p.added);
-                ttsAutoAsm(tts.takes.length - before);
+                if (p.tier_auto === null || p.tier_auto === undefined) ttsAutoAsm(tts.takes.length - before);
+                else showToast(`Строка сохранена по шаблону: эталонов ${p.tier_auto}`, 2500);
                 if (p.prompt) ttsRenderPrompt(p.prompt, p.advanced ? 'next' : null);
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
             } else if (p.stage === 'synth') {
@@ -6592,8 +6593,9 @@ let isProcessing = false;
             r.tiers.forEach(t => {
                 let fixed = t.exists && !t.write && t.file_len;
                 let pre = fixed ? 0 : t.pre;
-                out.push({ k: t.k, x: x + pre, w: fixed ? t.file_len : t.b - t.a, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, t });
-                x += pre + (fixed ? t.file_len : t.b - t.a);
+                let w = fixed ? t.file_len : Math.round((t.b - t.a) / (t.tempo * (r.take_tempo || 1)));
+                out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, t });
+                x += pre + w;
             });
             if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name }); x += r.ctx.end.len; }
             return { clips: out, total: x };
@@ -6626,23 +6628,34 @@ let isProcessing = false;
                      <canvas data-n="${n}"></canvas><span>${c.ctx === 'start' ? '… ' + escapeHtml(c.name) : escapeHtml(c.name) + ' …'}</span></div>`
                 : `${c.pre ? `<div class="tts-tiers__gap" style="left:${pct(c.x - c.pre)};width:${pct(c.pre)}">${c.pre}</div>` : ''}
                    <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
-                     ${c.fixed ? `onclick="ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
+                     ${c.fixed ? `onpointerdown="event.stopPropagation(); ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
                        : `onpointerdown="ttsTierMove(event, ${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — тяните: пауза перед ярусом; клик — послушать"`}>
                      <canvas data-n="${n}"></canvas><span>${escapeHtml(c.t.label)} <b>${escapeHtml(c.t.value)}</b></span></div>`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${x.exists && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
                     <span class="tts-tiers__lbl">${escapeHtml(x.label)} <b>${escapeHtml(x.value)}</b></span>
                     <span class="tts-tiers__txt">${escapeHtml(x.text)}</span>
+                    ${x.exists && !x.write ? '' : `<span class="tts-tiers__knob" title="Темп яруса (без смены высоты голоса)">темп
+                        <button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', -0.03)">&minus;</button><b>${Math.round(x.tempo * 100)}%</b><button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', 0.03)">+</button></span>
+                      <span class="tts-tiers__knob" title="Громкость яруса — к громкости фразы">дБ
+                        <button type="button" onclick="ttsTierKnob(${x.k}, 'gain', -1)">&minus;</button><b>${x.gain > 0 ? '+' : ''}${x.gain}</b><button type="button" onclick="ttsTierKnob(${x.k}, 'gain', 1)">+</button></span>`}
                     ${x.exists ? `<label class="tts-tiers__exists" title="Этот эталон уже сохранён из другой строки — по умолчанию не трогаем">
                         <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> уже есть · перезаписать</label>`
                       : x.mine ? '<span class="tts-tiers__ok">сохранён ✓</span>' : ''}</div>`).join('');
+            let tp = r.tpl, o = r.opts || {}, hasCtx = !!(r.ctx.start || r.ctx.end);
             el.innerHTML = `<div class="tts-tiers__title">Ярусы
-                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1)" title="Начало фразы + ярусы + продолжение — как склеятся файлы">&#9654; Вся сумма</button>
-                    <span class="tts-dim">Enter сохранит каждый ярус отдельным эталоном, строка целиком не сохраняется</span></div>
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1)" title="С секунды до первого яруса и до конца. Клик по дорожке «Сборка» — играть с этого места">&#9654; Вся сумма</button>
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierStop()" title="Остановить">&#9632;</button>
+                    ${hasCtx ? `<button type="button" class="tts-reuse-chip ${o.noise ? 'is-on' : ''}" onclick="ttsTierOpt('noise', ${!o.noise})" title="Пауза перед ярусом и фон под голосом — шумом комнаты из начала фразы">фон как во фразе${o.noise ? ' ✓' : ''}</button>
+                    <button type="button" class="tts-reuse-chip ${o.level ? 'is-on' : ''}" onclick="ttsTierOpt('level', ${!o.level})" title="Громкость речи ярусов — как у начала и продолжения фразы${r.ctx_level !== null ? ' (' + r.ctx_level + ' дБ)' : ''}">громкость как у фразы${o.level ? ' ✓' : ''}</button>` : '<span class="tts-dim">начало фразы не записано — фон и громкость не с чем сравнить</span>'}
+                    <span class="tts-tiers__tpl">${tp ? `шаблон: ${escapeHtml(tp.from)}${tp.used ? ' · размечено по нему' : ''}` : 'шаблона нет — первая сохранённая строка станет шаблоном'}
+                      <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierTpl()" title="Края, паузы, темп и громкость ярусов этой строки — для следующих строк">Шаблон из этой строки</button>
+                      ${tp ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierTplApply()" title="Разметить этот дубль заново по шаблону">По шаблону</button>
+                      <button type="button" class="tts-reuse-chip ${tp.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!tp.auto})" title="Записали строку — ярусы сохраняются сами, «Сборка» не открывается">сохранять сразу${tp.auto ? ' ✓' : ''}</button>` : ''}</span></div>
                 <div class="tts-tiers__row"><span class="tts-tiers__name">Дубль</span>
                     <div class="tts-tiers__wave" id="ttsTiersWave"><canvas id="ttsTiersCanvas" style="width:${pct(r.length)}"></canvas>${regions}</div></div>
                 <div class="tts-tiers__row"><span class="tts-tiers__name">Сборка</span>
-                    <div class="tts-tiers__asm" id="ttsTiersAsm">${clips}</div></div>
+                    <div class="tts-tiers__asm" id="ttsTiersAsm" onpointerdown="ttsTierSeek(event)" title="Клик — слушать с этого места">${clips}<i class="tts-tiers__head" id="ttsTiersHead"></i></div></div>
                 <div class="tts-tiers__chips">${chips}</div>`;
             ttsDrawPeaks(document.getElementById('ttsTiersCanvas'), r.peaks);
             el.querySelectorAll('.tts-tiers__clip canvas').forEach(cv => ttsDrawPeaks(cv, lay.clips[+cv.dataset.n].peaks || []));
@@ -6650,7 +6663,7 @@ let isProcessing = false;
         const ttsTiersSpan = () => Math.max(ttsTR.length, ttsTiersLayout().total) || 1;
         async function ttsTiersSend() {
             let i = ttsCurTake() && ttsCurTake().i;
-            let res = await pywebview.api.tts_tier_set(i, ttsTR.tiers.map(t => ({ a: t.a, b: t.b, pre: t.pre })), null);
+            let res = await pywebview.api.tts_tier_set(i, ttsTR.tiers.map(t => ({ a: t.a, b: t.b, pre: t.pre, tempo: t.tempo, gain: t.gain })), null);
             if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
         }
         // край клипа на дорожке «Дубль»: откуда и докуда берётся ярус
@@ -6670,7 +6683,7 @@ let isProcessing = false;
         }
         // клип на дорожке «Сборка»: тянуть — пауза перед ярусом, просто клик — послушать
         function ttsTierMove(e, k) {
-            e.preventDefault();
+            e.preventDefault(); e.stopPropagation();
             let span = ttsTiersSpan(), t = ttsTR.tiers[k], x0 = e.clientX, pre0 = t.pre, moved = false;
             let move = ev => {
                 let rc = document.getElementById('ttsTiersAsm').getBoundingClientRect();
@@ -6685,6 +6698,63 @@ let isProcessing = false;
             };
             window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
         }
+        async function ttsTierKnob(k, field, d) {
+            let t = ttsTR.tiers[k];
+            t[field] = field === 'tempo' ? Math.round(Math.max(0.8, Math.min(1.25, t.tempo + d)) * 100) / 100
+                : Math.max(-9, Math.min(9, t.gain + d));
+            ttsTiersRender();
+            await ttsTiersSend();
+            ttsTierPlay(k);
+        }
+        async function ttsTierOpt(key, on) {
+            let res = await pywebview.api.tts_tier_set(ttsCurTake().i, null, null, { [key]: on });
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+        }
+        async function ttsTierTpl() {
+            let res = await pywebview.api.tts_tier_template(ttsCurTake().i);
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); showToast('Шаблон — эта строка: следующие строки разметятся по ней'); ttsLoadPrompt(); }
+        }
+        async function ttsTierTplApply() {
+            let res = await pywebview.api.tts_tier_template_reset(ttsCurTake().i);
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+        }
+        async function ttsTierAutoSet(on) {
+            let r = await pywebview.api.tts_tier_auto(on);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            if (ttsTR) { ttsTR.tpl.auto = r.auto; ttsTiersRender(); }
+            ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt, null);
+            showToast(r.auto ? 'Строки сохраняются по шаблону сразу после записи' : 'Строки снова проверяете в «Сборке»');
+        }
+        // прослушка сборки с любого места: бегунок по дорожке «Сборка»
+        let ttsTierHeadTimer = null;
+        function ttsTierHead(fromMs, durMs) {
+            clearInterval(ttsTierHeadTimer);
+            let span = ttsTiersSpan(), t0 = performance.now();
+            let step = () => {
+                let el = document.getElementById('ttsTiersHead');
+                let ms = fromMs + (performance.now() - t0);
+                if (!el || ms > fromMs + durMs) { if (el) el.style.display = 'none'; clearInterval(ttsTierHeadTimer); return; }
+                el.style.display = 'block'; el.style.left = (100 * ms / span) + '%';
+            };
+            step(); ttsTierHeadTimer = setInterval(step, 40);
+        }
+        async function ttsTierSeek(e) {
+            let rc = document.getElementById('ttsTiersAsm').getBoundingClientRect();
+            if (!rc.width) return;
+            await ttsTierPlayFrom(Math.max(0, Math.round((e.clientX - rc.left) / rc.width * ttsTiersSpan())));
+        }
+        async function ttsTierPlayFrom(ms) {
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, null, ms);
+            if (r && r.error) { showToast(r.error); return; }
+            if (r && r.playing) ttsTierHead(r.from, r.duration * 1000);
+        }
+        async function ttsTierStop() {
+            clearInterval(ttsTierHeadTimer);
+            let el = document.getElementById('ttsTiersHead'); if (el) el.style.display = 'none';
+            await pywebview.api.tts_stop_audio();
+        }
         async function ttsTierWrite(k, on) {
             let w = {};
             ttsTR.tiers.forEach(x => { w[x.k] = x.k === k ? on : x.write; });
@@ -6692,8 +6762,13 @@ let isProcessing = false;
             if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
         }
         async function ttsTierPlay(k) {
+            if (k < 0) {                       // вся сумма — с секунды до первого яруса
+                let st0 = ttsTR && ttsTR.ctx.start ? Math.max(0, ttsTR.ctx.start.len - 1000) : 0;
+                return ttsTierPlayFrom(st0);
+            }
             await ttsStopPlay();
-            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, k < 0 ? null : k);
+            clearInterval(ttsTierHeadTimer);
+            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, k, null);
             if (r && r.error) showToast(r.error);
         }
 
@@ -8372,6 +8447,9 @@ let isProcessing = false;
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
             if (pr.sum_logic) modes += ` <button type="button" class="tts-pmode ${pr.sum_logic === 1 ? 'is-on' : ''}" onclick="ttsSumLogic(1)" title="миллионы + сотни + тысячи + тенге">1 101 001</button><button type="button" class="tts-pmode ${pr.sum_logic === 2 ? 'is-on' : ''}" onclick="ttsSumLogic(2)" title="миллионы + сотни тысяч + тенге">1 100 001</button>`;
+            if (pr.tier_tpl) modes += pr.tier_tpl.from
+                ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
+                : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
             let valN = pr.value_n ? ` <span class="tts-reuse-chip is-on" title="Значения переменной из таблицы читаются по очереди; продолжение фразы — целиком с последним">значение ${pr.value_n.k} из ${pr.value_n.n}</span>` : '';
             meta.innerHTML = `<span>${modes}${pr.redo_here ? '<span class="tts-redo-here">перезапись</span> ' : ''}${here}${pr.mode && pr.mode !== 'phrases' ? 'Строка' : 'Фраза'} <b>${pr.pos + 1}</b> из ${pr.total} · осталось ${pr.left}${pr.tiers_done ? ` · <span title="Сохранённые эталоны ярусов этого листа (одинаковые значения в разных строках — один файл)">эталонов ${pr.tiers_done[0]} из ${pr.tiers_done[1]}</span>` : ''}${reuseChip}${valN}`
                 + (pr.redo ? ` · <button type="button" class="tts-redo-chip" onclick="ttsShowRedo()">к перезаписи: ${pr.redo}</button>` : '') + `</span>`
