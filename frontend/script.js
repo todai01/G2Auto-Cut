@@ -6314,12 +6314,19 @@ let isProcessing = false;
             if (ttsTS && ttsTS.i === t.i) { ttsTS = null; ttsTsynRender(); return; }
             let r = await pywebview.api.tts_take_synth_info(t.i);
             if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-            ttsTS = { i: t.i, words: r.words, start: r.start, overlap: 2, text: null, mode: 'take',
-                      lang: r.lang, has_etalon: r.has_etalon, busy: r.busy };
+            ttsTS = { i: t.i, words: r.words, start: r.start, overlap: 2, text: null,
+                      mode: r.refs.length ? r.refs[0].mode : 'auto', refs: r.refs, fake: r.fake,
+                      tail_word: r.tail_word, lang: r.lang, busy: r.busy };
             ttsTsynRender();
         }
         const ttsTsynText = () => ttsTS.text !== null ? ttsTS.text
             : ttsTS.words.slice(Math.max(0, ttsTS.start - ttsTS.overlap)).join(' ');
+        // Слово-запас в конце: сервис синтеза срезает конец — режется запас, а не фраза.
+        const ttsSynTailOn = () => { try { return localStorage.getItem('gvox_syn_tail') !== '0'; } catch (e) { return true; } };
+        function ttsSynTailToggle() {
+            try { localStorage.setItem('gvox_syn_tail', ttsSynTailOn() ? '0' : '1'); } catch (e) {}
+            ttsTsynRender();
+        }
         function ttsTsynRender() {
             let el = document.getElementById('ttsTsyn');
             if (!el) return;
@@ -6332,17 +6339,21 @@ let isProcessing = false;
             }).join('');
             let chip = (on, label, js, dis) => `<button type="button" class="chip ${on ? 'chip-mode--active' : ''}" onclick="${js}" ${dis ? 'disabled' : ''}>${label}</button>`;
             el.innerHTML = `
-                <div class="tts-tsyn__head"><b>Добить синтезом</b>
+                <div class="tts-tsyn__head"><b>${s.fake ? 'Пересинтез' : 'Добить синтезом'}</b>
                     <span class="tts-dim">нажмите слово, с которого начинается синтез ·
                     <span class="tts-tsyn__lg is-rec">записано</span> <span class="tts-tsyn__lg is-ovl">перекрытие</span> <span class="tts-tsyn__lg is-syn">синтез</span></span></div>
                 <div class="tts-tsyn__words">${words}</div>
                 <div class="tts-tsyn__row">
                     <span class="tts-dim">Перекрытие</span>
                     ${[0, 1, 2, 3].map(n => chip(s.overlap === n, n === 0 ? 'нет' : `${n} сл.`, `ttsTsynSet({overlap: ${n}})`)).join('')}
-                    <span class="tts-dim" style="margin-left:14px">Образец голоса</span>
-                    ${chip(s.mode === 'take' && s.start > 0, 'этот дубль', "ttsTsynSet({mode: 'take'})", s.start === 0)}
-                    ${chip(s.mode !== 'take' || s.start === 0, s.has_etalon ? 'эталон «Синтеза сумм»' : 'сохранённая фраза', "ttsTsynSet({mode: 'auto'})")}
                     ${chip(s.start === 0, 'всю фразу', 'ttsTsynSet({start: 0})')}
+                </div>
+                <div class="tts-tsyn__row">
+                    <span class="tts-dim">Образец голоса</span>
+                    ${s.refs.map(r => chip(s.mode === r.mode, escapeHtml(r.label), `ttsTsynSet({mode: '${r.mode}'})`, r.mode === 'take' && s.start === 0)).join('')
+                      || '<span class="tts-dim">нет — запишите хотя бы одну фразу на этом языке</span>'}
+                    <span class="tts-dim" style="margin-left:14px">В конце</span>
+                    ${chip(ttsSynTailOn(), `+ «${escapeHtml(s.tail_word)}» (запас, срежете)`, 'ttsSynTailToggle()')}
                 </div>
                 <div class="tts-tsyn__row">
                     <input class="tts-tsyn__text" id="ttsTsynText" value="${escapeHtml(ttsTsynText())}" title="Что синтезировать — можно поправить"
@@ -6360,8 +6371,8 @@ let isProcessing = false;
         }
         async function ttsTsynRun() {
             if (!ttsTS || ttsTS.busy) return;
-            let mode = ttsTS.start === 0 ? 'auto' : ttsTS.mode;
-            let r = await pywebview.api.tts_take_synth(ttsTS.i, ttsTS.start, ttsTS.overlap, ttsTsynText(), mode);
+            let mode = ttsTS.start === 0 && ttsTS.mode === 'take' ? 'auto' : ttsTS.mode;
+            let r = await pywebview.api.tts_take_synth(ttsTS.i, ttsTS.start, ttsTS.overlap, ttsTsynText(), mode, ttsSynTailOn());
             if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
             ttsTS.busy = true;
             ttsTsynRender();
@@ -6369,7 +6380,7 @@ let isProcessing = false;
         }
         async function ttsPromptSynth() {
             if (!tts || !tts.loaded) return;
-            let r = await pywebview.api.tts_prompt_synth(null);
+            let r = await pywebview.api.tts_prompt_synth(null, ttsSynTailOn(), 'auto');
             if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
             showToast(`Синтезирую фразу${r.count > 1 ? ` (${r.count} кусочка)` : ''}, образец — ${r.ref}…`);
         }

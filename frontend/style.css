@@ -3277,3 +3277,4 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 /* значения переменной из ячейки <var> */
 .tts-ivar{ color: var(--accent-var); border-bottom: 2px solid color-mix(in srgb, var(--accent-var) 55%, transparent); }
 .tts-tail{ color: var(--text-faint); }
+.tts-tsyn__row > .tts-dim{ font-size: var(--fs-xs); font-weight: 700; }
