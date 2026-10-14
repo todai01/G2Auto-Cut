@@ -377,6 +377,57 @@
         </div>
     </div>
 
+    <!-- Подготовка к клону: папка → один WAV + тайминги; клоны → нарезка по таймингам -->
+    <div id="cloneOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Подготовка к клону</h3>
+                <button class="modal-close" onclick="closeClonePrep()" title="Закрыть">&times;</button>
+            </div>
+
+            <div class="clone-step">
+                <div class="clone-step__head"><b>1</b> Собрать один WAV</div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="clonePickFolder()">Папка с аудио</button>
+                    <span id="cloneFolderLabel" class="modal-hint" style="margin:0;">Папка не выбрана</span>
+                </div>
+                <div class="mode-options">
+                    <span class="mode-options__label">Пауза между файлами</span>
+                    <label class="opt-chip"><input type="radio" name="cloneGap" value="500"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">0.5 с</span></label>
+                    <label class="opt-chip"><input type="radio" name="cloneGap" value="1000" checked><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">1 с</span></label>
+                    <label class="opt-chip"><input type="radio" name="cloneGap" value="2000"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">2 с</span></label>
+                </div>
+                <div class="mode-options">
+                    <span class="mode-options__label">Частота WAV</span>
+                    <label class="opt-chip"><input type="radio" name="cloneRate" value="0" checked><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">как у файлов</span></label>
+                    <label class="opt-chip"><input type="radio" name="cloneRate" value="44100"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">44100 Гц</span></label>
+                    <label class="opt-chip"><input type="radio" name="cloneRate" value="48000"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">48000 Гц</span></label>
+                </div>
+                <button class="splash-btn" style="width:100%;" id="btnCloneBuild" onclick="cloneBuild()" disabled>Собрать WAV</button>
+                <div id="cloneBuildResult" class="clone-result"></div>
+            </div>
+
+            <div class="clone-step">
+                <div class="clone-step__head"><b>2</b> Нарезать клоны по таймингам</div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="clonePickJson()">Тайминги…</button>
+                    <span id="cloneJsonLabel" class="modal-hint" style="margin:0;">Соберите WAV или выберите «Клон_исходник.json»</span>
+                </div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="clonePickClones()">Файлы клонов…</button>
+                    <span id="cloneClonesLabel" class="modal-hint" style="margin:0;">Клоны не выбраны</span>
+                </div>
+                <div class="mode-options">
+                    <span class="mode-options__label">Частота файлов</span>
+                    <label class="opt-chip"><input type="radio" name="cloneOutRate" value="source" checked><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">как у исходных</span></label>
+                    <label class="opt-chip"><input type="radio" name="cloneOutRate" value="clone"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">как у клона</span></label>
+                </div>
+                <button class="splash-btn" style="width:100%;" id="btnCloneCut" onclick="cloneCut()" disabled>Нарезать</button>
+                <div id="cloneCutResult" class="clone-result"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Сопоставить укороченные имена файлов с полными из Excel и разложить по языкам -->
     <div id="renameMatchOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -991,6 +1042,10 @@
                     <button class="menu-tool rise" style="--d: 7" onclick="openConverter()" title="Перевести MP4 в MP3 или WAV с нужной герцовкой">
                         <span class="menu-tool__icon"><svg class="icon"><use href="#icon-film"></use></svg></span>
                         <span class="menu-row__text"><span class="menu-tool__title">Конвертер MP4</span><span class="menu-row__desc">В MP3 / WAV</span></span>
+                    </button>
+                    <button class="menu-tool rise" style="--d: 7" onclick="openClonePrep()" title="Все файлы папки — в один WAV для клона; готовые клоны — обратно на файлы с теми же именами">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-user"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Подготовка к клону</span><span class="menu-row__desc">Один WAV → нарезка клонов</span></span>
                     </button>
                     <button class="menu-tool rise" style="--d: 7" onclick="stripFilenames()" title="Убрать из имён файлов слова «миллион», «тысяч» — оставить цифры">
                         <span class="menu-tool__icon"><svg class="icon"><use href="#icon-type"></use></svg></span>

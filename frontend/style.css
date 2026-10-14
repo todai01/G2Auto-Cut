@@ -3364,3 +3364,13 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-tiers__ctxrow{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-sm); margin-bottom: 4px; }
 .tts-tiers__cl{ width: 62px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
 .tts-tiers__ctxt{ font-family: var(--font-mono); font-size: 11px; }
+
+/* Подготовка к клону */
+.clone-step{ border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 12px; margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.clone-step__head{ font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.clone-step__head b{ display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--tint-var); color: var(--accent-var); font-size: 12px; }
+.clone-result{ font-size: var(--fs-sm); line-height: 1.5; word-break: break-all; }
+.clone-result:empty{ display: none; }
+.clone-row{ padding: 4px 0; }
+.clone-bad{ color: var(--accent-trash); }
+#cloneOverlay .opt-chip input[type=radio]{ position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
