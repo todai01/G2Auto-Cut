@@ -76,6 +76,12 @@ def main():
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns('.cache', '.huggingface'))
             print(f'  {folder} → dist\\GVox\\{folder}')
 
+    # .NET (окно программы) не грузит DLL из «интернетной» папки, даже если
+    # метку Zone.Identifier где-то не сняли, — разрешаем явно.
+    with open(os.path.join(out, 'GVox.exe.config'), 'w', encoding='utf-8') as f:
+        f.write('<?xml version="1.0" encoding="utf-8"?>\n<configuration>\n  <runtime>\n'
+                '    <loadFromRemoteSources enabled="true"/>\n  </runtime>\n</configuration>\n')
+
     step('5/5  Самопроверка собранной программы')
     exe = os.path.join(out, 'GVox.exe' if os.name == 'nt' else 'GVox')
     code = subprocess.call([exe, '--selftest'], cwd=out)

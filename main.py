@@ -471,6 +471,28 @@ def _startup(window):
     _ffmpeg_on_path(APP_DIR)
 
 
+def _unblock_downloaded():
+    """Скачанный из интернета zip Windows помечает (Zone.Identifier), и
+    после распаковки метка у каждого файла. .NET (окно программы —
+    pythonnet) такие DLL не грузит: «Failed to resolve
+    Python.Runtime.Loader.Initialize». Снимаем метку со своих файлов сами —
+    один раз, пока она есть."""
+    if os.name != 'nt' or not getattr(sys, 'frozen', False):
+        return
+    base = resource_path("")
+    probe = os.path.join(base, 'pythonnet', 'runtime', 'Python.Runtime.dll')
+    if not os.path.exists(probe + ':Zone.Identifier'):
+        return
+    for root in (base, os.path.dirname(sys.executable)):
+        for dirpath, _dirs, files in os.walk(root):
+            for f in files:
+                if f.lower().endswith(('.dll', '.pyd', '.exe', '.config')):
+                    try:
+                        os.remove(os.path.join(dirpath, f) + ':Zone.Identifier')
+                    except OSError:
+                        pass
+
+
 def _ffmpeg_on_path(folder):
     """pydub ищет ffprobe (а местами и ffmpeg) по PATH, а не по своим
     настройкам, — папку с ними ставим первой в PATH этого процесса."""
@@ -524,6 +546,8 @@ def _selftest():
         segs, _ = m.transcribe(np.zeros(16000, dtype=np.float32), language='ru')
         list(segs)
         return path
+    if os.name == 'nt':
+        check("окно программы (.NET / pythonnet)", lambda: __import__('clr') and '')
     check("модуль распознавания (faster-whisper, ctranslate2, VAD)",
           lambda: __import__('faster_whisper') and __import__('ctranslate2') and __import__('onnxruntime') and '')
     check("распознавание речи RU (whisper-model)", lambda: asr('whisper-model'))
@@ -552,6 +576,7 @@ def _selftest():
 
 
 if __name__ == '__main__':
+    _unblock_downloaded()
     if '--selftest' in sys.argv:
         sys.exit(_selftest())
     api = Api()

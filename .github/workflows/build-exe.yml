@@ -38,6 +38,16 @@ jobs:
           PYTHONUTF8: '1'
         run: python build_exe.py
 
+      - name: Проверка «как после скачивания» (метка из интернета на всех файлах)
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\GVox -Recurse -File | ForEach-Object {
+            Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          $p = Start-Process -FilePath dist\GVox\GVox.exe -ArgumentList '--selftest' -WorkingDirectory dist\GVox -Wait -PassThru
+          Get-Content dist\GVox\GVox_проверка.txt -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Самопроверка после «скачивания» не прошла" }
+          Remove-Item dist\GVox\GVox_проверка.txt
+
       - name: Архивы
         shell: pwsh
         run: |
