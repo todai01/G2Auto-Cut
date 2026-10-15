@@ -1,7 +1,30 @@
 import os
+import subprocess
+import sys
+
+
+def _no_console_windows():
+    """Windows: служебные консольные программы (ffmpeg/ffprobe — их зовёт
+    pydub при каждом экспорте и прослушке, драйвер синтеза и т.п.) не
+    показывают чёрное окно на долю секунды. Флаг CREATE_NO_WINDOW ставится
+    всем запускам, где вызывающий сам флагов не задал; на окна обычных
+    программ (Audacity) он не влияет — касается только консольных."""
+    if os.name != 'nt' or getattr(subprocess.Popen.__init__, '_gvox_nowin', False):
+        return
+    orig = subprocess.Popen.__init__
+
+    def init(self, *args, **kwargs):
+        if len(args) < 13 and not kwargs.get('creationflags'):
+            kwargs['creationflags'] = 0x08000000          # CREATE_NO_WINDOW
+        orig(self, *args, **kwargs)
+    init._gvox_nowin = True
+    subprocess.Popen.__init__ = init
+
+
+_no_console_windows()
+
 import time
 import webview
-import sys
 from pydub import AudioSegment
 
 # 🧠 Основная логика (миксины из папки core)
@@ -548,6 +571,8 @@ def _selftest():
         return path
     if os.name == 'nt':
         check("окно программы (.NET / pythonnet)", lambda: __import__('clr') and '')
+        check("ffmpeg и др. — без всплывающих окон консоли",
+              lambda: '' if getattr(subprocess.Popen.__init__, '_gvox_nowin', False) else 1 / 0)
     check("модуль распознавания (faster-whisper, ctranslate2, VAD)",
           lambda: __import__('faster_whisper') and __import__('ctranslate2') and __import__('onnxruntime') and '')
     check("распознавание речи RU (whisper-model)", lambda: asr('whisper-model'))
