@@ -43,7 +43,11 @@ jobs:
         run: |
           Get-ChildItem dist\GVox -Recurse -File | ForEach-Object {
             Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
-          $p = Start-Process -FilePath dist\GVox\GVox.exe -ArgumentList '--selftest' -WorkingDirectory dist\GVox -Wait -PassThru
+          # напрямую (CreateProcess), без оболочки: та на «скачанном» exe спрашивает подтверждение
+          $psi = New-Object System.Diagnostics.ProcessStartInfo (Resolve-Path dist\GVox\GVox.exe).Path, '--selftest'
+          $psi.UseShellExecute = $false
+          $psi.WorkingDirectory = (Resolve-Path dist\GVox).Path
+          $p = [System.Diagnostics.Process]::Start($psi); $p.WaitForExit()
           Get-Content dist\GVox\GVox_проверка.txt -Encoding utf8
           if ($p.ExitCode -ne 0) { throw "Самопроверка после «скачивания» не прошла" }
           Remove-Item dist\GVox\GVox_проверка.txt
