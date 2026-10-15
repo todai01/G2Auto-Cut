@@ -7,3 +7,6 @@ dist/
 !main.spec
 temp_play.wav
 temp_var_preview.wav
+whisper-model/
+whisper-model-kz/
+GVox_проверка.txt

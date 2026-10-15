@@ -1,0 +1,12 @@
+# Модули GVox. Для запуска из кода: pip install -r requirements.txt
+pywebview
+pydub
+numpy
+openpyxl
+python-pptx
+pyautogui
+pywin32; sys_platform == "win32"
+sounddevice
+faster-whisper
+playwright
+audioop-lts; python_version >= "3.13"

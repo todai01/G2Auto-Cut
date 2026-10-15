@@ -437,6 +437,7 @@ def _startup(window):
     if getattr(sys, 'frozen', False):
         AudioSegment.converter = resource_path("ffmpeg.exe")
         AudioSegment.ffprobe = resource_path("ffprobe.exe")
+        _ffmpeg_on_path(resource_path(""))
         return
 
     def report(percent, text):
@@ -467,9 +468,92 @@ def _startup(window):
 
     AudioSegment.converter = os.path.join(APP_DIR, "ffmpeg.exe")
     AudioSegment.ffprobe = os.path.join(APP_DIR, "ffprobe.exe")
+    _ffmpeg_on_path(APP_DIR)
+
+
+def _ffmpeg_on_path(folder):
+    """pydub ищет ffprobe (а местами и ffmpeg) по PATH, а не по своим
+    настройкам, — папку с ними ставим первой в PATH этого процесса."""
+    folder = os.path.abspath(folder)
+    if folder not in os.environ.get('PATH', '').split(os.pathsep):
+        os.environ['PATH'] = folder + os.pathsep + os.environ.get('PATH', '')
+
+
+def _selftest():
+    """GVox.exe --selftest: проверить, что всё нужное на месте, — без окна.
+    Отчёт — в «GVox_проверка.txt» рядом с программой (и в консоль)."""
+    import subprocess
+    import traceback
+    frozen = getattr(sys, 'frozen', False)
+    base = os.path.dirname(sys.executable) if frozen else APP_DIR
+    ff_dir = resource_path("") if frozen else APP_DIR
+    _ffmpeg_on_path(ff_dir)
+    lines, ok_all = [], True
+
+    def check(name, fn):
+        nonlocal ok_all
+        try:
+            info = fn()
+            lines.append(f"[OK]   {name}{': ' + info if info else ''}")
+        except Exception as e:
+            ok_all = False
+            lines.append(f"[FAIL] {name}: {e}")
+            lines.append('       ' + traceback.format_exc().strip().splitlines()[-1])
+
+    def ff(exe):
+        path = os.path.join(ff_dir, exe + ('.exe' if os.name == 'nt' else ''))
+        if not os.path.exists(path):
+            path = exe
+        out = subprocess.run([path, '-version'], capture_output=True, text=True, timeout=20).stdout
+        return out.splitlines()[0] if out else '?'
+    check("ffmpeg", lambda: ff('ffmpeg'))
+    check("ffprobe", lambda: ff('ffprobe'))
+    check("интерфейс (frontend)", lambda: '' if os.path.exists(resource_path('frontend/index.html')) else 1 / 0)
+    for mod in ('numpy', 'pydub', 'openpyxl', 'pptx', 'webview'):
+        check(f"модуль {mod}", lambda m=mod: __import__(m) and '')
+    check("запись с микрофона (sounddevice)",
+          lambda: f"устройств ввода: {sum(1 for d in __import__('sounddevice').query_devices() if d['max_input_channels'] > 0)}")
+
+    def asr(dirname):
+        from faster_whisper import WhisperModel
+        import numpy as np
+        path = os.path.join(base, dirname)
+        if not os.path.isfile(os.path.join(path, 'model.bin')):
+            raise RuntimeError(f"нет папки модели «{path}»")
+        m = WhisperModel(path, device='cpu', compute_type='int8', cpu_threads=2)
+        segs, _ = m.transcribe(np.zeros(16000, dtype=np.float32), language='ru')
+        list(segs)
+        return path
+    check("модуль распознавания (faster-whisper, ctranslate2, VAD)",
+          lambda: __import__('faster_whisper') and __import__('ctranslate2') and __import__('onnxruntime') and '')
+    check("распознавание речи RU (whisper-model)", lambda: asr('whisper-model'))
+    if os.path.isdir(os.path.join(base, 'whisper-model-kz')):
+        check("распознавание речи KZ (whisper-model-kz)", lambda: asr('whisper-model-kz'))
+
+    def pw():
+        from playwright._impl._driver import compute_driver_executable
+        drv = compute_driver_executable()
+        drv = drv[0] if isinstance(drv, tuple) else drv
+        if not os.path.exists(drv):
+            raise RuntimeError(f"нет драйвера {drv}")
+        return "драйвер на месте (браузер — установленный Edge/Chrome)"
+    check("синтез (playwright)", pw)
+    report = "Проверка GVox\n" + "\n".join(lines) + ("\n\nВсё готово к работе." if ok_all else "\n\nЕсть проблемы — см. [FAIL].")
+    try:
+        with open(os.path.join(base, 'GVox_проверка.txt'), 'w', encoding='utf-8') as f:
+            f.write(report)
+    except OSError:
+        pass
+    try:
+        print(report)
+    except Exception:
+        pass
+    return 0 if ok_all else 1
 
 
 if __name__ == '__main__':
+    if '--selftest' in sys.argv:
+        sys.exit(_selftest())
     api = Api()
 
     html_path = resource_path('frontend/index.html')
