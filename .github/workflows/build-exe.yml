@@ -1,0 +1,60 @@
+# Сборка GVox.exe «всё включено» на Windows-сервере GitHub — без своей
+# среды разработки. Готовая сборка выкладывается в «Releases» репозитория:
+#   GVox-<номер>.zip       — программа + модель распознавания RU (распаковать и запускать GVox.exe)
+#   GVox-model-kz-<номер>.zip — модель для казахского (распаковать в ту же папку, рядом с GVox.exe)
+name: Сборка GVox.exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/g2auto-cut-project-y8qvzc]
+    paths: [build_exe.py, main.spec, main.py, requirements.txt, .github/workflows/build-exe.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Модели распознавания — из кэша
+        uses: actions/cache@v4
+        with:
+          path: |
+            whisper-model
+            whisper-model-kz
+          key: whisper-small-and-large-v3-turbo-v1
+
+      - name: Сборка и самопроверка (build_exe.py)
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+        run: python build_exe.py
+
+      - name: Архивы
+        shell: pwsh
+        run: |
+          $n = "${{ github.run_number }}"
+          New-Item -ItemType Directory -Force kz_model_tmp | Out-Null
+          if (Test-Path dist\GVox\whisper-model-kz) { Move-Item dist\GVox\whisper-model-kz kz_model_tmp\ }
+          7z a -tzip -mx=5 "GVox-$n.zip" .\dist\GVox
+          if (Test-Path kz_model_tmp\whisper-model-kz) { 7z a -tzip -mx=1 "GVox-model-kz-$n.zip" .\kz_model_tmp\whisper-model-kz }
+          Get-ChildItem *.zip | Format-Table Name, Length
+
+      - name: Выложить в Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $n = "${{ github.run_number }}"
+          $files = @("GVox-$n.zip")
+          if (Test-Path "GVox-model-kz-$n.zip") { $files += "GVox-model-kz-$n.zip" }
+          $notes = "Сборка $n (коммит ${{ github.sha }}).`n`n1. Скачайте GVox-$n.zip, распакуйте, запустите GVox\GVox.exe.`n2. Для казахского распознавания: распакуйте GVox-model-kz-$n.zip в ту же папку GVox (рядом с GVox.exe)."
+          gh release create "gvox-build-$n" @files --target "${{ github.sha }}" --title "GVox — сборка $n" --notes "$notes" --prerelease
