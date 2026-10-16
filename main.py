@@ -573,10 +573,19 @@ def _selftest():
         check("окно программы (.NET / pythonnet)", lambda: __import__('clr') and '')
         check("ffmpeg и др. — без всплывающих окон консоли",
               lambda: '' if getattr(subprocess.Popen.__init__, '_gvox_nowin', False) else 1 / 0)
-    check("модуль распознавания (faster-whisper, ctranslate2, VAD)",
-          lambda: __import__('faster_whisper') and __import__('ctranslate2') and __import__('onnxruntime') and '')
-    check("распознавание речи RU (whisper-model)", lambda: asr('whisper-model'))
-    if os.path.isdir(os.path.join(base, 'whisper-model-kz')):
+    try:
+        __import__('faster_whisper')
+        has_asr = True
+    except ImportError:
+        has_asr = False
+    if not has_asr and frozen and not os.path.isdir(os.path.join(base, 'whisper-model')):
+        lines.append("[--]   распознавание речи: не входит в эту сборку (облегчённая, без whisper) — "
+                     "запись в режиме «Без распознавания»")
+    else:
+        check("модуль распознавания (faster-whisper, ctranslate2, VAD)",
+              lambda: __import__('faster_whisper') and __import__('ctranslate2') and __import__('onnxruntime') and '')
+        check("распознавание речи RU (whisper-model)", lambda: asr('whisper-model'))
+    if has_asr and os.path.isdir(os.path.join(base, 'whisper-model-kz')):
         check("распознавание речи KZ (whisper-model-kz)", lambda: asr('whisper-model-kz'))
 
     def pw():

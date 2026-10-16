@@ -1,0 +1,61 @@
+# Облегчённая сборка GVox.exe — БЕЗ распознавания речи (whisper): без
+# faster-whisper, ctranslate2, onnxruntime и моделей. Запись — в режиме
+# «Без распознавания». Выкладывается в Releases как gvox-lite-<номер>:
+#   GVox-lite-<номер>.zip — распаковать и запускать GVox\GVox.exe
+name: Сборка GVox.exe (без whisper)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/g2auto-cut-project-y8qvzc]
+    paths: [build_exe.py, main.spec, main.py, requirements.txt, .github/workflows/build-exe-lite.yml, 'core/**', 'frontend/**', 'utils/**']
+
+permissions:
+  contents: write
+
+jobs:
+  build-lite:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Сборка без распознавания и самопроверка
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+        run: python build_exe.py --no-asr
+
+      - name: Проверка «как после скачивания» (метка из интернета на всех файлах)
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\GVox -Recurse -File | ForEach-Object {
+            Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          $psi = New-Object System.Diagnostics.ProcessStartInfo (Resolve-Path dist\GVox\GVox.exe).Path, '--selftest'
+          $psi.UseShellExecute = $false
+          $psi.WorkingDirectory = (Resolve-Path dist\GVox).Path
+          $p = [System.Diagnostics.Process]::Start($psi); $p.WaitForExit()
+          Get-Content dist\GVox\GVox_проверка.txt -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Самопроверка после «скачивания» не прошла" }
+          if (Test-Path dist\GVox\_internal\ctranslate2) { throw "В облегчённую сборку попал ctranslate2" }
+          Remove-Item dist\GVox\GVox_проверка.txt
+
+      - name: Архив
+        shell: pwsh
+        run: |
+          $n = "${{ github.run_number }}"
+          7z a -tzip -mx=5 "GVox-lite-$n.zip" .\dist\GVox
+          Get-ChildItem *.zip | Format-Table Name, Length
+
+      - name: Выложить в Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $n = "${{ github.run_number }}"
+          $notes = "Облегчённая сборка $n — без распознавания речи (whisper), коммит ${{ github.sha }}.`n`nСкачайте GVox-lite-$n.zip, распакуйте, запустите GVox\GVox.exe. Запись — в режиме «Без распознавания»; автопроверка и аудит голосом в этой сборке недоступны."
+          gh release create "gvox-lite-$n" "GVox-lite-$n.zip" --target "${{ github.sha }}" --title "GVox без whisper — сборка $n" --notes "$notes" --prerelease

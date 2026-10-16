@@ -25,9 +25,12 @@ if _missing_ffmpeg:
 # Модули с файлами, которые PyInstaller сам не видит: распознавание речи
 # (faster-whisper + ctranslate2 + токенизатор + VAD-модель + декодер av),
 # запись с микрофона (PortAudio), синтез (драйвер playwright).
+# GVOX_NO_ASR=1 (build_exe.bat --no-asr) — облегчённая сборка без распознавания
+# речи: без faster-whisper/ctranslate2/onnxruntime и без моделей.
+NO_ASR = os.environ.get('GVOX_NO_ASR') == '1'
+ASR_PKGS = ('faster_whisper', 'ctranslate2', 'tokenizers', 'onnxruntime', 'av', 'huggingface_hub')
 datas, binaries, hiddenimports = [('frontend', 'frontend')], list(_ffmpeg_binaries), []
-for pkg in ('faster_whisper', 'ctranslate2', 'tokenizers', 'onnxruntime', 'av',
-            'sounddevice', '_sounddevice_data', 'playwright', 'webview', 'pptx'):
+for pkg in (() if NO_ASR else ASR_PKGS) + ('sounddevice', '_sounddevice_data', 'playwright', 'webview', 'pptx'):
     try:
         d, b, h = collect_all(pkg)
     except Exception as e:
@@ -46,7 +49,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'matplotlib', 'IPython', 'pytest'],
+    excludes=['tkinter', 'matplotlib', 'IPython', 'pytest'] + (list(ASR_PKGS) if NO_ASR else []),
     noarchive=False,
 )
 pyz = PYZ(a.pure)

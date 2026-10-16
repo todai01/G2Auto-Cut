@@ -8,7 +8,9 @@
 4. Собирает dist\\GVox\\ (pyinstaller main.spec) и кладёт модели рядом с GVox.exe.
 5. Запускает самопроверку (GVox.exe --selftest) — отчёт в GVox_проверка.txt.
 
-Ключи: --no-kz — без казахской модели, --zip — ещё и dist\\GVox.zip.
+Ключи: --no-kz — без казахской модели, --no-asr — облегчённая сборка вообще
+без распознавания речи (без whisper и моделей; запись — «Без распознавания»),
+--zip — ещё и dist\\GVox.zip.
 """
 import os
 import shutil
@@ -35,12 +37,19 @@ def is_model(path):
 
 
 def main():
-    no_kz = '--no-kz' in sys.argv
+    no_asr = '--no-asr' in sys.argv
+    no_kz = '--no-kz' in sys.argv or no_asr
     os.chdir(HERE)
+    if no_asr:
+        os.environ['GVOX_NO_ASR'] = '1'                 # main.spec: без модулей распознавания
 
-    step('1/5  Модули Python')
+    step('1/5  Модули Python' + (' (без распознавания речи)' if no_asr else ''))
     run([sys.executable, '-m', 'pip', 'install', '--upgrade', 'pip'])
-    run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', 'pyinstaller', 'huggingface_hub'])
+    reqs = [l.strip() for l in open(os.path.join(HERE, 'requirements.txt'), encoding='utf-8')
+            if l.strip() and not l.lstrip().startswith('#')]
+    if no_asr:
+        reqs = [r for r in reqs if not r.lower().startswith('faster-whisper')]
+    run([sys.executable, '-m', 'pip', 'install', *reqs, 'pyinstaller'] + ([] if no_asr else ['huggingface_hub']))
 
     step('2/5  ffmpeg')
     sys.path.insert(0, HERE)
@@ -49,9 +58,9 @@ def main():
         sys.exit('\nНе удалось скачать ffmpeg. Положите ffmpeg.exe и ffprobe.exe рядом с main.py и запустите снова.')
     print('\n  ffmpeg.exe и ffprobe.exe на месте')
 
-    step('3/5  Модели распознавания речи')
-    from huggingface_hub import snapshot_download
-    for folder, repo in MODELS:
+    step('3/5  Модели распознавания речи' + (' — пропускаю (--no-asr)' if no_asr else ''))
+    for folder, repo in ([] if no_asr else MODELS):
+        from huggingface_hub import snapshot_download
         if no_kz and folder.endswith('-kz'):
             print(f'  {folder}: пропускаю (--no-kz)')
             continue
@@ -68,9 +77,9 @@ def main():
     step('4/5  Сборка (pyinstaller)')
     run([sys.executable, '-m', 'PyInstaller', 'main.spec', '--noconfirm', '--clean'])
     out = os.path.join(HERE, 'dist', 'GVox')
-    for folder, _repo in MODELS:
+    for folder, _repo in ([] if no_asr else MODELS):
         src = os.path.join(HERE, folder)
-        if is_model(src):
+        if is_model(src) and not (no_kz and folder.endswith('-kz')):
             dst = os.path.join(out, folder)
             shutil.rmtree(dst, ignore_errors=True)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns('.cache', '.huggingface'))

@@ -204,6 +204,9 @@ class AutoCheckMixin:
         try:
             from faster_whisper import WhisperModel
         except ImportError:
+            if getattr(sys, 'frozen', False):
+                return None, ("В этой сборке GVox нет распознавания речи (облегчённая, без whisper).\n"
+                              "Записывайте в режиме «Без распознавания» или возьмите полную сборку.")
             return None, ("Не установлен модуль распознавания речи. В командной строке выполните:\n"
                           "pip install faster-whisper")
         local = self._auto_check_model_path(lang)
