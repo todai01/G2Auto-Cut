@@ -2633,66 +2633,6 @@ class TtsFlowMixin:
                                 and st["units"][x["unit"]].get("sheet") == unit.get("sheet")),
                 "tpl": {"from": tpl["from"], "auto": bool(tpl.get("auto")), "used": bool(t.get("tier_by_tpl"))} if tpl else None}
 
-    # ---- пакет: записали подряд несколько строк — размечаем и сохраняем разом ----
-    def _tts_tier_batch_takes(self):
-        """Дубли строк текущего листа (и логики), ещё не сохранённые: по
-        одному (последнему) на строку, в порядке записи."""
-        st = self._tts()
-        mode, logic = st.get("prompt_mode", "phrases"), st.get("sum_logic", 1)
-        last = {}
-        for k, t in enumerate(st["takes"]):
-            u = st["units"][t["unit"]] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
-            if not u or not u.get("tiers") or u.get("sheet") != mode or u.get("logic") not in (None, logic):
-                continue
-            if t.get("rejected"):
-                continue
-            last[u["id"]] = k
-        out = [k for k in sorted(last.values()) if not st["takes"][k].get("approved")]
-        return out
-
-    def tts_tier_batch(self, limit=30):
-        """Пакет для разметки: строки с волной дубля и клипами ярусов."""
-        rows = []
-        for k in self._tts_tier_batch_takes()[:int(limit)]:
-            m = self.tts_tier_marks(k)
-            if not m.get("tiers"):
-                continue
-            pk = m["peaks"]
-            step = max(1, len(pk) // 400)                    # волна попроще — строк много
-            m["peaks"] = [max(pk[j:j + step]) for j in range(0, len(pk), step)]
-            m["frame"] = m["frame"] * step
-            for x in m["tiers"]:
-                x.pop("peaks", None); x.pop("file_peaks", None)
-            m.pop("ctx", None)
-            rows.append(m)
-        return {"rows": rows, "pending": len(self._tts_tier_batch_takes()), "bg": self.tts_tier_bg_state()}
-
-    def tts_tier_batch_save(self, idxs):
-        """Сохранить пакет: у каждой строки — её ярусы эталонами (как Enter)."""
-        st = self._tts()
-        saved, skipped, errors = 0, 0, []
-        for k in sorted({int(x) for x in idxs}):
-            if not (0 <= k < len(st["takes"])):
-                continue
-            t = st["takes"][k]
-            u = st["units"][t["unit"]] if t.get("unit") is not None else None
-            if not u or not u.get("tiers") or t.get("approved"):
-                continue
-            try:
-                written, skip = self._tts_tier_save(t, u)
-                for other in st["takes"]:
-                    if other.get("unit") == t["unit"] and other is not t:
-                        other["approved"] = False
-                t["approved"], t["rejected"] = True, False
-                saved += len(written)
-                skipped += len(skip)
-            except Exception as e:
-                errors.append(f"{u['name']}: {e}")
-        self._tts_save()
-        if hasattr(self, '_tts_prompt_fix'):
-            self._tts_prompt_fix()
-        return {**self.tts_state(), "batch_saved": saved, "batch_skipped": skipped, "batch_errors": errors[:5]}
-
     def tts_tier_set(self, i, clips=None, write=None, opts=None):
         """Подвинули край клипа / паузу / темп / громкость яруса, «перезаписать»,
         «фон как во фразе», «громкость как у фразы»."""

@@ -3369,27 +3369,6 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .clone-bad{ color: var(--accent-trash); }
 #cloneOverlay .opt-chip input[type=radio]{ position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
 
-/* Пакет переменных: N строк — разметка и сохранение разом */
-.tts-batch{ position: fixed; inset: 0; z-index: 900; display: none; align-items: center; justify-content: center;
-    background: rgba(5,7,11,.78); }
-.tts-batch__box{ width: min(1500px, 96vw); max-height: 92vh; display: flex; flex-direction: column; border-radius: 16px;
-    background: var(--panel); border: 1px solid var(--border); box-shadow: 0 30px 90px rgba(0,0,0,.6); }
-.tts-batch__top{ display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border-soft); }
-.tts-batch__top .tts-dim{ font-size: var(--fs-sm); }
-.tts-batch__sp{ flex: 1; }
-.tts-batch__list{ overflow: auto; padding: 10px 18px 16px; display: flex; flex-direction: column; gap: 10px; }
-.tts-batch__row{ border: 1px solid var(--border-soft); border-radius: 12px; padding: 8px 10px; }
-.tts-batch__head{ display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: var(--fs-sm); }
-.tts-batch__head > b{ font-family: var(--font-mono); color: var(--text-dim); min-width: 22px; }
-.tts-batch__txt{ flex: 1; color: var(--text); }
-.tts-batch__wave{ height: 54px; }
-.tts-batch__chips{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.tts-batch__chip{ display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim);
-    border: 1px solid var(--border-soft); border-radius: 8px; padding: 2px 8px 2px 2px; }
-.tts-batch__chip b{ color: var(--text); }
-.tts-batch__chip.is-skip{ opacity: .6; }
-.tts-batch__chip button{ border: 0; background: var(--tint-var); color: var(--accent-var); border-radius: 6px; width: 22px; height: 22px; cursor: pointer; }
-.tts-batch__chip label{ display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
 
 /* Идёт запись: всё вокруг чуть гаснет, яркий — только текст суфлёра.
    Навели мышь на затемнённое — проявляется (кнопками можно пользоваться). */

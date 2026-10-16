@@ -6796,8 +6796,8 @@ let isProcessing = false;
         async function ttsBgAfter(r) {
             if (!r) return;
             if (r.error) { showToast(r.error); return; }
-            if (ttsBatchIsOpen()) { ttsBatch.bg = r.bg; ttsBatchRender(); if (ttsBatch.rows.length) ttsBatchPlay(0, -2); }
-            else { let t = ttsCurTake(); if (t) { await ttsTiersLoad(t.i); ttsTierJoinPlay(); } }
+            let t = ttsCurTake();
+            if (t) { await ttsTiersLoad(t.i); ttsTierJoinPlay(); }
         }
         async function ttsBgPick() {
             let r = await pywebview.api.tts_tier_bg_pick();
@@ -8222,7 +8222,6 @@ let isProcessing = false;
         }
 
         function ttsHandleKey(e) {
-            if (ttsBatchIsOpen()) return ttsBatchKey(e);
             if (document.getElementById('ttsMarkOverlay').style.display === 'flex') { if (ttsMk) ttsMkKey(e); return true; }
             let vars = document.getElementById('ttsVarsOverlay');
             if (vars.style.display === 'flex') {
@@ -8581,7 +8580,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsBatchChipHTML(pr)} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -8624,7 +8623,6 @@ let isProcessing = false;
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
-            modes += ttsBatchChipHTML(pr);
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
                 : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
@@ -8936,174 +8934,9 @@ let isProcessing = false;
             ttsAutoAsmRender();
             showToast(on ? 'Записали фразу — сразу открою «Сборку» для проверки' : 'Сборка — только по кнопке');
         }
-        // ----- Пакет переменных: записали подряд N строк → разметили и сохранили разом -----
-        // В суфлёре режим «пакет N»: после записи строки «Сборка» не открывается;
-        // набралось N строк — открывается пакет: у каждой строки волна дубля с
-        // клипами ярусов (края тянутся мышью), ▶ — послушать; Enter — сохранить все.
-        const TTS_BATCH_STEPS = [0, 5, 10, 20];
-        const ttsBatchN = () => { try { let v = localStorage.getItem('gvox_tier_batch'); return v === null ? 10 : +v; } catch (e) { return 10; } };
-        function ttsBatchCycle() {
-            let i = TTS_BATCH_STEPS.indexOf(ttsBatchN());
-            let n = TTS_BATCH_STEPS[(i + 1) % TTS_BATCH_STEPS.length];
-            try { localStorage.setItem('gvox_tier_batch', String(n)); } catch (e) {}
-            showToast(n ? `Пакет по ${n} строк: записываете подряд, потом размечаете и сохраняете разом` : 'Пакет выключен: каждая строка — сразу в «Сборку»');
-            ttsPromptKey = null; ttsLoadPrompt();
-        }
-        // Сколько записанных, но не сохранённых строк текущего листа (по одной на строку).
-        function ttsBatchPending() {
-            if (!tts || !tts.takes) return 0;
-            let seen = new Set(), last = {};
-            tts.takes.forEach((t, k) => {
-                let u = t.unit !== null && t.unit !== undefined ? tts.units[t.unit] : null;
-                if (!u || !u.tiers || u.sheet !== tts.prompt_mode || (u.logic && u.logic !== tts.sum_logic) || t.rejected) return;
-                last[u.id] = t;
-            });
-            return Object.values(last).filter(t => !t.approved).length;
-        }
-        function ttsBatchChipHTML(pr) {
-            if (!pr || !pr.mode || pr.mode === 'phrases') return '';
-            let n = ttsBatchN(), k = ttsBatchPending();
-            return ` <button type="button" class="tts-reuse-chip ${n ? 'is-on' : ''}" onclick="ttsBatchCycle()" title="Сколько строк записывать подряд перед разметкой (клик — 5 / 10 / 20 / выкл)">пакет ${n || 'выкл'}</button>`
-                + (k ? ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsBatchOpen()" title="Разметить и сохранить записанные строки">разметить ${k}${n ? ' / ' + n : ''}</button>` : '');
-        }
-        let ttsBatch = null;
-        async function ttsBatchOpen() {
-            let r = await pywebview.api.tts_tier_batch(30);
-            if (!r || !r.rows || !r.rows.length) { showToast('Нет записанных несохранённых строк'); return; }
-            await ttsStopPlay();
-            ttsBatch = r;
-            let el = document.getElementById('ttsBatch');
-            if (!el) { el = document.createElement('div'); el.id = 'ttsBatch'; el.className = 'tts-batch'; document.body.appendChild(el); }
-            el.style.display = 'flex';
-            if (ttsRec.on && !ttsLiveSt.micOff) { ttsLiveSt.micOff = true; pywebview.api.tts_live_mic(false); ttsLiveRender(); }
-            ttsBatchRender();
-        }
-        function ttsBatchClose() {
-            let el = document.getElementById('ttsBatch');
-            if (el) el.style.display = 'none';
-            ttsBatch = null;
-            pywebview.api.tts_stop_audio();
-            if (ttsRec.on && ttsLiveSt.micOff) { ttsLiveSt.micOff = false; pywebview.api.tts_live_mic(true); ttsLiveRender(); }
-        }
-        const ttsBatchIsOpen = () => { let el = document.getElementById('ttsBatch'); return !!(el && el.style.display === 'flex'); };
-        function ttsBatchRowHTML(r, n) {
-            let L = r.length || 1, pct = ms => (100 * ms / L).toFixed(3) + '%';
-            let regs = r.tiers.map(t => `<div class="tts-tiers__reg ${t.exists && !t.write ? 'is-skip' : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
-                    title="${escapeHtml(t.label)}: ${escapeHtml(t.text)} — края тяните мышью"><span>${escapeHtml(t.label)}</span>
-                    <i class="tts-tiers__edge is-l" onpointerdown="ttsBatchEdge(event, ${n}, ${t.k}, 'a')"></i>
-                    <i class="tts-tiers__edge is-r" onpointerdown="ttsBatchEdge(event, ${n}, ${t.k}, 'b')"></i></div>`).join('');
-            let chips = r.tiers.map(t => `<span class="tts-batch__chip ${t.exists && !t.write ? 'is-skip' : ''}">
-                    <button type="button" onclick="ttsBatchPlay(${n}, ${t.k})" title="Послушать ярус">&#9654;</button>${escapeHtml(t.label)} <b>${escapeHtml(t.value)}</b>
-                    ${t.exists ? `<label title="Уже сохранён из другой строки"><input type="checkbox" ${t.write ? 'checked' : ''} onchange="ttsBatchWrite(${n}, ${t.k}, this.checked)"> есть · перезаписать</label>` : ''}</span>`).join('');
-            return `<div class="tts-batch__row" id="ttsBatchRow${n}">
-                <div class="tts-batch__head"><b>${n + 1}</b> <span class="tts-batch__txt">${escapeHtml(r.row)}</span>
-                    ${ttsJoinHTML(r.tiers, 'ttsBatchJoin' + n + '_')}
-                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBatchPlay(${n}, -2)" title="Стык: конец начала фразы + строка + начало продолжения (по ${TTS_JOIN_MS / 1000} с)">&#9654; Стык</button>
-                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBatchPlay(${n}, -1)" title="Вся строка с началом и концом фразы — как склеится">&#9654; Строка</button>
-                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBatchDelete(${n})" title="Удалить дубль — строку можно перезаписать">✕</button></div>
-                <div class="tts-tiers__wave tts-batch__wave"><canvas style="width:100%"></canvas>${regs}</div>
-                <div class="tts-batch__chips">${chips}</div></div>`;
-        }
-        function ttsBatchRender() {
-            let el = document.getElementById('ttsBatch');
-            if (!el || !ttsBatch) return;
-            let rows = ttsBatch.rows;
-            el.innerHTML = `<div class="tts-batch__box">
-                <div class="tts-batch__top"><b>Пакет: ${rows.length} ${rows.length === 1 ? 'строка' : rows.length < 5 ? 'строки' : 'строк'}</b>
-                    <span class="tts-dim">границы ярусов поставлены сами (по шаблону, если он есть) — поправьте, где нужно; ▶ — послушать</span>
-                    ${ttsBgHTML(ttsBatch.bg)}
-                    <span class="tts-batch__sp"></span>
-                    <button type="button" class="btn-tile btn-tile--good" onclick="ttsBatchSave()">Сохранить все <kbd>Enter</kbd></button>
-                    <button type="button" class="btn-tile btn-tile--sub" onclick="ttsBatchClose()">Закрыть <kbd>Esc</kbd></button></div>
-                <div class="tts-batch__list">${rows.map((r, n) => ttsBatchRowHTML(r, n)).join('')}</div></div>`;
-            rows.forEach((r, n) => { window['ttsBatchJoin' + n + '_'] = ttsBatchJoinFn(n); ttsDrawPeaks(el.querySelector(`#ttsBatchRow${n} canvas`), r.peaks); });
-        }
-        function ttsBatchRowRefresh(n) {
-            let old = document.getElementById('ttsBatchRow' + n);
-            if (!old) return;
-            let tmp = document.createElement('div'); tmp.innerHTML = ttsBatchRowHTML(ttsBatch.rows[n], n);
-            old.replaceWith(tmp.firstElementChild);
-            ttsDrawPeaks(document.querySelector(`#ttsBatchRow${n} canvas`), ttsBatch.rows[n].peaks);
-        }
-        function ttsBatchEdge(e, n, k, side) {
-            e.preventDefault(); e.stopPropagation();
-            let r = ttsBatch.rows[n], t = r.tiers[k];
-            let move = ev => {
-                let box = document.querySelector(`#ttsBatchRow${n} .tts-batch__wave`);
-                let rc = box && box.getBoundingClientRect();
-                if (!rc || !rc.width) return;
-                let ms = Math.round((ev.clientX - rc.left) / rc.width * r.length);
-                if (side === 'a') t.a = Math.max(0, Math.min(t.b - 40, ms)); else t.b = Math.min(r.length, Math.max(t.a + 40, ms));
-                ttsBatchRowRefresh(n);
-            };
-            let up = async () => {
-                window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-                let res = await pywebview.api.tts_tier_set(r.i, r.tiers.map(x => ({ a: x.a, b: x.b, pre: x.pre, post: x.post, tempo: x.tempo, gain: x.gain })), null);
-                if (res && res.tiers) res.tiers.forEach((x, j) => Object.assign(r.tiers[j], { a: x.a, b: x.b }));
-                ttsBatchRowRefresh(n);
-            };
-            window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-        }
-        async function ttsBatchPlay(n, k) {
-            await pywebview.api.tts_stop_audio();
-            let r = ttsBatch.rows[n];
-            let res = k === -2 ? await pywebview.api.tts_tier_play(r.i, null, 0, TTS_JOIN_MS)
-                : k < 0 ? await pywebview.api.tts_tier_play(r.i, null, 0) : await pywebview.api.tts_tier_play(r.i, k, null);
-            if (res && res.error) showToast(res.error);
-        }
-        // ttsBatchJoin<n>_(which, d) — пауза у стыка строки n (имя с номером: так проще из onclick)
-        function ttsBatchJoinFn(n) {
-            return async (which, d) => {
-                let r = ttsBatch.rows[n], tiers = r.tiers, t = which === 'pre' ? tiers[0] : tiers[tiers.length - 1];
-                t[which] = Math.max(0, Math.min(1500, (t[which] || 0) + d));
-                ttsBatchRowRefresh(n);
-                await pywebview.api.tts_tier_set(r.i, tiers.map(x => ({ a: x.a, b: x.b, pre: x.pre, post: x.post, tempo: x.tempo, gain: x.gain })), null);
-                ttsBatchPlay(n, -2);
-            };
-        }
-        async function ttsBatchWrite(n, k, on) {
-            let r = ttsBatch.rows[n], w = {};
-            r.tiers.forEach(x => { w[x.k] = x.k === k ? on : x.write; });
-            let res = await pywebview.api.tts_tier_set(r.i, null, w);
-            if (res && res.tiers) res.tiers.forEach((x, j) => { r.tiers[j].write = x.write; });
-            ttsBatchRowRefresh(n);
-        }
-        async function ttsBatchDelete(n) {
-            let res = await pywebview.api.tts_take_delete(ttsBatch.rows[n].i);
-            if (res && !res.error) tts = res;
-            let r = await pywebview.api.tts_tier_batch(30);
-            ttsRender(); ttsLoadPrompt();
-            if (!r || !r.rows.length) { ttsBatchClose(); return; }
-            ttsBatch = r; ttsBatchRender();
-        }
-        async function ttsBatchSave() {
-            if (!ttsBatch) return;
-            await pywebview.api.tts_stop_audio();
-            let res = await pywebview.api.tts_tier_batch_save(ttsBatch.rows.map(r => r.i));
-            if (!res || res.error) { showToast(res && res.error || 'Не получилось'); return; }
-            tts = res;
-            showToast(`Пакет сохранён: эталонов ${res.batch_saved}${res.batch_skipped ? ` · уже были: ${res.batch_skipped}` : ''}${res.batch_errors.length ? ' · ошибки: ' + res.batch_errors.join('; ') : ''}`, 5000);
-            ttsBatchClose();
-            ttsRender(); ttsPromptKey = null; ttsLoadPrompt();
-        }
-        function ttsBatchKey(e) {
-            if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); ttsBatchSave(); }
-            else if (e.code === 'Escape') { e.preventDefault(); ttsBatchClose(); }
-            else if (e.code === 'Space') { e.preventDefault(); pywebview.api.tts_stop_audio(); }
-            return true;
-        }
-
         function ttsAutoAsm(added) {
-            if (!(added > 0) || !ttsRec.on || !tts || !tts.takes.length) return;
+            if (!(added > 0) || !ttsRec.on || !ttsAutoAsmOn() || !tts || !tts.takes.length) return;
             if (ttsPttDown) { ttsAutoAsmPending = added; return; }     // сейчас пишут — откроем, когда отпустят
-            // пакет строк переменных: «Сборку» не открываем, набралось N — открываем пакет
-            let freshT = tts.takes.slice(-added);
-            if (ttsBatchN() && freshT.every(t => t.unit !== null && t.unit !== undefined && tts.units[t.unit] && tts.units[t.unit].tiers)) {
-                ttsPromptKey = null; ttsLoadPrompt();
-                if (ttsBatchPending() >= ttsBatchN() && !ttsBatchIsOpen()) ttsBatchOpen();
-                return;
-            }
-            if (!ttsAutoAsmOn()) return;
             let fresh = tts.takes.slice(-added).map(t => t.file);
             if (document.getElementById('stage4-tts').classList.contains('show-assembly') && ttsAsmAuto) {
                 ttsAsmQueue.push(...fresh);                             // кусочки той же фразы — по очереди после Enter
