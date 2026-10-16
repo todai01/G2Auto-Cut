@@ -6666,8 +6666,9 @@ let isProcessing = false;
                 let fixed = t.exists && !t.write && t.file_len;
                 let pre = fixed ? 0 : t.pre;
                 let w = fixed ? t.file_len : Math.round((t.b - t.a) / (t.tempo * (r.take_tempo || 1)));
-                out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, t });
-                x += pre + w;
+                let post = fixed ? 0 : (t.post || 0);
+                out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, post, t });
+                x += pre + w + post;
             });
             if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name }); x += r.ctx.end.len; }
             return { clips: out, total: x };
@@ -6702,7 +6703,8 @@ let isProcessing = false;
                    <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
                      ${c.fixed ? `onpointerdown="event.stopPropagation(); ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
                        : `onpointerdown="ttsTierMove(event, ${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — тяните: пауза перед ярусом; клик — послушать"`}>
-                     <canvas data-n="${n}"></canvas><span>${escapeHtml(c.t.label)} <b>${escapeHtml(c.t.value)}</b></span></div>`).join('');
+                     <canvas data-n="${n}"></canvas><span>${escapeHtml(c.t.label)} <b>${escapeHtml(c.t.value)}</b></span></div>
+                   ${c.post ? `<div class="tts-tiers__gap" style="left:${pct(c.x + c.w)};width:${pct(c.post)}">${c.post}</div>` : ''}`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${x.exists && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
                     <span class="tts-tiers__lbl">${escapeHtml(x.label)} <b>${escapeHtml(x.value)}</b></span>
@@ -6718,6 +6720,8 @@ let isProcessing = false;
             el.innerHTML = `<div class="tts-tiers__title">Ярусы
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1)" title="С секунды до первого яруса и до конца. Клик по дорожке «Сборка» — играть с этого места">&#9654; Вся сумма</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierStop()" title="Остановить">&#9632;</button>
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierJoinPlay()" title="Стык: конец начала фразы + строка + начало продолжения (по ${TTS_JOIN_MS / 1000} с)">&#9654; Стык</button>
+                    ${ttsJoinHTML(r.tiers, 'ttsTierJoin')}
                     ${hasCtx ? `<button type="button" class="tts-reuse-chip ${o.noise ? 'is-on' : ''}" onclick="ttsTierOpt('noise', ${!o.noise})" title="Пауза перед ярусом и фон под голосом — шумом комнаты из начала фразы">фон как во фразе${o.noise ? ' ✓' : ''}</button>
                     <button type="button" class="tts-reuse-chip ${o.level ? 'is-on' : ''}" onclick="ttsTierOpt('level', ${!o.level})" title="Громкость речи ярусов — как у начала и продолжения фразы${r.ctx_level !== null ? ' (' + r.ctx_level + ' дБ)' : ''}">громкость как у фразы${o.level ? ' ✓' : ''}</button>` : '<span class="tts-dim">начало фразы не записано — фон и громкость не с чем сравнить</span>'}
                     <span class="tts-tiers__tpl">${tp ? `шаблон: ${escapeHtml(tp.from)}${tp.used ? ' · размечено по нему' : ''}` : 'шаблона нет — первая сохранённая строка станет шаблоном'}
@@ -6736,7 +6740,7 @@ let isProcessing = false;
         const ttsTiersSpan = () => Math.max(ttsTR.length, ttsTiersLayout().total) || 1;
         async function ttsTiersSend() {
             let i = ttsCurTake() && ttsCurTake().i;
-            let res = await pywebview.api.tts_tier_set(i, ttsTR.tiers.map(t => ({ a: t.a, b: t.b, pre: t.pre, tempo: t.tempo, gain: t.gain })), null);
+            let res = await pywebview.api.tts_tier_set(i, ttsTR.tiers.map(t => ({ a: t.a, b: t.b, pre: t.pre, post: t.post, tempo: t.tempo, gain: t.gain })), null);
             if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
         }
         // край клипа на дорожке «Дубль»: откуда и докуда берётся ярус
@@ -6773,6 +6777,29 @@ let isProcessing = false;
         }
         // Фразы с этой переменной — по очереди: начало и продолжение вокруг
         // суммы; их громкость/темп правятся прямо здесь (меняется их дубль).
+        // Стык с фразой: пауза после начала (перед первым ярусом) и до продолжения
+        // (после последнего). ▶ Стык — конец начала + строка + начало продолжения.
+        const TTS_JOIN_MS = 1200;
+        function ttsJoinHTML(tiers, fn) {
+            let first = tiers[0], last = tiers[tiers.length - 1];
+            let knob = (lbl, tip, val, which) => `<span class="tts-tiers__knob" title="${tip}">${lbl}
+                <button type="button" onclick="${fn}('${which}', -50)">&minus;</button><b>${val} мс</b><button type="button" onclick="${fn}('${which}', 50)">+</button></span>`;
+            return knob('после начала', 'Пауза между концом начала фразы и первым ярусом (ложится в файл первого яруса)', first.pre || 0, 'pre')
+                + knob('до конца', 'Пауза между последним ярусом и продолжением фразы (ложится в файл последнего яруса)', last.post || 0, 'post');
+        }
+        async function ttsTierJoin(which, d) {
+            let tiers = ttsTR.tiers, t = which === 'pre' ? tiers[0] : tiers[tiers.length - 1];
+            t[which] = Math.max(0, Math.min(1500, (t[which] || 0) + d));
+            ttsTiersRender();
+            await ttsTiersSend();
+            ttsTierJoinPlay();
+        }
+        async function ttsTierJoinPlay() {
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, null, 0, TTS_JOIN_MS);
+            if (r && r.error) showToast(r.error);
+        }
+
         function ttsTierPhraseHTML(r) {
             let ph = r.phrase;
             if (!ph) return '<div class="tts-tiers__phrase tts-dim">Эта переменная не стоит ни в одной фразе таблицы</div>';
@@ -8964,6 +8991,8 @@ let isProcessing = false;
                     ${t.exists ? `<label title="Уже сохранён из другой строки"><input type="checkbox" ${t.write ? 'checked' : ''} onchange="ttsBatchWrite(${n}, ${t.k}, this.checked)"> есть · перезаписать</label>` : ''}</span>`).join('');
             return `<div class="tts-batch__row" id="ttsBatchRow${n}">
                 <div class="tts-batch__head"><b>${n + 1}</b> <span class="tts-batch__txt">${escapeHtml(r.row)}</span>
+                    ${ttsJoinHTML(r.tiers, 'ttsBatchJoin' + n + '_')}
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBatchPlay(${n}, -2)" title="Стык: конец начала фразы + строка + начало продолжения (по ${TTS_JOIN_MS / 1000} с)">&#9654; Стык</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBatchPlay(${n}, -1)" title="Вся строка с началом и концом фразы — как склеится">&#9654; Строка</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBatchDelete(${n})" title="Удалить дубль — строку можно перезаписать">✕</button></div>
                 <div class="tts-tiers__wave tts-batch__wave"><canvas style="width:100%"></canvas>${regs}</div>
@@ -8980,7 +9009,7 @@ let isProcessing = false;
                     <button type="button" class="btn-tile btn-tile--good" onclick="ttsBatchSave()">Сохранить все <kbd>Enter</kbd></button>
                     <button type="button" class="btn-tile btn-tile--sub" onclick="ttsBatchClose()">Закрыть <kbd>Esc</kbd></button></div>
                 <div class="tts-batch__list">${rows.map((r, n) => ttsBatchRowHTML(r, n)).join('')}</div></div>`;
-            rows.forEach((r, n) => ttsDrawPeaks(el.querySelector(`#ttsBatchRow${n} canvas`), r.peaks));
+            rows.forEach((r, n) => { window['ttsBatchJoin' + n + '_'] = ttsBatchJoinFn(n); ttsDrawPeaks(el.querySelector(`#ttsBatchRow${n} canvas`), r.peaks); });
         }
         function ttsBatchRowRefresh(n) {
             let old = document.getElementById('ttsBatchRow' + n);
@@ -9002,7 +9031,7 @@ let isProcessing = false;
             };
             let up = async () => {
                 window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-                let res = await pywebview.api.tts_tier_set(r.i, r.tiers.map(x => ({ a: x.a, b: x.b, pre: x.pre, tempo: x.tempo, gain: x.gain })), null);
+                let res = await pywebview.api.tts_tier_set(r.i, r.tiers.map(x => ({ a: x.a, b: x.b, pre: x.pre, post: x.post, tempo: x.tempo, gain: x.gain })), null);
                 if (res && res.tiers) res.tiers.forEach((x, j) => Object.assign(r.tiers[j], { a: x.a, b: x.b }));
                 ttsBatchRowRefresh(n);
             };
@@ -9011,8 +9040,19 @@ let isProcessing = false;
         async function ttsBatchPlay(n, k) {
             await pywebview.api.tts_stop_audio();
             let r = ttsBatch.rows[n];
-            let res = k < 0 ? await pywebview.api.tts_tier_play(r.i, null, 0) : await pywebview.api.tts_tier_play(r.i, k, null);
+            let res = k === -2 ? await pywebview.api.tts_tier_play(r.i, null, 0, TTS_JOIN_MS)
+                : k < 0 ? await pywebview.api.tts_tier_play(r.i, null, 0) : await pywebview.api.tts_tier_play(r.i, k, null);
             if (res && res.error) showToast(res.error);
+        }
+        // ttsBatchJoin<n>_(which, d) — пауза у стыка строки n (имя с номером: так проще из onclick)
+        function ttsBatchJoinFn(n) {
+            return async (which, d) => {
+                let r = ttsBatch.rows[n], tiers = r.tiers, t = which === 'pre' ? tiers[0] : tiers[tiers.length - 1];
+                t[which] = Math.max(0, Math.min(1500, (t[which] || 0) + d));
+                ttsBatchRowRefresh(n);
+                await pywebview.api.tts_tier_set(r.i, tiers.map(x => ({ a: x.a, b: x.b, pre: x.pre, post: x.post, tempo: x.tempo, gain: x.gain })), null);
+                ttsBatchPlay(n, -2);
+            };
         }
         async function ttsBatchWrite(n, k, on) {
             let r = ttsBatch.rows[n], w = {};

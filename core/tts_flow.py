@@ -2301,7 +2301,7 @@ class TtsFlowMixin:
             lo = spans[k - 1][1] if k > 0 else 0                      # не залезать в голос соседа
             hi = spans[k + 1][0] if k < n - 1 else length
             a, b = max(lo, v0 - lead), min(hi, v1 + tail)
-            clips.append({"a": int(a), "b": int(max(b, a + 40)), "pre": int(p.get("pre", 0)),
+            clips.append({"a": int(a), "b": int(max(b, a + 40)), "pre": int(p.get("pre", 0)), "post": int(p.get("post", 0)),
                           "tempo": float(p.get("tempo", 1.0)), "gain": float(p.get("gain", 0.0))})
         t["tier_clips"], t["tier_len"] = clips, length
         t["tier_by_tpl"] = bool(tpl)
@@ -2329,6 +2329,7 @@ class TtsFlowMixin:
         for x, c in zip(unit["tiers"], clips):
             v0, v1 = self._tts_voice_span(rms, c["a"], c["b"], thr)
             tiers[x["tier"]] = {"lead": max(0, v0 - c["a"]), "tail": max(0, c["b"] - v1), "pre": c.get("pre", 0),
+                                "post": c.get("post", 0),
                                 "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0)}
         tpls = self._tts().setdefault("tier_tpl", {})
         old = tpls.get(self._tts_tier_tpl_key(unit)) or {}
@@ -2595,7 +2596,7 @@ class TtsFlowMixin:
             path = self._tts_tier_path(unit, x)
             c = clips[k]
             item = {"k": k, "label": x["label"], "value": x["value"], "text": x["text"], "a": c["a"], "b": c["b"],
-                    "pre": c.get("pre", 0), "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0),
+                    "pre": c.get("pre", 0), "post": c.get("post", 0), "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0),
                     "exists": os.path.exists(path) and path not in mine,
                     "mine": path in mine, "write": bool(write.get(str(k)))}
             if item["exists"] and not item["write"]:      # в сборке — готовый файл, как он есть
@@ -2705,6 +2706,7 @@ class TtsFlowMixin:
                 a = max(0, min(L - 20, int(c["a"])))
                 fixed.append({"a": a, "b": max(a + 20, min(L, int(c["b"]))),
                               "pre": max(0, min(3000, int(c.get("pre") or 0))),
+                              "post": max(0, min(3000, int(c.get("post") or 0))),
                               "tempo": round(max(self.TIER_TEMPO[0], min(self.TIER_TEMPO[1], float(c.get("tempo") or 1))), 3),
                               "gain": round(max(self.TIER_GAIN[0], min(self.TIER_GAIN[1], float(c.get("gain") or 0))), 1)})
             t["tier_clips"] = fixed
@@ -2715,9 +2717,11 @@ class TtsFlowMixin:
         self._tts_save()
         return self.tts_tier_marks(i)
 
-    def _tts_tier_assembly(self, t, unit, k=None):
+    def _tts_tier_assembly(self, t, unit, k=None, ctx_ms=None):
         """Сборка как прозвучит: начало фразы + ярусы (готовые — из файлов) +
-        продолжение. k — только один ярус. Возвращает (файл, длина мс)."""
+        продолжение. k — только один ярус; ctx_ms — сколько конца начала и
+        начала продолжения взять (стык). Возвращает (файл, длина мс)."""
+        ctx_ms = int(ctx_ms or self.TIER_CTX_MS)
         import tempfile
         tmpd = tempfile.gettempdir()
         segs = []
@@ -2738,9 +2742,9 @@ class TtsFlowMixin:
                 segs.append(AudioSegment.from_file(dst))
         if start:
             sg = AudioSegment.from_file(start[0])
-            segs.insert(0, sg[-self.TIER_CTX_MS:] if len(sg) > self.TIER_CTX_MS else sg)
+            segs.insert(0, sg[-ctx_ms:] if len(sg) > ctx_ms else sg)
         if end:
-            segs.append(AudioSegment.from_file(end[0])[:self.TIER_CTX_MS])
+            segs.append(AudioSegment.from_file(end[0])[:ctx_ms])
         rate = max(sg.frame_rate for sg in segs)
         out = AudioSegment.empty().set_frame_rate(rate)
         for sg in segs:
@@ -2749,16 +2753,17 @@ class TtsFlowMixin:
         out.export(dst, format="wav")
         return dst, len(out)
 
-    def tts_tier_play(self, i, k=None, from_ms=None):
+    def tts_tier_play(self, i, k=None, from_ms=None, ctx_ms=None):
         """Послушать ярус (k) или всю сборку (k=None) с места from_ms (мс по
-        дорожке «Сборка») — ровно как сохранится и склеится."""
+        дорожке «Сборка») — ровно как сохранится и склеится. ctx_ms — стык:
+        только столько конца начала фразы и начала продолжения."""
         st = self._tts()
         if not (0 <= i < len(st["takes"])):
             return {"playing": False}
         t = st["takes"][i]
         unit = st["units"][t["unit"]]
         try:
-            dst, ln = self._tts_tier_assembly(t, unit, None if k is None or int(k) < 0 else int(k))
+            dst, ln = self._tts_tier_assembly(t, unit, None if k is None or int(k) < 0 else int(k), ctx_ms)
             off = max(0, min(ln - 50, int(from_ms or 0)))
             if off:
                 import tempfile
@@ -2792,14 +2797,15 @@ class TtsFlowMixin:
         self._tts_export_8k(seg, tmp, tempo * float(c.get("tempo") or 1.0))
         x, rate = _mono(tmp)
         pre = int(rate * int(c.get("pre") or 0) / 1000)
-        x = np.concatenate([np.zeros(pre, dtype=np.float32), x])
+        post = int(rate * int(c.get("post") or 0) / 1000)           # пауза после яруса (перед продолжением)
+        x = np.concatenate([np.zeros(pre, dtype=np.float32), x, np.zeros(post, dtype=np.float32)])
         start, end = self._tts_tier_ctx(unit)
         ref = (start or end or (None,))[0]
         if opts["noise"] and ref:
             bed = room_noise(ref, rate, len(x), seed=k)
             if bed is not None:
                 fr = max(1, rate // 100)                              # кадры 10 мс
-                body = x[pre:]
+                body = x[pre:len(x) - post]
                 e = np.sqrt((body[:len(body) // fr * fr].reshape(-1, fr) ** 2).mean(axis=1)) if len(body) >= fr else np.zeros(0)
                 bf = np.sqrt((bed[:len(bed) // fr * fr].reshape(-1, fr) ** 2).mean(axis=1))
                 own = float(np.percentile(e, 10)) if len(e) else 0.0
@@ -2811,6 +2817,10 @@ class TtsFlowMixin:
                     w[:pre] = 1.0
                     xf = min(pre, max(1, rate // 50))
                     w[pre - xf:pre] = np.linspace(1.0, k_body, xf, dtype=np.float32)
+                if post:
+                    w[len(x) - post:] = 1.0
+                    xf = min(post, max(1, rate // 50))
+                    w[len(x) - post:len(x) - post + xf] = np.linspace(k_body, 1.0, xf, dtype=np.float32)
                 x = x + bed[:len(x)] * w
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         _write_pcm16(dst, x, rate)
