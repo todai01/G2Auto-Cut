@@ -1894,13 +1894,23 @@ class TtsFlowMixin:
 
     # ---------------- Audacity ----------------
 
+    AUD_FRAG_GAP = 0.3        # пауза между фрагментами на дорожке Audacity, с
+
     def tts_send_to_audacity(self, i):
-        """Дубль — в Audacity (чистый проект, один трек, масштаб по дублю)."""
+        """Дубль — в Audacity (чистый проект, один трек, масштаб по дублю).
+        Дубль из нескольких кусков («из записанного» + новая запись) — каждый
+        кусок отдельным клипом на одной дорожке, по порядку, с паузой: там их
+        удобно двигать, подрезать и склеивать; «Сохранить из Audacity» —
+        забрать дорожку целиком и сохранить фразу."""
         st = self._tts()
         if not (0 <= i < len(st["takes"])):
             return {"error": "Нет такого дубля."}
         if not self._ensure_audacity_ready():
             return {"error": "Audacity не отвечает. Откройте его вручную и нажмите ещё раз."}
+        t = st["takes"][i]
+        clips = sorted(self._tts_clips(t), key=lambda c: c["pos"])
+        if len(clips) > 1:
+            return self._tts_send_fragments(i, t, clips)
         path = os.path.abspath(os.path.join(st["work_dir"], st["takes"][i]["file"])).replace('\\', '/')
         self.audacity.send_command('SelectAll:')
         self.audacity.send_command('RemoveTracks:')
@@ -1910,6 +1920,44 @@ class TtsFlowMixin:
         self.audacity.send_command('SelectNone:')
         self._tts_audacity_take = i
         return {"status": "ok"}
+
+    def _tts_send_fragments(self, i, t, clips):
+        import tempfile
+        tmpd = os.path.join(tempfile.gettempdir(), f"gvox_frag_{os.getpid()}")
+        shutil.rmtree(tmpd, ignore_errors=True)
+        os.makedirs(tmpd, exist_ok=True)
+        own = t.get("raw")
+        self.audacity.send_command('SelectAll:')
+        self.audacity.send_command('RemoveTracks:')
+        self.audacity.send_command('NewMonoTrack:')
+        pos, names = 0.0, []
+        for k, c in enumerate(clips):
+            kind = 'новое' if own and os.path.abspath(c["raw"]) == os.path.abspath(own) and t.get("reuse", {}).get("rec") \
+                else ('записано' if t.get("reuse") else 'кусок')
+            path = os.path.join(tmpd, f"{k + 1:02d}_{kind}.wav")
+            pieces = self._tts_timeline([dict(c, pos=0)])
+            if not wav_render(path, pieces):
+                seg = AudioSegment.empty()
+                for p in pieces:
+                    seg += AudioSegment.from_file(p[1])[p[2]:p[3]] if p[0] == "audio" else AudioSegment.silent(p[1])
+                seg.export(path, format="wav")
+            ln = self._import_clip_to_track0(path, pos)
+            names.append(os.path.basename(path)[:-4])
+            pos += (ln or 0) + self.AUD_FRAG_GAP
+        self.audacity.send_command('SelectTracks: Track=0 Mode=Set')
+        self.audacity.send_command(f'SelectTime: Start=0 End={pos + 0.5} RelativeTo=ProjectStart')
+        self.audacity.send_command('ZoomSel:')
+        self.audacity.send_command('SelectNone:')
+        self._tts_audacity_take = i
+        return {"status": "ok", "fragments": names}
+
+    def tts_save_from_audacity(self, i):
+        """«Сохранить из Audacity»: забрать дорожку (как склеили там) в дубль
+        и сразу сохранить фразу."""
+        r = self.tts_take_from_audacity(i)
+        if r.get("error"):
+            return r
+        return self.tts_approve(i)
 
     def tts_take_from_audacity(self, i):
         """Забрать правку из Audacity в файл дубля — в формате исходной записи."""
@@ -1934,7 +1982,15 @@ class TtsFlowMixin:
         t = st["takes"][i]
         dst = os.path.join(st["work_dir"], t["file"])
         seg = AudioSegment.from_file(tmp)
-        export_like(seg, dst, self._tts_raw(t))
+        like = self._tts_clips(t)[0]["raw"] if t.get("clips") else self._tts_raw(t)
+        export_like(seg, dst, like)
+        if t.get("clips"):                   # склеено в Audacity — исходник дубля теперь эта склейка
+            src = os.path.join(st["work_dir"], TTS_RECORDS_DIR, f"Audacity_{t.get('chunk', i)}_{int(time.time())}.wav")
+            os.makedirs(os.path.dirname(src), exist_ok=True)
+            shutil.copy2(dst, src)
+            for k in ("clips", "clips_orig", "stitched", "edit"):
+                t.pop(k, None)
+            t["raw"], t["orig"], t["start_ms"] = src, [0, len(seg)], 0
         t["ms"] = len(seg)
         t["listened"] = False
         t["audacity"] = True
@@ -2574,6 +2630,66 @@ class TtsFlowMixin:
                 "resave_n": sum(len(x.get("tier_files") or []) for x in st["takes"] if x.get("unit") is not None
                                 and st["units"][x["unit"]].get("sheet") == unit.get("sheet")),
                 "tpl": {"from": tpl["from"], "auto": bool(tpl.get("auto")), "used": bool(t.get("tier_by_tpl"))} if tpl else None}
+
+    # ---- пакет: записали подряд несколько строк — размечаем и сохраняем разом ----
+    def _tts_tier_batch_takes(self):
+        """Дубли строк текущего листа (и логики), ещё не сохранённые: по
+        одному (последнему) на строку, в порядке записи."""
+        st = self._tts()
+        mode, logic = st.get("prompt_mode", "phrases"), st.get("sum_logic", 1)
+        last = {}
+        for k, t in enumerate(st["takes"]):
+            u = st["units"][t["unit"]] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
+            if not u or not u.get("tiers") or u.get("sheet") != mode or u.get("logic") not in (None, logic):
+                continue
+            if t.get("rejected"):
+                continue
+            last[u["id"]] = k
+        out = [k for k in sorted(last.values()) if not st["takes"][k].get("approved")]
+        return out
+
+    def tts_tier_batch(self, limit=30):
+        """Пакет для разметки: строки с волной дубля и клипами ярусов."""
+        rows = []
+        for k in self._tts_tier_batch_takes()[:int(limit)]:
+            m = self.tts_tier_marks(k)
+            if not m.get("tiers"):
+                continue
+            pk = m["peaks"]
+            step = max(1, len(pk) // 400)                    # волна попроще — строк много
+            m["peaks"] = [max(pk[j:j + step]) for j in range(0, len(pk), step)]
+            m["frame"] = m["frame"] * step
+            for x in m["tiers"]:
+                x.pop("peaks", None); x.pop("file_peaks", None)
+            m.pop("ctx", None)
+            rows.append(m)
+        return {"rows": rows, "pending": len(self._tts_tier_batch_takes())}
+
+    def tts_tier_batch_save(self, idxs):
+        """Сохранить пакет: у каждой строки — её ярусы эталонами (как Enter)."""
+        st = self._tts()
+        saved, skipped, errors = 0, 0, []
+        for k in sorted({int(x) for x in idxs}):
+            if not (0 <= k < len(st["takes"])):
+                continue
+            t = st["takes"][k]
+            u = st["units"][t["unit"]] if t.get("unit") is not None else None
+            if not u or not u.get("tiers") or t.get("approved"):
+                continue
+            try:
+                written, skip = self._tts_tier_save(t, u)
+                for other in st["takes"]:
+                    if other.get("unit") == t["unit"] and other is not t:
+                        other["approved"] = False
+                t["approved"], t["rejected"] = True, False
+                saved += len(written)
+                skipped += len(skip)
+            except Exception as e:
+                errors.append(f"{u['name']}: {e}")
+        self._tts_save()
+        if hasattr(self, '_tts_prompt_fix'):
+            self._tts_prompt_fix()
+        return {**self.tts_state(), "batch_saved": saved, "batch_skipped": skipped, "batch_errors": errors[:5]}
 
     def tts_tier_set(self, i, clips=None, write=None, opts=None):
         """Подвинули край клипа / паузу / темп / громкость яруса, «перезаписать»,
