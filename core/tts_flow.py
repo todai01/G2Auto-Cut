@@ -2628,6 +2628,7 @@ class TtsFlowMixin:
         return {"i": i, "tiers": out, "length": length, "peaks": self._tts_peaks(rms), "frame": f,
                 "row": unit["text"], "ctx": ctx, "take_tempo": self._tts_sound(t)[1],
                 "opts": self._tts_tier_opts(), "ctx_level": level, "row_level": row_l, "phrase": phrase,
+                "bg": self.tts_tier_bg_state(),
                 "resave_n": sum(len(x.get("tier_files") or []) for x in st["takes"] if x.get("unit") is not None
                                 and st["units"][x["unit"]].get("sheet") == unit.get("sheet")),
                 "tpl": {"from": tpl["from"], "auto": bool(tpl.get("auto")), "used": bool(t.get("tier_by_tpl"))} if tpl else None}
@@ -2664,7 +2665,7 @@ class TtsFlowMixin:
                 x.pop("peaks", None); x.pop("file_peaks", None)
             m.pop("ctx", None)
             rows.append(m)
-        return {"rows": rows, "pending": len(self._tts_tier_batch_takes())}
+        return {"rows": rows, "pending": len(self._tts_tier_batch_takes()), "bg": self.tts_tier_bg_state()}
 
     def tts_tier_batch_save(self, idxs):
         """Сохранить пакет: у каждой строки — её ярусы эталонами (как Enter)."""
@@ -2822,8 +2823,112 @@ class TtsFlowMixin:
                     xf = min(post, max(1, rate // 50))
                     w[len(x) - post:len(x) - post + xf] = np.linspace(k_body, 1.0, xf, dtype=np.float32)
                 x = x + bed[:len(x)] * w
+        x = self._tts_add_bg(x, rate, f"{unit.get('name')}:{k}")
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         _write_pcm16(dst, x, rate)
+
+    # ---- фон из файла (например, 15 с шума офиса) под переменные ----
+    TIER_BG_DB = -24          # по умолчанию фон на столько дБ тише голоса
+    TIER_BG_DIR = '_Фон'
+
+    def _tts_bg(self):
+        bg = self._tts().get("tier_bg") or {}
+        wd = self._tts().get("work_dir")
+        if not bg.get("file") or not wd:
+            return None
+        path = os.path.join(wd, bg["file"])
+        return dict(bg, path=path) if os.path.exists(path) else None
+
+    def tts_tier_bg_pick(self):
+        """Загрузить фон (любой звук: mp3/wav/…): копия — в «_Фон/» проекта."""
+        st = self._tts()
+        if not st.get("work_dir"):
+            return {"error": "Сначала откройте проект."}
+        f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
+                                                  file_types=('Аудио (*.wav;*.mp3;*.flac;*.ogg;*.m4a)', 'Все файлы (*.*)'))
+        if not f:
+            return {"bg": self.tts_tier_bg_state()}
+        return self.tts_tier_bg_load(f[0])
+
+    def tts_tier_bg_load(self, src):
+        st = self._tts()
+        try:
+            seg = AudioSegment.from_file(src).set_channels(1).set_sample_width(2)
+        except Exception as e:
+            return {"error": f"Не читается: {e}"}
+        if len(seg) < 1000:
+            return {"error": "Фон слишком короткий — нужна хотя бы секунда."}
+        name = clean_name(os.path.splitext(os.path.basename(src))[0]) or 'фон'
+        rel = os.path.join(self.TIER_BG_DIR, f"{name}.wav")
+        dst = os.path.join(st["work_dir"], rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        seg.export(dst, format="wav")
+        old = st.get("tier_bg") or {}
+        st["tier_bg"] = {"file": rel, "name": name, "on": True, "db": old.get("db", self.TIER_BG_DB),
+                         "sec": round(len(seg) / 1000, 1)}
+        self.__dict__.pop('_tts_bg_cache', None)
+        self._tts_save()
+        return {"bg": self.tts_tier_bg_state()}
+
+    def tts_tier_bg_set(self, on=None, db=None):
+        st = self._tts()
+        bg = st.get("tier_bg")
+        if not bg:
+            return {"bg": None}
+        if on is not None:
+            bg["on"] = bool(on)
+        if db is not None:
+            bg["db"] = int(max(-45, min(-3, int(db))))
+        self._tts_save()
+        return {"bg": self.tts_tier_bg_state()}
+
+    def tts_tier_bg_state(self):
+        bg = self._tts_bg()
+        return {k: bg[k] for k in ("name", "on", "db", "sec")} if bg else None
+
+    def _tts_add_bg(self, x, rate, key):
+        """Подмешать фон: кусок записи (у каждого яруса — свой, по ключу),
+        по кругу с перекрытием, на bg.db дБ тише голоса яруса."""
+        bg = self._tts_bg()
+        if not bg or not bg.get("on") or not len(x):
+            return x
+        import zlib
+        from utils.audio_player import resample
+        cache = self.__dict__.setdefault('_tts_bg_cache', {})
+        ck = (bg["path"], os.path.getmtime(bg["path"]), rate)
+        if ck not in cache:
+            seg = AudioSegment.from_file(bg["path"]).set_channels(1).set_sample_width(2)
+            b = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
+            if seg.frame_rate != rate:
+                b = resample(b[:, None], seg.frame_rate, rate)[:, 0]
+            cache.clear()
+            cache[ck] = b.astype(np.float32)
+        b = cache[ck]
+        n, xf = len(x), max(1, int(rate * 0.05))
+        start = zlib.crc32(key.encode('utf-8')) % max(1, len(b) - xf)
+        out, pos, cur = np.zeros(n, dtype=np.float32), 0, start
+        while pos < n:                                      # по кругу; стык — перекрытие xf
+            piece = b[cur:cur + (n - pos)].copy()
+            take = len(piece)
+            if pos:
+                ov = min(xf, take)
+                piece[:ov] *= np.linspace(0, 1, ov, dtype=np.float32)
+                out[pos:pos + ov] *= np.linspace(1, 0, ov, dtype=np.float32)
+            out[pos:pos + take] += piece
+            if pos + take >= n or take <= xf:
+                break
+            pos, cur = pos + take - xf, 0
+        fr = max(1, rate // 100)
+        e = np.sqrt((x[:n // fr * fr].reshape(-1, fr) ** 2).mean(axis=1)) if n >= fr else np.zeros(0)
+        voice = float(np.percentile(e, 90)) if len(e) else 0.0
+        bed = float(np.sqrt(np.mean(out ** 2))) if len(out) else 0.0
+        if voice <= 1e-5 or bed <= 1e-6:
+            return x
+        out *= voice * 10 ** (float(bg.get("db", self.TIER_BG_DB)) / 20) / bed
+        f = min(n // 2, max(1, int(rate * 0.015)))          # без щелчков на краях файла
+        out[:f] *= np.linspace(0, 1, f, dtype=np.float32)
+        out[-f:] *= np.linspace(1, 0, f, dtype=np.float32)
+        return x + out
 
     @staticmethod
     def _tts_peaks(rms):

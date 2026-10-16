@@ -6724,6 +6724,7 @@ let isProcessing = false;
                     ${ttsJoinHTML(r.tiers, 'ttsTierJoin')}
                     ${hasCtx ? `<button type="button" class="tts-reuse-chip ${o.noise ? 'is-on' : ''}" onclick="ttsTierOpt('noise', ${!o.noise})" title="Пауза перед ярусом и фон под голосом — шумом комнаты из начала фразы">фон как во фразе${o.noise ? ' ✓' : ''}</button>
                     <button type="button" class="tts-reuse-chip ${o.level ? 'is-on' : ''}" onclick="ttsTierOpt('level', ${!o.level})" title="Громкость речи ярусов — как у начала и продолжения фразы${r.ctx_level !== null ? ' (' + r.ctx_level + ' дБ)' : ''}">громкость как у фразы${o.level ? ' ✓' : ''}</button>` : '<span class="tts-dim">начало фразы не записано — фон и громкость не с чем сравнить</span>'}
+                    ${ttsBgHTML(r.bg)}
                     <span class="tts-tiers__tpl">${tp ? `шаблон: ${escapeHtml(tp.from)}${tp.used ? ' · размечено по нему' : ''}` : 'шаблона нет — первая сохранённая строка станет шаблоном'}
                       <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierTpl()" title="Края, паузы, темп и громкость ярусов этой строки — для следующих строк">Шаблон из этой строки</button>
                       ${tp ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierTplApply()" title="Разметить этот дубль заново по шаблону">По шаблону</button>
@@ -6799,6 +6800,27 @@ let isProcessing = false;
             let r = await pywebview.api.tts_tier_play(ttsCurTake().i, null, 0, TTS_JOIN_MS);
             if (r && r.error) showToast(r.error);
         }
+
+        // Фон из файла (например, 15 с шума офиса) — под все переменные.
+        function ttsBgHTML(bg) {
+            if (!bg) return ` <button type="button" class="tts-reuse-chip" onclick="ttsBgPick()" title="Загрузить звук фона (шум офиса и т.п.) — подмешается под каждый ярус и паузы">фон из файла…</button>`;
+            return ` <button type="button" class="tts-reuse-chip ${bg.on ? 'is-on' : ''}" onclick="ttsBgSet(${!bg.on}, null)" title="Фон «${escapeHtml(bg.name)}» (${bg.sec} с) под переменными — вкл/выкл">фон: ${escapeHtml(bg.name)}${bg.on ? ' ✓' : ''}</button>`
+                + (bg.on ? `<span class="tts-tiers__knob" title="Громкость фона относительно голоса">
+                    <button type="button" onclick="ttsBgSet(null, ${bg.db - 2})">&minus;</button><b>${bg.db} дБ</b><button type="button" onclick="ttsBgSet(null, ${bg.db + 2})">+</button></span>` : '')
+                + `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsBgPick()" title="Загрузить другой файл фона">сменить</button>`;
+        }
+        async function ttsBgAfter(r) {
+            if (!r) return;
+            if (r.error) { showToast(r.error); return; }
+            if (ttsBatchIsOpen()) { ttsBatch.bg = r.bg; ttsBatchRender(); if (ttsBatch.rows.length) ttsBatchPlay(0, -2); }
+            else { let t = ttsCurTake(); if (t) { await ttsTiersLoad(t.i); ttsTierJoinPlay(); } }
+        }
+        async function ttsBgPick() {
+            let r = await pywebview.api.tts_tier_bg_pick();
+            if (r && r.bg) showToast(`Фон «${r.bg.name}» (${r.bg.sec} с) — под переменными. Сохранённые раньше эталоны — «Пересохранить готовые»`, 5000);
+            ttsBgAfter(r);
+        }
+        async function ttsBgSet(on, db) { ttsBgAfter(await pywebview.api.tts_tier_bg_set(on, db)); }
 
         function ttsTierPhraseHTML(r) {
             let ph = r.phrase;
@@ -9005,6 +9027,7 @@ let isProcessing = false;
             el.innerHTML = `<div class="tts-batch__box">
                 <div class="tts-batch__top"><b>Пакет: ${rows.length} ${rows.length === 1 ? 'строка' : rows.length < 5 ? 'строки' : 'строк'}</b>
                     <span class="tts-dim">границы ярусов поставлены сами (по шаблону, если он есть) — поправьте, где нужно; ▶ — послушать</span>
+                    ${ttsBgHTML(ttsBatch.bg)}
                     <span class="tts-batch__sp"></span>
                     <button type="button" class="btn-tile btn-tile--good" onclick="ttsBatchSave()">Сохранить все <kbd>Enter</kbd></button>
                     <button type="button" class="btn-tile btn-tile--sub" onclick="ttsBatchClose()">Закрыть <kbd>Esc</kbd></button></div>
