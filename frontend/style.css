@@ -3370,22 +3370,22 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 #cloneOverlay .opt-chip input[type=radio]{ position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
 
 
-/* Идёт запись: всё вокруг чуть гаснет, яркий — только текст суфлёра.
-   Навели мышь на затемнённое — проявляется (кнопками можно пользоваться). */
+/* Пока держат Space (или зажали фразу мышью) — всё вокруг чуть гаснет,
+   яркий — только текст суфлёра. Отпустили — всё как было. */
 .stage-tts > .tts-header, .stage-tts > .tts-rail-wrap, .stage-tts > .tts-body,
 .stage-tts .tts-recbar__row, .stage-tts .tts-prompter__meta, .stage-tts .tts-prompter__next,
 .stage-tts .tts-marks, .stage-tts .tts-prompter__hint{ transition: opacity .35s ease; }
-.stage-tts.is-recording:not(.show-assembly) > .tts-header,
-.stage-tts.is-recording:not(.show-assembly) > .tts-rail-wrap,
-.stage-tts.is-recording:not(.show-assembly) > .tts-body,
-.stage-tts.is-recording:not(.show-assembly) .tts-recbar__row,
-.stage-tts.is-recording:not(.show-assembly) .tts-prompter__meta,
-.stage-tts.is-recording:not(.show-assembly) .tts-prompter__next,
-.stage-tts.is-recording:not(.show-assembly) .tts-marks,
-.stage-tts.is-recording:not(.show-assembly) .tts-prompter__hint{ opacity: .38; }
-.stage-tts.is-recording:not(.show-assembly) > .tts-header:hover,
-.stage-tts.is-recording:not(.show-assembly) > .tts-rail-wrap:hover,
-.stage-tts.is-recording:not(.show-assembly) > .tts-body:hover,
-.stage-tts.is-recording:not(.show-assembly) .tts-recbar__row:hover,
-.stage-tts.is-recording:not(.show-assembly) .tts-prompter__meta:hover,
-.stage-tts.is-recording:not(.show-assembly) .tts-prompter__next:hover{ opacity: 1; }
+.stage-tts.is-holding:not(.show-assembly) > .tts-header,
+.stage-tts.is-holding:not(.show-assembly) > .tts-rail-wrap,
+.stage-tts.is-holding:not(.show-assembly) > .tts-body,
+.stage-tts.is-holding:not(.show-assembly) .tts-recbar__row,
+.stage-tts.is-holding:not(.show-assembly) .tts-prompter__meta,
+.stage-tts.is-holding:not(.show-assembly) .tts-prompter__next,
+.stage-tts.is-holding:not(.show-assembly) .tts-marks,
+.stage-tts.is-holding:not(.show-assembly) .tts-prompter__hint{ opacity: .38; }
+.stage-tts.is-holding:not(.show-assembly) > .tts-header:hover,
+.stage-tts.is-holding:not(.show-assembly) > .tts-rail-wrap:hover,
+.stage-tts.is-holding:not(.show-assembly) > .tts-body:hover,
+.stage-tts.is-holding:not(.show-assembly) .tts-recbar__row:hover,
+.stage-tts.is-holding:not(.show-assembly) .tts-prompter__meta:hover,
+.stage-tts.is-holding:not(.show-assembly) .tts-prompter__next:hover{ opacity: 1; }

@@ -409,6 +409,22 @@ class TtsFlowMixin:
                              "work_dir": None, "raw_path": None, "takes": [], "index": 0}
         return st
 
+    def tts_reset(self):
+        """«Новый проект»: закрыть текущий TTS-проект (всё сохранено на диске —
+        его можно открыть снова) и начать с чистого листа, без перезапуска."""
+        if getattr(self, '_tts_rec', None):
+            return {"error": "Сначала остановите запись (R)."}
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+        self._tts_save()                                 # последнее состояние — в проект на диске
+        self.tts = None
+        for k in ('_tts_del_stack', '_tts_claims_cache', '_tts_lvl_cache', '_tts_bg_cache', '_tts_audacity_take',
+                  '_tts_playing', '_tts_raw_len', '_tts_reuse_cache', '_tts_live'):
+            self.__dict__.pop(k, None)
+        return self.tts_state()
+
     def _tts_save(self):
         self._tts_claims_cache = {}                      # файлы/дубли поменялись — пересчитать
         st = self._tts()

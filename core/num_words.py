@@ -77,6 +77,40 @@ def ru_day_genitive(n):
     return (f"{_RU_TENS[t]} " if t else '') + _RU_ORD_UNITS[u]
 
 
+_RU_ORD_TENS_ALL = ['', '', 'двадцатого', 'тридцатого', 'сорокового', 'пятидесятого', 'шестидесятого',
+                    'семидесятого', 'восьмидесятого', 'девяностого']
+_RU_ORD_HUNDREDS = ['', 'сотого', 'двухсотого', 'трёхсотого', 'четырёхсотого', 'пятисотого', 'шестисотого',
+                    'семисотого', 'восьмисотого', 'девятисотого']
+_RU_ORD_THOUSANDS = {1: 'тысячного', 2: 'двухтысячного', 3: 'трёхтысячного'}
+
+
+def _ru_ord_genitive_99(n):
+    """1..99 → порядковое в родительном: 5 → «пятого», 40 → «сорокового», 25 → «двадцать пятого»."""
+    if 10 <= n <= 19:
+        return _RU_ORD_TEENS[n - 10]
+    t, u = divmod(n, 10)
+    if not u:
+        return _RU_ORD_TENS_ALL[t]
+    return (f"{_RU_TENS[t]} " if t else '') + _RU_ORD_UNITS[u]
+
+
+def ru_year_genitive(n):
+    """2025 → «две тысячи двадцать пятого года», 2000 → «двухтысячного года»
+    (как в «до первого января две тысячи двадцать пятого года»)."""
+    n = int(n)
+    th, r = divmod(n, 1000)
+    if not r:
+        word = _RU_ORD_THOUSANDS.get(th, f"{ru_words(n)}-го")
+    else:
+        h, rr = divmod(r, 100)
+        head = (['тысяча'] if th == 1 else [ru_words(th * 1000)]) if th else []
+        if not rr:
+            word = ' '.join(head + [_RU_ORD_HUNDREDS[h]])
+        else:
+            word = ' '.join(head + ([_RU_HUNDREDS[h]] if h else []) + [_ru_ord_genitive_99(rr)])
+    return f"{word} года"
+
+
 # ---------------- KZ ----------------
 
 _KZ_UNITS = ['', 'бір', 'екі', 'үш', 'төрт', 'бес', 'алты', 'жеті', 'сегіз', 'тоғыз']
@@ -152,6 +186,8 @@ def synth_text(category_key, value, lang=None):
             return f"{kz_words(n)} теңге"
         if base == 'day':
             return kz_ordinal(n)
+        if base == 'year':
+            return f"{kz_words(n)} жылғы"
         return kz_words(n)
     if base == 'million':
         return f"{ru_words(n)} {ru_plural(n, 'миллион', 'миллиона', 'миллионов')}"
@@ -163,4 +199,6 @@ def synth_text(category_key, value, lang=None):
         return f"{ru_words(n)} тенге"
     if base == 'day':
         return ru_day_genitive(n)
+    if base == 'year':
+        return ru_year_genitive(n)
     return ru_words(n)

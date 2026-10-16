@@ -8668,6 +8668,25 @@ let isProcessing = false;
             }
         }
 
+        // «Новый проект»: сбросить текущий TTS-проект и загрузить другую папку/таблицу.
+        async function ttsResetProject() {
+            if (ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            if (tts && tts.loaded && !(await showBeautifulConfirm(
+                `Закрыть проект <b>${escapeHtml(tts.project || tts.excel_name || '')}</b> и начать новый?<br><br>Всё записанное и сохранённое останется в его папке — его можно открыть снова.`,
+                'Новый проект', 'Отмена'))) return;
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_reset();
+            if (!res || res.error) { showToast(res && res.error || 'Не получилось'); return; }
+            tts = res;
+            ttsTR = null; ttsEd = null; ttsTS = null; ttsAudacitySent = -1; ttsPromptKey = null;
+            ttsAsmQueue = []; ttsAsmAuto = false;
+            let asm = document.getElementById('ttsAssembly'); if (asm) asm.dataset.key = '';
+            ttsShowAssembly(false);
+            ttsRender();
+            await ttsLoadPrompt();
+            showToast('Проект закрыт — выберите таблицу («Таблица») для нового');
+        }
+
         async function ttsRecStop() {
             clearInterval(ttsRec.timer);
             ttsRec.on = false;
@@ -8678,6 +8697,7 @@ let isProcessing = false;
 
         function ttsRecStopped(state, error) {
             clearInterval(ttsRec.timer);
+            document.getElementById('stage4-tts').classList.remove('is-holding');
             ttsSetPaused(false);
             ttsRec.on = false;
             ttsSetRecUi(false);
@@ -8934,6 +8954,7 @@ let isProcessing = false;
             ttsLiveSt.holding = down;
             if (!down) ttsLiveSt.busy = true;          // сразу «Распознаю…»
             document.getElementById('ttsRecBar').classList.toggle('is-holding', down);
+            document.getElementById('stage4-tts').classList.toggle('is-holding', down);   // затемнение вокруг текста
             ttsLiveRender();
             let res = await pywebview.api.tts_ptt(down);
             if (res && res.error) { showToast(res.error); ttsLiveSt.busy = false; ttsLiveRender(); }
@@ -9042,6 +9063,7 @@ let isProcessing = false;
             ttsPttDown = false;
             ttsLiveSt.holding = false;
             document.getElementById('ttsRecBar').classList.remove('is-holding');
+            document.getElementById('stage4-tts').classList.remove('is-holding');
             ttsLiveRender();
         }
         window.addEventListener('blur', () => { if (ttsPttDown) ttsPtt(false); });
