@@ -79,14 +79,6 @@ body{
     transition: filter .35s ease;
 }
 
-/* Когда окно программы теряет фокус (например, Audacity вышел на передний
-   план) — размываем и затемняем фон, как будто программа «отошла назад».
-   Срабатывает на стандартные события окна, поэтому включается само —
-   никаких дополнительных сигналов от Python не нужно. */
-body.app-unfocused{
-    filter: blur(5px) brightness(0.55) saturate(0.85);
-}
-
 button{ font-family: inherit; transition: transform .15s var(--ease), background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, opacity .15s ease; }
 button:active{ transform: translateY(1px); }
 button:focus-visible, input:focus-visible{ outline: 2px solid var(--accent-primary); outline-offset: 2px; }
@@ -545,7 +537,7 @@ body.sum-mode .action-panel > .silence-toggle{ display: none; }
 
 .custom-alert-overlay {
     display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(6, 7, 9, 0.78); backdrop-filter: blur(6px);
+    background: rgba(6, 7, 9, 0.78);
     z-index: 9999; justify-content: center; align-items: center;
     animation: fadeInAlert 0.2s ease;
 }
@@ -3379,7 +3371,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 
 /* Пакет переменных: N строк — разметка и сохранение разом */
 .tts-batch{ position: fixed; inset: 0; z-index: 900; display: none; align-items: center; justify-content: center;
-    background: rgba(5,7,11,.72); backdrop-filter: blur(4px); }
+    background: rgba(5,7,11,.78); }
 .tts-batch__box{ width: min(1500px, 96vw); max-height: 92vh; display: flex; flex-direction: column; border-radius: 16px;
     background: var(--panel); border: 1px solid var(--border); box-shadow: 0 30px 90px rgba(0,0,0,.6); }
 .tts-batch__top{ display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border-soft); }
@@ -3398,3 +3390,23 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-batch__chip.is-skip{ opacity: .6; }
 .tts-batch__chip button{ border: 0; background: var(--tint-var); color: var(--accent-var); border-radius: 6px; width: 22px; height: 22px; cursor: pointer; }
 .tts-batch__chip label{ display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+
+/* Идёт запись: всё вокруг чуть гаснет, яркий — только текст суфлёра.
+   Навели мышь на затемнённое — проявляется (кнопками можно пользоваться). */
+.stage-tts > .tts-header, .stage-tts > .tts-rail-wrap, .stage-tts > .tts-body,
+.stage-tts .tts-recbar__row, .stage-tts .tts-prompter__meta, .stage-tts .tts-prompter__next,
+.stage-tts .tts-marks, .stage-tts .tts-prompter__hint{ transition: opacity .35s ease; }
+.stage-tts.is-recording:not(.show-assembly) > .tts-header,
+.stage-tts.is-recording:not(.show-assembly) > .tts-rail-wrap,
+.stage-tts.is-recording:not(.show-assembly) > .tts-body,
+.stage-tts.is-recording:not(.show-assembly) .tts-recbar__row,
+.stage-tts.is-recording:not(.show-assembly) .tts-prompter__meta,
+.stage-tts.is-recording:not(.show-assembly) .tts-prompter__next,
+.stage-tts.is-recording:not(.show-assembly) .tts-marks,
+.stage-tts.is-recording:not(.show-assembly) .tts-prompter__hint{ opacity: .38; }
+.stage-tts.is-recording:not(.show-assembly) > .tts-header:hover,
+.stage-tts.is-recording:not(.show-assembly) > .tts-rail-wrap:hover,
+.stage-tts.is-recording:not(.show-assembly) > .tts-body:hover,
+.stage-tts.is-recording:not(.show-assembly) .tts-recbar__row:hover,
+.stage-tts.is-recording:not(.show-assembly) .tts-prompter__meta:hover,
+.stage-tts.is-recording:not(.show-assembly) .tts-prompter__next:hover{ opacity: 1; }

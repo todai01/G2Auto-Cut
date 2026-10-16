@@ -229,29 +229,13 @@ let isProcessing = false;
         window.addEventListener('pywebviewready', warmUpApp);
         document.addEventListener('DOMContentLoaded', () => setTimeout(warmUpApp, 50));
 
-        // Размытие/затемнение фона, когда окно программы теряет фокус ОС
-        // (например, когда Audacity выходит на передний план после C, R
-        // или выбора исходника для start/end). Это стандартные события
-        // window — их не нужно вызывать вручную из Python.
-        // Когда Audacity вживлён внутрь софта, клик по нему технически уводит
-        // фокус браузерного слоя — но это всё ещё то же самое окно, а не
-        // отдельная программа, поэтому темнить/размывать фон не нужно.
-        // В «Конструкторе переменных» своей рамки под встраивание пока нет —
-        // Audacity там всегда выходит отдельным окном по кнопке «Обновить
-        // сумму», и это нормальная часть работы с этим экраном, а не повод
-        // затемнять программу.
         window.addEventListener('blur', () => {
             // Окно потеряло фокус — если W/S были зажаты, keyup может не
             // прийти вовсе (например, alt-tab), и прокрутка иначе крутилась
             // бы бесконечно быстрее и быстрее сама по себе.
             constructorStopHold('KeyW');
             constructorStopHold('KeyS');
-            if (audacityEmbedded) return;
-            let constructorStage = document.getElementById('stage3-constructor');
-            if (constructorStage && constructorStage.style.display !== 'none') return;
-            document.body.classList.add('app-unfocused');
         });
-        window.addEventListener('focus', () => document.body.classList.remove('app-unfocused'));
 
         function updateProgress(p, t) {
             document.getElementById('progressContainer').style.display = 'block';
