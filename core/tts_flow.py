@@ -2185,7 +2185,10 @@ class TtsFlowMixin:
 
     def _tts_take_frames(self, t):
         """RMS дубля по кадрам 10 мс + длина в мс."""
-        seg = AudioSegment.from_file(os.path.join(self._tts()["work_dir"], t["file"]))
+        path = os.path.join(self._tts()["work_dir"], t["file"])
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Файл дубля не найден: {t['file']} — перезапишите строку или удалите дубль (Del).")
+        seg = AudioSegment.from_file(path)
         seg = seg.set_channels(1).set_sample_width(2)
         x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
         per = max(1, seg.frame_rate * self.TIER_FRAME_MS // 1000)
@@ -2400,28 +2403,24 @@ class TtsFlowMixin:
 
     @staticmethod
     def _k_weight(x, rate):
+        """K-фильтр (как в LUFS): полка +4 дБ выше 1,5 кГц и срез ниже 38 Гц.
+        Для замера громкости хватает АЧХ — применяем её в спектре (быстро)."""
         import math
+        n = len(x)
+        f = np.fft.rfftfreq(n, 1 / rate)
+        z = np.exp(-1j * 2 * np.pi * f / rate)
 
-        def biquad(x, b, a):
-            b0, b1, b2 = (v / a[0] for v in b)
-            a1, a2 = a[1] / a[0], a[2] / a[0]
-            y = [0.0] * len(x)
-            x1 = x2 = y1 = y2 = 0.0
-            for n, v in enumerate(x):
-                o = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
-                x2, x1, y2, y1 = x1, v, y1, o
-                y[n] = o
-            return y
-        w0 = 2 * math.pi * 1500 / rate                              # полка +4 дБ выше 1.5 кГц
-        A, al = 10 ** (4 / 40), math.sin(w0) / (2 / math.sqrt(2))
-        c, sa = math.cos(w0), 2 * math.sqrt(10 ** (4 / 40)) * math.sin(w0) / (2 / math.sqrt(2))
-        b = (A * ((A + 1) + (A - 1) * c + sa), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - sa))
-        a = ((A + 1) - (A - 1) * c + sa, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - sa)
-        y = biquad(x.tolist(), b, a)
-        w0 = 2 * math.pi * 38 / rate                                # срез низа ниже 38 Гц
+        def resp(b, a):
+            return np.abs((b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z))
+        w0 = 2 * math.pi * 1500 / rate
+        A, c = 10 ** (4 / 40), math.cos(w0)
+        sa = 2 * math.sqrt(A) * math.sin(w0) / (2 / math.sqrt(2))
+        h = resp((A * ((A + 1) + (A - 1) * c + sa), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - sa)),
+                 ((A + 1) - (A - 1) * c + sa, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - sa))
+        w0 = 2 * math.pi * 38 / rate
         al, c = math.sin(w0) / (2 * 0.5), math.cos(w0)
-        y = biquad(y, ((1 + c) / 2, -(1 + c), (1 + c) / 2), (1 + al, -2 * c, 1 - al))
-        return np.asarray(y, dtype=np.float64)
+        h = h * resp(((1 + c) / 2, -(1 + c), (1 + c) / 2), (1 + al, -2 * c, 1 - al))
+        return np.fft.irfft(np.fft.rfft(x) * h, n)
 
     @classmethod
     def _loudness(cls, seg):
@@ -2444,10 +2443,13 @@ class TtsFlowMixin:
         cache = self.__dict__.setdefault('_tts_lvl_cache', {})
         key = (path, os.path.getmtime(path), tail)
         if key not in cache:
-            seg = AudioSegment.from_file(path)
-            spans = detect_nonsilent(seg, min_silence_len=80, silence_thresh=seg.dBFS - 18) if seg.dBFS > -90 else []
-            if spans:
-                v0, v1 = spans[0][0], spans[-1][1]
+            seg = AudioSegment.from_file(path).set_channels(1).set_sample_width(2)
+            xs = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
+            fr = max(1, seg.frame_rate // 100)                       # кадры 10 мс
+            e = np.sqrt((xs[:len(xs) // fr * fr].reshape(-1, fr) ** 2).mean(axis=1)) if len(xs) >= fr else np.zeros(0)
+            v = np.nonzero(e > max(float(e.max()) * 0.1, 1e-4))[0] if len(e) else []
+            if len(v):
+                v0, v1 = int(v[0]) * 10, int(v[-1] + 1) * 10
                 seg = seg[max(v0, v1 - self.TIER_JOIN_MS):v1] if tail else seg[v0:min(v1, v0 + self.TIER_JOIN_MS)]
             cache[key] = self._loudness(seg)
         return cache[key]
@@ -2575,6 +2577,14 @@ class TtsFlowMixin:
         return {"resaved": n}
 
     def tts_tier_marks(self, i):
+        """Для «Сборки»: дубль строки (волна) и ярусы клипами (см. _tts_tier_marks).
+        Любая беда (пропал файл и т.п.) — сообщением, а не падением."""
+        try:
+            return self._tts_tier_marks(i)
+        except Exception as e:
+            return {"tiers": None, "error": str(e)}
+
+    def _tts_tier_marks(self, i):
         """Для «Сборки»: дубль строки (волна) и ярусы клипами — где взят каждый
         и как они встанут друг за другом (с началом и продолжением фразы)."""
         st = self._tts()

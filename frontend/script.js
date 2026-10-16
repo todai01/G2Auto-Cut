@@ -6555,7 +6555,16 @@ let isProcessing = false;
         }
 
         // «Сборка»: вся фраза из кусочков — что уже сохранено, где текущий.
-        function ttsRenderAssembly() {
+        // Кнопка «Слушать/Стоп» в «Сборке» — без перерисовки всего остального.
+        function ttsAsmPlayBtn(t) {
+            let b = document.querySelector('#ttsAssembly .tts-asm-play');
+            if (!b || !t) return;
+            let on = ttsPlayingIdx === t.i;
+            b.classList.toggle('is-active', on);
+            b.innerHTML = `${on ? 'Стоп' : 'Слушать'} <kbd>Space</kbd>`;
+        }
+
+        function ttsRenderAssembly(force) {
             let el = document.getElementById('ttsAssembly');
             let t = ttsCurTake();
             let u = t ? ttsUnit(t.unit) : null;
@@ -6580,6 +6589,13 @@ let isProcessing = false;
                 : block(u);
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             let [label, tone] = ttsTakeStatus(t);
+            // Ничего своего не поменялось (например, только кончилась прослушка) — не
+            // перерисовываем: иначе волны пропадают и загружаются заново (мигают).
+            let key = JSON.stringify([t.i, t.file, t.ms, t.unit, t.approved, t.unit_saved, t.status, t.gain_db, t.tempo,
+                t.audacity, !!t.reuse, t.clips || null, t.edit || null, blocks, label, tts.takes.length]);
+            ttsAsmPlayBtn(t);
+            if (el.dataset.key === key && el.firstElementChild) return;
+            el.dataset.key = key;
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
                     ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : 'обычная фраза'}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
@@ -6615,7 +6631,7 @@ let isProcessing = false;
                     ${ttsSoundBarHTML(t)}
                 </div>
                 <div class="tts-asm-actions">
-                    <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
+                    <button class="btn-tile tts-asm-play ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
                     <button class="btn-tile btn-tile--good" onclick="ttsApprove()">Сохранить <kbd>Enter</kbd></button>
                     <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
@@ -6637,6 +6653,10 @@ let isProcessing = false;
             if (!t || t.i !== i) return;
             ttsTR = r && r.tiers ? r : null;
             ttsTiersRender();
+            if (!ttsTR && r && r.error) {
+                let el = document.getElementById('ttsTiers');
+                if (el) el.innerHTML = `<div class="tts-dim">Ярусы: ${escapeHtml(r.error)}</div>`;
+            }
         }
         // Две дорожки, как в режиме «Суммы»: «Дубль» — откуда взят каждый ярус
         // (края тянутся), «Сборка» — ярусы друг за другом, как склеятся файлы,
@@ -6779,9 +6799,15 @@ let isProcessing = false;
             await ttsTiersSend();
             ttsTierJoinPlay();
         }
+        let ttsTierBusy = false;                     // звук ярусов готовится — лишние клики не копятся
+        async function ttsTierCall(fn) {
+            if (ttsTierBusy) return null;
+            ttsTierBusy = true;
+            try { return await fn(); } finally { ttsTierBusy = false; }
+        }
         async function ttsTierJoinPlay() {
             await ttsStopPlay();
-            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, null, 0, TTS_JOIN_MS);
+            let r = await ttsTierCall(() => pywebview.api.tts_tier_play(ttsCurTake().i, null, 0, TTS_JOIN_MS));
             if (r && r.error) showToast(r.error);
         }
 
@@ -6902,7 +6928,7 @@ let isProcessing = false;
         }
         async function ttsTierPlayFrom(ms) {
             await ttsStopPlay();
-            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, null, ms);
+            let r = await ttsTierCall(() => pywebview.api.tts_tier_play(ttsCurTake().i, null, ms));
             if (r && r.error) { showToast(r.error); return; }
             if (r && r.playing) ttsTierHead(r.from, r.duration * 1000);
         }
@@ -6924,7 +6950,7 @@ let isProcessing = false;
             }
             await ttsStopPlay();
             clearInterval(ttsTierHeadTimer);
-            let r = await pywebview.api.tts_tier_play(ttsCurTake().i, k, null);
+            let r = await ttsTierCall(() => pywebview.api.tts_tier_play(ttsCurTake().i, k, null));
             if (r && r.error) showToast(r.error);
         }
 
@@ -7526,6 +7552,7 @@ let isProcessing = false;
             let t = ttsCurTake();
             if (!t) return;
             if (ttsPlayingIdx === t.i) { await ttsStopPlay(); ttsRender(); return; }
+            if (ttsPlayPending) return;                  // ещё готовится — второй клик не запускает заново
             clearTimeout(ttsPlayTimer);
             let g = ++ttsPlayGen;
             ttsPlayPending = true;
@@ -9195,7 +9222,7 @@ let isProcessing = false;
             stage.classList.toggle('show-assembly', on === undefined ? !stage.classList.contains('show-assembly') : on);
             let open = stage.classList.contains('show-assembly');
             if (open) {
-                ttsPttCancel(); ttsEd = null; ttsRenderAssembly();
+                ttsPttCancel(); ttsEd = null; document.getElementById('ttsAssembly').dataset.key = ''; ttsRenderAssembly();
                 let t = ttsCurTake();                   // «из записанного» — куски сразу в Audacity
                 if (t && t.reuse && ttsAudacitySent !== t.i) ttsSendToAudacity(true);
             }
