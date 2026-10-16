@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/g2auto-cut-project-y8qvzc]
-    paths: [build_exe.py, main.spec, main.py, requirements.txt, .github/workflows/build-exe.yml]
+    paths: [build_exe.py, main.spec, main.py, requirements.txt, .github/workflows/build-exe.yml, 'core/**', 'frontend/**', 'utils/**']
 
 permissions:
   contents: write

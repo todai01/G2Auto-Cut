@@ -410,6 +410,7 @@ class TtsFlowMixin:
         return st
 
     def _tts_save(self):
+        self._tts_claims_cache = {}                      # файлы/дубли поменялись — пересчитать
         st = self._tts()
         wd = st.get("work_dir")
         if not wd or not os.path.isdir(wd):
@@ -2091,6 +2092,29 @@ class TtsFlowMixin:
                                           "tiers": tiers, "lang": lang, "cat_label": "Строка таблицы"})
         if changed:
             self._tts_save()
+
+    def _tts_tier_claims(self, sheet, logic):
+        """Какая строка «отвечает» за каждый ещё не готовый эталон яруса —
+        первая по порядку, где он встречается. Остальные строки с тем же
+        значением его не дают — читать их незачем (например, в логике 2
+        после логики 1 нужны только строки с новыми «сотнями тысяч»)."""
+        cache = self.__dict__.setdefault('_tts_claims_cache', {})
+        key = (sheet, logic)
+        if key not in cache:
+            claims, missing = {}, {}
+            for u in self._tts_row_units(sheet):
+                if u.get("logic") != logic:
+                    continue
+                miss = [p for p in (self._tts_tier_path(u, t) for t in u["tiers"]) if not os.path.exists(p)]
+                missing[u["id"]] = miss
+                for p in miss:
+                    claims.setdefault(p, u["id"])
+            cache[key] = (claims, missing)
+        return cache[key]
+
+    def _tts_tier_row_needed(self, u):
+        claims, missing = self._tts_tier_claims(u.get("sheet"), u.get("logic"))
+        return any(claims.get(p) == u["id"] for p in missing.get(u["id"], ()))
 
     def _tts_tiers_done(self, sheet):
         """Сколько эталонов ярусов листа уже готово (уникальные файлы)."""

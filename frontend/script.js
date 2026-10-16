@@ -8500,6 +8500,12 @@ let isProcessing = false;
         })();
 
         function ttsRenderPrompt(pr, flash, waiting, browse) {
+            if (pr && pr.logic_switched) {
+                let n = { 1: 'логика 1 (миллионы + сотни + тысячи + тенге)', 2: 'логика 2 (миллионы + сотни тысяч + тенге)' };
+                showToast(`Строки логики ${pr.logic_switched.from} прочитаны — дальше ${n[pr.logic_switched.to]}`, 5000);
+                ttsPromptKey = null;
+                if (tts) tts.sum_logic = pr.sum_logic;
+            }
             let text = document.getElementById('ttsPromptText');
             let meta = document.getElementById('ttsPromptMeta');
             let next = document.getElementById('ttsPromptNext');
@@ -8522,9 +8528,9 @@ let isProcessing = false;
             if (pr.done && !browse) {
                 let vals = pr.mode && pr.mode !== 'phrases';
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
-                text.innerHTML = vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
-                // переключатель режимов — и здесь: дальше можно записывать значения переменных
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${pr.total} из ${pr.total}</span>`;
+                text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
+                // переключатель режимов (и логик сумм) — и здесь
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -8566,7 +8572,7 @@ let isProcessing = false;
             let modes = ttsModesHTML(pr);
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
-            if (pr.sum_logic) modes += ` <button type="button" class="tts-pmode ${pr.sum_logic === 1 ? 'is-on' : ''}" onclick="ttsSumLogic(1)" title="миллионы + сотни + тысячи + тенге">1 101 001</button><button type="button" class="tts-pmode ${pr.sum_logic === 2 ? 'is-on' : ''}" onclick="ttsSumLogic(2)" title="миллионы + сотни тысяч + тенге">1 100 001</button>`;
+            if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
                 : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
@@ -8972,6 +8978,16 @@ let isProcessing = false;
         // Длинная фраза, диктор сбился: верное начало — подсвечено, дальше —
         // «продолжите отсюда». Слова — как на экране (по пробелам), как и на бэкенде.
         // Переключатель «Фразы / Сумма RU / Дата RU» — на суфлёре всегда, и когда всё прочитано.
+        // Логики сумм: 1 — миллионы + сотни + тысячи + тенге, 2 — миллионы + сотни тысяч + тенге.
+        // Рядом — сколько строк каждой ещё читать.
+        function ttsSumLogicHTML(pr) {
+            if (!pr.sum_logic) return '';
+            let left = pr.logic_left || {};
+            let b = (l, lbl, tip) => `<button type="button" class="tts-pmode ${pr.sum_logic === l ? 'is-on' : ''}" onclick="ttsSumLogic(${l})"
+                title="${tip}${left[l] !== undefined ? ' · осталось строк: ' + left[l] : ''}">${lbl}${left[l] === 0 ? ' ✓' : left[l] !== undefined ? ` <small>${left[l]}</small>` : ''}</button>`;
+            return ' ' + b(1, '1 101 001', 'Логика 1: миллионы + сотни + тысячи + тенге') + b(2, '1 100 001', 'Логика 2: миллионы + сотни тысяч + тенге');
+        }
+
         function ttsModesHTML(pr) {
             return (pr.modes || []).length > 1 ? ` <span class="tts-pmodes">${pr.modes.map(m =>
                 `<button type="button" class="tts-pmode ${m.key === (pr.mode || 'phrases') ? 'is-on' : ''}" onclick="ttsPromptModeSet('${m.key}')"

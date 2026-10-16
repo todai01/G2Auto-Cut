@@ -942,13 +942,21 @@ class TtsLiveMixin:
         """Нужно ли ещё читать: хоть один кусочек не сохранён и нет хорошего дубля."""
         st = self._tts()
         have = self._tts_good_units() if have is None else have
-        return any(i not in have and not (st.get("work_dir") and os.path.exists(self._tts_target(st["units"][i])))
-                   for i in ids)
+
+        def need(i):
+            if i in have or not st.get("work_dir"):
+                return i not in have and not st.get("work_dir")
+            u = st["units"][i]
+            if u.get("tiers"):                  # строка ярусов: нужна, если даёт хоть один новый эталон
+                return self._tts_tier_row_needed(u)
+            return not os.path.exists(self._tts_target(u))
+        return any(need(i) for i in ids)
 
     def tts_redo_list(self):
         """Что перезаписать: фразы, у которых есть только сомнительные или
         нераспознанные дубли, и дубли без привязки к фразе."""
         st = self._tts()
+        self._tts_claims_cache = {}
         items = self._tts_prompt_items()
         good = self._tts_good_units()
         pending = self._tts_pending_pos()
@@ -972,6 +980,7 @@ class TtsLiveMixin:
     def _tts_prompt_fix(self, start=None):
         """Встать на ближайшую фразу, которую ещё нужно прочитать."""
         st = self._tts()
+        self._tts_claims_cache = {}
         items = self._tts_prompt_items()
         if not items:
             st["prompt_pos"] = 0
@@ -986,6 +995,37 @@ class TtsLiveMixin:
         st["prompt_pos"] = pos
 
     def tts_prompt_info(self):
+        """Суфлёр. Лист сумм: строки одной логики прочитаны, а у другой ещё
+        есть что читать — сам переходим к ней (logic_switched)."""
+        self._tts_claims_cache = {}             # файлы могли поменяться и вне программы
+        info = self._tts_prompt_info_raw()
+        st = self._tts()
+        logic = info.get("sum_logic") if info else None
+        if info and logic and info.get("done") and not info.get("pending"):
+            other = 2 if logic == 1 else 1
+            if self._tts_logic_left(other):
+                st["sum_logic"] = other
+                self._tts_prompt_fix(0)
+                self._tts_save()
+                info = self._tts_prompt_info_raw() or info
+                info["logic_switched"] = {"from": logic, "to": other}
+        if info and info.get("sum_logic"):
+            info["logic_left"] = {str(l): self._tts_logic_left(l) for l in (1, 2)}
+        return info
+
+    def _tts_logic_left(self, logic):
+        """Сколько строк суммы этой логики ещё читать."""
+        st = self._tts()
+        cur = st.get("sum_logic", 1)
+        st["sum_logic"] = logic
+        try:
+            items = self._tts_prompt_items()
+            good = self._tts_good_units()
+            return sum(1 for ids in items if self._tts_prompt_needed(ids, good))
+        finally:
+            st["sum_logic"] = cur
+
+    def _tts_prompt_info_raw(self):
         st = self._tts()
         items = self._tts_prompt_items()
         if not items:
