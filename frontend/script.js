@@ -4452,6 +4452,12 @@ let isProcessing = false;
                 auditEdKey(e);
                 return;
             }
+            // Запись недостающих из аудита.
+            let aRecOv = document.getElementById('auditRecOverlay');
+            if (aRecOv && aRecOv.style.display === 'flex' && aRec && !['customAlertOverlay', 'ttsListOverlay'].some(id => (document.getElementById(id) || { style: {} }).style.display === 'flex')) {
+                auditRecKey(e);
+                return;
+            }
             // Разметка живых слов (синтез сумм) — окно поверх всего.
             let mkOverlay = document.getElementById('ttsMarkOverlay'), alertOn = document.getElementById('customAlertOverlay');
             if (mkOverlay && mkOverlay.style.display === 'flex' && ttsMk && !(alertOn && alertOn.style.display === 'flex')) {
@@ -5223,6 +5229,7 @@ let isProcessing = false;
         }
 
         function closeAudit() {
+            if (aRec && document.getElementById('auditRecOverlay').style.display === 'flex') auditRecClose();
             document.getElementById('auditOverlay').style.display = 'none';
             pywebview.api.audit_play_stop();
         }
@@ -5401,8 +5408,8 @@ let isProcessing = false;
             // по группам
             let by = {};
             groups.forEach(g => by[g.id] = { missing: [], dups: [], unknown: [], files: [] });
-            (res.missing || []).forEach(m => (by[gidOf(m)] || by[gid0]).missing.push(m));
-            (res.duplicates || []).forEach(d => (by[gidOf(d)] || by[gid0]).dups.push(d));
+            (res.missing || []).forEach((m, i) => { m._i = i; (by[gidOf(m)] || by[gid0]).missing.push(m); });
+            (res.duplicates || []).forEach((d, i) => { d._i = i; (by[gidOf(d)] || by[gid0]).dups.push(d); });
             unknown.forEach(u => by[gid0].unknown.push(u));
             (res.files || []).forEach((f, k) => (by[gidOf(f)] || by[gid0]).files.push(k));
 
@@ -5431,6 +5438,7 @@ let isProcessing = false;
                     <input class="audit-files__filter" placeholder="Поиск по названию или тексту" value="${escapeHtml(auditFilter)}" oninput="auditFilter = this.value; auditApplyFilter()">
                     <label class="audit-switch"><input type="checkbox" ${auditOnlyProblems ? 'checked' : ''} onchange="auditOnlyProblems = this.checked; auditApplyFilter()"> Только с проблемами</label>
                     <span class="audit-toolbar__spacer"></span>
+                    ${res.groups && res.missing_count ? `<button type="button" class="btn-ghost btn-ghost--compact audit-act is-rec" onclick="auditRecAll()" title="Записать по очереди всё, чего не хватает — каждый файл сразу ляжет в свою папку под своим именем">● Записать все недостающие — ${res.missing_count}</button>` : ''}
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(true)">Развернуть все</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(false)">Свернуть все</button>
                 </div>`;
@@ -5460,22 +5468,31 @@ let isProcessing = false;
             let pct = g.total ? Math.round(g.found / g.total * 100) : 0;
             let q = s => escapeHtml(String(s || '').toLowerCase());
             let body = '';
+            let act = !!(res.groups && g.target);          // можно исправлять прямо здесь
             if (b.missing.length) {
-                body += `<div class="audit-block"><div class="audit-block__title is-lost">${voice ? 'Не хватает' : 'Нет записи'} — ${b.missing.length}</div>`;
+                body += `<div class="audit-block"><div class="audit-block__title is-lost">${voice ? 'Не хватает' : 'Нет записи'} — ${b.missing.length}
+                    ${act ? `<span class="audit-block__acts">
+                        <button type="button" class="btn-ghost btn-ghost--compact audit-act is-rec" onclick="auditRecGroup('${escapeHtml(g.id)}')" title="Записать по очереди — каждый файл сразу ляжет в папку группы под своим именем">● Записать ${b.missing.length > 1 ? 'все ' + b.missing.length : ''}</button>
+                        <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditOpenFolder('${escapeHtml(g.id)}')" title="${escapeHtml(g.target)}">Открыть папку</button></span>` : ''}</div>`;
                 body += isVar || voice
-                    ? `<div class="audit-chips">${b.missing.map(m => `<span class="audit-chip" data-q="${q(m.filename + ' ' + m.text)}" title="Строка ${m.index}${voice ? '' : ' · файл ' + escapeHtml(m.filename)}">
-                            ${escapeHtml(m.text)}</span>`).join('')}</div>`
-                    : b.missing.map(m => `<div class="audit-line" data-q="${q(m.filename + ' ' + (m.phrase || m.text))}">
+                    ? `<div class="audit-chips">${b.missing.map(m => act
+                        ? `<button type="button" class="audit-chip is-act" data-q="${q(m.filename + ' ' + m.text)}" onclick="auditRecOne(${m._i})" title="Записать «${escapeHtml(m.text)}» → ${escapeHtml(m.filename)}">● ${escapeHtml(m.text)}</button>`
+                        : `<span class="audit-chip" data-q="${q(m.filename + ' ' + m.text)}" title="Строка ${m.index}${voice ? '' : ' · файл ' + escapeHtml(m.filename)}">${escapeHtml(m.text)}</span>`).join('')}</div>`
+                    : b.missing.map(m => `<div class="audit-line${act ? ' has-acts' : ''}" data-q="${q(m.filename + ' ' + (m.phrase || m.text))}">
                             <span class="audit-line__name is-lost">${escapeHtml(m.filename)}</span>
                             <span class="audit-line__text">${escapeHtml(m.phrase || m.text)}</span>
-                            <span class="audit-line__meta">стр. ${m.index}</span></div>`).join('');
+                            <span class="audit-line__meta">стр. ${m.index}</span>
+                            ${act ? `<span class="audit-line__acts"><button type="button" class="btn-ghost btn-ghost--compact audit-act is-rec" onclick="auditRecOne(${m._i})">● Записать</button><button type="button" class="btn-ghost btn-ghost--compact" onclick="auditPutFile(${m._i})" title="Взять готовую запись (wav/mp3…) — сохраню её сюда под этим именем">Файл…</button></span>` : ''}</div>`).join('');
                 body += `</div>`;
             }
             if (b.dups.length) {
                 body += `<div class="audit-block"><div class="audit-block__title is-dups">Дубли — ${b.dups.length} <span class="audit-block__hint">одно название в нескольких местах этой группы</span></div>`;
                 body += b.dups.map(d => `<div class="audit-line audit-line--top" data-q="${q(d.filename + ' ' + d.paths.join(' '))}">
                         <span class="audit-line__name is-dups">${escapeHtml(d.filename)}</span>
-                        <span class="audit-line__text audit-line__paths" title="${escapeHtml(d.paths.join('\n'))}">${d.paths.map(p => escapeHtml(auditRel(res, p))).join('<br>')}</span>
+                        <span class="audit-line__text">${d.paths.map((p, pi) => `<div class="audit-dup">
+                            <button type="button" class="audit-file__play audit-dup__play" onclick="auditPlayPath(${d._i}, ${pi}, this)" title="Послушать">&#9654;</button>
+                            <span class="audit-line__paths" title="${escapeHtml(p)}">${escapeHtml(auditRel(res, p))}</span>
+                            ${res.groups ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="auditDupKeep(${d._i}, ${pi})" title="Оставить этот файл, остальные копии — в «trash_аудит» (не удаляются насовсем)">Оставить этот</button>` : ''}</div>`).join('')}</span>
                         <span class="audit-line__meta">× ${d.count}</span></div>`).join('');
                 body += `</div>`;
             }
@@ -5511,6 +5528,228 @@ let isProcessing = false;
                 <div class="audit-grp__body">${body}</div>
             </details>`;
         }
+        // ----- Исправить прямо в аудите: записать недостающее, взять файл, разобрать дубли -----
+        function auditApplyRes(r) { if (r && r.res) renderAuditResult(r.res, true); }
+        async function auditOpenFolder(gid) {
+            let g = (window.auditRes.groups || []).find(x => x.id === gid);
+            if (g) pywebview.api.audit_open_folder(g.target);
+        }
+        async function auditPutFile(mi) {
+            let m = window.auditRes.missing[mi];
+            if (!m) return;
+            let r = await pywebview.api.audit_put_file(m.group, m.filename);
+            if (!r || r.error) { if (r && r.error !== 'cancel') showToast(r.error); return; }
+            auditApplyRes(r);
+            showToast(`Сохранено: ${m.filename}`);
+        }
+        async function auditPlayPath(di, pi, btn) {
+            let d = window.auditRes.duplicates[di];
+            if (!d) return;
+            let r = await pywebview.api.audit_play(d.paths[pi]);
+            if (r && r.error) showToast(r.error);
+        }
+        async function auditDupKeep(di, pi) {
+            let d = window.auditRes.duplicates[di];
+            if (!d) return;
+            let r = await pywebview.api.audit_dup_keep(d.group, d.filename, d.paths[pi]);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            auditApplyRes(r);
+            showToast(`Оставлен один файл «${d.filename}». Копии (${r.moved}) — в «trash_аудит»`);
+        }
+
+        // Студия записи недостающих: по очереди, R — запись/стоп, Space — послушать,
+        // Enter — сохранить и дальше. Файл сразу ложится в папку группы под своим именем.
+        let aRec = null;
+        function auditRecQueue(filter) {
+            let res = window.auditRes, groups = res.groups || [];
+            let order = groups.map(g => g.id);
+            return (res.missing || []).filter(filter)
+                .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group))
+                .map(m => {
+                    let g = groups.find(x => x.id === m.group) || {};
+                    return { gid: m.group, filename: m.filename, text: m.phrase || m.text, group: g.title, section: g.section, target: g.target, done: false };
+                });
+        }
+        function auditRecAll() { auditRecOpen(auditRecQueue(m => true), 0); }
+        function auditRecGroup(gid) { auditRecOpen(auditRecQueue(m => m.group === gid), 0); }
+        function auditRecOne(mi) {
+            let m = window.auditRes.missing[mi];
+            if (!m) return;
+            let q = auditRecQueue(x => x.group === m.group);
+            auditRecOpen(q, Math.max(0, q.findIndex(x => x.filename === m.filename)));
+        }
+        function auditRecOpen(queue, pos) {
+            if (!queue.length) return;
+            pywebview.api.audit_play_stop();
+            aRec = { queue, pos, take: null, recording: false, saved: 0, mic: aRec ? aRec.mic : undefined, micName: aRec ? aRec.micName : '' };
+            document.getElementById('auditRecOverlay').style.display = 'flex';
+            document.getElementById('auditRecCanvas').onmousedown = auditRecDown;
+            auditRecRender();
+        }
+        const aRecItem = () => aRec && aRec.queue[aRec.pos];
+        function auditRecRender() {
+            let it = aRecItem();
+            let left = aRec.queue.filter(x => !x.done).length;
+            document.getElementById('auditRecTitle').textContent = `Запись недостающих · ${aRec.pos + 1} из ${aRec.queue.length}` + (aRec.saved ? ` · записано ${aRec.saved}` : '');
+            if (!it || !left) {
+                document.getElementById('auditRecWhere').innerHTML = '';
+                document.getElementById('auditRecText').innerHTML = `<span class="audit-rec__done">Готово — всё из списка записано${aRec.saved ? ` (${aRec.saved})` : ''}</span>`;
+                document.getElementById('auditRecBar').innerHTML = `<span class="tts-ed__spacer"></span><button class="custom-alert-btn" onclick="auditRecClose()">Закрыть</button>`;
+                document.getElementById('auditRecHint').textContent = '';
+                auditRecDraw();
+                return;
+            }
+            let sec = String(it.section || '').replace(' · ', ' — ');
+            document.getElementById('auditRecWhere').innerHTML =
+                `<span class="audit-rec__grp">${escapeHtml(sec)} — ${escapeHtml(it.group || '')}</span>
+                 <span class="audit-rec__file" title="${escapeHtml(it.target || '')}">${escapeHtml(auditRel(window.auditRes, it.target || ''))}${escapeHtml(it.target ? '/' : '')}<b>${escapeHtml(it.filename)}</b></span>
+                 ${it.done ? '<span class="audit-pill is-ok">✓ записано</span>' : ''}`;
+            document.getElementById('auditRecText').textContent = it.text;
+            let t = aRec.take, R = aRec.recording;
+            document.getElementById('auditRecBar').innerHTML = `
+                <button class="btn-ghost audit-act is-rec ${R ? 'is-on' : ''}" onclick="auditRecToggle()">${R ? '■ Стоп' : t ? '● Перезаписать' : '● Запись'} <kbd>R</kbd></button>
+                <button class="btn-ghost" onclick="auditRecPlay()" ${t && !R ? '' : 'disabled'}>&#9654; Послушать <kbd>Space</kbd></button>
+                <button class="btn-ghost" onclick="auditRecFile()" ${R ? 'disabled' : ''} title="Взять готовую запись (wav/mp3…) вместо записи с микрофона">Файл…</button>
+                <span class="tts-ed__spacer"></span>
+                <button class="btn-ghost" onclick="auditRecGo(-1)" ${aRec.pos > 0 && !R ? '' : 'disabled'}>&larr; Назад</button>
+                <button class="btn-ghost" onclick="auditRecGo(1)" ${aRec.pos < aRec.queue.length - 1 && !R ? '' : 'disabled'}>Пропустить &rarr;</button>
+                <button class="custom-alert-btn" onclick="auditRecSave()" ${t && !R ? '' : 'disabled'}>Сохранить и дальше <kbd>Enter</kbd></button>`;
+            document.getElementById('auditRecHint').innerHTML = R ? 'Идёт запись — прочитайте текст и нажмите <kbd>R</kbd>.'
+                : t ? `Тишина по краям срезана сама — края можно подвинуть мышью.${t.clipped ? ' <b class="audit-rec__warn">Перегруз — запишите тише.</b>' : ''}`
+                    : `Микрофон: ${escapeHtml(aRec.micName || 'выберу при первой записи')}${aRec.micName ? ' · <a href="#" onclick="aRec.mic = undefined; aRec.micName = \'\'; auditRecRender(); return false">сменить</a>' : ''}. Громкость выровняю как у остальных записей, формат — как у файлов в этой папке.`;
+            auditRecDraw();
+        }
+        async function auditRecToggle() {
+            if (!aRec || !aRecItem()) return;
+            if (aRec.recording) {
+                aRec.recording = false;
+                clearInterval(aRec.timer);
+                document.getElementById('auditRecMeter').style.width = '0';
+                let r = await pywebview.api.audit_rec_stop();
+                if (!r || r.error) { aRec.take = null; showToast(r && r.error || 'Не получилось'); auditRecRender(); return; }
+                aRec.take = r.take;
+                auditRecRender();
+                return;
+            }
+            if (aRec.mic === undefined) {
+                let list = await pywebview.api.tts_rec_devices();
+                if (list && list.error) { showBeautifulAlert('⚠️ ' + escapeHtml(list.error).replace(/\n/g, '<br>')); return; }
+                let dev = await ttsPickMic(list.devices);
+                if (dev === null) return;
+                aRec.mic = dev;
+            }
+            let r = await pywebview.api.audit_rec_start(aRec.mic);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            aRec.micName = r.device; aRec.recording = true; aRec.take = null;
+            aRec.timer = setInterval(async () => {
+                let l = await pywebview.api.audit_rec_level();
+                if (!aRec || !aRec.recording || !l || !l.recording) return;
+                document.getElementById('auditRecMeter').style.width = Math.max(0, Math.min(100, (l.db + 60) / 60 * 100)) + '%';
+                document.getElementById('auditRecMeter').classList.toggle('is-hot', l.db > -3);
+            }, 100);
+            auditRecRender();
+        }
+        async function auditRecPlay() {
+            if (!aRec || !aRec.take || aRec.recording) return;
+            let r = await pywebview.api.audit_rec_play();
+            if (r && r.error) showToast(r.error);
+        }
+        function auditRecNext() {
+            let n = aRec.queue.findIndex((x, i) => i > aRec.pos && !x.done);
+            if (n < 0) n = aRec.queue.findIndex(x => !x.done);
+            aRec.pos = n < 0 ? aRec.queue.length : n;
+            aRec.take = null;
+            auditRecRender();
+        }
+        function auditRecDone(r) {
+            aRecItem().done = true; aRec.saved++;
+            auditApplyRes(r);
+            auditRecNext();
+        }
+        async function auditRecSave() {
+            let it = aRecItem();
+            if (!it || !aRec.take || aRec.recording) return;
+            let r = await pywebview.api.audit_rec_save(it.gid, it.filename);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            showToast(`Сохранено: ${it.filename}`);
+            auditRecDone(r);
+        }
+        async function auditRecFile() {
+            let it = aRecItem();
+            if (!it || aRec.recording) return;
+            let r = await pywebview.api.audit_put_file(it.gid, it.filename);
+            if (!r || r.error) { if (r && r.error !== 'cancel') showToast(r.error); return; }
+            showToast(`Сохранено: ${it.filename}`);
+            auditRecDone(r);
+        }
+        function auditRecGo(d) {
+            if (!aRec || aRec.recording) return;
+            aRec.pos = Math.max(0, Math.min(aRec.queue.length - 1, aRec.pos + d));
+            aRec.take = null;
+            pywebview.api.audit_rec_cancel();
+            auditRecRender();
+        }
+        async function auditRecClose() {
+            if (!aRec) return;
+            clearInterval(aRec.timer);
+            if (aRec.take && !aRec.recording && !(await showBeautifulConfirm('Запись не сохранена. Закрыть без сохранения?', 'Закрыть', 'Остаться'))) return;
+            aRec.recording = false; aRec.take = null;
+            await pywebview.api.audit_rec_cancel();
+            pywebview.api.audit_play_stop();
+            document.getElementById('auditRecOverlay').style.display = 'none';
+        }
+        function auditRecDraw() {
+            let cv = document.getElementById('auditRecCanvas'), dpr = window.devicePixelRatio || 1;
+            let w = cv.clientWidth, h = cv.clientHeight;
+            if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+            let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+            let t = aRec && aRec.take, css = getComputedStyle(document.documentElement);
+            if (!t) {
+                g.fillStyle = css.getPropertyValue('--text-faint').trim() || '#666';
+                g.font = '12px sans-serif'; g.textAlign = 'center';
+                g.fillText(aRec && aRec.recording ? 'идёт запись…' : 'здесь появится запись', w / 2, h / 2 + 4);
+                return;
+            }
+            let x = ms => ms / t.len * w, mid = h / 2, bw = Math.max(1, w / t.peaks.length);
+            t.peaks.forEach((p, k) => {
+                let ms = k * t.bucket, inside = ms >= t.a && ms <= t.b;
+                g.fillStyle = inside ? (css.getPropertyValue('--text').trim() || '#ddd') : (css.getPropertyValue('--text-faint').trim() || '#555');
+                let y = Math.max(1, p * (mid - 8));
+                g.fillRect(k * bw, mid - y, Math.max(1, bw - 0.5), y * 2);
+            });
+            g.fillStyle = 'rgba(0,0,0,.45)';
+            g.fillRect(0, 0, x(t.a), h); g.fillRect(x(t.b), 0, w - x(t.b), h);
+            g.fillStyle = css.getPropertyValue('--accent-primary').trim() || '#f5a623';
+            g.fillRect(x(t.a) - 1, 0, 2, h); g.fillRect(x(t.b) - 1, 0, 2, h);
+        }
+        function auditRecDown(e) {
+            let t = aRec && aRec.take;
+            if (!t || aRec.recording) return;
+            let cv = e.currentTarget, r = cv.getBoundingClientRect();
+            let toMs = cx => Math.max(0, Math.min(t.len, (cx - r.left) / cv.clientWidth * t.len));
+            let ms = toMs(e.clientX), edge = Math.abs(ms - t.a) < Math.abs(ms - t.b) ? 'a' : 'b';
+            let move = ev => {
+                let v = Math.round(toMs(ev.clientX));
+                if (edge === 'a') t.a = Math.min(v, t.b - 50); else t.b = Math.max(v, t.a + 50);
+                auditRecDraw();
+            };
+            move(e);
+            let up = async () => {
+                window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+                let b = await pywebview.api.audit_rec_bounds(t.a, t.b);
+                if (b && !b.error) { t.a = b.a; t.b = b.b; auditRecDraw(); }
+            };
+            window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+        }
+        function auditRecKey(e) {
+            if (e.code === 'Escape') { e.preventDefault(); auditRecClose(); return; }
+            if (e.code === 'KeyR') { e.preventDefault(); auditRecToggle(); return; }
+            if (e.code === 'Space') { e.preventDefault(); auditRecPlay(); return; }
+            if (e.code === 'Enter') { e.preventDefault(); auditRecSave(); return; }
+            if (e.code === 'ArrowRight') { e.preventDefault(); auditRecGo(1); return; }
+            if (e.code === 'ArrowLeft') { e.preventDefault(); auditRecGo(-1); return; }
+        }
+
         // путь — от выбранной папки (короче и понятнее)
         function auditRel(res, p) {
             let root = String(res.scan_dir || '').replace(/[\\/]+$/, '');

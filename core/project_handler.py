@@ -702,6 +702,9 @@ class ProjectMixin:
                 g = by_lang.get(f"ph_{lang}")
                 if g:
                     add_group(f"ph_{lang}", "Фразы", self._AUDIT_LANG_TITLE[lang], g["total"], g["found"], g["miss"], g["dups"])
+                    # недостающее — туда же, где лежит большинство записей этого языка
+                    dirs = [os.path.dirname(f["path"]) for f in files if f["group"] == f"ph_{lang}"]
+                    groups[-1]["target"] = max(set(dirs), key=dirs.count) if dirs else scan_dir
 
         values_by_key = getattr(self, 'var_extra_tag_values', None) or {}
         all_cats = self._all_category_keys()
@@ -737,6 +740,19 @@ class ProjectMixin:
                     duplicates_list.append({"filename": f_low, "count": len(paths), "paths": paths, "group": gid})
             add_group(gid, section, self._category_label(cat), len(values), found_n, miss_n, dups)
             groups[-1]["folder"] = root if root and not skip else None
+            if groups[-1]["folder"]:
+                groups[-1]["target"] = root
+            else:                                          # своей папки нет — создадим рядом с остальными ярусами
+                base = scan_dir if root else os.path.dirname(os.path.normpath(scan_dir))
+                groups[-1]["target"] = os.path.join(base, self._sum_manual_tier_dir(cat))
+
+        # ярус Суммы без своей папки — рядом с папками других ярусов («Суммы/…»)
+        sum_dirs = [os.path.dirname(g["folder"]) for g in groups
+                    if g.get("folder") and g["id"][4:] in SUM_TIER_ORDER and g["id"].startswith('var_')]
+        if sum_dirs:
+            for g in groups:
+                if g["id"].startswith('var_') and g["id"][4:] in SUM_TIER_ORDER and not g.get("folder"):
+                    g["target"] = os.path.join(max(set(sum_dirs), key=sum_dirs.count), self._sum_manual_tier_dir(g["id"][4:]))
 
         single = parts[0] if len(parts) == 1 else None
         self._audit_last = {"category": single or mode, "missing": {m["text"] for m in missing_list}}
@@ -753,7 +769,7 @@ class ProjectMixin:
             can_export = bool(missing_list and template and os.path.exists(template))
         else:
             can_export = False
-        return {
+        self._audit_res = res = {
             "category": single if single and single != 'excel' else None,
             "category_label": self._category_label(single) if single and single != 'excel' else None,
             "mode": mode,
@@ -769,6 +785,7 @@ class ProjectMixin:
             "files": files,
             "can_edit": self._excel_source_ok(),
         }
+        return res
 
     # ---------------- текст фразы для записи по её названию ----------------
 
