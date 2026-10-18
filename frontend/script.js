@@ -892,8 +892,14 @@ let isProcessing = false;
         function radialRender(animate) {
             let ring = radialEl('radialRing');
             if (!ring) return;
-            radialEl('radial').classList.toggle('is-open', radial.open);
-            radialEl('radialHubIn').innerHTML = radialHubHTML();
+            let root = radialEl('radial');
+            root.classList.toggle('is-open', radial.open);
+            root.dataset.cat = radial.cat || '';
+            let hub = radialEl('radialHubIn'), hubHTML = radialHubHTML();
+            if (hub.innerHTML !== hubHTML) {
+                hub.innerHTML = hubHTML;
+                if (animate && motionOK()) { hub.classList.remove('is-swap'); void hub.offsetWidth; hub.classList.add('is-swap'); }
+            }
             radialEl('radialHub').title = !radial.open ? 'Открыть меню' : radial.cat ? 'Назад (Esc)' : 'Свернуть (Esc)';
             let list = radialList();
             radial.items = list;
@@ -902,42 +908,70 @@ let isProcessing = false;
                 ring.innerHTML = list.map((it, k) => {
                     let a = (-90 + 360 / Math.max(1, n) * k) * Math.PI / 180;
                     let loaded = it.node && it.node.classList.contains('loaded');
-                    return `<button type="button" class="radial__item ${it.isCat ? 'radial__item--cat' : ''} ${it.cls ? 'radial__item--' + it.cls : ''} ${loaded ? 'is-loaded' : ''}"
-                        data-k="${k}" style="--x: ${(Math.cos(a)).toFixed(4)} * var(--R); --y: ${(Math.sin(a)).toFixed(4)} * var(--R); --dl: ${animate ? k * 35 : 0}ms">
+                    return `<button type="button" class="radial__item ${it.isCat ? 'radial__item--cat' : ''} ${loaded ? 'is-loaded' : ''}"
+                        data-k="${k}" data-ac="${it.isCat ? it.key : radial.cat}" style="--x: ${(Math.cos(a)).toFixed(4)} * var(--R); --y: ${(Math.sin(a)).toFixed(4)} * var(--R); --dl: ${animate ? 60 + k * 55 : 0}ms">
                         <span class="radial__item-icon">${iconHTML(it.icon)}</span>
                         <span class="radial__item-title">${escapeHtml(it.title)}</span>
+                        ${k < 9 ? `<span class="radial__item-key">${k + 1}</span>` : ''}
                         ${loaded && it.clear ? `<span class="radial__clear" role="button" title="Сбросить, чтобы загрузить заново" data-clear="${it.clear}">&times;</span>` : ''}
                     </button>`;
                 }).join('');
+                let lines = radialLines(list.length, animate);
                 ring.querySelectorAll('.radial__item').forEach(b => {
-                    let it = list[+b.dataset.k];
-                    b.onmouseenter = b.onfocus = () => radialSetInfo(it);
-                    b.onmouseleave = b.onblur = () => radialSetInfo(null);
+                    let k = +b.dataset.k, it = list[k];
+                    let hot = on => { let l = lines[k]; if (l) l.classList.toggle('is-hot', on); };
+                    b.onmouseenter = b.onfocus = () => { radialSetInfo(it); hot(true); };
+                    b.onmouseleave = b.onblur = () => { radialSetInfo(null); hot(false); };
                     b.onclick = e => {
                         let c = e.target.closest('[data-clear]');
                         if (c) { e.stopPropagation(); clearLoaded(e, c.dataset.clear); setTimeout(() => radialRender(false), 200); return; }
+                        b.classList.remove('is-press'); void b.offsetWidth; b.classList.add('is-press');
                         radialRun(it);
                     };
                 });
-                if (animate) requestAnimationFrame(() => requestAnimationFrame(() => ring.querySelectorAll('.radial__item').forEach(b => b.classList.add('is-in'))));
-                else ring.querySelectorAll('.radial__item').forEach(b => b.classList.add('is-in'));
+                let show = () => { ring.querySelectorAll('.radial__item').forEach(b => b.classList.add('is-in')); radialEl('radialLines').classList.add('is-in'); };
+                if (animate) requestAnimationFrame(() => requestAnimationFrame(show)); else show();
                 radialSetInfo(null);
                 radialExtraRender();
             };
             let old = ring.querySelectorAll('.radial__item');
             if (animate && old.length && motionOK()) {
-                old.forEach(b => { b.classList.remove('is-in'); b.classList.add('is-out'); });
-                setTimeout(draw, 170);
+                radialEl('radialLines').classList.remove('is-in');
+                old.forEach((b, k) => { b.style.setProperty('--dlo', `${(old.length - 1 - k) * 30}ms`); b.classList.remove('is-in'); b.classList.add('is-out'); });
+                setTimeout(draw, 260 + old.length * 30);
             } else draw();
+        }
+        // Лучи от центра к пунктам (SVG): прорисовываются вслед за пунктами.
+        function radialLines(n, animate) {
+            let svg = radialEl('radialLines'), st = radialEl('radialStage');
+            let cs = getComputedStyle(st), R = parseFloat(cs.getPropertyValue('--R')) || 188, S = parseFloat(cs.getPropertyValue('--S')) || 104;
+            let w = st.clientWidth, c = w / 2, hub = radialEl('radialHub').clientWidth / 2;
+            svg.setAttribute('viewBox', `0 0 ${w} ${w}`);
+            svg.classList.remove('is-in');
+            svg.innerHTML = Array.from({ length: n }, (_, k) => {
+                let a = (-90 + 360 / Math.max(1, n) * k) * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a);
+                let r0 = hub + 6, r1 = R - S / 2 - 6, len = Math.max(1, r1 - r0);
+                return `<line x1="${(c + ux * r0).toFixed(1)}" y1="${(c + uy * r0).toFixed(1)}" x2="${(c + ux * r1).toFixed(1)}" y2="${(c + uy * r1).toFixed(1)}"
+                    style="--len: ${len.toFixed(1)}; --dl: ${animate ? 140 + k * 55 : 0}ms"/>`;
+            }).join('');
+            return [...svg.querySelectorAll('line')];
+        }
+        function radialRipple() {
+            if (!motionOK()) return;
+            let r = document.createElement('span');
+            r.className = 'radial__ripple';
+            radialEl('radialStage').appendChild(r);
+            setTimeout(() => r.remove(), 750);
         }
         function radialRun(it) {
             if (!it) return;
-            if (it.isCat) { radial.cat = it.key; radial.cutOpen = false; radialRender(true); return; }
+            if (it.isCat) { radialRipple(); radial.cat = it.key; radial.cutOpen = false; radialRender(true); return; }
             if (it.act === 'cut') { radial.cutOpen = !radial.cutOpen; radialExtraRender(); return; }
             if (it.run) { it.run(); return; }
-            if (it.node) { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }
+            if (it.node) setTimeout(() => { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }, 160);
         }
         function radialHubClick() {
+            radialRipple();
             if (!radial.open) radial.open = true;
             else if (radial.cat) radial.cat = null;
             else radial.open = false;
@@ -955,6 +989,7 @@ let isProcessing = false;
         function radialInit() {
             if (!radialEl('radial') || radial.inited) return;
             radial.inited = true;
+            radialEl('radialStage').insertAdjacentHTML('afterbegin', `<div class="radial__orbit"><i></i><i></i><i></i></div><svg class="radial__lines" id="radialLines" aria-hidden="true"></svg>`);
             let prog = radialEl('progressContainer');
             if (prog) radialEl('radial').appendChild(prog);            // ход нарезки — под кольцом
             document.addEventListener('keydown', radialKey);
