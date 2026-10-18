@@ -744,6 +744,8 @@ class ProjectMixin:
                 groups[-1]["target"] = root
             else:                                          # своей папки нет — создадим рядом с остальными ярусами
                 base = scan_dir if root else os.path.dirname(os.path.normpath(scan_dir))
+                if cat in SUM_TIER_ORDER and self._audit_norm_dir(os.path.basename(os.path.normpath(base))) != 'суммы':
+                    base = os.path.join(base, 'Суммы')         # как в проекте: Проверенные/Суммы/<ярус>
                 groups[-1]["target"] = os.path.join(base, self._sum_manual_tier_dir(cat))
 
         # ярус Суммы без своей папки — рядом с папками других ярусов («Суммы/…»)
@@ -773,6 +775,7 @@ class ProjectMixin:
             "category": single if single and single != 'excel' else None,
             "category_label": self._category_label(single) if single and single != 'excel' else None,
             "mode": mode,
+            "parts": parts,
             "groups": groups,
             "can_export": can_export,
             "scan_dir": scan_dir,

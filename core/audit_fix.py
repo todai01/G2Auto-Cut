@@ -1,5 +1,5 @@
-"""Аудит → исправить на месте: записать недостающее с микрофона (или взять
-готовый файл) прямо в нужную папку под нужным именем, разобрать дубли.
+"""Аудит → исправить на месте: записать недостающее (в суфлёре — только оно),
+взять готовый файл в нужную папку под нужным именем, разобрать дубли.
 
 Результат последнего аудита (_audit_run) хранится в self._audit_res; каждое
 действие меняет его и возвращает целиком — окно аудита перерисовывается
@@ -7,18 +7,13 @@
 import os
 import re
 import shutil
-import tempfile
 import time
 import wave
 
-import numpy as np
 import webview
 from pydub import AudioSegment
 
 AUDIT_TRASH_DIR = 'trash_аудит'      # «trash» в имени — аудит эту папку не сканирует
-AUDIT_LEAD_MS = 120                  # тишины перед голосом в готовом файле
-AUDIT_TAIL_MS = 220                  # и после
-AUDIT_FRAME_MS = 10
 
 
 class AuditFixMixin:
@@ -107,110 +102,72 @@ class AuditFixMixin:
         name = filename if filename.lower().endswith('.wav') else re.sub(r'\.mp3$', '', filename, flags=re.I) + '.wav'
         return os.path.join(g["target"], name), None
 
-    # ---------------- запись с микрофона ----------------
-    def audit_rec_start(self, device=None):
-        if getattr(self, '_tts_rec', None):
-            return {"error": "Идёт запись в режиме TTS — сначала остановите её."}
-        if getattr(self, '_audit_rec', None):
-            return {"error": "Запись уже идёт."}
-        from core.tts_live import LiveRecorder
-        try:
-            self.player.stop()
-        except Exception:
-            pass
-        path = os.path.join(tempfile.gettempdir(), f"gvox_audit_rec_{os.getpid()}.wav")
-        try:
-            rec = LiveRecorder(path, None if device in (None, '', -1) else int(device))
-            rec.start()
-        except Exception as e:
-            return {"error": f"Не удалось включить микрофон: {e}"}
-        self._audit_rec = rec
-        return {"recording": True, "device": rec.device_name}
+    # ---------------- записать недостающее — в суфлёре, как обычно ----------------
+    def audit_to_prompter(self, scope='all', key=None):
+        """Суфлёр показывает только недостающее из аудита (scope: 'all' — всё,
+        'group' — группа key, 'one' — с недостающего key и дальше по его группе).
+        Дальше всё как обычно: запись, «Сборка», ярусы, сохранение."""
+        res = getattr(self, '_audit_res', None)
+        if not res:
+            return {"error": "Запустите аудит заново."}
+        st = getattr(self, 'tts', None)
+        if not st or not st.get("units") or not st.get("work_dir"):
+            return {"error": "Сначала откройте проект в режиме записи (суфлёр) — недостающее запишется там, как обычно."}
+        miss = res.get("missing") or []
+        if scope == 'group':
+            miss = [m for m in miss if m.get("group") == key]
+        elif scope == 'one':
+            m0 = miss[int(key)] if 0 <= int(key) < len(miss) else None
+            miss = [m for m in miss if m0 and m.get("group") == m0.get("group")]
+        if not miss:
+            return {"error": "Здесь уже нечего записывать."}
+        norm = lambda p: os.path.normcase(os.path.abspath(p))
+        want_paths, want_names = {}, {}
+        for m in miss:
+            g = self._audit_group(m.get("group")) or {}
+            if str(m.get("group", '')).startswith('ph_'):
+                want_names[re.sub(r'\.(wav|mp3)$', '', m["filename"].lower())] = m
+            elif g.get("target"):
+                want_paths[norm(os.path.join(g["target"], m["filename"]))] = m
+        self._tts_ensure_value_units()
+        units, found = [], set()
+        for u in st["units"]:                                  # фразы — по названию файла
+            if u.get("tiers") or u["kind"] == "value":
+                continue
+            name = os.path.splitext(os.path.basename(self._tts_target(u)))[0].lower()
+            if name in want_names:
+                units.append(u["id"])
+                found.add(id(want_names[name]))
+        rows = sorted(self._tts_row_units(), key=lambda u: u.get("logic") or 0)
+        for p, m in want_paths.items():                        # ярусы — первая строка, где есть этот эталон
+            u = next((u for u in rows if any(norm(self._tts_tier_path(u, t)) == p for t in u["tiers"])), None)
+            if u:
+                found.add(id(m))
+                if u["id"] not in units:
+                    units.append(u["id"])
+        if not units:
+            return {"error": "Этих записей нет в открытом проекте записи. Откройте в суфлёре проект, чью папку "
+                             "«Проверенные» вы проверяли, или запустите аудит по ней."}
+        lost = [m["filename"] for m in miss if id(m) not in found]
+        first = st["units"][units[0]]
+        if "prompt_focus" not in st:                           # куда вернуться после
+            st["prompt_focus_restore"] = {"mode": st.get("prompt_mode", "phrases"), "pos": st.get("prompt_pos", 0),
+                                          "pos_by": dict(st.get("prompt_pos_by_mode") or {}),
+                                          "sum_logic": st.get("sum_logic", 1)}
+        st["prompt_focus"] = {"units": units, "n": len(miss) - len(lost)}
+        st["prompt_mode"] = first.get("sheet") if first.get("tiers") else "phrases"
+        if first.get("logic"):
+            st["sum_logic"] = first["logic"]
+        self._tts_prompt_fix(0)
+        self._tts_save()
+        return {"state": self.tts_state(), "n": len(miss) - len(lost), "lost": lost}
 
-    def audit_rec_level(self):
-        rec = getattr(self, '_audit_rec', None)
-        if not rec:
-            return {"recording": False}
-        return {"recording": True, "db": round(rec.level_db, 1), "ms": rec.frames * 1000 // max(1, rec.rate),
-                "error": rec.error}
-
-    def audit_rec_stop(self):
-        """Стоп → дубль: волна и границы голоса (тишина по краям срезается сама)."""
-        rec = getattr(self, '_audit_rec', None)
-        if not rec:
-            return {"error": "Запись не идёт."}
-        self._audit_rec = None
-        rec.stop()
-        try:
-            seg = AudioSegment.from_file(rec.path).set_channels(1)
-        except Exception as e:
-            return {"error": f"Запись не читается: {e}"}
-        if len(seg) < 200:
-            return {"error": "Слишком коротко — запишите ещё раз."}
-        x = np.frombuffer(seg.set_sample_width(2).raw_data, dtype='<i2').astype(np.float32) / 32768
-        per = max(1, seg.frame_rate * AUDIT_FRAME_MS // 1000)
-        n = len(x) // per
-        rms = np.sqrt((x[:n * per].reshape(n, per) ** 2).mean(axis=1)) if n else np.zeros(0)
-        top = float(rms.max()) if len(rms) else 0.0
-        if top < 10 ** (-50 / 20):
-            return {"error": "Тишина — проверьте микрофон и запишите ещё раз."}
-        thr = max(top * 10 ** (-32 / 20), float(np.percentile(rms, 10)) * 3, 10 ** (-60 / 20))
-        v = np.nonzero(rms > thr)[0]
-        a = max(0, int(v[0]) * AUDIT_FRAME_MS - AUDIT_LEAD_MS)
-        b = min(len(seg), int(v[-1] + 1) * AUDIT_FRAME_MS + AUDIT_TAIL_MS)
-        clip = 20 * np.log10(float(np.abs(x).max()) + 1e-9) > -0.3
-        self._audit_take = {"path": rec.path, "len": len(seg), "a": a, "b": b}
-        step = max(1, len(rms) // 600)
-        peaks = [round(float(rms[k:k + step].max()) / top, 3) for k in range(0, len(rms), step)]
-        return {"take": {"len": len(seg), "a": a, "b": b, "peaks": peaks, "bucket": step * AUDIT_FRAME_MS,
-                         "clipped": bool(clip)}}
-
-    def audit_rec_bounds(self, a, b):
-        t = getattr(self, '_audit_take', None)
-        if not t:
-            return {"error": "Нет записи."}
-        t["a"] = max(0, min(int(a), t["len"] - 50))
-        t["b"] = max(t["a"] + 50, min(int(b), t["len"]))
-        return {"a": t["a"], "b": t["b"]}
-
-    def audit_rec_play(self):
-        """Послушать так, как сохранится (срезано, громкость выровнена)."""
-        t = getattr(self, '_audit_take', None)
-        if not t:
-            return {"error": "Нет записи."}
-        seg = self._tts_normalized(AudioSegment.from_file(t["path"])[t["a"]:t["b"]].set_channels(1))
-        dst = os.path.join(tempfile.gettempdir(), f"gvox_audit_prev_{os.getpid()}.wav")
-        seg.export(dst, format='wav')
-        self.player.stop()
-        self._audit_playing = None
-        self.player.play(dst)
-        return {"playing": True, "duration": len(seg) / 1000.0}
-
-    def audit_rec_cancel(self):
-        rec = getattr(self, '_audit_rec', None)
-        if rec:
-            self._audit_rec = None
-            rec.stop()
-        self._audit_take = None
-        return {"ok": True}
-
-    def audit_rec_save(self, gid, filename):
-        """Дубль → в папку группы под именем недостающего файла."""
-        t = getattr(self, '_audit_take', None)
-        if not t:
-            return {"error": "Сначала запишите."}
-        dst, err = self._audit_target(gid, filename)
-        if err:
-            return err
-        try:
-            seg = AudioSegment.from_file(t["path"])[t["a"]:t["b"]]
-            self._audit_write(seg, dst)
-        except PermissionError:
-            return {"error": "Файл занят другой программой — закройте его и повторите."}
-        except Exception as e:
-            return {"error": f"Не удалось сохранить: {e}"}
-        self._audit_take = None
-        return {"saved": dst, "res": self._audit_found(gid, os.path.basename(filename), dst)}
+    def audit_rerun(self):
+        """Проверить снова ту же папку (после записи в суфлёре)."""
+        res = getattr(self, '_audit_res', None)
+        if not res or not os.path.isdir(res.get("scan_dir") or ''):
+            return {"error": "Запустите аудит заново."}
+        return self._audit_run(res["scan_dir"], res["parts"], res["mode"])
 
     # ---------------- готовый файл вместо записи ----------------
     def audit_put_file(self, gid, filename):

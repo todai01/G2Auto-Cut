@@ -902,6 +902,10 @@ class TtsLiveMixin:
             ids = ch["parts"] if ch else [u["id"]]
             seen.update(ids)
             items.append(ids)
+        focus = st.get("prompt_focus")
+        if focus:                                  # из аудита: только недостающее
+            fu = set(focus["units"])
+            items = [ids for ids in items if fu.intersection(ids)]
         return items
 
     def _tts_item_tail(self, ids):
@@ -1009,9 +1013,52 @@ class TtsLiveMixin:
                 self._tts_save()
                 info = self._tts_prompt_info_raw() or info
                 info["logic_switched"] = {"from": logic, "to": other}
+        if st.get("prompt_focus"):
+            info = self._tts_focus_info(info)
         if info and info.get("sum_logic"):
             info["logic_left"] = {str(l): self._tts_logic_left(l) for l in (1, 2)}
         return info
+
+    # ---- суфлёр «только недостающее из аудита» (audit_to_prompter) ----
+    def _tts_focus_info(self, info):
+        """Сколько осталось; текущий режим прочитан — сами переходим к
+        следующему, где ещё есть недостающее (фразы → суммы → даты…)."""
+        st = self._tts()
+        focus = st["prompt_focus"]
+        units = [st["units"][i] for i in focus["units"] if i < len(st["units"])]
+        good = self._tts_good_units()
+        left = [u for u in units if self._tts_prompt_needed([u["id"]], good)]
+        if (info is None or (info.get("done") and not info.get("pending"))) and left:
+            u = left[0]
+            mode = u.get("sheet") if u.get("tiers") else "phrases"
+            if mode != st.get("prompt_mode", "phrases") or (u.get("logic") and u["logic"] != st.get("sum_logic", 1)):
+                st["prompt_mode"] = mode
+                if u.get("logic"):
+                    st["sum_logic"] = u["logic"]
+                self._tts_prompt_fix(0)
+                self._tts_save()
+                info = self._tts_prompt_info_raw() or info
+                info["focus_switched"] = "Фразы" if mode == "phrases" else \
+                    ((st.get("var_sheets") or {}).get(mode) or {}).get("label", mode)
+        if info is None:
+            info = {"none": True}
+        info["focus"] = {"left": len(left), "total": focus.get("n") or len(units)}
+        if not left and not (info.get("pending")):
+            info["focus_done"] = True
+        return info
+
+    def tts_focus_clear(self):
+        """«Показать всё»: суфлёр снова со всей таблицей, на прежнем месте."""
+        st = self._tts()
+        st.pop("prompt_focus", None)
+        back = st.pop("prompt_focus_restore", None)
+        if back:
+            st["prompt_mode"], st["prompt_pos"] = back["mode"], back["pos"]
+            st["prompt_pos_by_mode"] = back["pos_by"]
+            st["sum_logic"] = back["sum_logic"]
+        self._tts_prompt_fix()
+        self._tts_save()
+        return {"prompt": self.tts_prompt_info(), "state": self.tts_state()}
 
     def _tts_logic_left(self, logic):
         """Сколько строк суммы этой логики ещё читать."""
