@@ -421,7 +421,8 @@ class TtsFlowMixin:
         self._tts_save()                                 # последнее состояние — в проект на диске
         self.tts = None
         for k in ('_tts_del_stack', '_tts_claims_cache', '_tts_lvl_cache', '_tts_bg_cache', '_tts_audacity_take',
-                  '_tts_playing', '_tts_raw_len', '_tts_reuse_cache', '_tts_live'):
+                  '_tts_playing', '_tts_raw_len', '_tts_reuse_cache', '_tts_live', '_tts_mem', '_tts_mem_bytes',
+                  '_tts_disk_cache', '_tts_pre_want'):
             self.__dict__.pop(k, None)
         return self.tts_state()
 
@@ -436,6 +437,7 @@ class TtsFlowMixin:
                 json.dump(st, f, ensure_ascii=False, indent=1)
         except OSError:
             pass
+        self._tts_disk_flush()
         recent_projects.touch(wd, os.path.basename(wd))
 
     def _tts_push(self, payload):
@@ -2204,13 +2206,7 @@ class TtsFlowMixin:
         path = os.path.join(self._tts()["work_dir"], t["file"])
         if not os.path.exists(path):
             raise FileNotFoundError(f"Файл дубля не найден: {t['file']} — перезапишите строку или удалите дубль (Del).")
-        seg = AudioSegment.from_file(path)
-        seg = seg.set_channels(1).set_sample_width(2)
-        x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
-        per = max(1, seg.frame_rate * self.TIER_FRAME_MS // 1000)
-        n = len(x) // per
-        rms = np.sqrt((x[:n * per].reshape(n, per) ** 2).mean(axis=1)) if n else np.zeros(0)
-        return rms, len(seg)
+        return self._tts_cached(('frames',) + self._file_sig(path), lambda: self._tts_file_rms(path, cache=False))
 
     def _tts_tier_auto(self, unit, rms, length):
         """Границы ярусов: ожидаемое место — по доле букв внутри звучащей
@@ -2398,6 +2394,118 @@ class TtsFlowMixin:
     # ---- начало/продолжение фразы рядом с ярусами ----
     TIER_CTX_MS = 2500        # сколько начала/продолжения фразы показывать и играть рядом
 
+    # ---- кэш: прочитанные файлы, громкость, готовые ярусы ----
+    # Ключ — всё, от чего зависит звук (файл и время его изменения, границы,
+    # паузы, темп, громкость, шум, фон): изменилось что-то одно — пересчитается
+    # только это, остальное берётся готовым. В памяти — не больше TTS_CACHE_MB,
+    # громкость файлов — ещё и на диске (_Кэш/), чтобы после перезапуска не
+    # мерить заново. Папку _Кэш можно удалить в любой момент.
+    TTS_CACHE_MB = 200
+    TTS_CACHE_DIR = '_Кэш'
+
+    @staticmethod
+    def _file_sig(path):
+        s = os.stat(path)
+        return (os.path.abspath(path), s.st_mtime_ns, s.st_size)
+
+    def _tts_cached(self, key, make):
+        """LRU в памяти: make() — только если такого ещё не считали."""
+        import collections
+        lock = self.__dict__.setdefault('_tts_mem_lock', threading.RLock())
+        with lock:
+            mem = self.__dict__.setdefault('_tts_mem', collections.OrderedDict())
+            if key in mem:
+                mem.move_to_end(key)
+                return mem[key][0]
+        val = make()
+        size = self._tts_nbytes(val)
+        with lock:
+            mem[key] = (val, size)
+            total = self.__dict__.get('_tts_mem_bytes', 0) + size
+            while total > self.TTS_CACHE_MB * 2 ** 20 and len(mem) > 1:
+                _k, (_v, sz) = mem.popitem(last=False)
+                total -= sz
+            self._tts_mem_bytes = total
+        return val
+
+    @staticmethod
+    def _tts_nbytes(v):
+        if isinstance(v, AudioSegment):
+            return len(v.raw_data)
+        if isinstance(v, np.ndarray):
+            return v.nbytes
+        if isinstance(v, (tuple, list)):
+            return sum(TtsFlowMixin._tts_nbytes(x) for x in v)
+        return 64
+
+    def _tts_seg(self, path):
+        """Файл → моно AudioSegment (читается один раз, пока файл не изменится)."""
+        return self._tts_cached(('seg',) + self._file_sig(path), lambda: AudioSegment.from_file(path).set_channels(1))
+
+    def _tts_disk(self):
+        """Замеры громкости на диске: {ключ: дБ}."""
+        wd = self._tts().get("work_dir")
+        d = self.__dict__.get('_tts_disk_cache')
+        if d is None or d.get("wd") != wd:
+            data = {}
+            try:
+                with open(os.path.join(wd, self.TTS_CACHE_DIR, 'громкость.json'), encoding='utf-8') as f:
+                    data = json.load(f)
+            except (OSError, ValueError, TypeError):
+                pass
+            d = self._tts_disk_cache = {"wd": wd, "data": data if isinstance(data, dict) else {}, "dirty": False}
+        return d
+
+    def _tts_disk_key(self, path, extra):
+        _p, mt, sz = self._file_sig(path)
+        wd = self._tts().get("work_dir") or ''
+        try:
+            rel = os.path.relpath(path, wd)
+        except ValueError:
+            rel = path
+        return f"{rel}|{mt}|{sz}|{extra}"
+
+    def _tts_disk_level(self, path, extra, make):
+        d = self._tts_disk()
+        key = self._tts_disk_key(path, extra)
+        if key not in d["data"]:
+            d["data"][key] = make()
+            d["dirty"] = True
+        return d["data"][key]
+
+    def _tts_disk_flush(self):
+        d = self.__dict__.get('_tts_disk_cache')
+        if not d or not d.get("dirty") or not d.get("wd") or not os.path.isdir(d["wd"]):
+            return
+        try:
+            folder = os.path.join(d["wd"], self.TTS_CACHE_DIR)
+            os.makedirs(folder, exist_ok=True)
+            tmp = os.path.join(folder, 'громкость.json.tmp')
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(d["data"], f, ensure_ascii=False)
+            os.replace(tmp, os.path.join(folder, 'громкость.json'))
+            d["dirty"] = False
+        except OSError:
+            pass
+
+    def _tts_timed(self, name, fn):
+        """Сколько заняла операция — в _Кэш/замеры.txt (от 30 мс), чтобы
+        видеть, что на самом деле тормозит на этом компьютере."""
+        t0 = time.perf_counter()
+        try:
+            return fn()
+        finally:
+            ms = (time.perf_counter() - t0) * 1000
+            wd = self._tts().get("work_dir") if getattr(self, 'tts', None) else None
+            if ms >= 30 and wd and os.path.isdir(wd):
+                try:
+                    folder = os.path.join(wd, self.TTS_CACHE_DIR)
+                    os.makedirs(folder, exist_ok=True)
+                    with open(os.path.join(folder, 'замеры.txt'), 'a', encoding='utf-8') as f:
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{name}\t{ms:.0f} мс\n")
+                except OSError:
+                    pass
+
     def _tts_tier_ctx(self, unit):
         """Выбранная фраза вокруг суммы: (файл начала, True, имя), (файл конца, False, имя)."""
         ch, _p, _n = self._tts_tier_chain(unit)
@@ -2459,16 +2567,20 @@ class TtsFlowMixin:
         cache = self.__dict__.setdefault('_tts_lvl_cache', {})
         key = (path, os.path.getmtime(path), tail)
         if key not in cache:
-            seg = AudioSegment.from_file(path).set_channels(1).set_sample_width(2)
-            xs = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
-            fr = max(1, seg.frame_rate // 100)                       # кадры 10 мс
-            e = np.sqrt((xs[:len(xs) // fr * fr].reshape(-1, fr) ** 2).mean(axis=1)) if len(xs) >= fr else np.zeros(0)
-            v = np.nonzero(e > max(float(e.max()) * 0.1, 1e-4))[0] if len(e) else []
-            if len(v):
-                v0, v1 = int(v[0]) * 10, int(v[-1] + 1) * 10
-                seg = seg[max(v0, v1 - self.TIER_JOIN_MS):v1] if tail else seg[v0:min(v1, v0 + self.TIER_JOIN_MS)]
-            cache[key] = self._loudness(seg)
+            cache[key] = self._tts_disk_level(path, f"join{int(bool(tail))}", lambda: self._tts_join_loud_calc(path, tail))
         return cache[key]
+
+    def _tts_join_loud_calc(self, path, tail):
+        """Громкость голоса у стыка — сам замер (без кэша)."""
+        seg = self._tts_seg(path).set_sample_width(2)
+        xs = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
+        fr = max(1, seg.frame_rate // 100)                       # кадры 10 мс
+        e = np.sqrt((xs[:len(xs) // fr * fr].reshape(-1, fr) ** 2).mean(axis=1)) if len(xs) >= fr else np.zeros(0)
+        v = np.nonzero(e > max(float(e.max()) * 0.1, 1e-4))[0] if len(e) else []
+        if len(v):
+            v0, v1 = int(v[0]) * 10, int(v[-1] + 1) * 10
+            seg = seg[max(v0, v1 - self.TIER_JOIN_MS):v1] if tail else seg[v0:min(v1, v0 + self.TIER_JOIN_MS)]
+        return self._loudness(seg)
 
     def _tts_ctx_level(self, unit):
         """Целевая громкость ярусов листа: медиана громкости у стыков всех
@@ -2489,11 +2601,13 @@ class TtsFlowMixin:
         key = ('row', path, os.path.getmtime(path), tuple((c["a"], c["b"]) for c in clips))
         cache = self.__dict__.setdefault('_tts_lvl_cache', {})
         if key not in cache:
-            src = AudioSegment.from_file(path)
-            seg = AudioSegment.empty().set_frame_rate(src.frame_rate)
-            for c in clips:
-                seg += src[c["a"]:c["b"]]
-            cache[key] = self._loudness(seg)
+            def calc():
+                src = self._tts_seg(path)
+                seg = AudioSegment.empty().set_frame_rate(src.frame_rate)
+                for c in clips:
+                    seg += src[c["a"]:c["b"]]
+                return self._loudness(seg)
+            cache[key] = self._tts_disk_level(path, "row" + ",".join(f"{c['a']}-{c['b']}" for c in clips), calc)
         return cache[key]
 
     # ---- фразы с этой переменной: по очереди, с началом и концом ----
@@ -2576,7 +2690,7 @@ class TtsFlowMixin:
             return {**self.tts_tier_marks(i), "error": r["error"]}
         return self.tts_tier_marks(i)
 
-    def tts_tier_resave_all(self):
+    def _tts_tier_resave_all(self):
         """Пересохранить все готовые ярусы листа (новая громкость/фон)."""
         st = self._tts()
         mode = st.get("prompt_mode", "phrases")
@@ -2592,13 +2706,65 @@ class TtsFlowMixin:
         self._tts_save()
         return {"resaved": n}
 
+    def tts_tier_resave_all(self):
+        return self._tts_timed('ярусы: пересохранить все', self._tts_tier_resave_all)
+
     def tts_tier_marks(self, i):
         """Для «Сборки»: дубль строки (волна) и ярусы клипами (см. _tts_tier_marks).
         Любая беда (пропал файл и т.п.) — сообщением, а не падением."""
         try:
-            return self._tts_tier_marks(i)
+            r = self._tts_timed('ярусы: открыть строку', lambda: self._tts_tier_marks(i))
         except Exception as e:
             return {"tiers": None, "error": str(e)}
+        self._tts_disk_flush()
+        if r.get("tiers"):
+            self._tts_prerender_kick(i)
+        return r
+
+    # ---- предрасчёт: пока вы смотрите на строку, ярусы готовятся в фоне ----
+    TTS_PRERENDER_DELAY = 0.3     # подождать: маркер тянут — считать после того, как отпустили
+
+    def _tts_prerender_kick(self, i):
+        self._tts_pre_want = i
+        th = self.__dict__.get('_tts_pre_thread')
+        if th is None or not th.is_alive():
+            th = self._tts_pre_thread = threading.Thread(target=self._tts_prerender_loop, daemon=True)
+            th.start()
+
+    def _tts_prerender_loop(self):
+        while True:
+            time.sleep(self.TTS_PRERENDER_DELAY)
+            i = self.__dict__.pop('_tts_pre_want', None)
+            if i is None:
+                return
+            if getattr(self, '_tts_rec', None):            # идёт запись — не отнимать у неё процессор
+                continue
+            try:
+                self._tts_prerender(i)
+            except Exception:
+                pass                                       # не вышло — посчитается по кнопке, как раньше
+
+    def _tts_prerender(self, i):
+        st = self._tts()
+        t = st["takes"][i]
+        unit = st["units"][t["unit"]]
+        n = len(unit.get("tiers") or [])
+        clips = t.get("tier_clips")
+        if not n or not clips or len(clips) != n or not t.get("tier_len"):
+            return                                         # границы ещё не выставлены — не трогаем проект из фона
+        write = t.get("tier_write") or {}
+        mine = set(t.get("tier_files") or [])
+        for j, x in enumerate(unit["tiers"]):
+            if '_tts_pre_want' in self.__dict__ or self.tts is not st:   # перешли к другой строке / новый проект
+                return
+            path = self._tts_tier_path(unit, x)
+            if os.path.exists(path) and path not in mine and not write.get(str(j)):
+                self._tts_seg(path)
+            else:
+                self._tts_tier_audio(t, unit, j)
+        for c in self._tts_tier_ctx(unit):
+            if c:
+                self._tts_seg(c[0])
 
     def _tts_tier_marks(self, i):
         """Для «Сборки»: дубль строки (волна) и ярусы клипами — где взят каждый
@@ -2682,15 +2848,13 @@ class TtsFlowMixin:
         if opts is not None:
             st["tier_opts"] = {**self._tts_tier_opts(), **{k: bool(v) for k, v in dict(opts).items() if k in ("noise", "level")}}
         self._tts_save()
-        return self.tts_tier_marks(i)
+        return self.tts_tier_marks(i)              # там же — предрасчёт изменённого
 
     def _tts_tier_assembly(self, t, unit, k=None, ctx_ms=None):
         """Сборка как прозвучит: начало фразы + ярусы (готовые — из файлов) +
         продолжение. k — только один ярус; ctx_ms — сколько конца начала и
         начала продолжения взять (стык). Возвращает (файл, длина мс)."""
         ctx_ms = int(ctx_ms or self.TIER_CTX_MS)
-        import tempfile
-        tmpd = tempfile.gettempdir()
         segs = []
         start = end = None
         if k is None:
@@ -2702,23 +2866,28 @@ class TtsFlowMixin:
                 continue
             path = self._tts_tier_path(unit, x)
             if os.path.exists(path) and path not in mine and not write.get(str(j)):
-                segs.append(AudioSegment.from_file(path))
+                segs.append(self._tts_seg(path))
             else:
-                dst = os.path.join(tmpd, f"gvox_tier_{os.getpid()}_{j}.wav")
-                self._tts_tier_render(t, unit, j, dst)
-                segs.append(AudioSegment.from_file(dst))
+                segs.append(self._tts_pcm_seg(*self._tts_tier_audio(t, unit, j)))
         if start:
-            sg = AudioSegment.from_file(start[0])
+            sg = self._tts_seg(start[0])
             segs.insert(0, sg[-ctx_ms:] if len(sg) > ctx_ms else sg)
         if end:
-            segs.append(AudioSegment.from_file(end[0])[:ctx_ms])
+            segs.append(self._tts_seg(end[0])[:ctx_ms])
         rate = max(sg.frame_rate for sg in segs)
         out = AudioSegment.empty().set_frame_rate(rate)
         for sg in segs:
             out += sg.set_frame_rate(rate).set_channels(1).set_sample_width(2)
-        dst = os.path.join(tmpd, f"gvox_tier_play_{os.getpid()}.wav")
-        out.export(dst, format="wav")
-        return dst, len(out)
+        return out
+
+    @staticmethod
+    def _tts_pcm_seg(x, rate):
+        """float → AudioSegment 16 бит — байт в байт как в сохранённом файле (_write_pcm16)."""
+        peak = float(np.abs(x).max()) if len(x) else 0.0
+        if peak > 0.98:
+            x = x * (0.98 / peak)
+        pcm = np.round(np.asarray(x, dtype=np.float32) * 32767).astype('<i2')
+        return AudioSegment(pcm.tobytes(), frame_rate=rate, sample_width=2, channels=1)
 
     def tts_tier_play(self, i, k=None, from_ms=None, ctx_ms=None):
         """Послушать ярус (k) или всю сборку (k=None) с места from_ms (мс по
@@ -2730,44 +2899,65 @@ class TtsFlowMixin:
         t = st["takes"][i]
         unit = st["units"][t["unit"]]
         try:
-            dst, ln = self._tts_tier_assembly(t, unit, None if k is None or int(k) < 0 else int(k), ctx_ms)
+            import tempfile
+            out = self._tts_timed('сборка для прослушки', lambda: self._tts_tier_assembly(
+                t, unit, None if k is None or int(k) < 0 else int(k), ctx_ms))
+            ln = len(out)
             off = max(0, min(ln - 50, int(from_ms or 0)))
-            if off:
-                import tempfile
-                cut = os.path.join(tempfile.gettempdir(), f"gvox_tier_from_{os.getpid()}.wav")
-                AudioSegment.from_file(dst)[off:].export(cut, format="wav")
-                dst = cut
+            dst = os.path.join(tempfile.gettempdir(), f"gvox_tier_play_{os.getpid()}.wav")
+            (out[off:] if off else out).export(dst, format="wav")      # [0:] обрезал бы хвост до целых мс
         except Exception as e:
             return {"playing": False, "error": str(e)}
+        self._tts_disk_flush()
         self._tts_mark_listened()
         self.player.play(dst)
         return {"playing": True, "duration": (ln - off) / 1000.0, "from": off, "length": ln}
 
     def _tts_tier_render(self, t, unit, k, dst):
-        """Ярус → эталон: кусок дубля, громкость (как у фразы ± своя), темп
-        (дубля × свой), пауза перед ним и фон — как в начале/продолжении фразы."""
-        import tempfile
-        from core.tts_synth import _mono, _write_pcm16, room_noise
+        """Ярус → эталон (файл)."""
+        from core.tts_synth import _write_pcm16
+        x, rate = self._tts_tier_audio(t, unit, k)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        _write_pcm16(dst, x, rate)
+
+    def _tts_tier_audio(self, t, unit, k):
+        """Ярус как прозвучит: (float32, частота). Посчитан раз — берётся из
+        кэша, пока не поменялось ничего, от чего зависит звук."""
         clips, _length, _rms = self._tts_tier_clips(t, unit)
         c = clips[k]
-        gain, tempo = self._tts_sound(t)
         opts = self._tts_tier_opts()
         level = self._tts_ctx_level(unit) if opts["level"] else None
         row = self._tts_row_loud(t, unit) if level is not None else None
-        seg = AudioSegment.from_file(os.path.join(self._tts()["work_dir"], t["file"]))[c["a"]:c["b"]].set_channels(1)
+        start, end = self._tts_tier_ctx(unit)
+        ref = (start or end or (None,))[0]
+        bg = self._tts_bg()
+        take = os.path.join(self._tts()["work_dir"], t["file"])
+        key = ('tier',) + self._file_sig(take) + (
+            tuple(sorted((n, v) for n, v in c.items())), self._tts_sound(t), tuple(sorted(opts.items())), level, row,
+            self._file_sig(ref) if opts["noise"] and ref else None, k, unit.get('name'), OUT_RATE,
+            (self._file_sig(bg["path"]), bg.get("db", self.TIER_BG_DB)) if bg and bg.get("on") else None)
+        lock = self.__dict__.setdefault('_tts_render_lock', threading.Lock())
+        with lock:                                         # фон и кнопка — не считают одно и то же дважды
+            return self._tts_cached(key, lambda: self._tts_tier_audio_calc(t, unit, c, k, level, row, ref, opts))
+
+    def _tts_tier_audio_calc(self, t, unit, c, k, level, row, ref, opts):
+        """Сам расчёт яруса: кусок дубля, громкость (как у фразы ± своя), темп
+        (дубля × свой), паузы и фон — как в начале/продолжении фразы."""
+        import tempfile
+        from core.tts_synth import _mono, room_noise
+        gain, tempo = self._tts_sound(t)
+        seg = self._tts_seg(os.path.join(self._tts()["work_dir"], t["file"]))[c["a"]:c["b"]]
         if level is not None and row is not None:          # вся строка — к громкости фразы у стыка
             base = level - row
         else:
             seg, base = self._tts_normalized(seg), 0.0
         seg = self._tts_gain_limited(seg, gain + float(c.get("gain") or 0) + base)
-        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tier_src_{os.getpid()}.wav")
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tier_src_{os.getpid()}_{threading.get_ident()}.wav")
         self._tts_export_8k(seg, tmp, tempo * float(c.get("tempo") or 1.0))
         x, rate = _mono(tmp)
         pre = int(rate * int(c.get("pre") or 0) / 1000)
         post = int(rate * int(c.get("post") or 0) / 1000)           # пауза после яруса (перед продолжением)
         x = np.concatenate([np.zeros(pre, dtype=np.float32), x, np.zeros(post, dtype=np.float32)])
-        start, end = self._tts_tier_ctx(unit)
-        ref = (start or end or (None,))[0]
         if opts["noise"] and ref:
             bed = room_noise(ref, rate, len(x), seed=k)
             if bed is not None:
@@ -2790,8 +2980,8 @@ class TtsFlowMixin:
                     w[len(x) - post:len(x) - post + xf] = np.linspace(k_body, 1.0, xf, dtype=np.float32)
                 x = x + bed[:len(x)] * w
         x = self._tts_add_bg(x, rate, f"{unit.get('name')}:{k}")
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        _write_pcm16(dst, x, rate)
+        x.setflags(write=False)                            # общий для кэша — не менять на месте
+        return x, rate
 
     # ---- фон из файла (например, 15 с шума офиса) под переменные ----
     TIER_BG_DB = -24          # по умолчанию фон на столько дБ тише голоса
@@ -2901,9 +3091,12 @@ class TtsFlowMixin:
         top = float(np.max(rms)) if len(rms) else 0
         return [round(min(1.0, float(v) / top), 3) if top > 1e-6 else 0 for v in rms]
 
-    def _tts_file_rms(self, path, keep_ms=None, tail=False):
+    def _tts_file_rms(self, path, keep_ms=None, tail=False, cache=True):
         """RMS файла по кадрам 10 мс (keep_ms — только начало/конец файла)."""
-        seg = AudioSegment.from_file(path).set_channels(1).set_sample_width(2)
+        if cache:
+            return self._tts_cached(('rms', keep_ms, bool(tail)) + self._file_sig(path),
+                                    lambda: self._tts_file_rms(path, keep_ms, tail, cache=False))
+        seg = self._tts_seg(path).set_sample_width(2)
         if keep_ms and len(seg) > keep_ms:
             seg = seg[-keep_ms:] if tail else seg[:keep_ms]
         x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float32) / 32768
