@@ -5235,20 +5235,34 @@ let isProcessing = false;
             let list = document.getElementById('auditCategoryList');
             list.innerHTML = '';
 
-            const addOption = (key, label) => {
+            const addOption = (key, label, desc, cls) => {
                 let btn = document.createElement('button');
                 btn.type = 'button';
-                btn.className = 'audit-category-item';
-                btn.textContent = label;
+                btn.className = 'audit-category-item' + (cls ? ' ' + cls : '');
+                btn.innerHTML = escapeHtml(label) + (desc ? `<span class="audit-choice-desc">${escapeHtml(desc)}</span>` : '');
                 btn.onclick = () => {
                     closeAuditCategoryPicker();
-                    askAuditChunks(key, key === 'excel' ? 'Текст из Excel' : label);
+                    if (key === 'all' || key === 'vars') runProjectAudit(key);      // сразу по названиям файлов
+                    else askAuditChunks(key, key === 'excel' ? 'Текст из Excel' : label);
                 };
                 list.appendChild(btn);
             };
+            const addHead = text => {
+                let h = document.createElement('div');
+                h.className = 'audit-category-head';
+                h.textContent = text;
+                list.appendChild(h);
+            };
 
-            if (res.has_excel) addOption('excel', 'Список дублей из Excel (Шаг 1)');
-            res.categories.forEach(c => addOption(c.key, c.label));
+            let cats = res.categories || [];
+            if (res.has_excel && cats.length)
+                addOption('all', 'Весь проект', 'Фразы по языкам и все переменные — одной проверкой, по названиям файлов', 'is-main');
+            if (res.has_excel) addOption('excel', 'Фразы (Excel, Шаг 1)', 'Названия из таблицы — по языкам');
+            if (cats.length > 1) addOption('vars', 'Все переменные', 'Каждая категория — в своей папке («1 - 100 млн», «1 - 99 тыс»…)');
+            if (cats.length) {
+                addHead('Одна категория');
+                cats.forEach(c => addOption(c.key, c.label, '', 'is-compact'));
+            }
 
             document.getElementById('auditCategoryOverlay').style.display = 'flex';
         }
@@ -5347,96 +5361,169 @@ let isProcessing = false;
             renderAuditResult(res);
         }
 
+        // Аудит по группам: «Фразы» (по языкам) и «Переменные» (Суммы — по
+        // ярусам, остальные категории — отдельно). В каждой группе — сводка
+        // одной строкой, раскрывается: чего нет, дубли, записи.
+        let auditFilter = '';
+        let auditOnlyProblems = false;
+        let auditOpen = {};                 // id группы/подсписка → раскрыт ли (запоминается между перерисовками)
+        function auditGroupsOf(res) {
+            if (res.groups && res.groups.length) return res.groups;
+            let voice = !!res.by_voice;
+            return [{ id: '_all', section: res.category ? 'Переменные' : 'Фразы',
+                      title: res.category_label || (voice ? 'Записи' : 'Текст из Excel'),
+                      total: res.total_excel, found: voice ? res.total_disk : (res.files || []).length,
+                      missing: res.missing_count, duplicates: voice ? (res.unknown || []).length : res.duplicates_count }];
+        }
         function renderAuditResult(res, quiet) {
-            // Показываем красивое модальное окно
             window.auditRes = res;
             let voice = !!res.by_voice;
             let unknown = res.unknown || [];
-            let categoryNote = res.category ? ` — категория «${res.category_label}»` : '';
+            let groups = auditGroupsOf(res);
+            let gid0 = groups[0].id;
+            let gidOf = x => x.group || gid0;
+            let multi = groups.length > 1;
+            let categoryNote = res.category ? ` — категория «${res.category_label}»`
+                : res.mode === 'all' ? ' — весь проект' : res.mode === 'vars' ? ' — все переменные' : '';
             if (voice) categoryNote += ` — по голосу, чанков: ${res.chunks_total}${res.stopped ? ' (остановлено, проверены не все)' : ''}`;
             document.getElementById('auditOverlay').style.display = 'flex';
             document.getElementById('auditPath').innerHTML = iconHTML('folder') + (voice ? " Чанки: " : " Директория сканирования: ") + escapeHtml(res.scan_dir) + escapeHtml(categoryNote);
             document.querySelector('#auditOverlay .stat-card--total .stat-card__label').textContent =
-                res.category ? 'Всего в словаре' : 'Всего в Excel';
+                multi ? 'Всего ожидается' : res.category ? 'Всего в словаре' : 'Всего в Excel';
             document.querySelector('#auditOverlay .stat-card--found .stat-card__label').textContent = voice ? 'Услышано' : 'Найдено';
             document.querySelector('#auditOverlay .stat-card--lost .stat-card__label').textContent = voice ? 'Не хватает' : 'Потеряно';
             document.querySelector('#auditOverlay .stat-card--dups .stat-card__label').textContent = voice ? 'Не распознано' : 'Дубликаты';
-
-            // Запускаем анимацию счетчиков (на 1200 миллисекунд); после правки текста — сразу числа
             let counts = [['auditTotalExcel', res.total_excel], ['auditTotalDisk', res.total_disk],
                           ['auditMissing', res.missing_count], ['auditDups', voice ? unknown.length : res.duplicates_count]];
             counts.forEach(([id, v]) => quiet ? (document.getElementById(id).innerHTML = v) : animateValue(document.getElementById(id), 0, v, 1200));
+            if (!quiet) auditOpen = {};
 
-            // Генерируем детальные списки и чистый текст для копирования
-            let detailsHtml = '';
-            window.lastAuditReportText = `ОТЧЁТ АУДИТА ПРОЕКТА${categoryNote}\nДиректория: ${res.scan_dir}\n`;
-            window.lastAuditReportText += `База: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n\n`;
+            // по группам
+            let by = {};
+            groups.forEach(g => by[g.id] = { missing: [], dups: [], unknown: [], files: [] });
+            (res.missing || []).forEach(m => (by[gidOf(m)] || by[gid0]).missing.push(m));
+            (res.duplicates || []).forEach(d => (by[gidOf(d)] || by[gid0]).dups.push(d));
+            unknown.forEach(u => by[gid0].unknown.push(u));
+            (res.files || []).forEach((f, k) => (by[gidOf(f)] || by[gid0]).files.push(k));
 
-            // Блок отсутствующих файлов
-            if (res.missing_count > 0) {
-                detailsHtml += `<h4 class="audit-group-title audit-group-title--lost">Отсутствуют — ${res.missing_count}</h4>`;
-                window.lastAuditReportText += `ОТСУТСТВУЮТ (${res.missing_count}):\n`;
+            // текст отчёта — тоже по группам
+            let rep = `ОТЧЁТ АУДИТА ПРОЕКТА${categoryNote}\nДиректория: ${res.scan_dir}\n`;
+            rep += `Всего: ${res.total_excel} | Найдено: ${res.total_disk} | Потеряно: ${res.missing_count} | Дубликаты: ${res.duplicates_count}\n`;
+            groups.forEach(g => {
+                let b = by[g.id];
+                rep += `\n== ${g.section.replace(' · ', ' / ')} / ${g.title}: найдено ${g.found} из ${g.total}` +
+                       `${b.missing.length ? `, нет ${b.missing.length}` : ''}${b.dups.length ? `, дубли ${b.dups.length}` : ''}\n`;
+                b.missing.forEach(m => rep += `- нет: ${m.filename} (строка ${m.index}: ${m.text})\n`);
+                b.dups.forEach(d => rep += `- дубль: ${d.filename} × ${d.count}\n${d.paths.map(p => '    ' + p).join('\n')}\n`);
+                b.unknown.forEach(u => rep += `- не распознано: ${u.filename}: «${u.heard}» ~ ${u.guess} (${Math.round(u.score * 100)}%)\n`);
+            });
+            window.lastAuditReportText = rep;
 
-                res.missing.forEach(m => {
-                    detailsHtml += voice ? `
-                    <div class="audit-row">
-                        <span class="audit-row__name audit-row__name--lost">${escapeHtml(m.text)}</span>
-                        <div class="audit-row__meta">Строка ${m.index}: не услышано ни в одном чанке</div>
-                    </div>` : `
-                    <div class="audit-row">
-                        <span class="audit-row__name audit-row__name--lost">${escapeHtml(m.filename)}</span>
-                        <div class="audit-row__meta">Строка ${m.index}: ${escapeHtml(m.phrase || m.text)}</div>
-                    </div>`;
-                    window.lastAuditReportText += `- ${m.filename} (Строка ${m.index}: ${m.text})\n`;
+            // разделы: «Фразы» / «Переменные» (внутри — «Суммы» и отдельные категории)
+            let sections = [];
+            groups.forEach(g => {
+                let [sec, sub] = String(g.section || '').split(' · ');
+                let S = sections.find(x => x.title === sec) || (sections.push({ title: sec, subs: [] }), sections[sections.length - 1]);
+                let U = S.subs.find(x => x.title === (sub || '')) || (S.subs.push({ title: sub || '', groups: [] }), S.subs[S.subs.length - 1]);
+                U.groups.push(g);
+            });
+            let html = `<div class="audit-toolbar">
+                    <input class="audit-files__filter" placeholder="Поиск по названию или тексту" value="${escapeHtml(auditFilter)}" oninput="auditFilter = this.value; auditApplyFilter()">
+                    <label class="audit-switch"><input type="checkbox" ${auditOnlyProblems ? 'checked' : ''} onchange="auditOnlyProblems = this.checked; auditApplyFilter()"> Только с проблемами</label>
+                    <span class="audit-toolbar__spacer"></span>
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(true)">Развернуть все</button>
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(false)">Свернуть все</button>
+                </div>`;
+            sections.forEach(S => {
+                let n = S.subs.reduce((a, U) => a + U.groups.length, 0);
+                let bad = S.subs.reduce((a, U) => a + U.groups.filter(g => g.missing || g.duplicates).length, 0);
+                html += `<section class="audit-section"><div class="audit-section__title">${escapeHtml(S.title)}
+                    <span class="audit-section__meta">${n} ${plural(n, 'группа', 'группы', 'групп')}${bad ? ` · с проблемами: ${bad}` : ' · всё на месте'}</span></div>`;
+                S.subs.forEach(U => {
+                    if (U.title) html += `<div class="audit-subsection">${escapeHtml(U.title)}</div>`;
+                    U.groups.forEach(g => html += auditGroupHTML(res, g, by[g.id], groups.length === 1));
                 });
-                window.lastAuditReportText += `\n`;
-            } else {
-                detailsHtml += `<div class="audit-ok">Все файлы по списку Excel на месте</div>`;
-            }
-
-            // По голосу: чанки, где речь есть, но марку уверенно не узнали —
-            // их стоит послушать: возможно, там как раз «недостающее».
-            if (voice) {
-                if (unknown.length) {
-                    detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Не распознано уверенно — ${unknown.length} (послушайте)</h4>`;
-                    window.lastAuditReportText += `НЕ РАСПОЗНАНО (${unknown.length}):\n`;
-                    unknown.forEach(u => {
-                        detailsHtml += `
-                        <div class="audit-row">
-                            <span class="audit-row__name audit-row__name--dups">${escapeHtml(u.filename)}</span>
-                            <div class="audit-row__meta">Услышано: «${escapeHtml(u.heard)}» · похоже на ${escapeHtml(u.guess)} (${Math.round(u.score * 100)}%)</div>
-                        </div>`;
-                        window.lastAuditReportText += `- ${u.filename}: «${u.heard}» ~ ${u.guess} (${Math.round(u.score * 100)}%)\n`;
-                    });
-                }
-                auditSetDetails(detailsHtml + auditFilesHTML(res), quiet);
-                document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
-                return;
-            }
-
-            // Блок дубликатов
-            if (res.duplicates_count > 0) {
-                detailsHtml += `<h4 class="audit-group-title audit-group-title--dups">Дубликаты — ${res.duplicates_count}</h4>`;
-                window.lastAuditReportText += `ДУБЛИКАТЫ (${res.duplicates_count}):\n`;
-
-                res.duplicates.forEach(d => {
-                    detailsHtml += `
-                    <div class="audit-row">
-                        <span class="audit-row__name audit-row__name--dups">${d.filename}</span> — найдено ${d.count} шт.
-                        <div class="audit-row__meta">${d.paths.join('<br>')}</div>
-                    </div>`;
-                    window.lastAuditReportText += `- ${d.filename} (Найдено: ${d.count} шт.)\n`;
-                });
-            } else {
-                detailsHtml += `<div class="audit-ok">Дубликатов не обнаружено</div>`;
-            }
-
-            auditSetDetails(auditFilesHTML(res) + detailsHtml, quiet);
+                html += `</section>`;
+            });
+            auditSetDetails(html, quiet);
             document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
+        }
+        function plural(n, one, few, many) {
+            let m10 = n % 10, m100 = n % 100;
+            return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+        }
+        function auditGroupHTML(res, g, b, only) {
+            let voice = !!res.by_voice;
+            let isVar = String(g.id).startsWith('var_') || (!res.groups && res.category);
+            let probs = b.missing.length + b.dups.length + b.unknown.length;
+            let open = g.id in auditOpen ? auditOpen[g.id] : (only || probs > 0);
+            let pct = g.total ? Math.round(g.found / g.total * 100) : 0;
+            let q = s => escapeHtml(String(s || '').toLowerCase());
+            let body = '';
+            if (b.missing.length) {
+                body += `<div class="audit-block"><div class="audit-block__title is-lost">${voice ? 'Не хватает' : 'Нет записи'} — ${b.missing.length}</div>`;
+                body += isVar || voice
+                    ? `<div class="audit-chips">${b.missing.map(m => `<span class="audit-chip" data-q="${q(m.filename + ' ' + m.text)}" title="Строка ${m.index}${voice ? '' : ' · файл ' + escapeHtml(m.filename)}">
+                            ${escapeHtml(m.text)}</span>`).join('')}</div>`
+                    : b.missing.map(m => `<div class="audit-line" data-q="${q(m.filename + ' ' + (m.phrase || m.text))}">
+                            <span class="audit-line__name is-lost">${escapeHtml(m.filename)}</span>
+                            <span class="audit-line__text">${escapeHtml(m.phrase || m.text)}</span>
+                            <span class="audit-line__meta">стр. ${m.index}</span></div>`).join('');
+                body += `</div>`;
+            }
+            if (b.dups.length) {
+                body += `<div class="audit-block"><div class="audit-block__title is-dups">Дубли — ${b.dups.length} <span class="audit-block__hint">одно название в нескольких местах этой группы</span></div>`;
+                body += b.dups.map(d => `<div class="audit-line audit-line--top" data-q="${q(d.filename + ' ' + d.paths.join(' '))}">
+                        <span class="audit-line__name is-dups">${escapeHtml(d.filename)}</span>
+                        <span class="audit-line__text audit-line__paths" title="${escapeHtml(d.paths.join('\n'))}">${d.paths.map(p => escapeHtml(auditRel(res, p))).join('<br>')}</span>
+                        <span class="audit-line__meta">× ${d.count}</span></div>`).join('');
+                body += `</div>`;
+            }
+            if (b.unknown.length) {
+                body += `<div class="audit-block"><div class="audit-block__title is-dups">Не распознано уверенно — ${b.unknown.length} <span class="audit-block__hint">послушайте: возможно, там как раз недостающее</span></div>`;
+                body += b.unknown.map(u => `<div class="audit-line" data-q="${q(u.filename + ' ' + u.heard + ' ' + u.guess)}">
+                        <span class="audit-line__name is-dups">${escapeHtml(u.filename)}</span>
+                        <span class="audit-line__text">«${escapeHtml(u.heard)}» · похоже на ${escapeHtml(u.guess)}</span>
+                        <span class="audit-line__meta">${Math.round(u.score * 100)}%</span></div>`).join('');
+                body += `</div>`;
+            }
+            if (!probs) body += `<div class="audit-ok audit-ok--sm">Всё на месте${g.folder ? ` · папка «${escapeHtml(g.folder.split(/[\\/]/).pop())}»` : ''}</div>`;
+            if (b.files.length) {
+                let fid = g.id + ':files';
+                let fopen = fid in auditOpen ? auditOpen[fid] : (voice || (only && b.files.length <= 30));
+                let editable = voice || (!isVar && res.can_edit);
+                body += `<details class="audit-sub" data-id="${escapeHtml(fid)}" ${fopen ? 'open' : ''} ontoggle="auditOpen[this.dataset.id] = this.open">
+                    <summary>Записи — ${b.files.length}</summary>
+                    <div class="tts-dim audit-files__hint">${voice
+                        ? '▶ — послушать. Распознано неверно — исправьте текст и нажмите Enter: сверка с таблицей пересчитается, правка запомнится в папке чанков.'
+                        : editable ? '▶ — послушать, ✂ — подрезать запись. Текст фразы можно исправить — он запишется в таблицу Excel (перед первой правкой сохраню её копию «… .до_правок»).'
+                                   : '▶ — послушать, ✂ — подрезать запись.'}</div>
+                    <div class="audit-files">${b.files.map(k => auditFileRow(res, res.files[k], k, editable)).join('')}</div>
+                </details>`;
+            }
+            return `<details class="audit-grp${probs ? ' has-problems' : ''}" data-id="${escapeHtml(g.id)}" ${open ? 'open' : ''} ontoggle="auditOpen[this.dataset.id] = this.open">
+                <summary class="audit-grp__head">
+                    <span class="audit-grp__title">${escapeHtml(g.title)}</span>
+                    <span class="audit-grp__bar" title="${pct}%"><i style="width:${pct}%"></i></span>
+                    <span class="audit-grp__count">${g.found} из ${g.total}</span>
+                    <span class="audit-grp__pills">${b.missing.length ? `<span class="audit-pill is-lost">нет ${b.missing.length}</span>` : ''}${b.dups.length ? `<span class="audit-pill is-dups">дубли ${b.dups.length}</span>` : ''}${b.unknown.length ? `<span class="audit-pill is-dups">?&nbsp;${b.unknown.length}</span>` : ''}${probs ? '' : '<span class="audit-pill is-ok">✓ всё на месте</span>'}</span>
+                </summary>
+                <div class="audit-grp__body">${body}</div>
+            </details>`;
+        }
+        // путь — от выбранной папки (короче и понятнее)
+        function auditRel(res, p) {
+            let root = String(res.scan_dir || '').replace(/[\\/]+$/, '');
+            return root && p.startsWith(root) ? '…' + p.slice(root.length) : p;
+        }
+        function auditToggleAll(open) {
+            document.querySelectorAll('#auditDetails details').forEach(d => {
+                if (d.classList.contains('audit-sub') && open) return;   // записи — раскрываются по одной (их много)
+                d.open = open; auditOpen[d.dataset.id] = open;
+            });
         }
 
         // ----- Записи в аудите: послушать и поправить текст -----
-        let auditFilter = '';
         function auditSetDetails(html, quiet) {
             let box = document.getElementById('auditDetails');
             let top = quiet ? box.scrollTop : 0;
@@ -5447,57 +5534,59 @@ let isProcessing = false;
             box.querySelectorAll('.audit-file__phrase').forEach(t => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; });
             auditApplyFilter();
         }
-        function auditFilesHTML(res) {
-            let files = res.files || [];
-            if (!files.length) return '';
+        function auditFileRow(res, f, k, editable) {
             let voice = !!res.by_voice;
-            let editable = voice || (!res.category && res.can_edit);
-            let rows = files.map((f, k) => {
-                let badge = voice
-                    ? (f.match ? `<span class="audit-file__badge is-ok" title="Совпало со значением таблицы">✓ ${escapeHtml(f.match)}</span>`
-                               : f.text ? `<span class="audit-file__badge" title="Не совпало ни с одним значением уверенно">? ${escapeHtml(f.guess || '')}</span>`
-                                        : '<span class="audit-file__badge">тишина</span>')
-                    : '';
-                let note = voice && f.fixed ? `<div class="audit-file__heard">распознано: «${escapeHtml(f.heard || '—')}» · исправлено вами</div>` : '';
-                if (voice && f.phrase) note += `<div class="audit-file__heard">фраза: «${escapeHtml(f.phrase)}»</div>`;
-                // по названиям: текст фразы из таблицы (по названию файла) — видно и правится в своей ячейке
-                if (!voice && f.phrase) return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + f.phrase).toLowerCase())}">
-                    <span class="audit-file__btns"><button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button><button type="button" class="audit-file__play" onclick="auditEdOpen(${k})" title="Править запись: срезать края, вырезать лишнее">&#9986;</button></span>
-                    <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
-                    <textarea class="audit-file__text audit-file__phrase" data-k="${k}" rows="1" title="Текст фразы — исправленный запишется в ту же ячейку таблицы Excel"
-                        onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.blur(); } if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
-                        oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"
-                        onchange="auditPhraseFix(${k}, this.value)">${escapeHtml(f.phrase)}</textarea>
-                    <span></span>
-                </div>`;
-                return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + (f.text || '') + ' ' + (f.match || '')).toLowerCase())}">
-                    <span class="audit-file__btns"><button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button><button type="button" class="audit-file__play" onclick="auditEdOpen(${k})" title="Править запись: срезать края, вырезать лишнее">&#9986;</button></span>
-                    <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
-                    ${editable
-                        ? `<input class="audit-file__text" data-k="${k}" value="${escapeHtml(f.text || '')}" placeholder="${voice ? 'что сказано — впишите' : 'текст фразы'}"
-                             onkeydown="if (event.key === 'Enter') this.blur(); if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
-                             onchange="auditFix(${k}, this.value)" title="${voice ? 'Исправьте, если распознано неверно — сверка пересчитается' : 'Исправленный текст запишется в таблицу Excel'}">`
-                        : `<span class="audit-file__text is-ro">${escapeHtml(f.text || '')}</span>`}
-                    ${badge}${note}
-                </div>`;
-            }).join('');
-            return `<h4 class="audit-group-title">Записи — ${files.length}
-                    <input class="audit-files__filter" placeholder="найти по названию или тексту" value="${escapeHtml(auditFilter)}" oninput="auditFilter = this.value; auditApplyFilter()"></h4>
-                <div class="tts-dim audit-files__hint">${voice
-                    ? '▶ — послушать. Распознано неверно — исправьте текст и нажмите Enter: сверка с таблицей пересчитается, правка запомнится в папке чанков.'
-                    : editable ? '▶ — послушать. Текст фразы можно исправить — он запишется в таблицу Excel (перед первой правкой сохраню её копию «… .до_правок»).'
-                               : '▶ — послушать запись.'}</div>
-                <div class="audit-files">${rows}</div>`;
+            let btns = `<span class="audit-file__btns"><button type="button" class="audit-file__play" data-k="${k}" onclick="auditPlay(${k})" title="Прослушать (ещё раз — стоп)">&#9654;</button><button type="button" class="audit-file__cut" onclick="auditEdOpen(${k})" title="Править запись: срезать края, вырезать лишнее">&#9986;</button></span>`;
+            let badge = voice
+                ? (f.match ? `<span class="audit-file__badge is-ok" title="Совпало со значением таблицы">✓ ${escapeHtml(f.match)}</span>`
+                           : f.text ? `<span class="audit-file__badge" title="Не совпало ни с одним значением уверенно">? ${escapeHtml(f.guess || '')}</span>`
+                                    : '<span class="audit-file__badge">тишина</span>')
+                : '';
+            let note = voice && f.fixed ? `<div class="audit-file__heard">распознано: «${escapeHtml(f.heard || '—')}» · исправлено вами</div>` : '';
+            if (voice && f.phrase) note += `<div class="audit-file__heard">фраза: «${escapeHtml(f.phrase)}»</div>`;
+            // по названиям: текст фразы из таблицы (по названию файла) — видно и правится в своей ячейке
+            if (!voice && f.phrase) return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + f.phrase).toLowerCase())}">
+                ${btns}
+                <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
+                <textarea class="audit-file__text audit-file__phrase" data-k="${k}" rows="1" title="Текст фразы — исправленный запишется в ту же ячейку таблицы Excel"
+                    onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.blur(); } if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
+                    oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"
+                    onchange="auditPhraseFix(${k}, this.value)">${escapeHtml(f.phrase)}</textarea>
+                <span></span>
+            </div>`;
+            return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + (f.text || '') + ' ' + (f.match || '')).toLowerCase())}">
+                ${btns}
+                <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
+                ${editable
+                    ? `<input class="audit-file__text" data-k="${k}" value="${escapeHtml(f.text || '')}" placeholder="${voice ? 'что сказано — впишите' : 'текст фразы'}"
+                         onkeydown="if (event.key === 'Enter') this.blur(); if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
+                         onchange="auditFix(${k}, this.value)" title="${voice ? 'Исправьте, если распознано неверно — сверка пересчитается' : 'Исправленный текст запишется в таблицу Excel'}">`
+                    : `<span class="audit-file__text is-ro">${escapeHtml(f.text || '')}</span>`}
+                ${badge}${note}
+            </div>`;
         }
         function auditApplyFilter() {
             let q = auditFilter.trim().toLowerCase();
-            document.querySelectorAll('#auditDetails .audit-file').forEach(el => el.style.display = !q || el.dataset.q.includes(q) ? '' : 'none');
+            document.querySelectorAll('#auditDetails .audit-grp').forEach(g => {
+                let hits = 0;
+                g.querySelectorAll('[data-q]').forEach(el => {
+                    let ok = !q || el.dataset.q.includes(q);
+                    el.style.display = ok ? '' : 'none';
+                    if (ok) hits++;
+                });
+                let title = g.querySelector('.audit-grp__title').textContent.toLowerCase();
+                let show = (!auditOnlyProblems || g.classList.contains('has-problems')) && (!q || hits || title.includes(q));
+                g.style.display = show ? '' : 'none';
+                if (q && hits) { g.open = true; let sub = g.querySelector('.audit-sub'); if (sub && sub.querySelector('.audit-file[data-q]:not([style*="none"])')) sub.open = true; }
+            });
+            document.querySelectorAll('#auditDetails .audit-section').forEach(S =>
+                S.style.display = [...S.querySelectorAll('.audit-grp')].some(g => g.style.display !== 'none') ? '' : 'none');
         }
         let auditPlayTimer = null;
         async function auditPlay(k) {
             let f = (window.auditRes.files || [])[k];
             if (!f) return;
-            let btns = document.querySelectorAll('.audit-file__play');
+            let btns = document.querySelectorAll('.audit-file__play[data-k]');     // только ▶ — ✂ рядом не трогаем
             let was = document.querySelector(`.audit-file__play[data-k="${k}"]`);
             let replay = was && was.classList.contains('is-playing');
             btns.forEach(b => { b.classList.remove('is-playing'); b.innerHTML = '&#9654;'; });

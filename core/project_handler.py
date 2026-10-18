@@ -560,9 +560,10 @@ class ProjectMixin:
 
     def audit_project_files(self, category=None):
         """Без выбранной категории и при загруженном словаре переменных —
-        сперва спрашивает, по какой категории сверяться (Excel-список
-        дублей «Шага 1» или одна из категорий словаря — марка/год/ярусы
-        Суммы и т.п.), а уже потом открывает папку на сканирование."""
+        сперва спрашивает, что сверять: весь проект (фразы + все переменные),
+        только фразы Excel, все переменные или одну категорию; потом
+        открывает папку на сканирование. category: 'excel' | 'all' |
+        'vars' | ключ категории."""
         if category is None:
             categories = self._audit_available_categories()
             if categories:
@@ -575,63 +576,192 @@ class ProjectMixin:
                 # Только Excel — сразу спрашиваем, готовы ли чанки.
                 return {"status": "choose_chunks", "category": "excel", "label": "Текст из Excel"}
 
-        if category and category != 'excel':
-            return self._audit_by_category(category)
-
-        if not self.phrases_data:
+        cats = [c["key"] for c in self._audit_available_categories()]
+        if category == 'all':
+            parts = (['excel'] if self.phrases_data else []) + cats
+        elif category == 'vars':
+            parts = cats
+        elif category and category != 'excel':
+            parts = [category]
+        else:
+            parts = ['excel']
+        if 'excel' in parts and not self.phrases_data:
             return {"error": "Сначала загрузите Excel-файл с текстами (Шаг 1)!"}
+        if not parts:
+            return {"error": "Для этой категории в словаре переменных нет ни одного значения."}
 
         folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not folder:
             return {"error": "cancel"}
+        return self._audit_run(folder[0], parts, category or 'excel')
 
-        scan_dir = folder[0]
+    # ---- аудит по группам: Фразы (по языкам) и Переменные (по категориям) ----
+    _AUDIT_KZ_LETTERS = set('әғқңөұүһіӘҒҚҢӨҰҮҺІ')
+
+    @classmethod
+    def _audit_lang(cls, name, text, header=''):
+        """Язык фразы: по названию/колонке (…_kz, RU_…), иначе по буквам текста."""
+        tag = f"{name} {header}".lower()
+        if re.search(r'(^|[^a-zа-я])(kz|kaz|қаз|каз)([^a-zа-я]|$)', tag):
+            return 'kz'
+        if re.search(r'(^|[^a-zа-я])(ru|rus|рус)([^a-zа-я]|$)', tag):
+            return 'ru'
+        txt = str(text or '')
+        if any(ch in cls._AUDIT_KZ_LETTERS for ch in txt):
+            return 'kz'
+        if re.search(r'[а-яё]', txt.lower()):
+            return 'ru'
+        return 'other' if txt.strip() else 'ru'
+
+    _AUDIT_LANG_TITLE = {'ru': 'Русский', 'kz': 'Қазақша', 'other': 'Другие'}
+
+    @staticmethod
+    def _audit_norm_dir(name):
+        return re.sub(r'[\s\-–—_.]+', '', str(name or '').lower())
+
+    def _audit_cat_dirs(self, category):
+        """Как может называться папка категории: «1 - 100 млн», ключ, подпись."""
+        names = {self._sum_manual_tier_dir(category), category, self._category_label(category)}
+        return {self._audit_norm_dir(n) for n in names if n}
+
+    def _audit_scope(self, scan_dir, category, all_cats):
+        """Папка, где лежат файлы категории: сама выбранная папка, если это
+        она, иначе её подпапка с именем категории. Не нашлась — вся папка,
+        кроме папок других категорий (иначе «1.wav» миллионов и «1.wav»
+        тенге выглядят дублями друг друга)."""
+        mine = self._audit_cat_dirs(category)
+        if self._audit_norm_dir(os.path.basename(os.path.normpath(scan_dir))) in mine:
+            return scan_dir, set()
+        hits = []
+        for root_dir, dirs, _f in os.walk(scan_dir):
+            for d in dirs:
+                if self._audit_norm_dir(d) in mine:
+                    hits.append(os.path.join(root_dir, d))
+        if hits:
+            hits.sort(key=lambda h: (h.count(os.sep), h))
+            return hits[0], set()
+        others = set()
+        for c in all_cats:
+            if c != category:
+                others |= self._audit_cat_dirs(c)
+        if self._audit_norm_dir(os.path.basename(os.path.normpath(scan_dir))) in others:
+            return None, others                            # выбрана папка другой категории — здесь искать нечего
+        return scan_dir, others
+
+    @staticmethod
+    def _audit_in(path, root, skip_dirs):
+        if root is None:
+            return False
+        rel = os.path.relpath(os.path.dirname(path), root)
+        if rel.startswith('..'):
+            return False
+        if skip_dirs and rel != '.':
+            for part in rel.split(os.sep):
+                if ProjectMixin._audit_norm_dir(part) in skip_dirs:
+                    return False
+        return True
+
+    def _audit_run(self, scan_dir, parts, mode):
         found_files, all_disk_files = self._audit_scan_folder(scan_dir)
+        entries = [(f_low, pth) for f_low, paths in found_files.items() for pth in paths]
+        cats = [c for c in parts if c != 'excel']
+        groups, missing_list, duplicates_list, files = [], [], [], []
+        valid_total = 0
 
-        missing_list = []
-        duplicates_list = []
-        files = []                 # найденные записи — послушать и поправить текст
+        def add_group(gid, section, title, total, found_n, miss, dups):
+            groups.append({"id": gid, "section": section, "title": title, "total": total,
+                           "found": found_n, "missing": miss, "duplicates": dups})
 
-        valid_excel_count = 0
-        for i, p in enumerate(self.phrases_data):
-            custom_filename = p.get("filename")
-            if not custom_filename or not str(custom_filename).strip():
+        if 'excel' in parts:
+            by_lang = {}
+            want = {}
+            for i, p in enumerate(self.phrases_data):
+                fn = str(p.get("filename") or '').strip()
+                if not fn:
+                    continue
+                valid_total += 1
+                exp = (fn if fn.lower().endswith('.wav') else f"{fn}.wav").lower()
+                lang = self._audit_lang(fn, p.get("text"), p.get("category") or '')
+                gid = f"ph_{lang}"
+                g = by_lang.setdefault(gid, {"total": 0, "found": 0, "miss": 0, "dups": 0, "lang": lang})
+                g["total"] += 1
+                want[exp] = gid
+                if exp not in all_disk_files:
+                    missing_list.append({"index": i + 1, "filename": exp, "text": p.get("text", ""), "group": gid})
+                    g["miss"] += 1
+                else:
+                    g["found"] += 1
+                    files.append({"i": i, "filename": os.path.basename(found_files[exp][0]),
+                                  "path": found_files[exp][0], "text": p.get("text", ""), "group": gid})
+            for exp, gid in want.items():                       # дубли — только среди нужных названий
+                paths = found_files.get(exp) or []
+                if len(paths) > 1:
+                    duplicates_list.append({"filename": exp, "count": len(paths), "paths": paths, "group": gid})
+                    by_lang[gid]["dups"] += 1
+            for lang in ('ru', 'kz', 'other'):
+                g = by_lang.get(f"ph_{lang}")
+                if g:
+                    add_group(f"ph_{lang}", "Фразы", self._AUDIT_LANG_TITLE[lang], g["total"], g["found"], g["miss"], g["dups"])
+
+        values_by_key = getattr(self, 'var_extra_tag_values', None) or {}
+        all_cats = self._all_category_keys()
+        for cat in cats:
+            values = values_by_key.get(cat) or []
+            if not values:
                 continue
+            root, skip = self._audit_scope(scan_dir, cat, all_cats)
+            scoped = {}
+            for f_low, pth in entries:
+                if self._audit_in(pth, root, skip):
+                    scoped.setdefault(f_low, []).append(pth)
+            gid = f"var_{cat}"
+            section = "Переменные · Суммы" if cat in SUM_TIER_ORDER else "Переменные"
+            miss_n = found_n = 0
+            names = set()
+            for i, value in enumerate(values):
+                name_base = self._var_value_name_base(cat, value)
+                names.add(name_base)
+                have = sorted({f"{name_base}.wav", f"{name_base}.mp3"} & set(scoped))
+                valid_total += 1
+                if have:
+                    found_n += 1
+                    path = scoped[have[0]][0]
+                    files.append({"filename": os.path.basename(path), "path": path, "text": value, "group": gid})
+                else:
+                    miss_n += 1
+                    missing_list.append({"index": i + 1, "filename": f"{name_base}.wav", "text": value, "group": gid})
+            dups = 0
+            for f_low, paths in scoped.items():
+                if len(paths) > 1 and re.sub(r'\.(wav|mp3)$', '', f_low) in names:
+                    dups += 1
+                    duplicates_list.append({"filename": f_low, "count": len(paths), "paths": paths, "group": gid})
+            add_group(gid, section, self._category_label(cat), len(values), found_n, miss_n, dups)
+            groups[-1]["folder"] = root if root and not skip else None
 
-            valid_excel_count += 1
-            expected_wav = (str(custom_filename).strip() if str(custom_filename).strip().lower().endswith(
-                '.wav') else f"{str(custom_filename).strip()}.wav").lower()
-
-            if expected_wav not in all_disk_files:
-                missing_list.append({
-                    "index": i + 1,
-                    "filename": expected_wav,
-                    "text": p.get("text", "")
-                })
-            else:
-                files.append({"i": i, "filename": os.path.basename(found_files[expected_wav][0]),
-                              "path": found_files[expected_wav][0], "text": p.get("text", "")})
-
-        for f_low, paths in found_files.items():
-            if len(paths) > 1:
-                duplicates_list.append({
-                    "filename": f_low,
-                    "count": len(paths),
-                    "paths": paths
-                })
-
-        self._audit_last = {"category": "excel", "missing": {m["text"] for m in missing_list}}
+        single = parts[0] if len(parts) == 1 else None
+        self._audit_last = {"category": single or mode, "missing": {m["text"] for m in missing_list}}
         files = self._audit_attach_phrases(files)
         pm = getattr(self, '_audit_pmap', None) or {}
         for m in missing_list:                                 # недостающее — с текстом фразы
-            hit = pm.get(re.sub(r'\.(wav|mp3)$', '', m["filename"].lower()))
-            m["phrase"] = hit["text"] if hit else None
-
+            if str(m.get("group", '')).startswith('ph_'):
+                hit = pm.get(re.sub(r'\.(wav|mp3)$', '', m["filename"].lower()))
+                m["phrase"] = hit["text"] if hit else None
+        if single == 'excel':
+            can_export = bool(missing_list and self._excel_source_ok())
+        elif single:
+            template = getattr(self, 'var_template_path', None)
+            can_export = bool(missing_list and template and os.path.exists(template))
+        else:
+            can_export = False
         return {
-            "can_export": bool(missing_list and self._excel_source_ok()),
+            "category": single if single and single != 'excel' else None,
+            "category_label": self._category_label(single) if single and single != 'excel' else None,
+            "mode": mode,
+            "groups": groups,
+            "can_export": can_export,
             "scan_dir": scan_dir,
-            "total_excel": valid_excel_count,
-            "total_disk": len(all_disk_files),
+            "total_excel": valid_total,
+            "total_disk": len(files),
             "missing_count": len(missing_list),
             "duplicates_count": len(duplicates_list),
             "missing": missing_list,
@@ -783,63 +913,6 @@ class ProjectMixin:
                 return {"error": f"Не удалось записать в таблицу: {e}"}
         self.phrases_data[i]["text"] = text
         return {"ok": True, "text": text, "excel_saved": excel_saved}
-
-    def _audit_by_category(self, category):
-        """Сверяет с папкой не основной Excel, а список значений ОДНОЙ
-        категории словаря переменных (марка/год/ярус Суммы и т.п.) — то
-        же имя файла, что ждёт сохранение эталона в этой категории (см.
-        _sum_stage2_resolve_value): для ярусов Суммы это голые цифры
-        значения, для остальных категорий — само значение, очищенное от
-        запрещённых в именах файлов символов."""
-        values = (getattr(self, 'var_extra_tag_values', None) or {}).get(category) or []
-        if not values:
-            return {"error": "Для этой категории в словаре переменных нет ни одного значения."}
-
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return {"error": "cancel"}
-
-        scan_dir = folder[0]
-        found_files, all_disk_files = self._audit_scan_folder(scan_dir)
-
-        missing_list = []
-        files = []
-        for i, value in enumerate(values):
-            clean_value = re.sub(r'[<>:"/\\|?*]', '', value).strip()
-            name_base = re.sub(r'\D', '', clean_value) if category in SUM_TIER_ORDER else clean_value
-            name_base = (name_base or clean_value).lower()
-            expected = {f"{name_base}.wav", f"{name_base}.mp3"}
-            have = expected & all_disk_files
-            if have:
-                path = found_files[sorted(have)[0]][0]
-                files.append({"filename": os.path.basename(path), "path": path, "text": value})
-            if not expected & all_disk_files:
-                missing_list.append({
-                    "index": i + 1,
-                    "filename": f"{name_base}.wav",
-                    "text": value
-                })
-
-        duplicates_list = [{"filename": f, "count": len(paths), "paths": paths}
-                            for f, paths in found_files.items() if len(paths) > 1]
-
-        # Для выгрузки «таблицы недостающих» (audit_export_missing).
-        self._audit_last = {"category": category, "missing": {m["text"] for m in missing_list}}
-        template = getattr(self, 'var_template_path', None)
-
-        return {
-            "category": category,
-            "can_export": bool(missing_list and template and os.path.exists(template)),
-            "category_label": self._category_label(category),
-            "scan_dir": scan_dir,
-            "total_excel": len(values),
-            "total_disk": len(all_disk_files),
-            "missing_count": len(missing_list),
-            "duplicates_count": len(duplicates_list),
-            "missing": missing_list,
-            "duplicates": duplicates_list,
-            "files": self._audit_attach_phrases(files),
-        }
 
     def _excel_source_ok(self):
         p = getattr(self, 'excel_path', None)
