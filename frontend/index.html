@@ -903,9 +903,9 @@
             <section class="setup-col">
                 <div class="section-label"><span>Новый проект</span></div>
 
-                <button class="option-card option-card--tts rise" style="--d: 1" id="btnTts" onclick="openTts()">
+                <button class="option-card option-card--tts rise" style="--d: 1" id="btnTts" onclick="openTts()" title="Запись фраз и переменных по таблице: суфлёр с микрофоном, распознавание и сверка с текстом, сборка и сохранение эталонов">
                     <span class="option-icon"><svg class="icon"><use href="#icon-mic"></use></svg></span>
-                    <div><span class="option-title">TTS-проект</span><span class="option-desc" id="descTts">Таблица + запись → автопроверка → апрув</span></div>
+                    <div><span class="option-title">Студия записи</span><span class="option-desc" id="descTts">Суфлёр · автосверка · сборка эталонов</span></div>
                 </button>
 
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
@@ -1417,7 +1417,7 @@
         <header class="workspace-header tts-header">
             <div class="header-actions">
                 <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
-                <button class="btn-ghost" onclick="ttsResetProject()" title="Закрыть этот TTS-проект (он сохранён на диске) и начать новый — без перезапуска программы">Новый проект</button>
+                <button class="btn-ghost" onclick="ttsResetProject()" title="Закрыть текущий проект студии (он сохранён на диске) и начать новый — без перезапуска программы">Новый проект</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadExcel()" title="Таблица с фразами (лист с колонкой &lt;phrase&gt;) и листами переменных">Таблица</button>
                 <button class="btn-ghost btn-ghost--rec" id="ttsRecBtn" onclick="ttsToggleRec()" title="Записывать с микрофона: готовые фразы появляются на ленте прямо во время записи">● Записывать <kbd>R</kbd></button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
@@ -1426,7 +1426,7 @@
                 <button class="btn-ghost btn-alert btn-ghost--compact" id="ttsMarksBtn" style="display:none" onclick="ttsMarksRetry()" title="Отметки start/end и переменных ещё не записаны в таблицу (например, она открыта в Excel)"></button>
             </div>
             <div class="tts-title">
-                <span class="tts-title__main">TTS</span>
+                <span class="tts-title__main">Студия записи</span>
                 <span class="tts-title__sub"><span id="ttsMeta">Таблица не загружена</span>
                     <span class="tts-lang" id="ttsLang" title="Язык распознавания речи">
                         <button type="button" data-l="ru" onclick="ttsSetLang('ru')">RU</button><button type="button" data-l="kz" onclick="ttsSetLang('kz')">KZ</button>
