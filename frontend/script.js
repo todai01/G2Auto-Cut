@@ -747,8 +747,24 @@ let isProcessing = false;
 
         function showMenu() {
             if (stageAnimating) return;
-            if (isShown('stage0-splash') && motionOK()) { animateSplashToMenu(); return; }
+            if (isShown('stage0-splash') && motionOK()) { fadeSplashToMenu(); return; }
             showMenuNow();
+        }
+
+        // Заставка → меню: просто плавная смена экранов (без полёта букв).
+        async function fadeSplashToMenu() {
+            stageAnimating = true;
+            let splash = document.getElementById('stage0-splash');
+            let menu = document.getElementById('stage1-loading');
+            try {
+                await splash.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).finished;
+            } catch (e) {}
+            showMenuNow();
+            splash.getAnimations().forEach(an => an.cancel());
+            try {
+                await menu.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, easing: 'cubic-bezier(.2,.7,.3,1)' }).finished;
+            } catch (e) {}
+            stageAnimating = false;
         }
 
         function showMenuNow() {
