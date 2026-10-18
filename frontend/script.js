@@ -800,7 +800,171 @@ let isProcessing = false;
                     <span class="menu-recent__time">${formatRecentTime(it.updated_at)}</span>
                 </button>`).join('');
             box.style.display = 'block';
+            if (radial.open && (!radial.cat || radial.cat === 'recent')) radialRender(false);
         }
+
+        // ===== Главное меню — круговое =====
+        // Значок в центре: клик — вокруг раскрываются разделы; выбрали раздел —
+        // в том же кольце его пункты, в центре — «назад». Пункты нажимают
+        // прежние (скрытые) кнопки меню: вся логика, статусы и «×» — те же.
+        const RADIAL_CATS = [
+            { key: 'new', title: 'Новый проект', icon: 'plus-circle', desc: 'Студия записи, текст из Excel, нарезка сырого WAV, готовые чанки' },
+            { key: 'vars', title: 'Переменные', icon: 'dollar-sign', desc: 'Пакетная сборка сумм, готовая папка с переменными, конструктор', cls: 'var' },
+            { key: 'tools', title: 'Утилиты', icon: 'zap', desc: 'Аудит проекта, названия по Excel, PowerPoint, конвертер, клон, очистка названий', cls: 'tool' },
+            { key: 'recent', title: 'Недавние', icon: 'calendar', desc: 'Открыть один из последних проектов', cls: 'good' },
+        ];
+        const RADIAL_ITEMS = {
+            new: [
+                { title: 'Студия записи', icon: 'mic', src: '#btnTts' },
+                { title: 'Загрузить текст', icon: 'file-text', src: '#btnLoadExcel', clear: 'excel' },
+                { title: 'Резать сырой WAV', icon: 'sliders', src: '#btnLoadAudio', clear: 'project' },
+                { title: 'Настройки нарезки', icon: 'scissors', act: 'cut' },
+                { title: 'Открыть готовые чанки', icon: 'folder', src: '#btnLoadFolder', clear: 'project' },
+            ],
+            vars: [
+                { title: 'Пакетная сборка', icon: 'refresh-cw', src: '.menu-row--var', cls: 'var' },
+                { title: 'Готовая папка', icon: 'folder', src: '.menu-row--good', cls: 'good' },
+                { title: 'Конструктор', icon: 'sliders', src: '.menu-row--info' },
+            ],
+        };
+        let radial = { open: false, cat: null, items: [], cutOpen: false, inited: false };
+        const radialEl = id => document.getElementById(id);
+        function radialToolItems() {
+            return [...document.querySelectorAll('.menu-grid .menu-tools .menu-tool')].map(b => {
+                let use = b.querySelector('use');
+                return { title: (b.querySelector('.menu-tool__title') || {}).textContent || '',
+                         icon: ((use && use.getAttribute('href')) || '#icon-zap').replace('#icon-', ''), node: b, cls: 'tool' };
+            });
+        }
+        function radialRecentItems() {
+            return (recentProjectsCache || []).slice(0, 6).map((it, idx) => ({ title: it.name, icon: 'folder', cls: 'good',
+                desc: `${it.path || ''}${it.updated_at ? ' · ' + formatRecentTime(it.updated_at) : ''}`, run: () => openRecentProject(idx) }));
+        }
+        function radialList() {
+            if (!radial.open) return [];
+            if (!radial.cat) return RADIAL_CATS.filter(c => c.key !== 'recent' || (recentProjectsCache || []).length).map(c => ({ ...c, isCat: true }));
+            if (radial.cat === 'tools') return radialToolItems();
+            if (radial.cat === 'recent') return radialRecentItems();
+            return (RADIAL_ITEMS[radial.cat] || []).map(it => ({ ...it, node: it.src ? document.querySelector('.menu-grid ' + it.src) : null }));
+        }
+        function radialDesc(it) {
+            if (it.desc) return it.desc;
+            if (it.act === 'cut') return `Сейчас: ${(radialEl('cutSummary') || {}).textContent || ''}. Обычно подбираются сами под запись`;
+            let n = it.node;
+            if (!n) return '';
+            let d = n.querySelector('.option-desc, .menu-row__desc');
+            return [d && d.textContent, n.getAttribute('title')].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
+        }
+        function radialHubHTML() {
+            if (!radial.cat) return `<span class="radial__logo">G<span>Vox</span></span><span class="radial__hub-sub">${radial.open ? 'свернуть' : 'меню'}</span>`;
+            let c = RADIAL_CATS.find(x => x.key === radial.cat);
+            return `<span class="radial__hub-icon">${iconHTML(c.icon)}</span><span class="radial__hub-title">${escapeHtml(c.title)}</span><span class="radial__hub-sub">&larr; назад</span>`;
+        }
+        function radialInfoHTML(it) {
+            if (it) return `<div class="radial__info-title">${escapeHtml(it.title)}</div><div class="radial__info-desc">${escapeHtml(radialDesc(it))}</div>`;
+            if (!radial.open) return `<div class="radial__info-desc">Нажмите на значок — откроется меню</div>`;
+            let n = radial.items.length;
+            return `<div class="radial__info-desc">${radial.cat ? 'Выберите действие' : 'Выберите раздел'}${n ? ` · клавиши <kbd>1</kbd>–<kbd>${n}</kbd>` : ''} · <kbd>Esc</kbd> — ${radial.cat ? 'назад' : 'свернуть'}</div>`;
+        }
+        function radialSetInfo(it) { radialEl('radialInfo').innerHTML = radialInfoHTML(it); }
+        // Под кольцом: параметры пакетной сборки, настройки нарезки, «очистить недавние».
+        function radialExtraRender() {
+            let ex = radialEl('radialExtra');
+            let opts = document.querySelector('.menu-row__opts');
+            let home = document.querySelector('.menu-grid .menu-row--var');
+            let cut = document.querySelector('details.menu-cut');
+            let col = document.querySelector('.menu-grid .setup-col');
+            if (radial.open && radial.cat === 'vars' && opts) { if (opts.parentNode !== ex) ex.appendChild(opts); }
+            else if (opts && home && opts.parentNode !== home) home.insertBefore(opts, home.querySelector('.menu-row__go'));
+            if (radial.open && radial.cat === 'new' && radial.cutOpen && cut) { if (cut.parentNode !== ex) { ex.appendChild(cut); cut.open = true; } }
+            else if (cut && col && cut.parentNode !== col) col.insertBefore(cut, radialEl('btnLoadFolder'));
+            let rc = radialEl('radialRecentClear');
+            if (radial.open && radial.cat === 'recent') {
+                if (!rc) ex.insertAdjacentHTML('beforeend', `<button type="button" class="radial__link" id="radialRecentClear" onclick="radialRecentClear()" title="Убрать все проекты из списка. Сами папки и файлы не удаляются">Очистить список</button>`);
+            } else if (rc) rc.remove();
+        }
+        async function radialRecentClear() {
+            await clearMenuRecent();
+            let rc = radialEl('radialRecentClear');
+            if (rc) rc.textContent = radialEl('menuRecentClear').classList.contains('is-confirm') ? 'Точно очистить?' : 'Очистить список';
+            if (!(recentProjectsCache || []).length) { radial.cat = null; radialRender(true); }
+        }
+        function radialRender(animate) {
+            let ring = radialEl('radialRing');
+            if (!ring) return;
+            radialEl('radial').classList.toggle('is-open', radial.open);
+            radialEl('radialHubIn').innerHTML = radialHubHTML();
+            radialEl('radialHub').title = !radial.open ? 'Открыть меню' : radial.cat ? 'Назад (Esc)' : 'Свернуть (Esc)';
+            let list = radialList();
+            radial.items = list;
+            let draw = () => {
+                let n = list.length;
+                ring.innerHTML = list.map((it, k) => {
+                    let a = (-90 + 360 / Math.max(1, n) * k) * Math.PI / 180;
+                    let loaded = it.node && it.node.classList.contains('loaded');
+                    return `<button type="button" class="radial__item ${it.isCat ? 'radial__item--cat' : ''} ${it.cls ? 'radial__item--' + it.cls : ''} ${loaded ? 'is-loaded' : ''}"
+                        data-k="${k}" style="--x: ${(Math.cos(a)).toFixed(4)} * var(--R); --y: ${(Math.sin(a)).toFixed(4)} * var(--R); --dl: ${animate ? k * 35 : 0}ms">
+                        <span class="radial__item-icon">${iconHTML(it.icon)}</span>
+                        <span class="radial__item-title">${escapeHtml(it.title)}</span>
+                        ${loaded && it.clear ? `<span class="radial__clear" role="button" title="Сбросить, чтобы загрузить заново" data-clear="${it.clear}">&times;</span>` : ''}
+                    </button>`;
+                }).join('');
+                ring.querySelectorAll('.radial__item').forEach(b => {
+                    let it = list[+b.dataset.k];
+                    b.onmouseenter = b.onfocus = () => radialSetInfo(it);
+                    b.onmouseleave = b.onblur = () => radialSetInfo(null);
+                    b.onclick = e => {
+                        let c = e.target.closest('[data-clear]');
+                        if (c) { e.stopPropagation(); clearLoaded(e, c.dataset.clear); setTimeout(() => radialRender(false), 200); return; }
+                        radialRun(it);
+                    };
+                });
+                if (animate) requestAnimationFrame(() => requestAnimationFrame(() => ring.querySelectorAll('.radial__item').forEach(b => b.classList.add('is-in'))));
+                else ring.querySelectorAll('.radial__item').forEach(b => b.classList.add('is-in'));
+                radialSetInfo(null);
+                radialExtraRender();
+            };
+            let old = ring.querySelectorAll('.radial__item');
+            if (animate && old.length && motionOK()) {
+                old.forEach(b => { b.classList.remove('is-in'); b.classList.add('is-out'); });
+                setTimeout(draw, 170);
+            } else draw();
+        }
+        function radialRun(it) {
+            if (!it) return;
+            if (it.isCat) { radial.cat = it.key; radial.cutOpen = false; radialRender(true); return; }
+            if (it.act === 'cut') { radial.cutOpen = !radial.cutOpen; radialExtraRender(); return; }
+            if (it.run) { it.run(); return; }
+            if (it.node) { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }
+        }
+        function radialHubClick() {
+            if (!radial.open) radial.open = true;
+            else if (radial.cat) radial.cat = null;
+            else radial.open = false;
+            radial.cutOpen = false;
+            radialRender(true);
+        }
+        function radialKey(e) {
+            if (!isShown('stage1-loading') || !radialEl('radial')) return;
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+            if ([...document.querySelectorAll('.custom-alert-overlay')].some(o => o.style.display === 'flex')) return;
+            if (e.code === 'Escape' && radial.open) { e.preventDefault(); radialHubClick(); return; }
+            let m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+            if (m && radial.open && radial.items[+m[1] - 1]) { e.preventDefault(); radialRun(radial.items[+m[1] - 1]); }
+        }
+        function radialInit() {
+            if (!radialEl('radial') || radial.inited) return;
+            radial.inited = true;
+            let prog = radialEl('progressContainer');
+            if (prog) radialEl('radial').appendChild(prog);            // ход нарезки — под кольцом
+            document.addEventListener('keydown', radialKey);
+            // загрузили таблицу / проект — «✓» и «×» на кольце обновляются сами
+            let grid = document.querySelector('.menu-grid'), t = null;
+            if (grid) new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { if (radial.open && radial.cat && isShown('stage1-loading')) radialRender(false); }, 120); })
+                .observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true, characterData: true });
+            radialRender(false);
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', radialInit); else radialInit();
 
         // Очистить список недавних: первый клик спрашивает, второй — очищает.
         let menuRecentClearTimer = null;

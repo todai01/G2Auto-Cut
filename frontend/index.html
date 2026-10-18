@@ -897,7 +897,20 @@
             </div>
         </header>
 
-        <div class="setup-grid menu-grid">
+        <!-- Главное меню — круговое: значок в центре, разделы и их пункты вокруг.
+             Кнопки ниже (скрытые) остаются источником действий и статусов. -->
+        <div class="radial" id="radial">
+            <div class="radial__stage" id="radialStage">
+                <div class="radial__ring" id="radialRing"></div>
+                <button type="button" class="radial__hub" id="radialHub" onclick="radialHubClick()" title="Меню">
+                    <span class="radial__hub-in" id="radialHubIn"></span>
+                </button>
+            </div>
+            <div class="radial__info" id="radialInfo"></div>
+            <div class="radial__extra" id="radialExtra"></div>
+        </div>
+
+        <div class="setup-grid menu-grid menu-grid--hidden" aria-hidden="true">
 
             <!-- ЛЕВАЯ КОЛОНКА: с чего начать -->
             <section class="setup-col">
