@@ -649,7 +649,11 @@ class ProjectMixin:
                         seen.add(rel.lower())
                         lang = text_lang(u.get("text")) or u.get("lang") or sh.get("lang") or 'ru'
                         lang = 'kz' if lang in ('kz', 'kk') else ('ru' if lang == 'ru' else 'other')
-                        out.append((rel, "Фразы", f"ph_{lang}", self._AUDIT_LANG_TITLE[lang], u.get("text", ''), u.get("row")))
+                        # цельные фразы и фразы с переменными (кусочки до/после суммы, даты, значения из ячейки)
+                        with_var = u.get("kind") == "piece" or bool(u.get("role"))
+                        out.append((rel, "Фразы · С переменными" if with_var else "Фразы · Цельные",
+                                    f"ph_var_{lang}" if with_var else f"ph_{lang}", self._AUDIT_LANG_TITLE[lang],
+                                    u.get("text", ''), u.get("row")))
         finally:
             self.tts = saved
             for k, v in saved_caches.items():
