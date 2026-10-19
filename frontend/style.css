@@ -3706,3 +3706,6 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .custom-alert-overlay .btn-secondary:hover, .custom-alert-overlay .audit-category-item:hover{ border-color: var(--modal-ac); background: rgba(var(--modal-ac-rgb), .08); }
 .custom-alert-overlay .search-input:focus{ border-color: var(--modal-ac); }
 .custom-alert-overlay .audit-category-item.is-main{ border-color: var(--modal-ac); }
+
+.audit-note{ padding: 10px 14px; border-radius: 9px; font-size: 12.5px; line-height: 1.45; color: var(--text);
+    background: rgba(238,172,62,.08); border: 1px solid rgba(238,172,62,.4); }

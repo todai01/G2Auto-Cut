@@ -5566,7 +5566,7 @@ let isProcessing = false;
                 btn.innerHTML = escapeHtml(label) + (desc ? `<span class="audit-choice-desc">${escapeHtml(desc)}</span>` : '');
                 btn.onclick = () => {
                     closeAuditCategoryPicker();
-                    if (key === 'all' || key === 'vars' || key === 'studio') runProjectAudit(key);      // сразу по названиям файлов
+                    if (['all', 'vars', 'studio', 'studio_pick'].includes(key)) runProjectAudit(key);      // сразу по названиям файлов
                     else askAuditChunks(key, key === 'excel' ? 'Текст из Excel' : label);
                 };
                 list.appendChild(btn);
@@ -5581,8 +5581,10 @@ let isProcessing = false;
             let cats = res.categories || [];
             let studio = res.studio || {};
             addOption('studio', 'Таблица Студии записи — все листы',
-                (studio.loaded ? `«${studio.name}» · ` : 'Выберу таблицу (.xlsx) · ')
+                (studio.loaded ? `«${studio.name}» · изменена ${studio.mtime} · ` : 'Выберу таблицу (.xlsx) · ')
                 + 'фразы, суммы по ярусам, даты — во всех папках внутри выбранной', 'is-main');
+            if (studio.loaded) addOption('studio_pick', 'Другая таблица (.xlsx) — все листы',
+                'Обновили таблицу или она лежит в другом месте — выберите файл, читается заново');
             if (res.has_excel && cats.length)
                 addOption('all', 'Весь проект (Шаг 1 + словарь)', 'Фразы по языкам и все переменные словаря — одной проверкой, по названиям файлов');
             if (res.has_excel) addOption('excel', 'Фразы (Excel, Шаг 1)', 'Названия из таблицы — по языкам');
@@ -5712,7 +5714,7 @@ let isProcessing = false;
             let gidOf = x => x.group || gid0;
             let multi = groups.length > 1;
             let categoryNote = res.category ? ` — категория «${res.category_label}»`
-                : res.mode === 'studio' ? ` — таблица «${res.studio_name || ''}», все листы`
+                : res.mode === 'studio' ? ` — таблица «${res.studio_name || ''}» (изменена ${res.studio_mtime || '—'}), все листы`
                 : res.mode === 'all' ? ' — весь проект' : res.mode === 'vars' ? ' — все переменные' : '';
             if (voice) categoryNote += ` — по голосу, чанков: ${res.chunks_total}${res.stopped ? ' (остановлено, проверены не все)' : ''}`;
             document.getElementById('auditOverlay').style.display = 'flex';
@@ -5775,8 +5777,32 @@ let isProcessing = false;
                 });
                 html += `</section>`;
             });
+            let extra = res.extra || [];
+            if (extra.length) {
+                rep += `\n== Нет в таблице: ${extra.length}\n` + extra.map(e => `- ${e.folder}/${e.filename}`).join('\n') + '\n';
+                window.lastAuditReportText = rep;
+                let q = s => escapeHtml(String(s || '').toLowerCase());
+                html += `<section class="audit-section"><div class="audit-section__title">Нет в таблице
+                    <span class="audit-section__meta">${extra.length} ${plural(extra.length, 'файл', 'файла', 'файлов')} в папках проекта, которых нет в таблице — лишние или переименованные</span></div>
+                    <details class="audit-grp has-problems" data-id="_extra" ${'_extra' in auditOpen ? (auditOpen._extra ? 'open' : '') : 'open'} ontoggle="auditOpen[this.dataset.id] = this.open">
+                    <summary class="audit-grp__head"><span class="audit-grp__title">Файлы без строки в таблице</span><span></span>
+                        <span class="audit-grp__count">${extra.length}</span><span class="audit-grp__pills"><span class="audit-pill is-dups">лишние ${extra.length}</span></span></summary>
+                    <div class="audit-grp__body">${extra.map((e, i) => `<div class="audit-line has-acts" data-q="${q(e.folder + ' ' + e.filename)}">
+                        <span class="audit-line__name is-dups">${escapeHtml(e.filename)}</span>
+                        <span class="audit-line__text audit-line__paths">${escapeHtml(e.folder)}</span>
+                        <span class="audit-line__meta"></span>
+                        <span class="audit-line__acts"><button type="button" class="audit-file__play" onclick="auditPlayExtra(${i})" title="Послушать">&#9654;</button></span></div>`).join('')}</div>
+                    </details></section>`;
+            }
+            if (res.studio_note) html = `<div class="audit-note">${escapeHtml(res.studio_note)}</div>` + html;
             auditSetDetails(html, quiet);
             document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
+        }
+        async function auditPlayExtra(i) {
+            let e = (window.auditRes.extra || [])[i];
+            if (!e) return;
+            let r = await pywebview.api.audit_play(e.path);
+            if (r && r.error) showToast(r.error);
         }
         function plural(n, one, few, many) {
             let m10 = n % 10, m100 = n % 100;

@@ -571,10 +571,12 @@ class ProjectMixin:
                 "status": "choose_category",
                 "categories": self._audit_available_categories(),
                 "has_excel": bool(self.phrases_data),
-                "studio": {"loaded": bool(xl and os.path.exists(xl)), "name": os.path.basename(xl) if xl else None},
+                "studio": {"loaded": bool(xl and os.path.exists(xl)), "name": os.path.basename(xl) if xl else None,
+                           "path": xl, "mtime": time.strftime('%d.%m.%Y %H:%M', time.localtime(os.path.getmtime(xl)))
+                           if xl and os.path.exists(xl) else None},
             }
-        if category == 'studio':
-            return self._audit_studio_start()
+        if category in ('studio', 'studio_pick'):
+            return self._audit_studio_start(force_pick=category == 'studio_pick')
 
         cats = [c["key"] for c in self._audit_available_categories()]
         if category == 'all':
@@ -602,12 +604,13 @@ class ProjectMixin:
     # выбранной; совпадение — по «хвосту» пути, поэтому «5.wav» миллионов и
     # «5.wav» дня месяца не путаются, а выбрать можно корень проекта,
     # «Проверенные» или папку выше.
-    def _audit_studio_start(self):
+    def _audit_studio_start(self, force_pick=False):
         st = getattr(self, 'tts', None) or {}
         xl = st.get("excel_path")
-        if not (xl and os.path.exists(xl)):
+        if force_pick or not (xl and os.path.exists(xl)):
             picked = webview.windows[0].create_file_dialog(
-                webview.FileDialog.OPEN, file_types=('Excel files (*.xlsx)', 'All files (*.*)'))
+                webview.FileDialog.OPEN, directory=os.path.dirname(xl) if xl else '',
+                file_types=('Excel files (*.xlsx)', 'All files (*.*)'))
             if not picked:
                 return {"error": "cancel"}
             xl = picked if isinstance(picked, str) else picked[0]
@@ -651,9 +654,12 @@ class ProjectMixin:
                         lang = 'kz' if lang in ('kz', 'kk') else ('ru' if lang == 'ru' else 'other')
                         # цельные фразы и фразы с переменными (кусочки до/после суммы, даты, значения из ячейки)
                         with_var = u.get("kind") == "piece" or bool(u.get("role"))
+                        text = u.get("text", '')
+                        if re.fullmatch(r'фраза_\d{4}', str(u.get("name") or '')):    # название в таблице пустое
+                            text = f"[в таблице нет названия — строка {u.get('row')}] {text}"
                         out.append((rel, "Фразы · С переменными" if with_var else "Фразы · Цельные",
                                     f"ph_var_{lang}" if with_var else f"ph_{lang}", self._AUDIT_LANG_TITLE[lang],
-                                    u.get("text", ''), u.get("row")))
+                                    text, u.get("row")))
         finally:
             self.tts = saved
             for k, v in saved_caches.items():
@@ -727,6 +733,24 @@ class ProjectMixin:
             if not gid.startswith('ph_') and g["found"]:
                 g["folder"] = g["target"]
             out_groups.append(g)
+        # Файлы, которых нет в таблице: в тех папках, где лежат ожидаемые записи
+        # (иначе в список попали бы черновики из «Записи», «Чанки» и т.п.).
+        used = {os.path.normcase(f["path"]) for f in files}
+        for d in duplicates_list:
+            used.update(os.path.normcase(p) for p in d["paths"])
+        known_dirs = {os.path.normcase(os.path.dirname(p)) for p in used}
+        extra = []
+        for f_low, paths in found_files.items():
+            for pth in paths:
+                if os.path.normcase(pth) not in used and os.path.normcase(os.path.dirname(pth)) in known_dirs:
+                    extra.append({"filename": os.path.basename(pth), "path": pth,
+                                  "folder": os.path.relpath(os.path.dirname(pth), scan_dir)})
+        extra.sort(key=lambda e: (e["folder"].lower(), e["filename"].lower()))
+        studio_xl = st.get("excel_path")
+        note = None
+        if studio_xl and os.path.abspath(studio_xl) != os.path.abspath(excel_path):
+            note = (f"Студия записи сейчас работает с другой таблицей — «{os.path.basename(studio_xl)}». "
+                    f"Чтобы записывать по этой, загрузите её в Студии (кнопка «Таблица»).")
         self._audit_last = {"category": "studio", "missing": {m["text"] for m in missing_list}}
         files = self._audit_attach_phrases(files)
         self._audit_res = res = {
@@ -735,7 +759,8 @@ class ProjectMixin:
             "total_excel": len(expected), "total_disk": len(files),
             "missing_count": len(missing_list), "duplicates_count": len(duplicates_list),
             "missing": missing_list, "duplicates": duplicates_list, "files": files, "can_edit": False,
-            "studio_name": os.path.basename(excel_path),
+            "studio_name": os.path.basename(excel_path), "extra": extra, "studio_note": note,
+            "studio_mtime": time.strftime('%d.%m.%Y %H:%M', time.localtime(os.path.getmtime(excel_path))),
         }
         return res
 
