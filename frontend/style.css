@@ -3652,3 +3652,14 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .radial-bg__wave{ position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 9vh; fill: rgba(120,160,235,.07);
     -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); }
 @media (prefers-reduced-motion: reduce){ .radial-bg *{ animation: none !important; } }
+
+/* Кольцо не двигается, когда подпись под ним в 1–3 строки или раскрываются
+   настройки: оно прижато сверху на «центральном» отступе, подпись — фиксированной высоты. */
+.radial{ --R: clamp(190px, 29vh, 268px); --S: clamp(108px, 15vh, 138px); --H: clamp(140px, 19vh, 176px);
+    justify-content: flex-start; padding-top: max(12px, calc((100vh - (var(--R) * 2 + var(--S) + 24px)) / 2 - 70px)); }
+.radial__stage{ --R: inherit; --S: inherit; --H: inherit; flex: none; }
+.radial__info{ height: 84px; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; }
+@media (max-height: 760px){ .radial{ --R: 170px; --S: 100px; --H: 128px; } }
+.radial{ min-height: 0; box-sizing: border-box; padding-bottom: 0; }
+/* «Справка» и «Вернуться к работе» — в углу, не занимают место под кольцом */
+.radial__actions{ position: fixed; right: 24px; bottom: 20px; z-index: 2; }
