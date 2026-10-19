@@ -18,7 +18,7 @@ import webview
 from pydub import AudioSegment
 
 from core.auto_check import _lat_to_cyr, _norm, _ratio
-from core.tts_flow import FIND_SCORE, LEAD_S, TTS_CHUNKS_DIR, TTS_DONE_DIR, align_stream, end_word_ok, var_label
+from core.tts_flow import FIND_SCORE, LEAD_S, TTS_CHUNKS_DIR, TTS_DONE_DIR, TTS_VALUES_DIR, align_stream, end_word_ok, var_label
 from utils.wav_io import wav_concat
 
 LIVE_RATE = 16000          # копия для распознавания
@@ -1115,7 +1115,7 @@ class TtsLiveMixin:
                 "context": self._tts_value_context(st.get("prompt_mode")) if st.get("prompt_mode", "phrases") != "phrases" else None,
                 "sum_logic": st.get("sum_logic", 1) if st.get("prompt_mode", "phrases") != "phrases"
                 and self._tts_is_sum_sheet((st.get("var_sheets") or {}).get(st.get("prompt_mode")) or {"categories": []}) else None,
-                "sum_folder": os.path.join(st["work_dir"], TTS_DONE_DIR, 'Суммы') if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
+                "sum_folder": os.path.join(st["work_dir"], TTS_VALUES_DIR, st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "tiers_done": self._tts_tiers_done(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "tier_tpl": self._tts_mode_tpl(),
                 "modes": [{"key": "phrases", "label": "Фразы"}] + [{"key": k, "label": sh["label"]}

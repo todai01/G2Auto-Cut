@@ -65,11 +65,17 @@ class ConstructorMixin:
             assigned[tier] = name
             remaining.remove(name)
 
-        match = next((d for d in remaining if 'млн' in d.lower() or 'миллион' in d.lower()), None)
+        from core.variables_handler import sum_tier_from_dirname
+        for d in list(remaining):                          # новый формат: million_ru, thousand_ru…
+            t = sum_tier_from_dirname(d)
+            if t and t not in assigned:
+                claim(t, d)
+
+        match = None if 'millions' in assigned else next((d for d in remaining if 'млн' in d.lower() or 'миллион' in d.lower()), None)
         if match:
             claim('millions', match)
 
-        match = next((d for d in remaining if any(k in d.lower() for k in ('тенге', 'kzt', '₸'))), None)
+        match = None if 'tenge' in assigned else next((d for d in remaining if any(k in d.lower() for k in ('тенге', 'kzt', '₸'))), None)
         if match:
             claim('tenge', match)
 

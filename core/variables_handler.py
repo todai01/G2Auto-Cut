@@ -60,6 +60,39 @@ SUM_TIER_DEFAULT_DIR = {
     'thousands': '1 - 99 тыс',
     'tenge': '1 - 100 тенге',
 }
+# Единый формат хранения переменных (как в Студии записи):
+# «Значения/<лист>/<категория>/<значение>.wav», для сумм —
+# «Значения/sum_ru/million_ru/5.wav». Старый формат «Проверенные/Суммы/1 - 100 млн/»
+# переносится сюда сам (_values_migrate) и по-прежнему узнаётся по названию.
+VALUES_DIR = 'Значения'
+SUM_TIER_KEY = {'millions': 'million', 'hundred_thousands': 'hundred_thousand', 'hundreds': 'hundred',
+                'thousands': 'thousand', 'tenge': 'tenge'}
+
+
+def sum_tier_from_dirname(name):
+    """«million_ru» → 'millions' (ключи таблицы); иначе None."""
+    base = re.sub(r'_(ru|kz|kk)$', '', str(name or '').strip().lower())
+    return next((t for t, k in SUM_TIER_KEY.items() if base == k), None)
+
+
+def sum_tier_from_old_dirname(name):
+    """Старые русские папки: «1 - 100 млн», «100 - 900 тыс», «1 - 99 тыс», «1 - 100 тенге», «100 - 900»."""
+    n = str(name or '').lower()
+    for t, d in SUM_TIER_DEFAULT_DIR.items():
+        if n == d.lower():
+            return t
+    if any(k in n for k in ('млн', 'миллион')):
+        return 'millions'
+    if any(k in n for k in ('тенге', 'теңге', 'kzt', '₸')):
+        return 'tenge'
+    if any(k in n for k in ('тыс', 'мың', 'мын')):
+        nums = re.findall(r'\d+', n)
+        return 'hundred_thousands' if nums and int(nums[0]) >= 100 else 'thousands'
+    if re.fullmatch(r'\s*100\s*-\s*900\s*', n):
+        return 'hundreds'
+    return None
+
+
 SUM_TIER_CAP = {'millions': 100, 'hundred_thousands': 900, 'hundreds': 900, 'thousands': 99, 'tenge': 100}
 
 # Ровно две логики звучания суммы — переключаются кнопкой в интерфейсе,
@@ -720,7 +753,14 @@ class VariablesMixin:
 
         assigned = {}
         remaining_dirs = list(subdirs)
+        for d in list(remaining_dirs):                      # новый формат: million_ru, thousand_ru…
+            t = sum_tier_from_dirname(d)
+            if t and t not in assigned:
+                assigned[t] = d
+                remaining_dirs.remove(d)
         for tier, keywords in SUM_SPECIFIC_TIER_KEYWORDS.items():
+            if tier in assigned:
+                continue
             match = next((d for d in remaining_dirs if any(k in d.lower() for k in keywords)), None)
             if match:
                 assigned[tier] = match
@@ -731,6 +771,8 @@ class VariablesMixin:
         # Сотни тысяч, «1 - 99 тыс» это обычные Тысячи.
         for d in [d for d in remaining_dirs if 'тыс' in d.lower()]:
             tier = _thousands_subtier(d)
+            if tier in assigned:
+                continue
             if tier not in assigned:
                 assigned[tier] = d
                 remaining_dirs.remove(d)
@@ -907,7 +949,7 @@ class VariablesMixin:
 
     def _sum_save_var_batch(self, cat_name, normalize_chunks=False):
         """Сохраняет ТОЛЬКО активный (текущий) кусок — не всю склейку — в
-        Проверенные/Суммы/<ярус>/, затем сдвигает очередь на следующий шаг."""
+        Значения/sum_<язык>/<ярус>_<язык>/, затем сдвигает очередь на следующий шаг."""
         import shutil
         virtual_idx = self.cascade_ptrs[cat_name]
         total = len(self.cascade_files[cat_name])
@@ -2026,13 +2068,82 @@ class VariablesMixin:
     #  создаёт папки ярусов по мере сохранения.
     # ==================================================================
 
+    def _values_lang(self):
+        """Язык листа сумм: из таблицы Студии (sum_ru / sum_kz), иначе — по
+        единственной папке «Значения/sum_*» проекта, иначе ru."""
+        st = getattr(self, 'tts', None) or {}
+        for k in (st.get("var_sheets") or {}):
+            if str(k).lower().startswith('sum_'):
+                return str(k)[4:]
+        try:
+            root = os.path.join(self.work_dir, VALUES_DIR)
+            langs = sorted(d[4:] for d in os.listdir(root)
+                           if d.lower().startswith('sum_') and os.path.isdir(os.path.join(root, d)))
+            if len(langs) == 1:
+                return langs[0]
+        except (OSError, TypeError):
+            pass
+        return 'ru'
+
     def _sum_manual_tier_root(self):
-        return os.path.join(self.work_dir, 'Проверенные', 'Суммы')
+        self._values_migrate()
+        return os.path.join(self.work_dir, VALUES_DIR, f"sum_{self._values_lang()}")
 
     def _sum_manual_tier_dir(self, tier):
-        # Доп.категории из словаря переменных (mark/year/...) не входят в
-        # SUM_TIER_DEFAULT_DIR — для них папку называем просто по ключу.
-        return SUM_TIER_DEFAULT_DIR.get(tier, tier)
+        # Ярусы суммы — ключами таблицы («million_ru»); доп.категории из
+        # словаря переменных (mark/year/...) — просто по ключу.
+        k = SUM_TIER_KEY.get(tier)
+        return f"{k}_{self._values_lang()}" if k else tier
+
+    def _values_migrate(self, work_dir=None, sheet=None):
+        """Старый формат «Проверенные/Суммы/<ярус по-русски>/» → «Значения/sum_<язык>/<ярус>_<язык>/».
+        Файлы, которые уже есть на новом месте, не трогаем (остаются в старой
+        папке). Один раз на папку проекта. → {старый путь: новый}."""
+        wd = work_dir or getattr(self, 'work_dir', None)
+        if not wd:
+            return {}
+        done = self.__dict__.setdefault('_values_migrated', set())
+        key = os.path.normcase(os.path.abspath(wd))
+        if key in done:
+            return {}
+        done.add(key)
+        old_root = os.path.join(wd, 'Проверенные', 'Суммы')
+        if not os.path.isdir(old_root):
+            return {}
+        sheet = sheet or f"sum_{self._values_lang()}"
+        lang = sheet[4:] if sheet.lower().startswith('sum_') else self._values_lang()
+        new_root = os.path.join(wd, VALUES_DIR, sheet)
+        moved = {}
+        for d in sorted(os.listdir(old_root)):
+            src_dir = os.path.join(old_root, d)
+            if not os.path.isdir(src_dir):
+                continue
+            tier = sum_tier_from_old_dirname(d) or sum_tier_from_dirname(d)
+            dst_dir = os.path.join(new_root, f"{SUM_TIER_KEY[tier]}_{lang}" if tier else d)
+            for f in sorted(os.listdir(src_dir)):
+                src = os.path.join(src_dir, f)
+                if not os.path.isfile(src):
+                    continue
+                dst = os.path.join(dst_dir, f)
+                if os.path.exists(dst):
+                    continue
+                try:
+                    os.makedirs(dst_dir, exist_ok=True)
+                    shutil.move(src, dst)
+                    moved[src] = dst
+                except OSError:
+                    pass
+            try:
+                if not os.listdir(src_dir):
+                    os.rmdir(src_dir)
+            except OSError:
+                pass
+        try:
+            if not os.listdir(old_root):
+                os.rmdir(old_root)
+        except OSError:
+            pass
+        return moved
 
     def _sum_tier_capped(self, tier, counts=None):
         """Ярус дошёл до потолка (см. SUM_TIER_CAP) и больше не растёт —

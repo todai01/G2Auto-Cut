@@ -10,7 +10,7 @@ from pydub.silence import detect_nonsilent
 from core import project_state, recent_projects
 from core.ui_dialogs import ui_confirm, ui_toast
 from utils.wav_io import slice_or_export
-from core.variables_handler import SUM_TIER_ORDER
+from core.variables_handler import SUM_TIER_ORDER, SUM_TIER_DEFAULT_DIR, VALUES_DIR
 
 try:
     import audioop  # быстрый расчёт громкости; удалён из Python 3.13
@@ -597,7 +597,7 @@ class ProjectMixin:
 
     # ---- аудит по таблице Студии записи: все листы (фразы, суммы, даты…) ----
     # Ожидаемые файлы — ровно те пути, куда их сохраняет Студия записи
-    # (Проверенные/<имя>.wav, Проверенные/Суммы/<ярус>/<цифры>.wav,
+    # (Проверенные/<имя>.wav, Значения/sum_ru/<ярус>_ru/<цифры>.wav,
     # Значения/<лист>/<категория>/<значение>.wav). Ищем во всех папках внутри
     # выбранной; совпадение — по «хвосту» пути, поэтому «5.wav» миллионов и
     # «5.wav» дня месяца не путаются, а выбрать можно корень проекта,
@@ -759,9 +759,23 @@ class ProjectMixin:
     def _audit_norm_dir(name):
         return re.sub(r'[\s\-–—_.]+', '', str(name or '').lower())
 
+    def _audit_values_base(self, base):
+        """Папка листа сумм в едином формате от выбранной: «…/Значения/sum_ru»."""
+        sheet = f"sum_{self._values_lang()}"
+        name = self._audit_norm_dir(os.path.basename(os.path.normpath(base)))
+        if name == self._audit_norm_dir(sheet):
+            return base
+        if name == self._audit_norm_dir(VALUES_DIR):
+            return os.path.join(base, sheet)
+        if name == 'проверенные':                         # выбрали «Проверенные» — «Значения» рядом
+            base = os.path.dirname(os.path.normpath(base))
+        return os.path.join(base, VALUES_DIR, sheet)
+
     def _audit_cat_dirs(self, category):
-        """Как может называться папка категории: «1 - 100 млн», ключ, подпись."""
-        names = {self._sum_manual_tier_dir(category), category, self._category_label(category)}
+        """Как может называться папка категории: «million_ru» (единый формат),
+        старое «1 - 100 млн», ключ, подпись."""
+        names = {self._sum_manual_tier_dir(category), SUM_TIER_DEFAULT_DIR.get(category), category,
+                 self._category_label(category)}
         return {self._audit_norm_dir(n) for n in names if n}
 
     def _audit_scope(self, scan_dir, category, all_cats):
@@ -882,19 +896,9 @@ class ProjectMixin:
             groups[-1]["folder"] = root if root and not skip else None
             if groups[-1]["folder"]:
                 groups[-1]["target"] = root
-            else:                                          # своей папки нет — создадим рядом с остальными ярусами
+            else:                                          # своей папки нет — создадим в едином формате
                 base = scan_dir if root else os.path.dirname(os.path.normpath(scan_dir))
-                if cat in SUM_TIER_ORDER and self._audit_norm_dir(os.path.basename(os.path.normpath(base))) != 'суммы':
-                    base = os.path.join(base, 'Суммы')         # как в проекте: Проверенные/Суммы/<ярус>
-                groups[-1]["target"] = os.path.join(base, self._sum_manual_tier_dir(cat))
-
-        # ярус Суммы без своей папки — рядом с папками других ярусов («Суммы/…»)
-        sum_dirs = [os.path.dirname(g["folder"]) for g in groups
-                    if g.get("folder") and g["id"][4:] in SUM_TIER_ORDER and g["id"].startswith('var_')]
-        if sum_dirs:
-            for g in groups:
-                if g["id"].startswith('var_') and g["id"][4:] in SUM_TIER_ORDER and not g.get("folder"):
-                    g["target"] = os.path.join(max(set(sum_dirs), key=sum_dirs.count), self._sum_manual_tier_dir(g["id"][4:]))
+                groups[-1]["target"] = os.path.join(self._audit_values_base(base), self._sum_manual_tier_dir(cat))
 
         single = parts[0] if len(parts) == 1 else None
         self._audit_last = {"category": single or mode, "missing": {m["text"] for m in missing_list}}

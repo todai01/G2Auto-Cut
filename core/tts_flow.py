@@ -2107,10 +2107,53 @@ class TtsFlowMixin:
         return f"{text} {'теңге' if lang == 'kz' else 'тенге'}" if tier == 'tenge' else text
 
     def _tts_tier_path(self, unit, tier):
+        """Эталон яруса — в едином формате «Значения/<лист>/<категория>/<значение>.wav»
+        (суммы тоже: «Значения/sum_ru/million_ru/5.wav»)."""
         if str(unit.get("cat", '')).startswith('sum_l'):
-            return os.path.join(self._tts()["work_dir"] or '', TTS_DONE_DIR, 'Суммы',
-                                self.SUM_TIER_DIRS.get(tier["tier"], tier["tier"]), f"{tier['value']}.wav")
+            return self._tts_value_file(unit["sheet"], tier["cat"], self._tts_sum_raw_value(unit["sheet"], tier["cat"], tier["value"]))
         return self._tts_value_file(unit["sheet"], tier["cat"], tier["value"])
+
+    def _tts_sum_raw_value(self, sheet, cat, digits):
+        """Значение суммы — как в таблице (имя файла то же, что на экране «Переменные»)."""
+        sh = (self._tts().get("var_sheets") or {}).get(sheet) or {}
+        c = next((c for c in sh.get("categories", []) if c["key"] == cat), None)
+        return next((v for v in (c or {}).get("values", []) if re.sub(r'\D', '', str(v)) == str(digits)), digits)
+
+    def _tts_old_sum_path(self, unit, tier):
+        """Где эталон лежал раньше: «Проверенные/Суммы/<ярус по-русски>/<цифры>.wav»."""
+        return os.path.join(self._tts()["work_dir"] or '', TTS_DONE_DIR, 'Суммы',
+                            self.SUM_TIER_DIRS.get(tier["tier"], tier["tier"]), f"{tier['value']}.wav")
+
+    def _tts_migrate_values(self):
+        """Перенос эталонов сумм из старого формата в «Значения/…» (один раз на проект)."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        if not wd or st.get("values_layout") == 2:
+            return 0
+        moved = {}
+        for u in st["units"]:
+            if not (u.get("tiers") and str(u.get("cat", '')).startswith('sum_l')):
+                continue
+            for t in u["tiers"]:
+                old, new = self._tts_old_sum_path(u, t), self._tts_tier_path(u, t)
+                if old in moved or not os.path.exists(old) or os.path.exists(new):
+                    continue
+                try:
+                    os.makedirs(os.path.dirname(new), exist_ok=True)
+                    shutil.move(old, new)
+                    moved[old] = new
+                except OSError:
+                    pass
+        sheet = next((k for k in (st.get("var_sheets") or {}) if str(k).lower().startswith('sum_')), None)
+        if hasattr(self, '_values_migrate'):              # остальное из «Проверенные/Суммы» — по названиям папок
+            moved.update(self._values_migrate(wd, sheet))
+        if moved:
+            for t in st.get("takes") or []:
+                if t.get("tier_files"):
+                    t["tier_files"] = [moved.get(p, p) for p in t["tier_files"]]
+        st["values_layout"] = 2
+        self._tts_save()
+        return len(moved)
 
     def _tts_row_units(self, sheet=None):
         return [u for u in self._tts()["units"] if u.get("tiers") and (sheet is None or u.get("sheet") == sheet)]
@@ -2166,6 +2209,8 @@ class TtsFlowMixin:
                                           "tiers": tiers, "lang": lang, "cat_label": "Строка таблицы"})
         if changed:
             self._tts_save()
+        if st.get("work_dir") and st.get("values_layout") != 2:
+            self._tts_migrate_values()
 
     def _tts_tier_claims(self, sheet, logic):
         """Какая строка «отвечает» за каждый ещё не готовый эталон яруса —

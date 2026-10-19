@@ -9614,7 +9614,7 @@ let isProcessing = false;
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
-                : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Проверенные/Суммы»'
+                : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Значения/sum_…»'
                 : 'Читаем строки таблицы — Enter в «Сборке» сохранит каждое значение эталоном в «Значения»', 5000);
         }
 
