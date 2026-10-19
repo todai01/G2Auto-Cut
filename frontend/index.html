@@ -38,6 +38,7 @@
         <symbol id="icon-dollar-sign" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
         <symbol id="icon-headphones" viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></symbol>
         <symbol id="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
+        <symbol id="icon-tenge" viewBox="0 0 24 24"><line x1="5" y1="4" x2="19" y2="4"/><line x1="5" y1="9" x2="19" y2="9"/><line x1="12" y1="9" x2="12" y2="21"/></symbol>
     </svg>
 
     <div id="customAlertOverlay" class="custom-alert-overlay">
@@ -137,7 +138,7 @@
                     <div><span class="option-title">Загрузить таблицу-словарь</span><span class="option-desc">Категории и связки определятся сами</span></div>
                 </button>
                 <button class="option-card option-card--alt rise" onclick="premadeVarTypeSums()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-dollar-sign"></use></svg></span>
+                    <span class="option-icon"><svg class="icon"><use href="#icon-tenge"></use></svg></span>
                     <div><span class="option-title">Без словаря — только Суммы</span><span class="option-desc">Как раньше: Миллионы/Сотни/Тысячи/Тенге</span></div>
                 </button>
             </div>
@@ -1316,7 +1317,7 @@
                         </div>
                         <!-- Слот 3: Сумма -->
                         <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('amount')" id="btnVarAmountLoad"><svg class="icon"><use href="#icon-dollar-sign"></use></svg> Сумма: кликните для загрузки</button>
+                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('amount')" id="btnVarAmountLoad"><svg class="icon"><use href="#icon-tenge"></use></svg> Сумма: кликните для загрузки</button>
                             <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('amount')" id="btnVarAmountMix" disabled>Собрать</button>
                         </div>
                     </div>

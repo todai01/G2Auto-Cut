@@ -267,11 +267,25 @@ let isProcessing = false;
             'stage4-tts':         'flex'
         };
 
+        // Рабочие экраны: «Вернуться к работе» в меню ведёт на последний из них.
+        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи' };
+        let lastWork = null;
         function showStage(activeId) {
             Object.keys(STAGE_DISPLAY).forEach(id => {
                 let el = document.getElementById(id);
                 if (el) el.style.display = (id === activeId) ? STAGE_DISPLAY[id] : 'none';
             });
+            if (WORK_STAGES[activeId]) lastWork = { stage: activeId, area: embedAreaId, btn: embedBtnId };
+            // цвет окон — по режиму: студия синяя, переменные янтарные
+            if (activeId === 'stage4-tts') document.body.dataset.mode = 'new';
+            else if (activeId === 'stage3-constructor') document.body.dataset.mode = 'vars';
+        }
+        // Есть ли куда вернуться: пустой рабочий экран (ничего не загружено) — не считается.
+        function canResumeWork() {
+            if (!lastWork) return false;
+            if (lastWork.stage === 'stage4-tts') return !!(typeof tts !== 'undefined' && tts && tts.loaded);
+            if (lastWork.stage === 'stage2-workspace') return workspaceReady && (parseInt((document.getElementById('statTotal') || {}).innerText, 10) || 0) > 0;
+            return true;
         }
 
         const motionOK = () => !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -786,7 +800,11 @@ let isProcessing = false;
 
             // Кнопка возврата появляется, только если работать уже есть с чем
             let btnResume = document.getElementById('btnResume');
-            if (btnResume) btnResume.style.display = workspaceReady ? 'inline-flex' : 'none';
+            if (btnResume) {
+                let ok = canResumeWork();
+                btnResume.style.display = ok ? 'inline-flex' : 'none';
+                if (ok) btnResume.innerHTML = `&#8592;&nbsp; ${WORK_STAGES[lastWork.stage]}`;
+            }
 
             // Перезапускаем появление блоков «лесенкой»
             document.getElementById('stage1-loading').querySelectorAll('.rise').forEach(el => {
@@ -834,7 +852,7 @@ let isProcessing = false;
         // прежние (скрытые) кнопки меню: вся логика, статусы и «×» — те же.
         const RADIAL_CATS = [
             { key: 'new', title: 'Новый проект', icon: 'plus-circle', desc: 'Студия записи, текст из Excel, нарезка сырого WAV, готовые чанки' },
-            { key: 'vars', title: 'Переменные', icon: 'dollar-sign', desc: 'Пакетная сборка сумм, готовая папка с переменными, конструктор', cls: 'var' },
+            { key: 'vars', title: 'Переменные', icon: 'tenge', desc: 'Пакетная сборка сумм, готовая папка с переменными, конструктор', cls: 'var' },
             { key: 'tools', title: 'Утилиты', icon: 'zap', desc: 'Аудит проекта, названия по Excel, PowerPoint, конвертер, клон, очистка названий', cls: 'tool' },
             { key: 'recent', title: 'Недавние', icon: 'calendar', desc: 'Открыть один из последних проектов', cls: 'good' },
         ];
@@ -926,6 +944,11 @@ let isProcessing = false;
             let ring = radialEl('radialRing');
             if (!ring) return;
             let root = radialEl('radial');
+            if (!animate) {               // обновление статуса (✓, ×, недавние) — без пружины и прорисовки лучей
+                root.classList.add('is-static');
+                clearTimeout(radial.staticT);
+                radial.staticT = setTimeout(() => root.classList.remove('is-static'), 60);
+            }
             root.classList.toggle('is-open', radial.open);
             root.dataset.cat = radial.cat || '';
             let hub = radialEl('radialHubIn'), hubHTML = radialHubHTML();
@@ -1021,6 +1044,7 @@ let isProcessing = false;
             if (!it) return;
             if (it.isCat) { radialRipple(); radial.cat = it.key; radial.cutOpen = false; radialSaveCat(); radialRender(true); return; }
             if (it.act === 'cut') { radial.cutOpen = !radial.cutOpen; radialExtraRender(); return; }
+            document.body.dataset.mode = radial.cat || 'new';
             if (it.run) { it.run(); return; }
             if (it.node) setTimeout(() => { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }, 160);
         }
@@ -1191,8 +1215,10 @@ let isProcessing = false;
         }
 
         function resumeWorkspace() {
-            if (!workspaceReady) return;
-            showWorkspace();
+            if (!canResumeWork()) return;
+            if (lastWork.stage === 'stage4-tts') { openTtsScreen(tts); return; }
+            embedAreaId = lastWork.area; embedBtnId = lastWork.btn;
+            showStage(lastWork.stage);
         }
 
         // Подсказка в шапке экрана подготовки

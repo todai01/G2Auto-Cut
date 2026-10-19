@@ -3684,3 +3684,25 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .radial__continue-go{ color: var(--accent-good); font-weight: 700; transition: transform .2s; }
 .radial__continue:hover .radial__continue-go{ transform: translateX(3px); }
 .radial__continue kbd{ font-size: 10px; margin: 0; }
+
+/* Тихое обновление кольца — без анимаций */
+.radial.is-static .radial__item, .radial.is-static .radial__lines line, .radial.is-static .radial__info > *, .radial.is-static .radial__extra > *{ transition: none !important; animation: none !important; }
+
+/* Окна — в цвете режима: студия/новый проект — синий, переменные — янтарный,
+   утилиты — фиолетовый, недавние — зелёный */
+body{ --modal-ac: var(--accent-info); --modal-ac-rgb: 43,192,207; --modal-ac-hi: #5fd3de; }
+body[data-mode="new"]{ --modal-ac: var(--accent-primary); --modal-ac-rgb: 77,149,234; --modal-ac-hi: #64a8f3; }
+body[data-mode="vars"]{ --modal-ac: var(--accent-var); --modal-ac-rgb: 238,172,62; --modal-ac-hi: #f5c26a; }
+body[data-mode="tools"]{ --modal-ac: var(--accent-mode); --modal-ac-rgb: 146,112,234; --modal-ac-hi: #ab92f0; }
+body[data-mode="recent"]{ --modal-ac: var(--accent-good); --modal-ac-rgb: 47,191,125; --modal-ac-hi: #5fd29f; }
+.custom-alert-overlay .custom-alert-box{ border-top-color: var(--modal-ac);
+    box-shadow: var(--shadow-pop), 0 -1px 24px rgba(var(--modal-ac-rgb), .12); }
+#customAlertOverlay .custom-alert-icon:not(.icon-tone--error):not(.icon-tone--warning){ color: var(--modal-ac); }
+.custom-alert-overlay .custom-alert-btn:not(.btn-secondary):not(.tts-syn__go){
+    background: linear-gradient(180deg, var(--modal-ac-hi), var(--modal-ac));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 16px rgba(var(--modal-ac-rgb), .3); }
+body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondary):not(.tts-syn__go){ color: #1a1206; }
+body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondary) kbd{ color: #1a1206; background: rgba(255,255,255,.25); border-color: rgba(0,0,0,.15); }
+.custom-alert-overlay .btn-secondary:hover, .custom-alert-overlay .audit-category-item:hover{ border-color: var(--modal-ac); background: rgba(var(--modal-ac-rgb), .08); }
+.custom-alert-overlay .search-input:focus{ border-color: var(--modal-ac); }
+.custom-alert-overlay .audit-category-item.is-main{ border-color: var(--modal-ac); }
