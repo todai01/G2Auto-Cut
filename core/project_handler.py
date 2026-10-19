@@ -565,16 +565,16 @@ class ProjectMixin:
         открывает папку на сканирование. category: 'excel' | 'all' |
         'vars' | ключ категории."""
         if category is None:
-            categories = self._audit_available_categories()
-            if categories:
-                return {
-                    "status": "choose_category",
-                    "categories": categories,
-                    "has_excel": bool(self.phrases_data),
-                }
-            if self.phrases_data:
-                # Только Excel — сразу спрашиваем, готовы ли чанки.
-                return {"status": "choose_chunks", "category": "excel", "label": "Текст из Excel"}
+            st = getattr(self, 'tts', None) or {}
+            xl = st.get("excel_path")
+            return {
+                "status": "choose_category",
+                "categories": self._audit_available_categories(),
+                "has_excel": bool(self.phrases_data),
+                "studio": {"loaded": bool(xl and os.path.exists(xl)), "name": os.path.basename(xl) if xl else None},
+            }
+        if category == 'studio':
+            return self._audit_studio_start()
 
         cats = [c["key"] for c in self._audit_available_categories()]
         if category == 'all':
@@ -594,6 +594,146 @@ class ProjectMixin:
         if not folder:
             return {"error": "cancel"}
         return self._audit_run(folder[0], parts, category or 'excel')
+
+    # ---- аудит по таблице Студии записи: все листы (фразы, суммы, даты…) ----
+    # Ожидаемые файлы — ровно те пути, куда их сохраняет Студия записи
+    # (Проверенные/<имя>.wav, Проверенные/Суммы/<ярус>/<цифры>.wav,
+    # Значения/<лист>/<категория>/<значение>.wav). Ищем во всех папках внутри
+    # выбранной; совпадение — по «хвосту» пути, поэтому «5.wav» миллионов и
+    # «5.wav» дня месяца не путаются, а выбрать можно корень проекта,
+    # «Проверенные» или папку выше.
+    def _audit_studio_start(self):
+        st = getattr(self, 'tts', None) or {}
+        xl = st.get("excel_path")
+        if not (xl and os.path.exists(xl)):
+            picked = webview.windows[0].create_file_dialog(
+                webview.FileDialog.OPEN, file_types=('Excel files (*.xlsx)', 'All files (*.*)'))
+            if not picked:
+                return {"error": "cancel"}
+            xl = picked if isinstance(picked, str) else picked[0]
+        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not folder:
+            return {"error": "cancel"}
+        return self._audit_studio(folder[0], xl)
+
+    def _audit_studio_expected(self, excel_path):
+        """[(rel_path, section, group_id, group_title, text, row)] по всем листам таблицы."""
+        from core.tts_flow import parse_tts_workbook, text_lang
+        parsed = parse_tts_workbook(excel_path)
+        sheets = parsed["phrase_sheets"] or [{"title": "", "lang": "ru", "units": [], "chains": []}]
+        saved = getattr(self, 'tts', None)
+        saved_caches = {k: self.__dict__.get(k) for k in ('_tts_claims_cache',)}
+        out, seen = [], set()
+        try:
+            for sh in sheets:
+                # временное состояние без папки — пути выходят относительными
+                self.tts = {"v": 0, "excel_path": excel_path, "sheet": sh.get("title"), "lang": sh.get("lang", "ru"),
+                            "units": [dict(u) for u in sh.get("units", [])], "chains": sh.get("chains", []),
+                            "var_sheets": parsed["var_sheets"], "work_dir": '', "takes": [], "index": 0}
+                self._tts_ensure_value_units()
+                st = self.tts
+                for u in st["units"]:
+                    if u.get("tiers"):
+                        label = ((st["var_sheets"].get(u["sheet"]) or {}).get("label") or u["sheet"])
+                        for t in u["tiers"]:
+                            rel = os.path.normpath(self._tts_tier_path(u, t))
+                            if rel.lower() in seen:
+                                continue
+                            seen.add(rel.lower())
+                            out.append((rel, f"Переменные · {label}", f"var_{u['sheet']}_{t['cat']}",
+                                        t.get("label") or t["cat"], t.get("text") or str(t["value"]), None))
+                    elif u["kind"] != "value":
+                        rel = os.path.normpath(self._tts_target(u))
+                        if rel.lower() in seen:
+                            continue
+                        seen.add(rel.lower())
+                        lang = text_lang(u.get("text")) or u.get("lang") or sh.get("lang") or 'ru'
+                        lang = 'kz' if lang in ('kz', 'kk') else ('ru' if lang == 'ru' else 'other')
+                        out.append((rel, "Фразы", f"ph_{lang}", self._AUDIT_LANG_TITLE[lang], u.get("text", ''), u.get("row")))
+        finally:
+            self.tts = saved
+            for k, v in saved_caches.items():
+                if v is None:
+                    self.__dict__.pop(k, None)
+                else:
+                    self.__dict__[k] = v
+        return out
+
+    def _audit_studio(self, scan_dir, excel_path):
+        try:
+            expected = self._audit_studio_expected(excel_path)
+        except Exception as e:
+            return {"error": f"Не удалось прочитать таблицу «{os.path.basename(excel_path)}»: {e}"}
+        if not expected:
+            return {"error": "В таблице не нашлось ни фраз, ни переменных для записи."}
+        found_files, _all = self._audit_scan_folder(scan_dir)
+        cands = {}                                         # имя → [(путь, части пути от выбранной папки)]
+        for f_low, paths in found_files.items():
+            for pth in paths:
+                rel = os.path.relpath(pth, scan_dir)
+                cands.setdefault(f_low, []).append((pth, tuple(rel.lower().replace('\\', '/').split('/'))))
+        st = getattr(self, 'tts', None) or {}
+        root = st.get("work_dir") if st.get("excel_path") and os.path.abspath(st["excel_path"]) == os.path.abspath(excel_path) else None
+        groups, order = {}, []
+        missing_list, duplicates_list, files = [], [], []
+        for k, (rel, section, gid, title, text, row) in enumerate(expected):
+            E = tuple(rel.lower().replace('\\', '/').split('/'))
+            name = E[-1]
+            strict = [(p, C) for p, C in cands.get(name, []) if E[-len(C):] == C or C[-len(E):] == E]
+            hits = strict or ([(p, C) for p, C in cands.get(name, [])] if gid.startswith('ph_') else [])
+            if strict and root is None:                    # где корень проекта относительно выбранной папки
+                p, C = strict[0]
+                if len(C) <= len(E):
+                    up = scan_dir
+                    for _ in range(len(E) - len(C)):
+                        up = os.path.dirname(os.path.normpath(up))
+                    root = up
+                else:
+                    root = os.path.join(scan_dir, *os.path.relpath(p, scan_dir).replace('\\', '/').split('/')[:len(C) - len(E)])
+            g = groups.get(gid)
+            if g is None:
+                g = groups[gid] = {"id": gid, "section": section, "title": title, "total": 0, "found": 0,
+                                   "missing": 0, "duplicates": 0, "_rel_dir": os.path.dirname(rel), "_dirs": []}
+                order.append(gid)
+            g["total"] += 1
+            if hits:
+                g["found"] += 1
+                g["_dirs"].append(os.path.dirname(hits[0][0]))
+                files.append({"filename": os.path.basename(hits[0][0]), "path": hits[0][0], "text": text, "group": gid})
+                if len(strict) > 1:
+                    g["duplicates"] += 1
+                    duplicates_list.append({"filename": name, "count": len(strict), "paths": [p for p, _ in strict], "group": gid})
+            else:
+                g["missing"] += 1
+                missing_list.append({"index": row if isinstance(row, int) else k + 1, "filename": os.path.basename(rel),
+                                     "text": text, "group": gid, "_rel_dir": os.path.dirname(rel)})
+        if root is None:
+            root = os.path.dirname(os.path.normpath(scan_dir)) if self._audit_norm_dir(os.path.basename(os.path.normpath(scan_dir))) == 'проверенные' else scan_dir
+        for m in missing_list:                             # куда сохранять каждый недостающий
+            m["dir"] = os.path.join(root, m.pop("_rel_dir"))
+        out_groups = []
+        for gid in order:
+            g = groups.pop(gid)
+            dirs = g.pop("_dirs")
+            rel_dir = g.pop("_rel_dir")
+            if gid.startswith('ph_') and dirs:
+                g["target"] = max(set(dirs), key=dirs.count)
+            else:
+                g["target"] = os.path.join(root, rel_dir)
+            if not gid.startswith('ph_') and g["found"]:
+                g["folder"] = g["target"]
+            out_groups.append(g)
+        self._audit_last = {"category": "studio", "missing": {m["text"] for m in missing_list}}
+        files = self._audit_attach_phrases(files)
+        self._audit_res = res = {
+            "category": None, "category_label": None, "mode": "studio", "parts": ["studio"], "studio_excel": excel_path,
+            "groups": out_groups, "can_export": False, "scan_dir": scan_dir,
+            "total_excel": len(expected), "total_disk": len(files),
+            "missing_count": len(missing_list), "duplicates_count": len(duplicates_list),
+            "missing": missing_list, "duplicates": duplicates_list, "files": files, "can_edit": False,
+            "studio_name": os.path.basename(excel_path),
+        }
+        return res
 
     # ---- аудит по группам: Фразы (по языкам) и Переменные (по категориям) ----
     _AUDIT_KZ_LETTERS = set('әғқңөұүһіӘҒҚҢӨҰҮҺІ')

@@ -97,10 +97,13 @@ class AuditFixMixin:
 
     def _audit_target(self, gid, filename):
         g = self._audit_group(gid)
-        if not g or not g.get("target"):
+        m = next((x for x in (getattr(self, '_audit_res', None) or {}).get("missing") or []
+                  if x.get("group") == gid and x["filename"].lower() == str(filename).lower()), None)
+        folder = (m or {}).get("dir") or (g or {}).get("target")      # своя папка файла (аудит по таблице студии)
+        if not folder:
             return None, {"error": "Не знаю, куда сохранить — запустите аудит заново."}
         name = filename if filename.lower().endswith('.wav') else re.sub(r'\.mp3$', '', filename, flags=re.I) + '.wav'
-        return os.path.join(g["target"], name), None
+        return os.path.join(folder, name), None
 
     # ---------------- записать недостающее — в суфлёре, как обычно ----------------
     def audit_to_prompter(self, scope='all', key=None):
@@ -167,6 +170,8 @@ class AuditFixMixin:
         res = getattr(self, '_audit_res', None)
         if not res or not os.path.isdir(res.get("scan_dir") or ''):
             return {"error": "Запустите аудит заново."}
+        if res.get("mode") == "studio":
+            return self._audit_studio(res["scan_dir"], res["studio_excel"])
         return self._audit_run(res["scan_dir"], res["parts"], res["mode"])
 
     # ---------------- готовый файл вместо записи ----------------

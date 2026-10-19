@@ -5566,7 +5566,7 @@ let isProcessing = false;
                 btn.innerHTML = escapeHtml(label) + (desc ? `<span class="audit-choice-desc">${escapeHtml(desc)}</span>` : '');
                 btn.onclick = () => {
                     closeAuditCategoryPicker();
-                    if (key === 'all' || key === 'vars') runProjectAudit(key);      // сразу по названиям файлов
+                    if (key === 'all' || key === 'vars' || key === 'studio') runProjectAudit(key);      // сразу по названиям файлов
                     else askAuditChunks(key, key === 'excel' ? 'Текст из Excel' : label);
                 };
                 list.appendChild(btn);
@@ -5579,8 +5579,12 @@ let isProcessing = false;
             };
 
             let cats = res.categories || [];
+            let studio = res.studio || {};
+            addOption('studio', 'Таблица Студии записи — все листы',
+                (studio.loaded ? `«${studio.name}» · ` : 'Выберу таблицу (.xlsx) · ')
+                + 'фразы, суммы по ярусам, даты — во всех папках внутри выбранной', 'is-main');
             if (res.has_excel && cats.length)
-                addOption('all', 'Весь проект', 'Фразы по языкам и все переменные — одной проверкой, по названиям файлов', 'is-main');
+                addOption('all', 'Весь проект (Шаг 1 + словарь)', 'Фразы по языкам и все переменные словаря — одной проверкой, по названиям файлов');
             if (res.has_excel) addOption('excel', 'Фразы (Excel, Шаг 1)', 'Названия из таблицы — по языкам');
             if (cats.length > 1) addOption('vars', 'Все переменные', 'Каждая категория — в своей папке («1 - 100 млн», «1 - 99 тыс»…)');
             if (cats.length) {
@@ -5708,6 +5712,7 @@ let isProcessing = false;
             let gidOf = x => x.group || gid0;
             let multi = groups.length > 1;
             let categoryNote = res.category ? ` — категория «${res.category_label}»`
+                : res.mode === 'studio' ? ` — таблица «${res.studio_name || ''}», все листы`
                 : res.mode === 'all' ? ' — весь проект' : res.mode === 'vars' ? ' — все переменные' : '';
             if (voice) categoryNote += ` — по голосу, чанков: ${res.chunks_total}${res.stopped ? ' (остановлено, проверены не все)' : ''}`;
             document.getElementById('auditOverlay').style.display = 'flex';
