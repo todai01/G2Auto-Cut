@@ -3605,3 +3605,50 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .stage-loading .btn-help:hover{ background: rgba(77,149,234,.08); border-color: rgba(77,149,234,.35); color: var(--text); }
 .stage-loading .btn-help__icon{ width: 18px; height: 18px; border-color: rgba(255,255,255,.1); }
 .stage-loading .btn-resume{ border-radius: 999px; }
+
+/* ===== Без заставки и без верхней панели; крупное кольцо и фон ===== */
+#stage0-splash .entry, #stage0-splash .entry__footer{ display: none; }   /* приложение сразу открывает меню */
+#stage1-loading > .setup-header{ display: none; }
+#stage1-loading{ position: relative; isolation: isolate; }
+#stage1-loading > *:not(.radial-bg){ position: relative; z-index: 1; }
+.radial{ min-height: calc(100vh - 80px); }
+.radial__stage{ --R: clamp(190px, 29vh, 268px); --S: clamp(108px, 15vh, 138px); --H: clamp(140px, 19vh, 176px); }
+.radial__hub, .radial__ripple{ width: var(--H); height: var(--H); margin: calc(var(--H) / -2) 0 0 calc(var(--H) / -2); }
+.radial__logo{ font-size: clamp(30px, 4.2vh, 40px); }
+.radial__hub-sub{ font-size: 11px; }
+.radial__hub-title{ font-size: 15px; }
+.radial__hub-icon, .radial__hub-icon .icon{ width: 32px; height: 32px; }
+.radial__item-icon{ width: 44px; height: 44px; }
+.radial__item-icon .icon{ width: 20px; height: 20px; }
+.radial__item--cat .radial__item-icon{ width: 50px; height: 50px; }
+.radial__item--cat .radial__item-icon .icon{ width: 23px; height: 23px; }
+.radial__item-title{ font-size: 13px; max-width: calc(var(--S) - 22px); }
+.radial__item--cat .radial__item-title{ font-size: 14px; }
+.radial__info{ min-height: 52px; }
+.radial__info-title{ font-size: 16px; }
+.radial__info-desc{ font-size: 13px; }
+.radial__info-step{ display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 6px;
+    padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); }
+.radial__info-step::before{ content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-primary); box-shadow: 0 0 8px var(--accent-primary); }
+.radial__actions{ display: flex; gap: 10px; justify-content: center; }
+.radial__actions .btn-help, .radial__actions .btn-resume{ height: 32px; border-radius: 999px; font-size: 12.5px; padding: 0 14px 0 8px;
+    background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07); color: var(--text-dim); }
+.radial__actions .btn-resume{ padding: 0 14px; color: var(--accent-primary); border-color: rgba(77,149,234,.35); background: rgba(77,149,234,.08); }
+.radial__actions .btn-help:hover, .radial__actions .btn-resume:hover{ color: var(--text); border-color: rgba(77,149,234,.5); background: rgba(77,149,234,.12); }
+@media (max-height: 760px){ .radial__stage{ --R: 170px; --S: 100px; --H: 128px; } }
+
+/* фон */
+.radial-bg{ position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.radial-bg__blob{ position: absolute; border-radius: 50%; filter: blur(80px); opacity: .55; will-change: transform; }
+.radial-bg__blob--a{ width: 46vmax; height: 46vmax; left: -12vmax; top: -16vmax; background: radial-gradient(circle, rgba(77,149,234,.45), transparent 65%); animation: rbgA 26s ease-in-out infinite alternate; }
+.radial-bg__blob--b{ width: 40vmax; height: 40vmax; right: -14vmax; top: 18vh; background: radial-gradient(circle, rgba(146,112,234,.38), transparent 65%); animation: rbgB 32s ease-in-out infinite alternate; }
+.radial-bg__blob--c{ width: 36vmax; height: 36vmax; left: 22vw; bottom: -22vmax; background: radial-gradient(circle, rgba(32,190,190,.22), transparent 65%); animation: rbgC 38s ease-in-out infinite alternate; }
+@keyframes rbgA{ to{ transform: translate(14vw, 10vh) scale(1.12); } }
+@keyframes rbgB{ to{ transform: translate(-16vw, -8vh) scale(.92); } }
+@keyframes rbgC{ to{ transform: translate(18vw, -6vh) scale(1.1); } }
+.radial-bg__grid{ position: absolute; inset: 0; opacity: .5;
+    background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1.4px); background-size: 26px 26px;
+    -webkit-mask-image: radial-gradient(ellipse 70% 65% at 50% 48%, #000 20%, transparent 78%); mask-image: radial-gradient(ellipse 70% 65% at 50% 48%, #000 20%, transparent 78%); }
+.radial-bg__wave{ position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 9vh; fill: rgba(120,160,235,.07);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); }
+@media (prefers-reduced-motion: reduce){ .radial-bg *{ animation: none !important; } }

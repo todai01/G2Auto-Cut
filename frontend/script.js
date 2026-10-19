@@ -214,6 +214,7 @@ let isProcessing = false;
             appWarmed = true;
             loadRecentProjects();
             loadMenuRecent();
+            if (isShown('stage0-splash')) enterApp();       // заставки нет — сразу в меню
             const prerender = () => {
                 let menu = document.getElementById('stage1-loading');
                 if (!menu || menu.style.display !== 'none') return;
@@ -878,7 +879,8 @@ let isProcessing = false;
         }
         function radialInfoHTML(it) {
             if (it) return `<div class="radial__info-title">${escapeHtml(it.title)}</div><div class="radial__info-desc">${escapeHtml(radialDesc(it))}</div>`;
-            if (!radial.open) return `<div class="radial__info-desc">Нажмите на значок — откроется меню</div>`;
+            let step = (radialEl('setupStatus') || {}).textContent || '';
+            if (!radial.open) return `${step ? `<div class="radial__info-step">${escapeHtml(step)}</div>` : ''}<div class="radial__info-desc">Нажмите на значок — откроется меню</div>`;
             let n = radial.items.length;
             return `<div class="radial__info-desc">${radial.cat ? 'Выберите действие' : 'Выберите раздел'}${n ? ` · клавиши <kbd>1</kbd>–<kbd>${n}</kbd>` : ''} · <kbd>Esc</kbd> — ${radial.cat ? 'назад' : 'свернуть'}</div>`;
         }
@@ -960,7 +962,12 @@ let isProcessing = false;
         // Лучи от центра к пунктам (SVG): прорисовываются вслед за пунктами.
         function radialLines(n, animate) {
             let svg = radialEl('radialLines'), st = radialEl('radialStage');
-            let cs = getComputedStyle(st), R = parseFloat(cs.getPropertyValue('--R')) || 188, S = parseFloat(cs.getPropertyValue('--S')) || 104;
+            // --R/--S заданы через clamp() — меряем пробником в пикселях
+            let probe = document.createElement('i');
+            probe.style.cssText = 'position:absolute;visibility:hidden;width:var(--R);height:var(--S)';
+            st.appendChild(probe);
+            let R = probe.offsetWidth || 188, S = probe.offsetHeight || 104;
+            probe.remove();
             let w = st.clientWidth, c = w / 2, hub = radialEl('radialHub').clientWidth / 2;
             svg.setAttribute('viewBox', `0 0 ${w} ${w}`);
             svg.classList.remove('is-in');
@@ -1006,14 +1013,37 @@ let isProcessing = false;
             if (!radialEl('radial') || radial.inited) return;
             radial.inited = true;
             radialEl('radialStage').insertAdjacentHTML('afterbegin', `<div class="radial__orbit"><i></i><i></i><i></i></div><svg class="radial__lines" id="radialLines" aria-hidden="true"></svg>`);
+            let acts = document.createElement('div');
+            acts.className = 'radial__actions';
+            let resume = radialEl('btnResume'), help = document.querySelector('#stage1-loading .btn-help');
+            if (resume) acts.appendChild(resume);
+            if (help) acts.appendChild(help);
+            radialEl('radialExtra').after(acts);
             let prog = radialEl('progressContainer');
             if (prog) radialEl('radial').appendChild(prog);            // ход нарезки — под кольцом
+            radialBg();
             document.addEventListener('keydown', radialKey);
             // загрузили таблицу / проект — «✓» и «×» на кольце обновляются сами
             let grid = document.querySelector('.menu-grid'), t = null;
             if (grid) new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { if (radial.open && radial.cat && isShown('stage1-loading')) radialRender(false); }, 120); })
                 .observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true, characterData: true });
             radialRender(false);
+        }
+        // Фон меню: мягкие цветные пятна, сетка точек и «звуковая дорожка».
+        // Двигается только transform — видеокарта, без перерисовки страницы.
+        function radialBg() {
+            let st = radialEl('stage1-loading');
+            if (!st || st.querySelector('.radial-bg')) return;
+            let n = 96, bars = '';
+            for (let k = 0; k < n; k++) {
+                let x = k / (n - 1), env = Math.sin(Math.PI * x) ** 0.8;
+                let h = 6 + env * (18 + 46 * Math.abs(Math.sin(k * 0.61) * Math.cos(k * 0.23 + 1.3)));
+                bars += `<rect x="${k * 12 + 3}" y="${(80 - h / 2).toFixed(1)}" width="5" height="${h.toFixed(1)}" rx="2.5"/>`;
+            }
+            st.insertAdjacentHTML('afterbegin', `<div class="radial-bg" aria-hidden="true">
+                <i class="radial-bg__blob radial-bg__blob--a"></i><i class="radial-bg__blob radial-bg__blob--b"></i><i class="radial-bg__blob radial-bg__blob--c"></i>
+                <div class="radial-bg__grid"></div>
+                <svg class="radial-bg__wave" viewBox="0 0 ${n * 12} 160" preserveAspectRatio="none">${bars}</svg></div>`);
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', radialInit); else radialInit();
 
