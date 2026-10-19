@@ -203,6 +203,14 @@ let isProcessing = false;
         document.addEventListener('DOMContentLoaded', () => {
             updateSettingsText();
             loadRecentProjects();
+            // Заставки нет: меню показываем сразу, не дожидаясь Python, — одним
+            // проявлением. «Продолжить проект?» спросим, когда мост будет готов.
+            if (isShown('stage0-splash')) {
+                showStage('stage1-loading');
+                let m = document.getElementById('stage1-loading');
+                m.classList.add('is-boot');
+                setTimeout(() => m.classList.remove('is-boot'), 700);
+            }
         });
 
         // Прогрев при запуске: мост к Python готов — заранее берём недавние
@@ -214,7 +222,7 @@ let isProcessing = false;
             appWarmed = true;
             loadRecentProjects();
             loadMenuRecent();
-            if (isShown('stage0-splash')) enterApp();       // заставки нет — сразу в меню
+            if (!resumePromptAnswered) enterApp();           // недавний проект — спросить «продолжить?»
             const prerender = () => {
                 let menu = document.getElementById('stage1-loading');
                 if (!menu || menu.style.display !== 'none') return;

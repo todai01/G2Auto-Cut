@@ -3639,10 +3639,10 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 
 /* фон */
 .radial-bg{ position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-.radial-bg__blob{ position: absolute; border-radius: 50%; filter: blur(80px); opacity: .55; will-change: transform; }
-.radial-bg__blob--a{ width: 46vmax; height: 46vmax; left: -12vmax; top: -16vmax; background: radial-gradient(circle, rgba(77,149,234,.45), transparent 65%); animation: rbgA 26s ease-in-out infinite alternate; }
-.radial-bg__blob--b{ width: 40vmax; height: 40vmax; right: -14vmax; top: 18vh; background: radial-gradient(circle, rgba(146,112,234,.38), transparent 65%); animation: rbgB 32s ease-in-out infinite alternate; }
-.radial-bg__blob--c{ width: 36vmax; height: 36vmax; left: 22vw; bottom: -22vmax; background: radial-gradient(circle, rgba(32,190,190,.22), transparent 65%); animation: rbgC 38s ease-in-out infinite alternate; }
+.radial-bg__blob{ position: absolute; border-radius: 50%; opacity: .55; will-change: transform; }   /* без filter: blur — он и тормозил старт */
+.radial-bg__blob--a{ width: 46vmax; height: 46vmax; left: -12vmax; top: -16vmax; background: radial-gradient(circle, rgba(77,149,234,.40), rgba(77,149,234,.14) 35%, transparent 70%); animation: rbgA 26s ease-in-out infinite alternate; }
+.radial-bg__blob--b{ width: 40vmax; height: 40vmax; right: -14vmax; top: 18vh; background: radial-gradient(circle, rgba(146,112,234,.34), rgba(146,112,234,.12) 35%, transparent 70%); animation: rbgB 32s ease-in-out infinite alternate; }
+.radial-bg__blob--c{ width: 36vmax; height: 36vmax; left: 22vw; bottom: -22vmax; background: radial-gradient(circle, rgba(32,190,190,.20), rgba(32,190,190,.07) 35%, transparent 70%); animation: rbgC 38s ease-in-out infinite alternate; }
 @keyframes rbgA{ to{ transform: translate(14vw, 10vh) scale(1.12); } }
 @keyframes rbgB{ to{ transform: translate(-16vw, -8vh) scale(.92); } }
 @keyframes rbgC{ to{ transform: translate(18vw, -6vh) scale(1.1); } }
@@ -3663,3 +3663,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .radial{ min-height: 0; box-sizing: border-box; padding-bottom: 0; }
 /* «Справка» и «Вернуться к работе» — в углу, не занимают место под кольцом */
 .radial__actions{ position: fixed; right: 24px; bottom: 20px; z-index: 2; }
+
+/* Запуск: меню сразу, одним плавным проявлением */
+#stage1-loading.is-boot{ animation: bootIn .6s ease-out both; }
+@keyframes bootIn{ from{ opacity: 0; } to{ opacity: 1; } }
