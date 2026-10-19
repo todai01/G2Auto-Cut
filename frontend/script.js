@@ -825,7 +825,7 @@ let isProcessing = false;
                     <span class="menu-recent__time">${formatRecentTime(it.updated_at)}</span>
                 </button>`).join('');
             box.style.display = 'block';
-            if (radial.open && (!radial.cat || radial.cat === 'recent')) radialRender(false);
+            if (radial.open && (!radial.cat || radial.cat === 'recent')) radialRender(false); else radialContinueRender();
         }
 
         // ===== Главное меню — круговое =====
@@ -852,7 +852,14 @@ let isProcessing = false;
                 { title: 'Конструктор', icon: 'sliders', src: '.menu-row--info' },
             ],
         };
-        let radial = { open: false, cat: null, items: [], cutOpen: false, inited: false };
+        const RADIAL_CAT_KEY = 'gvox_radial_cat';
+        let radial = { open: true, cat: null, items: [], cutOpen: false, inited: false };
+        function radialSaveCat() { try { localStorage.setItem(RADIAL_CAT_KEY, radial.cat || ''); } catch (e) {} }
+        function radialLoadCat() {
+            let c = null;
+            try { c = localStorage.getItem(RADIAL_CAT_KEY) || null; } catch (e) {}
+            return RADIAL_CATS.some(x => x.key === c) ? c : null;
+        }
         const radialEl = id => document.getElementById(id);
         function radialToolItems() {
             return [...document.querySelectorAll('.menu-grid .menu-tools .menu-tool')].map(b => {
@@ -929,16 +936,18 @@ let isProcessing = false;
             radialEl('radialHub').title = !radial.open ? 'Открыть меню' : radial.cat ? 'Назад (Esc)' : 'Свернуть (Esc)';
             let list = radialList();
             radial.items = list;
+            radialContinueRender();
             let draw = () => {
                 let n = list.length;
                 ring.innerHTML = list.map((it, k) => {
                     let a = (-90 + 360 / Math.max(1, n) * k) * Math.PI / 180;
                     let loaded = it.node && it.node.classList.contains('loaded');
+                    let badge = it.isCat ? radialBadge(it.key) : '';
                     return `<button type="button" class="radial__item ${it.isCat ? 'radial__item--cat' : ''} ${loaded ? 'is-loaded' : ''}"
                         data-k="${k}" data-ac="${it.isCat ? it.key : radial.cat}" style="--x: ${(Math.cos(a)).toFixed(4)} * var(--R); --y: ${(Math.sin(a)).toFixed(4)} * var(--R); --dl: ${animate ? 60 + k * 55 : 0}ms">
                         <span class="radial__item-icon">${iconHTML(it.icon)}</span>
                         <span class="radial__item-title">${escapeHtml(it.title)}</span>
-                        ${k < 9 ? `<span class="radial__item-key">${k + 1}</span>` : ''}
+                        ${k < 9 ? `<span class="radial__item-key">${k + 1}</span>` : ''}${badge}
                         ${loaded && it.clear ? `<span class="radial__clear" role="button" title="Сбросить, чтобы загрузить заново" data-clear="${it.clear}">&times;</span>` : ''}
                     </button>`;
                 }).join('');
@@ -994,9 +1003,23 @@ let isProcessing = false;
             radialEl('radialStage').appendChild(r);
             setTimeout(() => r.remove(), 750);
         }
+        // Статус на разделе — видно, не заходя внутрь
+        function radialBadge(key) {
+            if (key === 'new') {
+                let on = ['#btnLoadExcel', '#btnLoadAudio', '#btnLoadFolder'].map(q => document.querySelector('.menu-grid ' + q)).filter(n => n && n.classList.contains('loaded'));
+                if (!on.length) return '';
+                let what = on.map(n => (n.querySelector('.option-desc') || {}).textContent || '').filter(Boolean).join(' · ');
+                return `<span class="radial__badge is-ok" title="Загружено: ${escapeHtml(what)}">✓${on.length > 1 ? on.length : ''}</span>`;
+            }
+            if (key === 'recent') {
+                let n = (recentProjectsCache || []).length;
+                return n ? `<span class="radial__badge" title="Недавних проектов: ${n}">${n}</span>` : '';
+            }
+            return '';
+        }
         function radialRun(it) {
             if (!it) return;
-            if (it.isCat) { radialRipple(); radial.cat = it.key; radial.cutOpen = false; radialRender(true); return; }
+            if (it.isCat) { radialRipple(); radial.cat = it.key; radial.cutOpen = false; radialSaveCat(); radialRender(true); return; }
             if (it.act === 'cut') { radial.cutOpen = !radial.cutOpen; radialExtraRender(); return; }
             if (it.run) { it.run(); return; }
             if (it.node) setTimeout(() => { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }, 160);
@@ -1007,6 +1030,7 @@ let isProcessing = false;
             else if (radial.cat) radial.cat = null;
             else radial.open = false;
             radial.cutOpen = false;
+            radialSaveCat();
             radialRender(true);
         }
         function radialKey(e) {
@@ -1015,7 +1039,25 @@ let isProcessing = false;
             if ([...document.querySelectorAll('.custom-alert-overlay')].some(o => o.style.display === 'flex')) return;
             if (e.code === 'Escape' && radial.open) { e.preventDefault(); radialHubClick(); return; }
             let m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
-            if (m && radial.open && radial.items[+m[1] - 1]) { e.preventDefault(); radialRun(radial.items[+m[1] - 1]); }
+            if (m && radial.open && radial.items[+m[1] - 1]) { e.preventDefault(); radialRun(radial.items[+m[1] - 1]); return; }
+            if ((e.code === 'Enter' || e.code === 'NumpadEnter') && (recentProjectsCache || []).length
+                && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('button, a, details'))) {
+                e.preventDefault(); radialContinue();
+            }
+        }
+        // «Продолжить: <последний проект> →» — в один клик (или Enter)
+        function radialContinueRender() {
+            let box = radialEl('radialContinue'), last = (recentProjectsCache || [])[0];
+            if (!box) return;
+            box.style.display = last ? '' : 'none';
+            if (last) box.innerHTML = `<span class="radial__continue-label">Продолжить</span><b>${escapeHtml(last.name)}</b>`
+                + `${last.updated_at ? `<span class="radial__continue-time">${escapeHtml(formatRecentTime(last.updated_at))}</span>` : ''}<span class="radial__continue-go">&rarr;</span><kbd>Enter</kbd>`;
+            if (last) box.title = last.path || '';
+        }
+        function radialContinue() {
+            if (!(recentProjectsCache || []).length) return;
+            radialRipple();
+            openRecentProject(0);
         }
         function radialInit() {
             if (!radialEl('radial') || radial.inited) return;
@@ -1027,14 +1069,17 @@ let isProcessing = false;
             if (resume) acts.appendChild(resume);
             if (help) acts.appendChild(help);
             radialEl('radialExtra').after(acts);
+            radialEl('radialInfo').insertAdjacentHTML('afterend', `<button type="button" class="radial__continue" id="radialContinue" onclick="radialContinue()" style="display:none"></button>`);
             let prog = radialEl('progressContainer');
             if (prog) radialEl('radial').appendChild(prog);            // ход нарезки — под кольцом
             radialBg();
             document.addEventListener('keydown', radialKey);
             // загрузили таблицу / проект — «✓» и «×» на кольце обновляются сами
             let grid = document.querySelector('.menu-grid'), t = null;
-            if (grid) new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { if (radial.open && radial.cat && isShown('stage1-loading')) radialRender(false); }, 120); })
+            if (grid) new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { if (radial.open && isShown('stage1-loading')) radialRender(false); }, 120); })
                 .observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true, characterData: true });
+            radial.cat = radialLoadCat();
+            if (radial.cat === 'recent' && !(recentProjectsCache || []).length) radial.cat = null;
             radialRender(false);
         }
         // Фон меню: мягкие цветные пятна, сетка точек и «звуковая дорожка».
