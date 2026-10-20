@@ -3212,6 +3212,8 @@ class TtsFlowMixin:
         if not ctx["start_saved"]:
             return {"error": f"Начало фразы «{a['name']}» ещё не сохранено — запишите его в «Фразах»."}
         segs = [AudioSegment.from_file(self._tts_target(a))]
+        if which == 'start' and len(segs[0]) > self.TIER_CTX_MS:     # «▶ Начало» — только конец фразы, в интонацию
+            segs[0] = segs[0][-self.TIER_CTX_MS:]
         if which == 'whole':
             if take_i is None or not (0 <= take_i < len(st["takes"])):
                 return {"error": "Нет дубля."}

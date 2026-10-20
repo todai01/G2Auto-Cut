@@ -7236,8 +7236,8 @@ let isProcessing = false;
             let span = Math.max(r.length, lay.total) || 1;
             let pct = ms => (100 * ms / span).toFixed(3) + '%';
             let regions = r.tiers.map(t => `<div class="tts-tiers__reg ${t.exists && !t.write ? 'is-skip' : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
-                    title="${escapeHtml(t.label)}: ${escapeHtml(t.text)} — края тяните мышью">
-                    <span>${escapeHtml(t.label)}</span>
+                    title="${escapeHtml(t.label)} ${escapeHtml(t.value)}: ${escapeHtml(t.text)} — края тяните мышью">
+                    <span>${escapeHtml(t.text || t.label)}</span>
                     <i class="tts-tiers__edge is-l" onpointerdown="ttsTierEdge(event, ${t.k}, 'a')"></i>
                     <i class="tts-tiers__edge is-r" onpointerdown="ttsTierEdge(event, ${t.k}, 'b')"></i></div>`).join('');
             let clips = lay.clips.map((c, n) => c.ctx
@@ -7247,12 +7247,12 @@ let isProcessing = false;
                    <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
                      ${c.fixed ? `onpointerdown="event.stopPropagation(); ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
                        : `onpointerdown="ttsTierMove(event, ${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — тяните: пауза перед ярусом; клик — послушать"`}>
-                     <canvas data-n="${n}"></canvas><span>${escapeHtml(c.t.label)} <b>${escapeHtml(c.t.value)}</b></span></div>
+                     <canvas data-n="${n}"></canvas><span><b>${escapeHtml(c.t.text || c.t.value)}</b></span></div>
                    ${c.post ? `<div class="tts-tiers__gap" style="left:${pct(c.x + c.w)};width:${pct(c.post)}">${c.post}</div>` : ''}`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${x.exists && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
-                    <span class="tts-tiers__lbl">${escapeHtml(x.label)} <b>${escapeHtml(x.value)}</b></span>
-                    <span class="tts-tiers__txt">${escapeHtml(x.text)}</span>
+                    <span class="tts-tiers__lbl"><b>${escapeHtml(x.text || x.value)}</b></span>
+                    <span class="tts-tiers__txt">${escapeHtml(x.label)} · ${escapeHtml(x.value)}</span>
                     ${x.exists && !x.write ? '' : `<span class="tts-tiers__knob" title="Темп яруса (без смены высоты голоса)">темп
                         <button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', -0.03)">&minus;</button><b>${Math.round(x.tempo * 100)}%</b><button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', 0.03)">+</button></span>
                       <span class="tts-tiers__knob" title="Громкость яруса — к громкости фразы">дБ
@@ -9198,7 +9198,7 @@ let isProcessing = false;
                 : ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsReuseBuild(${pr.reuse.unit})" title="Вся фраза уже звучит в ${srcs} — собрать без записи">целиком из записанного · собрать</button>`) : '';
             let modes = ttsFocusHTML(pr) + ttsModesHTML(pr);
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
-                    title="${pr.context.start_saved ? 'Послушать записанное начало «' + escapeHtml(pr.context.start_name) + '» — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
+                    title="${pr.context.start_saved ? 'Послушать конец начала «' + escapeHtml(pr.context.start_name) + '» (последние 2–3 секунды) — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`

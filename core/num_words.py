@@ -169,6 +169,20 @@ def _num(value):
     return int(s) if re.fullmatch(r'\d+', s) else None
 
 
+# Месяцы: русские названия (как часто пишут и в казахских таблицах) → казахские.
+KZ_MONTHS = {}
+for _ru, _kz in (('январ', 'қаңтар'), ('феврал', 'ақпан'), ('март', 'наурыз'), ('апрел', 'сәуір'), ('ма', 'мамыр'),
+                 ('июн', 'маусым'), ('июл', 'шілде'), ('август', 'тамыз'), ('сентябр', 'қыркүйек'),
+                 ('октябр', 'қазан'), ('ноябр', 'қараша'), ('декабр', 'желтоқсан')):
+    for _end in ('ь', 'я', 'а', '', 'й', 'е'):
+        KZ_MONTHS.setdefault(_ru + _end, _kz)
+KZ_MONTHS.update({'май': 'мамыр', 'мая': 'мамыр', 'маю': 'мамыр'})
+for _kz in ('қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мамыр', 'маусым', 'шілде', 'тамыз', 'қыркүйек', 'қазан', 'қараша', 'желтоқсан'):
+    KZ_MONTHS[_kz] = _kz
+KZ_MONTHS.pop('ма', None)
+KZ_MONTHS.pop('мае', None)
+
+
 def synth_text(category_key, value, lang=None):
     """Текст для синтеза значения категории: «значение с единицей»."""
     key = (category_key or '').lower()
@@ -176,6 +190,8 @@ def synth_text(category_key, value, lang=None):
     base = re.sub(r'_(ru|kz|kk)$', '', key)
     n = _num(value)
     if n is None:
+        if lang == 'kz' and base == 'month':             # месяц в казахском листе — по-казахски
+            return KZ_MONTHS.get(str(value).strip().lower(), str(value).strip())
         return str(value).strip()
     if lang == 'kz':
         if base == 'million':
