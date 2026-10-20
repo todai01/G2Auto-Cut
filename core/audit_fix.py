@@ -165,6 +165,43 @@ class AuditFixMixin:
         self._tts_save()
         return {"state": self.tts_state(), "n": len(miss) - len(lost), "lost": lost}
 
+    def audit_export_folders(self):
+        """«Разложить по папкам Студии»: найденные записи — копиями в выбранную
+        папку, в той же структуре, что создаёт суфлёр (Проверенные/…,
+        Фразы_Переменные/…, Значения/<лист>/<категория>/…); папки категорий
+        создаются и для пока пустых. Исходники не трогаем, готовое не перезаписываем."""
+        res = getattr(self, '_audit_res', None)
+        if not res or res.get("mode") != "studio":
+            return {"error": "Сначала запустите аудит по таблице Студии записи."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER, directory=res.get("scan_dir") or '')
+        if not picked:
+            return {"error": "cancel"}
+        dest = picked if isinstance(picked, str) else picked[0]
+        norm = lambda p: os.path.normcase(os.path.abspath(p))
+        copied = same = kept = 0
+        failed = []
+        for g in res.get("groups") or []:
+            if g.get("rel_dir"):
+                os.makedirs(os.path.join(dest, g["rel_dir"]), exist_ok=True)
+        for f in res.get("files") or []:
+            if not f.get("rel") or not os.path.exists(f["path"]):
+                continue
+            dst = os.path.join(dest, f["rel"])
+            if norm(dst) == norm(f["path"]):
+                same += 1                                  # уже лежит на своём месте
+                continue
+            if os.path.exists(dst):
+                kept += 1                                  # там уже есть файл — не перезаписываем
+                continue
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(f["path"], dst)
+                copied += 1
+            except OSError as e:
+                failed.append(f"{f['filename']}: {e}")
+        return {"dest": dest, "copied": copied, "same": same, "kept": kept, "failed": failed[:10],
+                "folders": sorted({g["rel_dir"] for g in res.get("groups") or [] if g.get("rel_dir")})}
+
     def audit_rerun(self):
         """Проверить снова ту же папку (после записи в суфлёре)."""
         res = getattr(self, '_audit_res', None)

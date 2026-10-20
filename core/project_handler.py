@@ -709,7 +709,7 @@ class ProjectMixin:
             if hits:
                 g["found"] += 1
                 g["_dirs"].append(os.path.dirname(hits[0][0]))
-                files.append({"filename": os.path.basename(hits[0][0]), "path": hits[0][0], "text": text, "group": gid})
+                files.append({"filename": os.path.basename(hits[0][0]), "path": hits[0][0], "text": text, "group": gid, "rel": rel})
                 if len(strict) > 1:
                     g["duplicates"] += 1
                     duplicates_list.append({"filename": name, "count": len(strict), "paths": [p for p, _ in strict], "group": gid})
@@ -726,6 +726,7 @@ class ProjectMixin:
             g = groups.pop(gid)
             dirs = g.pop("_dirs")
             rel_dir = g.pop("_rel_dir")
+            g["rel_dir"] = rel_dir                         # папка категории так, как её назвала бы Студия
             if gid.startswith('ph_') and dirs:
                 g["target"] = max(set(dirs), key=dirs.count)
             else:

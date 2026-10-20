@@ -5762,6 +5762,7 @@ let isProcessing = false;
                     <input class="audit-files__filter" placeholder="Поиск по названию или тексту" value="${escapeHtml(auditFilter)}" oninput="auditFilter = this.value; auditApplyFilter()">
                     <label class="audit-switch"><input type="checkbox" ${auditOnlyProblems ? 'checked' : ''} onchange="auditOnlyProblems = this.checked; auditApplyFilter()"> Только с проблемами</label>
                     <span class="audit-toolbar__spacer"></span>
+                    ${res.mode === 'studio' ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="auditExportFolders()" title="Скопировать найденные записи в выбранную папку — в структуре, как у суфлёра: Проверенные/…, Фразы_Переменные/…, Значения/<лист>/<категория>/…">Разложить по папкам Студии</button>` : ''}
                     ${res.groups && res.missing_count ? `<button type="button" class="btn-ghost btn-ghost--compact audit-act is-rec" onclick="auditToPrompter('all')" title="Открыть суфлёр только с тем, чего не хватает — записывайте как обычно">● Записать все недостающие — ${res.missing_count}</button>` : ''}
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(true)">Развернуть все</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(false)">Свернуть все</button>
@@ -5797,6 +5798,18 @@ let isProcessing = false;
             if (res.studio_note) html = `<div class="audit-note">${escapeHtml(res.studio_note)}</div>` + html;
             auditSetDetails(html, quiet);
             document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
+        }
+        async function auditExportFolders() {
+            let r = await pywebview.api.audit_export_folders();
+            if (!r || r.error) { if (r && r.error !== 'cancel') showToast(r.error); return; }
+            let lines = [`Скопировано: <b>${r.copied}</b>`];
+            if (r.same) lines.push(`уже на своём месте: ${r.same}`);
+            if (r.kept) lines.push(`не перезаписаны (там уже есть файл): ${r.kept}`);
+            if (r.failed.length) lines.push(`ошибки: ${r.failed.map(escapeHtml).join('<br>')}`);
+            let go = await showBeautifulConfirm(`✅ <b>Разложено по папкам Студии</b><br><br>${lines.join('<br>')}<br><br>`
+                + `<span style="word-break:break-all">${escapeHtml(r.dest)}</span><br><br>Папки: ${r.folders.map(f => '«' + escapeHtml(f) + '»').join(', ')}`,
+                'Открыть папку', 'Закрыть');
+            if (go) pywebview.api.audit_open_folder(r.dest);
         }
         async function auditPlayExtra(i) {
             let e = (window.auditRes.extra || [])[i];
