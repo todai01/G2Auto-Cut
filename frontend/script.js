@@ -7029,7 +7029,13 @@ let isProcessing = false;
         function ttsRenderRail() {
             let rail = document.getElementById('ttsRail');
             if (!tts.takes.length) {
-                rail.innerHTML = `<div class="tts-rail__empty">${!tts.loaded ? 'Загрузите таблицу и запись' : (ttsRec.on ? 'Записанные фразы появятся здесь' : 'Загрузите или запишите запись — здесь появятся дубли')}</div>`;
+                // Готовые файлы (импорт, прошлые проекты) — не дубли: на ленте только новые записи.
+                let ready = tts.loaded && tts.stats ? tts.stats.saved : 0;
+                let msg = !tts.loaded ? 'Загрузите таблицу и запись'
+                    : ttsRec.on ? 'Записанные фразы появятся здесь'
+                    : ready ? `Готовых записей в проекте: ${ready} — они уже на своих местах, суфлёр их пропускает. Здесь появятся новые дубли`
+                    : 'Загрузите или запишите запись — здесь появятся дубли';
+                rail.innerHTML = `<div class="tts-rail__empty">${msg}</div>`;
                 return;
             }
             rail.innerHTML = tts.takes.map(t => `
@@ -9016,8 +9022,14 @@ let isProcessing = false;
             if (info !== undefined) document.getElementById('ttsRecInfo').innerText = info;
         }
 
+        // Опрос не накладывается: пока прошлый ответ не пришёл, новый не шлём
+        // (иначе при медленном ответе вызовы копятся и окно «не отвечает»).
+        let ttsRecPollBusy = false;
         async function ttsRecPoll() {
-            let s = await pywebview.api.tts_rec_status();
+            if (ttsRecPollBusy) return;
+            ttsRecPollBusy = true;
+            let s;
+            try { s = await pywebview.api.tts_rec_status(); } finally { ttsRecPollBusy = false; }
             if (!s || !s.recording) return;
             let sec = Math.floor(s.seconds);
             document.getElementById('ttsRecTime').innerText = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;

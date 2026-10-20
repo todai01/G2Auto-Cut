@@ -9,6 +9,7 @@
 
 import os
 import queue
+import re
 import struct
 import threading
 import time
@@ -41,6 +42,45 @@ PARTIAL_MIN_WORDS = 2      # верное начало длиннее — зап
 WORD_EQ = 0.66             # слово распознано «как в тексте»
 LIVE_WAIT_MAX_MS = 45000   # недочитанную фразу ждём не дольше
 PROMPT_PREFIX_SCORE = 0.6  # сказанное похоже на начало фразы — ждём продолжения
+
+
+def spell_digits(words, lang):
+    """Распознавание часто пишет числа цифрами («1 101 001 теңге»), а в
+    суфлёре они словами — без этого строка суммы «не узнаётся» и дубль не
+    появляется. Цифры → слова языка фразы; время числа делим между словами."""
+    from core.num_words import kz_words, ru_words
+    spell = kz_words if lang == 'kz' else ru_words
+    num = re.compile(r'\s*(\d[\d\s\u00a0]*?)([.,!?:;]*)\s*')
+    out, i = [], 0
+    while i < len(words):
+        w, s, e = words[i][:3]
+        m = num.fullmatch(w)
+        if not m:
+            out.append(words[i])
+            i += 1
+            continue
+        digits, tail = re.sub(r'\D', '', m.group(1)), m.group(2)
+        j = i + 1
+        # «1 101 001» бывает и отдельными словами: группы по три цифры — то же число
+        while not tail and j < len(words) and len(digits) <= 9 and re.fullmatch(r'\s*\d{3}[.,!?:;]*\s*', words[j][0]):
+            g = words[j][0].strip()
+            digits += re.sub(r'\D', '', g)
+            tail = g[3:]
+            e = words[j][2]
+            j += 1
+        try:
+            spoken = spell(int(digits)).split() if len(digits) <= 12 else []
+        except Exception:
+            spoken = []
+        if not spoken:
+            out.extend(words[i:j])
+            i = j
+            continue
+        step = (e - s) / len(spoken)
+        for k, sw in enumerate(spoken):
+            out.append((' ' + sw + (tail if k == len(spoken) - 1 else ''), s + k * step, s + (k + 1) * step))
+        i = j
+    return out
 
 
 def tok_norms(text):
@@ -452,7 +492,19 @@ class TtsLiveMixin:
                 "hold_s": round(max(0, rec.ana_ms - live["hold"]) / 1000, 1) if live.get("hold") is not None else 0,
                 "overflows": rec.overflows, "mic_off": bool(live.get("mic_off")), "asr_s": live.get("asr_s"),
                 "pending_n": len(live.get("queue", [])) + (1 if live.get("busy") and live.get("inflight_pos") is not None else 0),
-                "error": rec.error, "prompt": self.tts_prompt_info()}
+                "error": rec.error, "prompt": self._tts_rec_prompt()}
+
+    def _tts_rec_prompt(self):
+        """Суфлёр для опроса записи (5 раз в секунду): пересчитываем, только
+        если что-то поменялось или прошла секунда, иначе — прошлый ответ."""
+        key = (getattr(self, '_tts_ver', 0), self._tts().get("prompt_pos"), self._tts().get("prompt_focus") and 1)
+        now = time.monotonic()
+        last = getattr(self, '_tts_rec_prompt_last', None)
+        if last and last[0] == key and now - last[1] < 1.0:
+            return last[2]
+        info = self.tts_prompt_info()
+        self._tts_rec_prompt_last = ((getattr(self, '_tts_ver', 0),) + key[1:], now, info)
+        return info
 
     # ---------------- разбор в паузах ----------------
 
@@ -567,6 +619,7 @@ class TtsLiveMixin:
         words = self._tts_transcribe_pack(self._tts_live_model(lg), [{"index": 0, "audio": samples, "ms": len(seg)}],
                                           'kk' if lg == 'kz' else 'ru', live=True,
                                           hotwords=self._tts_hint_text(pos))[0]
+        words = spell_digits(words, lg)
         live["asr_s"] = round(time.time() - t0, 1)
         with self._tts_live_lock:
             if live.get("gen", 0) != gen:
@@ -1001,7 +1054,12 @@ class TtsLiveMixin:
     def tts_prompt_info(self):
         """Суфлёр. Лист сумм: строки одной логики прочитаны, а у другой ещё
         есть что читать — сам переходим к ней (logic_switched)."""
-        self._tts_claims_cache = {}             # файлы могли поменяться и вне программы
+        # Файлы могли поменяться и вне программы — но не чаще раза в 2 с
+        # (свои изменения и так сбрасывают кэш в _tts_save).
+        now = time.monotonic()
+        if now - getattr(self, '_tts_claims_at', 0) > 2:
+            self._tts_claims_cache = {}
+            self._tts_claims_at = now
         info = self._tts_prompt_info_raw()
         st = self._tts()
         logic = info.get("sum_logic") if info else None
@@ -1283,6 +1341,7 @@ class TtsLiveMixin:
         lg = self._tts_pos_lang()
         words = self._tts_transcribe_pack(self._tts_live_model(lg), [{"index": 0, "audio": samples, "ms": len(seg)}],
                                           'kk' if lg == 'kz' else 'ru', live=True)[0]
+        words = spell_digits(words, lg)
         text = ''.join(w[0] for w in words).strip()
         if not words or self._asr_is_noise(text):
             live["waiting"] = False

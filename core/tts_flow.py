@@ -428,6 +428,7 @@ class TtsFlowMixin:
 
     def _tts_save(self):
         self._tts_claims_cache = {}                      # файлы/дубли поменялись — пересчитать
+        self._tts_ver = getattr(self, '_tts_ver', 0) + 1
         st = self._tts()
         wd = st.get("work_dir")
         if not wd or not os.path.isdir(wd):
@@ -2120,7 +2121,16 @@ class TtsFlowMixin:
         """Значение суммы — как в таблице (имя файла то же, что на экране «Переменные»)."""
         sh = (self._tts().get("var_sheets") or {}).get(sheet) or {}
         c = next((c for c in sh.get("categories", []) if c["key"] == cat), None)
-        return next((v for v in (c or {}).get("values", []) if re.sub(r'\D', '', str(v)) == str(digits)), digits)
+        vals = (c or {}).get("values", [])
+        # Индекс «цифры → значение» на категорию: суфлёр зовёт это тысячи раз.
+        cache = self.__dict__.setdefault('_tts_raw_idx', {})
+        hit = cache.get((sheet, cat))
+        if not hit or hit[0] is not vals or hit[1] != len(vals):
+            idx = {}
+            for v in vals:
+                idx.setdefault(re.sub(r'\D', '', str(v)), v)
+            hit = cache[(sheet, cat)] = (vals, len(vals), idx)
+        return hit[2].get(str(digits), digits)
 
     def _tts_old_sum_path(self, unit, tier):
         """Где эталон лежал раньше: «Проверенные/Суммы/<ярус по-русски>/<цифры>.wav»."""
