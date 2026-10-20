@@ -2238,7 +2238,8 @@ class TtsFlowMixin:
             for u in self._tts_row_units(sheet):
                 if u.get("logic") != logic:
                     continue
-                miss = [p for p in (self._tts_tier_path(u, t) for t in u["tiers"]) if self._tts_tier_missing(sheet, p)]
+                miss = [p for p in (self._tts_tier_path(u, t) for t in u["tiers"] if self._tts_tier_own(u, t))
+                        if self._tts_tier_missing(sheet, p)]
                 missing[u["id"]] = miss
                 for p in miss:
                     claims.setdefault(p, u["id"])
@@ -2283,6 +2284,12 @@ class TtsFlowMixin:
         return {"prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
                 "state": self.tts_state()}
 
+    def _tts_tier_own(self, u, t):
+        """Ярус, за который отвечает эта строка. Логика 2 даёт только «сотни
+        тысяч» (100…900 — 9 строк): миллионы и тенге — эталоны логики 1,
+        их строки логики 2 не ждут и не перезаписывают."""
+        return u.get("logic") != 2 or t.get("tier") not in self.SUM_LOGICS[1]
+
     def _tts_tier_row_needed(self, u):
         claims, missing = self._tts_tier_claims(u.get("sheet"), u.get("logic"))
         return any(claims.get(p) == u["id"] for p in missing.get(u["id"], ()))
@@ -2291,7 +2298,7 @@ class TtsFlowMixin:
         """Сколько эталонов ярусов листа уже готово (уникальные файлы)."""
         paths = {self._tts_tier_path(u, t) for u in self._tts_row_units(sheet)
                  if not (u.get("logic") and u["logic"] != (self._tts_logic_now() if hasattr(self, '_tts_logic_now')
-                                                           else self._tts().get("sum_logic", 1))) for t in u["tiers"]}
+                                                           else self._tts().get("sum_logic", 1))) for t in u["tiers"] if self._tts_tier_own(u, t)}
         return sum(1 for p in paths if not self._tts_tier_missing(sheet, p)), len(paths)
 
     # ---- разметка ярусов в дубле строки ----
@@ -2888,7 +2895,7 @@ class TtsFlowMixin:
             item = {"k": k, "label": x["label"], "value": x["value"], "text": x["text"], "a": c["a"], "b": c["b"],
                     "pre": c.get("pre", 0), "post": c.get("post", 0), "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0),
                     "exists": not self._tts_tier_missing(unit.get("sheet"), path) and path not in mine,
-                    "mine": path in mine, "write": bool(write.get(str(k)))}
+                    "mine": path in mine, "write": bool(write.get(str(k))), "shared": not self._tts_tier_own(unit, x)}
             if item["exists"] and not item["write"]:      # в сборке — готовый файл, как он есть
                 try:
                     r, ln = self._tts_file_rms(path)
@@ -3211,8 +3218,9 @@ class TtsFlowMixin:
         redo = (self._tts().get("tier_redo") or {}).get(unit.get("sheet"))
         for k, x in enumerate(unit["tiers"]):
             path = self._tts_tier_path(unit, x)
-            if not self._tts_tier_missing(unit.get("sheet"), path) and path not in mine and not write.get(str(k)):
-                skipped.append(x["label"])
+            if not write.get(str(k)) and path not in mine and (
+                    not self._tts_tier_own(unit, x) or not self._tts_tier_missing(unit.get("sheet"), path)):
+                skipped.append(x["label"])        # готовый, или ярус логики 1 в строке логики 2
                 continue
             if resave and path not in mine:
                 continue

@@ -7258,7 +7258,7 @@ let isProcessing = false;
             let r = ttsTR, lay = ttsTiersLayout();
             let span = Math.max(r.length, lay.total) || 1;
             let pct = ms => (100 * ms / span).toFixed(3) + '%';
-            let regions = r.tiers.map(t => `<div class="tts-tiers__reg ${t.exists && !t.write ? 'is-skip' : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
+            let regions = r.tiers.map(t => `<div class="tts-tiers__reg ${(t.exists || t.shared) && !t.write ? 'is-skip' : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
                     title="${escapeHtml(t.label)} ${escapeHtml(t.value)}: ${escapeHtml(t.text)} — края тяните мышью">
                     <span>${escapeHtml(t.text || t.label)}</span>
                     <i class="tts-tiers__edge is-l" onpointerdown="ttsTierEdge(event, ${t.k}, 'a')"></i>
@@ -7272,7 +7272,7 @@ let isProcessing = false;
                        : `onpointerdown="ttsTierMove(event, ${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — тяните: пауза перед ярусом; клик — послушать"`}>
                      <canvas data-n="${n}"></canvas><span><b>${escapeHtml(c.t.text || c.t.value)}</b></span></div>
                    ${c.post ? `<div class="tts-tiers__gap" style="left:${pct(c.x + c.w)};width:${pct(c.post)}">${c.post}</div>` : ''}`).join('');
-            let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${x.exists && !x.write ? 'is-skip' : ''}">
+            let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${(x.exists || x.shared) && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
                     <span class="tts-tiers__lbl"><b>${escapeHtml(x.text || x.value)}</b></span>
                     <span class="tts-tiers__txt">${escapeHtml(x.label)} · ${escapeHtml(x.value)}</span>
@@ -7282,6 +7282,8 @@ let isProcessing = false;
                         <button type="button" onclick="ttsTierKnob(${x.k}, 'gain', -1)">&minus;</button><b>${x.gain > 0 ? '+' : ''}${x.gain}</b><button type="button" onclick="ttsTierKnob(${x.k}, 'gain', 1)">+</button></span>`}
                     ${x.exists ? `<label class="tts-tiers__exists" title="Этот эталон уже сохранён из другой строки — по умолчанию не трогаем">
                         <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> уже есть · перезаписать</label>`
+                      : x.shared && !x.mine ? `<label class="tts-tiers__exists" title="Логика 2 сохраняет только сотни тысяч. Этот ярус записывается в логике 1">
+                        <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> из логики 1 · сохранить и здесь</label>`
                       : x.mine ? '<span class="tts-tiers__ok">сохранён ✓</span>' : ''}</div>`).join('');
             let tp = r.tpl, o = r.opts || {}, hasCtx = !!(r.ctx.start || r.ctx.end);
             el.innerHTML = `<div class="tts-tiers__title">Ярусы
