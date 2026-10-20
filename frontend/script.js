@@ -6890,6 +6890,14 @@ let isProcessing = false;
         }
 
         // «Готовые записи»: папка с уже записанным → на свои места в проекте, суфлёр их пропустит.
+        // Готовые фразы с переменными — на ленту: править вместе со значениями.
+        async function ttsReadyToRail() {
+            let r = await pywebview.api.tts_ready_to_rail();
+            if (!r || r.error) { if (r) showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
+            tts = r.state; ttsRender();
+            showToast(r.added ? `На ленте готовых фраз: ${r.added}. Правьте в «Сборке» и сохраняйте (Enter)` : 'Готовых фраз с переменными нет — или они уже на ленте', 3500);
+        }
+
         async function ttsImportExisting() {
             if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
             let r = await pywebview.api.tts_import_existing();
@@ -6901,6 +6909,7 @@ let isProcessing = false;
             if (r.same) lines.push(`уже были на своих местах: ${r.same}`);
             if (r.kept) lines.push(`в проекте уже есть свой файл (не перезаписан): ${r.kept}`);
             if (r.extra) lines.push(`в папке есть файлы, которых нет в таблице: ${r.extra} — их видно в аудите`);
+            if (r.rail) lines.push(`фраз с переменными на ленте для правки: <b>${r.rail}</b>`);
             if (r.failed.length) lines.push(`ошибки: ${r.failed.map(escapeHtml).join('<br>')}`);
             showBeautifulAlert(`✅ <b>Готовые записи учтены</b><br><br>${lines.join('<br>')}<br><br>Суфлёр теперь пропускает записанное — осталось ${r.missing}.`
                 + `<br><br><span class="tts-dim" style="word-break:break-all">${escapeHtml(r.src)}</span>`);
@@ -7033,9 +7042,11 @@ let isProcessing = false;
                 let ready = tts.loaded && tts.stats ? tts.stats.saved : 0;
                 let msg = !tts.loaded ? 'Загрузите таблицу и запись'
                     : ttsRec.on ? 'Записанные фразы появятся здесь'
-                    : ready ? `Готовых записей в проекте: ${ready} — они уже на своих местах, суфлёр их пропускает. Здесь появятся новые дубли`
+                    : ready ? `Готовых записей в проекте: ${ready} — суфлёр их пропускает. Здесь появятся новые дубли`
                     : 'Загрузите или запишите запись — здесь появятся дубли';
-                rail.innerHTML = `<div class="tts-rail__empty">${msg}</div>`;
+                let canReady = tts.loaded && !ttsRec.on && tts.stats && tts.stats.pieces_saved;
+                rail.innerHTML = `<div class="tts-rail__empty">${msg}${canReady ? ` <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsReadyToRail()"
+                    title="Готовые фразы с переменными — дублями на ленту: править в «Сборке» вместе со значениями и сохранять поверх">Фразы с переменными — на ленту</button>` : ''}</div>`;
                 return;
             }
             rail.innerHTML = tts.takes.map(t => `
@@ -7044,8 +7055,13 @@ let isProcessing = false;
                         ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
-                    <span class="tts-take__meta">${t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
+                    <span class="tts-take__meta">${t.ready ? 'готовый' : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
+            // Готовые фразы с переменными, которых нет на ленте, — добавить для правки.
+            let offRail = ttsRec.on ? 0 : tts.units.filter(u => u.kind === 'piece' && u.saved && !(u.takes || []).length).length;
+            if (offRail) rail.insertAdjacentHTML('beforeend', `<button type="button" class="tts-take tts-take--add" onclick="ttsReadyToRail()"
+                title="Готовые фразы с переменными — дублями на ленту: править в «Сборке» вместе со значениями">
+                <span class="tts-take__num">+${offRail}</span><span class="tts-take__name">готовые фразы</span><span class="tts-take__meta">на ленту</span></button>`);
             rail.classList.toggle('is-playing', ttsPlayingIdx === tts.index);
             let cur = rail.querySelector('.is-current');
             if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: motionOK() ? 'smooth' : 'auto' });
@@ -9316,7 +9332,7 @@ let isProcessing = false;
             }
             if (added) {
                 let rail = document.getElementById('ttsRail');
-                rail.querySelectorAll('.tts-take').forEach((el, k) => { if (k >= tts.takes.length - added) el.classList.add('is-new'); });
+                rail.querySelectorAll('.tts-take[data-i]').forEach((el, k) => { if (k >= tts.takes.length - added) el.classList.add('is-new'); });
             }
         }
 

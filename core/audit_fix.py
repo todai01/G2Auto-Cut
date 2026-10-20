@@ -212,10 +212,59 @@ class AuditFixMixin:
         self.__dict__.pop('_tts_claims_cache', None)
         self._tts_prompt_fix()
         self._tts_save()
-        return {"src": src_dir, "found": len(res.get("files") or []), "expected": res.get("total_excel", 0),
+        rail = self.tts_ready_to_rail()                    # фразы с переменными — на ленту, для правки
+        return {"src": src_dir, "rail": rail.get("added", 0), "found": len(res.get("files") or []), "expected": res.get("total_excel", 0),
                 "copied": copied, "same": same, "kept": kept, "failed": failed[:10],
                 "extra": len(res.get("extra") or []), "missing": left,
                 "state": self.tts_state(), "prompt": self.tts_prompt_info()}
+
+    READY_DIR = 'Готовые'           # внутри «Записи»: исходники готовых файлов для ленты
+
+    def tts_ready_to_rail(self, kinds=('piece',)):
+        """Готовые фразы с переменными (и др. по kinds) — на ленту дублями, чтобы
+        править их в «Сборке» вместе со значениями и сохранять поверх.
+        Исходник — копия в «Записи/Готовые» (правка режет из неё, как из
+        записи); сам готовый файл меняется только при сохранении."""
+        from core.tts_flow import TTS_CHUNKS_DIR, TTS_RECORDS_DIR
+        st = self._tts()
+        wd = st.get("work_dir")
+        if not wd or not os.path.isdir(wd):
+            return {"error": "Сначала откройте проект Студии."}
+        have = {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
+        src_dir = os.path.join(wd, TTS_RECORDS_DIR, self.READY_DIR)
+        n = max([t.get("chunk", 0) for t in st["takes"]] + [0])
+        added = 0
+        for u in st["units"]:
+            if u["kind"] not in kinds or u.get("tiers") or u["id"] in have:
+                continue
+            target = self._tts_target(u)
+            if not os.path.exists(target):
+                continue
+            try:
+                raw = os.path.join(src_dir, os.path.relpath(target, wd).replace(os.sep, '__'))
+                if not os.path.exists(raw):
+                    os.makedirs(src_dir, exist_ok=True)
+                    shutil.copy2(target, raw)
+                try:
+                    with wave.open(raw, 'rb') as w:
+                        ms = int(w.getnframes() * 1000 / w.getframerate())
+                except Exception:
+                    ms = len(AudioSegment.from_file(raw))
+                n += 1
+                f = os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav")
+                os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
+                shutil.copy2(raw, os.path.join(wd, f))
+            except OSError:
+                continue
+            st["takes"].append({"file": f, "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": raw, "heard": '',
+                                "listened": True, "chunk": n, "unit": u["id"], "score": 1.0, "status": "manual",
+                                "approved": True, "ready": True})
+            added += 1
+        if added:
+            first = len(st["takes"]) - added
+            st["index"] = first
+            self._tts_save()
+        return {"added": added, "state": self.tts_state()}
 
     def audit_export_folders(self):
         """«Разложить по папкам Студии»: найденные записи — копиями в выбранную

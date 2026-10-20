@@ -1474,7 +1474,8 @@ class TtsFlowMixin:
         if wd and t.get("tier_files"):                 # ярусы, сохранённые из этого дубля
             for p in t["tier_files"]:
                 hide(p)
-        elif wd and t.get("approved") and t.get("unit") is not None and t["unit"] < len(st["units"]):
+        elif wd and t.get("approved") and not t.get("ready") and t.get("unit") is not None and t["unit"] < len(st["units"]):
+            # готовый файл, открытый на ленте для правки, при удалении дубля остаётся
             hide(self._tts_target(st["units"][t["unit"]]))
             copies = st.setdefault("twin_copies", {})
             rec["twin_copies"] = {}
