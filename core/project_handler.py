@@ -676,6 +676,18 @@ class ProjectMixin:
             return {"error": f"Не удалось прочитать таблицу «{os.path.basename(excel_path)}»: {e}"}
         if not expected:
             return {"error": "В таблице не нашлось ни фраз, ни переменных для записи."}
+        # Выбрали папку внутри проекта («Проверенные», «Значения», «Фразы_Переменные») —
+        # соседние папки проекта тоже нужны: смотрим весь проект.
+        widened = None
+        proj_dirs = {'проверенные', 'значения', 'фразыпеременные'}
+        here = self._audit_norm_dir(os.path.basename(os.path.normpath(scan_dir)))
+        parent = os.path.dirname(os.path.normpath(scan_dir))
+        if here in proj_dirs and parent and os.path.isdir(parent):
+            try:
+                if any(self._audit_norm_dir(d) in proj_dirs - {here} for d in os.listdir(parent)):
+                    widened, scan_dir = scan_dir, parent
+            except OSError:
+                pass
         found_files, _all = self._audit_scan_folder(scan_dir)
         cands = {}                                         # имя → [(путь, части пути от выбранной папки)]
         for f_low, paths in found_files.items():
@@ -739,14 +751,26 @@ class ProjectMixin:
         used = {os.path.normcase(f["path"]) for f in files}
         for d in duplicates_list:
             used.update(os.path.normcase(p) for p in d["paths"])
-        known_dirs = {os.path.normcase(os.path.dirname(p)) for p in used}
+        # Лишние — во всех папках, кроме служебных (черновики записи, нарезка, кэш…)
+        service = {'записи', 'чанки', 'кэш', 'суммысырые', 'фон', 'клон', 'trashаудит'}
+        def is_service(pth):
+            parts = os.path.relpath(os.path.dirname(pth), scan_dir).split(os.sep)
+            return any(self._audit_norm_dir(x) in service or 'trash' in x.lower() for x in parts if x != '.')
         extra = []
         for f_low, paths in found_files.items():
             for pth in paths:
-                if os.path.normcase(pth) not in used and os.path.normcase(os.path.dirname(pth)) in known_dirs:
+                if os.path.normcase(pth) not in used and not is_service(pth):
                     extra.append({"filename": os.path.basename(pth), "path": pth,
                                   "folder": os.path.relpath(os.path.dirname(pth), scan_dir)})
         extra.sort(key=lambda e: (e["folder"].lower(), e["filename"].lower()))
+        # что просмотрено: папки (первые два уровня) и сколько в них записей
+        seen_dirs = {}
+        for paths in found_files.values():
+            for pth in paths:
+                rel = os.path.relpath(os.path.dirname(pth), scan_dir)
+                key = '.' if rel == '.' else os.sep.join(rel.split(os.sep)[:2])
+                seen_dirs[key] = seen_dirs.get(key, 0) + 1
+        scanned = [{"folder": k if k != '.' else '(корень)', "files": v} for k, v in sorted(seen_dirs.items(), key=lambda kv: kv[0].lower())]
         studio_xl = st.get("excel_path")
         note = None
         if studio_xl and os.path.abspath(studio_xl) != os.path.abspath(excel_path):
@@ -761,6 +785,7 @@ class ProjectMixin:
             "missing_count": len(missing_list), "duplicates_count": len(duplicates_list),
             "missing": missing_list, "duplicates": duplicates_list, "files": files, "can_edit": False,
             "studio_name": os.path.basename(excel_path), "extra": extra, "studio_note": note,
+            "scanned": scanned, "widened": widened,
             "studio_mtime": time.strftime('%d.%m.%Y %H:%M', time.localtime(os.path.getmtime(excel_path))),
         }
         return res

@@ -3709,3 +3709,9 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 
 .audit-note{ padding: 10px 14px; border-radius: 9px; font-size: 12.5px; line-height: 1.45; color: var(--text);
     background: rgba(238,172,62,.08); border: 1px solid rgba(238,172,62,.4); }
+
+.audit-scanned{ font-size: 12px; color: var(--text-dim); line-height: 1.9; }
+.audit-scanned__dir{ display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 0 0; padding: 1px 8px; border-radius: 999px;
+    background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07); font-family: var(--font-mono); font-size: 11px; color: var(--text); }
+.audit-scanned__dir i{ font-style: normal; color: var(--text-faint); }
+.audit-switch{ white-space: nowrap; }

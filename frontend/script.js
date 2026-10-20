@@ -5796,6 +5796,12 @@ let isProcessing = false;
                     </details></section>`;
             }
             if (res.studio_note) html = `<div class="audit-note">${escapeHtml(res.studio_note)}</div>` + html;
+            if (res.scanned && res.scanned.length) {
+                let total = res.scanned.reduce((a, d) => a + d.files, 0);
+                html = `<div class="audit-scanned">${res.widened ? `<b>Выбрана «${escapeHtml(res.widened.split(/[\\/]/).pop())}» — смотрю весь проект.</b> ` : ''}`
+                    + `Просмотрено ${total} ${plural(total, 'запись', 'записи', 'записей')} во всех вложенных папках: `
+                    + res.scanned.map(d => `<span class="audit-scanned__dir">${escapeHtml(d.folder)} <i>${d.files}</i></span>`).join('') + `</div>` + html;
+            }
             auditSetDetails(html, quiet);
             document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';
         }
