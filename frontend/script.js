@@ -7018,6 +7018,7 @@ let isProcessing = false;
             ttsRenderRail();
             ttsRenderCurrent();
             ttsRenderAssembly();
+            ttsCutChipUpdate();
             ttsShowMarksPending(tts.marks_pending);
             // Audacity встроен — текущий дубль сам уезжает туда.
             let cur = ttsCurTake();
@@ -8172,7 +8173,9 @@ let isProcessing = false;
                         ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); ttsAsmAuto = true; ttsTogglePlay();
                     } else ttsShowAssembly(false);
                 }
+                else if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i);
                 else if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
+                ttsCutChipUpdate();
             } finally { ttsApproving = false; }
         }
 
@@ -8254,6 +8257,7 @@ let isProcessing = false;
             ttsRender();
             ttsLoadPrompt();
             showToast(`Удалён: ${res.deleted} — Ctrl+Z вернёт`);
+            if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i - 1);
         }
         async function ttsUndoDelete() {
             await ttsStopPlay();
@@ -8895,7 +8899,7 @@ let isProcessing = false;
                 tts = res.state; ttsRender();
                 showToast(res.restored);
             }
-            await pywebview.api.tts_live_fast(ttsFastOn());
+            await pywebview.api.tts_live_fast(ttsFastOn() || ttsFlowActive());
             ttsFastRender();
             ttsLiveSt.micOff = document.getElementById('stage4-tts').classList.contains('show-assembly');
             if (ttsLiveSt.micOff) pywebview.api.tts_live_mic(false);
@@ -9186,7 +9190,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -9230,6 +9234,7 @@ let isProcessing = false;
                     title="${pr.context.start_saved ? 'Послушать конец начала «' + escapeHtml(pr.context.start_name) + '» (последние 2–3 секунды) — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);
+            modes += ttsFlowHTML();
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
                 : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
@@ -9286,6 +9291,15 @@ let isProcessing = false;
             ttsLoadPrompt();
             if (error) { showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error)); return; }
             showToast('Запись сохранена в папку «Записи»');
+            let cut = ttsCutList().length;
+            if (ttsFlowActive() && cut) {
+                // Поток: прочитали — теперь спокойно срезаем, строка за строкой.
+                showBeautifulAlert(`✂️ <b>Записано строк: ${cut}</b><br><br>Теперь срезка: каждая строка откроется в «Сборке»,
+                    поправьте границы ярусов и нажмите <b>Enter</b> — сохранится и откроется следующая. Esc — прервать,
+                    продолжить потом — «✂ Срезка» в суфлёре.<br><br>
+                    <button type="button" class="custom-alert-btn" onclick="closeCustomAlert(); ttsCutStart()">Начать срезку</button>`);
+                return;
+            }
             ttsShowRedo(true);
         }
 
@@ -9562,8 +9576,68 @@ let isProcessing = false;
             ttsAutoAsmRender();
             showToast(on ? 'Записали фразу — сразу открою «Сборку» для проверки' : 'Сборка — только по кнопке');
         }
+        // ----- «Поток»: суммы/даты читаются подряд, без «Сборки» и ожидания распознавания;
+        // срезка потом — «✂ Срезка N»: строка за строкой в обычной «Сборке», Enter — сохранить и дальше. -----
+        function ttsFlowOn() {
+            try { return localStorage.getItem('gvox_tts_flow') !== '0'; } catch (e) { return true; }
+        }
+        const ttsValueMode = () => !!tts && (tts.prompt_mode || 'phrases') !== 'phrases';
+        const ttsFlowActive = () => ttsFlowOn() && ttsValueMode();
+        async function ttsFlowToggle() {
+            let on = !ttsFlowOn();
+            try { localStorage.setItem('gvox_tts_flow', on ? '1' : '0'); } catch (e) {}
+            if (ttsRec.on) await pywebview.api.tts_live_fast(ttsFastOn() || ttsFlowActive());
+            ttsPromptKey = null; ttsLoadPrompt();
+            showToast(on ? 'Поток: читайте строки подряд — «Сборка» не откроется. Срезка потом: «✂ Срезка»'
+                         : 'Поток выключен: после каждой строки — «Сборка»', 4500);
+        }
+        // Дубли строк сумм/дат, ещё не сохранённые эталонами, — по порядку записи.
+        function ttsCutList() {
+            if (!tts) return [];
+            return tts.takes.filter(t => t.unit !== null && !t.approved && !t.rejected
+                && tts.units[t.unit] && tts.units[t.unit].tiers).map(t => t.i);
+        }
+        function ttsFlowHTML() {
+            if (!ttsValueMode()) return '';
+            let n = ttsCutList().length;
+            return ` <button type="button" class="tts-reuse-chip ${ttsFlowOn() ? 'is-on' : ''}" onclick="ttsFlowToggle()"
+                    title="${ttsFlowOn() ? 'Включено: читаете строки подряд, суфлёр сразу дальше, «Сборка» не открывается. Клик — выключить' : 'Включить: читать строки подряд без «Сборки», срезать потом'}">&#9654;&#9654; поток${ttsFlowOn() ? ' ✓' : ''}</button>`
+                + `<button type="button" class="tts-reuse-chip ${n ? 'is-on tts-cut-chip' : ''}" id="ttsCutChip" onclick="ttsCutStart()" ${n ? '' : 'disabled'}
+                    title="Срезать записанные строки по очереди: «Сборка» → границы ярусов → Enter сохраняет и открывает следующую. Esc — прервать">&#9986; Срезка ${n}</button>`;
+        }
+        function ttsCutChipUpdate() {
+            let b = document.getElementById('ttsCutChip');
+            if (!b) return;
+            let n = ttsCutList().length;
+            b.innerHTML = `&#9986; Срезка ${n}`;
+            b.disabled = !n;
+            b.classList.toggle('is-on', !!n); b.classList.toggle('tts-cut-chip', !!n);
+        }
+        let ttsCutMode = false;
+        async function ttsCutStart() {
+            if (ttsRec.on) { showToast('Сначала остановите запись (R) — срезка после чтения'); return; }
+            ttsCutMode = true;
+            ttsCutNext(-1);
+        }
+        function ttsCutNext(after) {
+            let list = ttsCutList();
+            if (!ttsCutMode) return;
+            if (!list.length) {
+                ttsCutMode = false;
+                ttsShowAssembly(false);
+                showToast('Срезка закончена — все записанные строки сохранены', 4000);
+                ttsLoadPrompt();
+                return;
+            }
+            let k = list.find(i => i > after);
+            tts.index = k === undefined ? list[0] : k;
+            ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); ttsTogglePlay();
+            showToast(`Срезка: осталось строк ${list.length} · Enter — сохранить и дальше, Del — удалить`, 2500);
+        }
+
         function ttsAutoAsm(added) {
             if (!(added > 0) || !ttsRec.on || !ttsAutoAsmOn() || !tts || !tts.takes.length) return;
+            if (ttsFlowActive()) { ttsCutChipUpdate(); return; }      // поток: срезка потом
             if (ttsPttDown) { ttsAutoAsmPending = added; return; }     // сейчас пишут — откроем, когда отпустят
             let fresh = tts.takes.slice(-added).map(t => t.file);
             if (document.getElementById('stage4-tts').classList.contains('show-assembly') && ttsAsmAuto) {
@@ -9847,7 +9921,7 @@ let isProcessing = false;
                 let t = ttsCurTake();                   // «из записанного» — куски сразу в Audacity
                 if (t && t.reuse && ttsAudacitySent !== t.i) ttsSendToAudacity(true);
             }
-            else { ttsAsmAuto = false; ttsAsmQueue = []; }
+            else { ttsAsmAuto = false; ttsAsmQueue = []; ttsCutMode = false; }
             // Сборка открыта — микрофон выключен: не шумит при прослушивании.
             if (ttsRec.on && ttsLiveSt.micOff !== open) {
                 ttsLiveSt.micOff = open;
