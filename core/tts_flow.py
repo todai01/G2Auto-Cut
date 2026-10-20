@@ -2238,12 +2238,50 @@ class TtsFlowMixin:
             for u in self._tts_row_units(sheet):
                 if u.get("logic") != logic:
                     continue
-                miss = [p for p in (self._tts_tier_path(u, t) for t in u["tiers"]) if not os.path.exists(p)]
+                miss = [p for p in (self._tts_tier_path(u, t) for t in u["tiers"]) if self._tts_tier_missing(sheet, p)]
                 missing[u["id"]] = miss
                 for p in miss:
                     claims.setdefault(p, u["id"])
             cache[key] = (claims, missing)
         return cache[key]
+
+    # ---- «Перезаписать все»: эталоны листа пишутся заново, даже если уже есть ----
+    # st["tier_redo"] = {лист: [эталоны, записанные с момента включения]} —
+    # остальные считаются незаписанными: суфлёр ведёт по всем строкам, а
+    # сохранение перезаписывает готовый файл (повтор значения — один раз).
+    def _tts_tier_redo_set(self, sheet):
+        redo = (self._tts().get("tier_redo") or {}).get(sheet)
+        return None if redo is None else set(redo)
+
+    def _tts_tier_rel(self, path):
+        return os.path.relpath(path, self._tts()["work_dir"] or '').replace(os.sep, '/')
+
+    def _tts_tier_missing(self, sheet, path):
+        if not os.path.exists(path):
+            return True
+        redo = self._tts_tier_redo_set(sheet)
+        return redo is not None and self._tts_tier_rel(path) not in redo
+
+    def tts_tier_redo(self, on):
+        """Включить/выключить «Перезаписать все» для листа, открытого в суфлёре."""
+        st = self._tts()
+        sheet = st.get("prompt_mode")
+        if not sheet or sheet == "phrases":
+            return {"error": "Откройте в суфлёре лист сумм или дат."}
+        redo, since = st.setdefault("tier_redo", {}), st.setdefault("tier_redo_from", {})
+        if on:
+            redo[sheet] = []
+            since[sheet] = max([t.get("chunk", 0) for t in st["takes"]] + [0])
+            if any(u.get("logic") for u in self._tts_row_units(sheet)):
+                st["sum_logic"] = 1                       # заново — с первой логики
+        else:
+            redo.pop(sheet, None)
+            since.pop(sheet, None)
+        if hasattr(self, '_tts_prompt_fix'):
+            self._tts_prompt_fix(0)
+        self._tts_save()
+        return {"prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
+                "state": self.tts_state()}
 
     def _tts_tier_row_needed(self, u):
         claims, missing = self._tts_tier_claims(u.get("sheet"), u.get("logic"))
@@ -2253,7 +2291,7 @@ class TtsFlowMixin:
         """Сколько эталонов ярусов листа уже готово (уникальные файлы)."""
         paths = {self._tts_tier_path(u, t) for u in self._tts_row_units(sheet)
                  if not (u.get("logic") and u["logic"] != self._tts().get("sum_logic", 1)) for t in u["tiers"]}
-        return sum(1 for p in paths if os.path.exists(p)), len(paths)
+        return sum(1 for p in paths if not self._tts_tier_missing(sheet, p)), len(paths)
 
     # ---- разметка ярусов в дубле строки ----
     TIER_FRAME_MS = 10
@@ -2848,7 +2886,7 @@ class TtsFlowMixin:
             c = clips[k]
             item = {"k": k, "label": x["label"], "value": x["value"], "text": x["text"], "a": c["a"], "b": c["b"],
                     "pre": c.get("pre", 0), "post": c.get("post", 0), "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0),
-                    "exists": os.path.exists(path) and path not in mine,
+                    "exists": not self._tts_tier_missing(unit.get("sheet"), path) and path not in mine,
                     "mine": path in mine, "write": bool(write.get(str(k)))}
             if item["exists"] and not item["write"]:      # в сборке — готовый файл, как он есть
                 try:
@@ -3169,9 +3207,10 @@ class TtsFlowMixin:
         write = t.get("tier_write") or {}
         mine = set(t.get("tier_files") or [])
         out, skipped = [], []
+        redo = (self._tts().get("tier_redo") or {}).get(unit.get("sheet"))
         for k, x in enumerate(unit["tiers"]):
             path = self._tts_tier_path(unit, x)
-            if os.path.exists(path) and path not in mine and not write.get(str(k)):
+            if not self._tts_tier_missing(unit.get("sheet"), path) and path not in mine and not write.get(str(k)):
                 skipped.append(x["label"])
                 continue
             if resave and path not in mine:
@@ -3180,6 +3219,8 @@ class TtsFlowMixin:
                 self._tts_trash(path)
             self._tts_tier_render(t, unit, k, path)
             out.append(path)
+            if redo is not None and self._tts_tier_rel(path) not in redo:
+                redo.append(self._tts_tier_rel(path))
         t["tier_files"] = sorted(set(out) | (mine if resave else set()))
         t["tier_write"] = {}
         if not self._tts_tier_tpl(unit):                # первая сохранённая строка — шаблон листа

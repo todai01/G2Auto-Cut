@@ -984,8 +984,13 @@ class TtsLiveMixin:
 
     def _tts_good_units(self):
         st = self._tts()
+        # «Перезаписать все»: дубли строк листа, сделанные до включения, не в счёт
+        since = st.get("tier_redo_from") or {}
+        old = lambda t: (since and t["unit"] < len(st["units"]) and st["units"][t["unit"]].get("tiers")
+                         and st["units"][t["unit"]].get("sheet") in since
+                         and t.get("chunk", 0) <= since[st["units"][t["unit"]]["sheet"]])
         return {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")
-                and (t.get("status") in self.GOOD_STATUS or t.get("approved"))}
+                and (t.get("status") in self.GOOD_STATUS or t.get("approved")) and not old(t)}
 
     def _tts_pending_pos(self):
         """Фразы, которые прочитаны и ещё распознаются («не ждать»)."""
@@ -1075,6 +1080,9 @@ class TtsLiveMixin:
             info = self._tts_focus_info(info)
         if info and info.get("sum_logic"):
             info["logic_left"] = {str(l): self._tts_logic_left(l) for l in (1, 2)}
+        mode = st.get("prompt_mode", "phrases")
+        if info and mode != "phrases":
+            info["tier_redo"] = mode in (st.get("tier_redo") or {})
         return info
 
     # ---- суфлёр «только недостающее из аудита» (audit_to_prompter) ----

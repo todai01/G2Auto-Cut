@@ -9147,7 +9147,8 @@ let isProcessing = false;
         function ttsRenderPrompt(pr, flash, waiting, browse) {
             if (pr && pr.logic_switched) {
                 let n = { 1: 'логика 1 (миллионы + сотни + тысячи + тенге)', 2: 'логика 2 (миллионы + сотни тысяч + тенге)' };
-                showToast(`Строки логики ${pr.logic_switched.from} прочитаны — дальше ${n[pr.logic_switched.to]}`, 5000);
+                showToast(`Логика ${pr.logic_switched.from}: остальные строки не нужны — их эталоны уже есть в проекте. Дальше ${n[pr.logic_switched.to]}.`
+                    + (pr.tier_redo ? '' : ' Записать заново — «↻ перезаписать все»'), 7000);
                 ttsPromptKey = null;
                 if (tts) tts.sum_logic = pr.sum_logic;
             }
@@ -9185,7 +9186,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -9228,6 +9229,7 @@ let isProcessing = false;
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать конец начала «' + escapeHtml(pr.context.start_name) + '» (последние 2–3 секунды) — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
+            modes += ttsTierRedoHTML(pr);
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
                 : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
@@ -9663,6 +9665,21 @@ let isProcessing = false;
             let b = (l, lbl, tip) => `<button type="button" class="tts-pmode ${pr.sum_logic === l ? 'is-on' : ''}" onclick="ttsSumLogic(${l})"
                 title="${tip}${left[l] !== undefined ? ' · осталось строк: ' + left[l] : ''}">${lbl}${left[l] === 0 ? ' ✓' : left[l] !== undefined ? ` <small>${left[l]}</small>` : ''}</button>`;
             return ' ' + b(1, '1 101 001', 'Логика 1: миллионы + сотни + тысячи + тенге') + b(2, '1 100 001', 'Логика 2: миллионы + сотни тысяч + тенге');
+        }
+        // «Перезаписать все»: суфлёр ведёт по всем строкам листа, готовые эталоны пишутся заново.
+        function ttsTierRedoHTML(pr) {
+            if (pr.tier_redo === undefined) return '';
+            return ` <button type="button" class="tts-pmode ${pr.tier_redo ? 'is-on' : ''}" onclick="ttsTierRedo(${!pr.tier_redo})"
+                title="${pr.tier_redo ? 'Включено: суфлёр идёт по всем строкам, эталоны перезаписываются (каждое значение — один раз). Клик — выключить'
+                    : 'Сейчас суфлёр пропускает строки, у которых все эталоны уже есть в проекте. Клик — пройти все строки заново и перезаписать эталоны'}">${pr.tier_redo ? '↻ перезапись: вкл' : '↻ перезаписать все'}</button>`;
+        }
+        async function ttsTierRedo(on) {
+            if (ttsRec.on && on) { showToast('Сначала остановите запись (R)'); return; }
+            let r = await pywebview.api.tts_tier_redo(on);
+            if (!r || r.error) { if (r) showToast(r.error); return; }
+            tts = r.state; ttsRender(); ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+            showToast(on ? 'Перезапись: суфлёр пройдёт все строки, старые эталоны уйдут в корзину проекта при сохранении' : 'Перезапись выключена', 4000);
         }
 
         function ttsFocusHTML(pr) {
