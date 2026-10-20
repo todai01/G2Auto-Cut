@@ -643,8 +643,10 @@ class ProjectMixin:
                             if rel.lower() in seen:
                                 continue
                             seen.add(rel.lower())
+                            # старый формат сумм («Проверенные/Суммы/1 - 100 млн/5.wav») тоже узнаём
+                            alt = os.path.normpath(self._tts_old_sum_path(u, t)) if str(u.get("cat", '')).startswith('sum_l') else None
                             out.append((rel, f"Переменные · {label}", f"var_{u['sheet']}_{t['cat']}",
-                                        t.get("label") or t["cat"], t.get("text") or str(t["value"]), None))
+                                        t.get("label") or t["cat"], t.get("text") or str(t["value"]), None, alt))
                     elif u["kind"] != "value":
                         rel = os.path.normpath(self._tts_target(u))
                         if rel.lower() in seen:
@@ -659,7 +661,7 @@ class ProjectMixin:
                             text = f"[в таблице нет названия — строка {u.get('row')}] {text}"
                         out.append((rel, "Фразы · С переменными" if with_var else "Фразы · Цельные",
                                     f"ph_var_{lang}" if with_var else f"ph_{lang}", self._AUDIT_LANG_TITLE[lang],
-                                    text, u.get("row")))
+                                    text, u.get("row"), None))
         finally:
             self.tts = saved
             for k, v in saved_caches.items():
@@ -698,13 +700,16 @@ class ProjectMixin:
         root = st.get("work_dir") if st.get("excel_path") and os.path.abspath(st["excel_path"]) == os.path.abspath(excel_path) else None
         groups, order = {}, []
         missing_list, duplicates_list, files = [], [], []
-        for k, (rel, section, gid, title, text, row) in enumerate(expected):
+        for k, (rel, section, gid, title, text, row, alt) in enumerate(expected):
             E = tuple(rel.lower().replace('\\', '/').split('/'))
             name = E[-1]
-            strict = [(p, C) for p, C in cands.get(name, []) if E[-len(C):] == C or C[-len(E):] == E]
+            tails = [E] + ([tuple(alt.lower().replace('\\', '/').split('/'))] if alt else [])
+            strict = [(p, C) for p, C in cands.get(name, [])
+                      if any(T[-len(C):] == C or C[-len(T):] == T for T in tails)]
             hits = strict or ([(p, C) for p, C in cands.get(name, [])] if gid.startswith('ph_') else [])
-            if strict and root is None:                    # где корень проекта относительно выбранной папки
-                p, C = strict[0]
+            primary = [(p, C) for p, C in strict if E[-len(C):] == C or C[-len(E):] == E]
+            if primary and root is None:                   # где корень проекта относительно выбранной папки
+                p, C = primary[0]
                 if len(C) <= len(E):
                     up = scan_dir
                     for _ in range(len(E) - len(C)):

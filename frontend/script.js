@@ -6889,6 +6889,23 @@ let isProcessing = false;
             ttsRenderPrompt(pr || { none: true });
         }
 
+        // «Готовые записи»: папка с уже записанным → на свои места в проекте, суфлёр их пропустит.
+        async function ttsImportExisting() {
+            if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            let r = await pywebview.api.tts_import_existing();
+            if (!r || r.error) { if (r && r.error !== 'cancel') showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
+            if (r.state) { tts = r.state; ttsRender(); }
+            ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt); else ttsLoadPrompt();
+            let lines = [`Найдено по таблице: <b>${r.found}</b> из ${r.expected}`, `Добавлено в проект: <b>${r.copied}</b>`];
+            if (r.same) lines.push(`уже были на своих местах: ${r.same}`);
+            if (r.kept) lines.push(`в проекте уже есть свой файл (не перезаписан): ${r.kept}`);
+            if (r.extra) lines.push(`в папке есть файлы, которых нет в таблице: ${r.extra} — их видно в аудите`);
+            if (r.failed.length) lines.push(`ошибки: ${r.failed.map(escapeHtml).join('<br>')}`);
+            showBeautifulAlert(`✅ <b>Готовые записи учтены</b><br><br>${lines.join('<br>')}<br><br>Суфлёр теперь пропускает записанное — осталось ${r.missing}.`
+                + `<br><br><span class="tts-dim" style="word-break:break-all">${escapeHtml(r.src)}</span>`);
+        }
+
         async function ttsLoadExcel() {
             let st = await ttsPickExcelFlow();
             if (st) { tts = st; ttsRender(); ttsLoadPrompt(); }

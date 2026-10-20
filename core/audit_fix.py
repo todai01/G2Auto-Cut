@@ -165,6 +165,58 @@ class AuditFixMixin:
         self._tts_save()
         return {"state": self.tts_state(), "n": len(miss) - len(lost), "lost": lost}
 
+    # ---------------- Студия: «Готовые записи» ----------------
+    def tts_import_existing(self):
+        """Папка с уже записанным → копии на свои места в проекте (как их назвал бы
+        суфлёр), чтобы суфлёр видел их записанными. Сверка — как в аудите по
+        таблице: все листы, все вложенные папки. Исходники не трогаем, готовое
+        в проекте не перезаписываем."""
+        st = getattr(self, 'tts', None) or {}
+        wd, xl = st.get("work_dir"), st.get("excel_path")
+        if not wd or not os.path.isdir(wd):
+            return {"error": "Сначала откройте проект Студии (папку проекта) — туда лягут записи."}
+        if not xl or not os.path.exists(xl):
+            return {"error": "Сначала загрузите таблицу (кнопка «Таблица»)."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER, directory=st.get("import_dir") or '')
+        if not picked:
+            return {"error": "cancel"}
+        src_dir = picked if isinstance(picked, str) else picked[0]
+        res = self._audit_studio(src_dir, xl)
+        if res.get("error"):
+            return res
+        norm = lambda p: os.path.normcase(os.path.abspath(p))
+        copied = same = kept = 0
+        failed = []
+        for f in res.get("files") or []:
+            if not f.get("rel") or not os.path.exists(f["path"]):
+                continue
+            dst = os.path.join(wd, f["rel"])
+            if norm(dst) == norm(f["path"]):
+                same += 1
+                continue
+            if os.path.exists(dst):
+                kept += 1
+                continue
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(f["path"], dst)
+                copied += 1
+            except OSError as e:
+                failed.append(f"{f['filename']}: {e}")
+        st["import_dir"] = src_dir
+        try:                                               # сколько по таблице ещё нет в самом проекте
+            left = sum(1 for e in self._audit_studio_expected(xl) if not os.path.exists(os.path.join(wd, e[0])))
+        except Exception:
+            left = res.get("missing_count", 0)
+        self.tts = st
+        self.__dict__.pop('_tts_claims_cache', None)
+        self._tts_prompt_fix()
+        self._tts_save()
+        return {"src": src_dir, "found": len(res.get("files") or []), "expected": res.get("total_excel", 0),
+                "copied": copied, "same": same, "kept": kept, "failed": failed[:10],
+                "extra": len(res.get("extra") or []), "missing": left,
+                "state": self.tts_state(), "prompt": self.tts_prompt_info()}
+
     def audit_export_folders(self):
         """«Разложить по папкам Студии»: найденные записи — копиями в выбранную
         папку, в той же структуре, что создаёт суфлёр (Проверенные/…,
