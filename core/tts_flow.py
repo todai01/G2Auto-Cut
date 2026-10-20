@@ -3026,8 +3026,31 @@ class TtsFlowMixin:
         _write_pcm16(dst, x, rate)
 
     def _tts_tier_audio(self, t, unit, k):
-        """Ярус как прозвучит: (float32, частота). Посчитан раз — берётся из
-        кэша, пока не поменялось ничего, от чего зависит звук."""
+        """Ярус как прозвучит: (float32, частота). Фон из файла — сквозной по
+        строке: ярус берёт фон с того места, где кончился у предыдущего, и с
+        одной громкостью на всю строку (а не заново с каждого яруса)."""
+        x, rate = self._tts_tier_dry(t, unit, k)
+        bg = self._tts_bg()
+        if not bg or not bg.get("on") or not len(x):
+            return x, rate
+        drys = [self._tts_tier_dry(t, unit, j) for j in range(len(unit["tiers"]))]
+        key = ('tier_bg', tuple(self._tts_tier_dry_key(t, unit, j) for j in range(len(unit["tiers"]))), k,
+               self._file_sig(bg["path"]), bg.get("db", self.TIER_BG_DB))
+
+        def wet():
+            offset = sum(len(d[0]) for d in drys[:k])
+            fr = max(1, rate // 100)
+            levels = []
+            for d, _r in drys:                             # голос строки: громкие кадры всех ярусов
+                if len(d) >= fr:
+                    e = np.sqrt((d[:len(d) // fr * fr].reshape(-1, fr) ** 2).mean(axis=1))
+                    levels.append(float(np.percentile(e, 90)))
+            y = self._tts_add_bg(x, rate, offset, float(np.median(levels)) if levels else 0.0)
+            y.setflags(write=False)
+            return y, rate
+        return self._tts_cached(key, wet)
+
+    def _tts_tier_dry_key(self, t, unit, k):
         clips, _length, _rms = self._tts_tier_clips(t, unit)
         c = clips[k]
         opts = self._tts_tier_opts()
@@ -3035,12 +3058,21 @@ class TtsFlowMixin:
         row = self._tts_row_loud(t, unit) if level is not None else None
         start, end = self._tts_tier_ctx(unit)
         ref = (start or end or (None,))[0]
-        bg = self._tts_bg()
         take = os.path.join(self._tts()["work_dir"], t["file"])
-        key = ('tier',) + self._file_sig(take) + (
+        return ('tier',) + self._file_sig(take) + (
             tuple(sorted((n, v) for n, v in c.items())), self._tts_sound(t), tuple(sorted(opts.items())), level, row,
-            self._file_sig(ref) if opts["noise"] and ref else None, k, unit.get('name'), OUT_RATE,
-            (self._file_sig(bg["path"]), bg.get("db", self.TIER_BG_DB)) if bg and bg.get("on") else None)
+            self._file_sig(ref) if opts["noise"] and ref else None, k, unit.get('name'), OUT_RATE)
+
+    def _tts_tier_dry(self, t, unit, k):
+        """Ярус без фона из файла (кэш, пока не поменялось ничего, от чего зависит звук)."""
+        clips, _length, _rms = self._tts_tier_clips(t, unit)
+        c = clips[k]
+        opts = self._tts_tier_opts()
+        level = self._tts_ctx_level(unit) if opts["level"] else None
+        row = self._tts_row_loud(t, unit) if level is not None else None
+        start, end = self._tts_tier_ctx(unit)
+        ref = (start or end or (None,))[0]
+        key = self._tts_tier_dry_key(t, unit, k)
         lock = self.__dict__.setdefault('_tts_render_lock', threading.Lock())
         with lock:                                         # фон и кнопка — не считают одно и то же дважды
             return self._tts_cached(key, lambda: self._tts_tier_audio_calc(t, unit, c, k, level, row, ref, opts))
@@ -3084,7 +3116,6 @@ class TtsFlowMixin:
                     xf = min(post, max(1, rate // 50))
                     w[len(x) - post:len(x) - post + xf] = np.linspace(k_body, 1.0, xf, dtype=np.float32)
                 x = x + bed[:len(x)] * w
-        x = self._tts_add_bg(x, rate, f"{unit.get('name')}:{k}")
         x.setflags(write=False)                            # общий для кэша — не менять на месте
         return x, rate
 
@@ -3147,13 +3178,12 @@ class TtsFlowMixin:
         bg = self._tts_bg()
         return {k: bg[k] for k in ("name", "on", "db", "sec")} if bg else None
 
-    def _tts_add_bg(self, x, rate, key):
-        """Подмешать фон: кусок записи (у каждого яруса — свой, по ключу),
-        по кругу с перекрытием, на bg.db дБ тише голоса яруса."""
+    def _tts_add_bg(self, x, rate, start, voice):
+        """Подмешать фон с места start (отсчёты от начала строки): по кругу с
+        перекрытием, на bg.db дБ тише голоса строки (voice — RMS громких кадров)."""
         bg = self._tts_bg()
-        if not bg or not bg.get("on") or not len(x):
+        if not bg or not bg.get("on") or not len(x) or voice <= 1e-5:
             return x
-        import zlib
         from utils.audio_player import resample
         cache = self.__dict__.setdefault('_tts_bg_cache', {})
         ck = (bg["path"], os.path.getmtime(bg["path"]), rate)
@@ -3163,15 +3193,18 @@ class TtsFlowMixin:
             if seg.frame_rate != rate:
                 b = resample(b[:, None], seg.frame_rate, rate)[:, 0]
             cache.clear()
-            cache[ck] = b.astype(np.float32)
-        b = cache[ck]
+            cache[ck] = (b.astype(np.float32), float(np.sqrt(np.mean(b.astype(np.float64) ** 2))) if len(b) else 0.0)
+        b, bed = cache[ck]
+        if bed <= 1e-6:
+            return x
         n, xf = len(x), max(1, int(rate * 0.05))
-        start = zlib.crc32(key.encode('utf-8')) % max(1, len(b) - xf)
-        out, pos, cur = np.zeros(n, dtype=np.float32), 0, start
+        loop = max(1, len(b) - xf)                          # шаг по кругу (с перекрытием xf)
+        cur = int(start) % loop
+        out, pos = np.zeros(n, dtype=np.float32), 0
         while pos < n:                                      # по кругу; стык — перекрытие xf
             piece = b[cur:cur + (n - pos)].copy()
             take = len(piece)
-            if pos:
+            if pos and cur == 0:
                 ov = min(xf, take)
                 piece[:ov] *= np.linspace(0, 1, ov, dtype=np.float32)
                 out[pos:pos + ov] *= np.linspace(1, 0, ov, dtype=np.float32)
@@ -3179,14 +3212,8 @@ class TtsFlowMixin:
             if pos + take >= n or take <= xf:
                 break
             pos, cur = pos + take - xf, 0
-        fr = max(1, rate // 100)
-        e = np.sqrt((x[:n // fr * fr].reshape(-1, fr) ** 2).mean(axis=1)) if n >= fr else np.zeros(0)
-        voice = float(np.percentile(e, 90)) if len(e) else 0.0
-        bed = float(np.sqrt(np.mean(out ** 2))) if len(out) else 0.0
-        if voice <= 1e-5 or bed <= 1e-6:
-            return x
         out *= voice * 10 ** (float(bg.get("db", self.TIER_BG_DB)) / 20) / bed
-        f = min(n // 2, max(1, int(rate * 0.015)))          # без щелчков на краях файла
+        f = min(n // 2, max(1, int(rate * 0.002)))          # 2 мс — только от щелчка на краю файла
         out[:f] *= np.linspace(0, 1, f, dtype=np.float32)
         out[-f:] *= np.linspace(1, 0, f, dtype=np.float32)
         return x + out
