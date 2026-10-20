@@ -7155,7 +7155,7 @@ let isProcessing = false;
             // Ничего своего не поменялось (например, только кончилась прослушка) — не
             // перерисовываем: иначе волны пропадают и загружаются заново (мигают).
             let key = JSON.stringify([t.i, t.file, t.ms, t.unit, t.approved, t.unit_saved, t.status, t.gain_db, t.tempo,
-                t.audacity, !!t.reuse, t.clips || null, t.edit || null, blocks, label, tts.takes.length]);
+                t.audacity, !!t.reuse, t.clips || null, t.edit || null, blocks, label, tts.takes.length, ttsTierBackHere(t)]);
             ttsAsmPlayBtn(t);
             if (el.dataset.key === key && el.firstElementChild) return;
             el.dataset.key = key;
@@ -7163,7 +7163,8 @@ let isProcessing = false;
                     ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : 'обычная фраза'}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
-                    <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
+                    ${ttsTierBackHere(t) ? `<button class="tts-asm-close tts-asm-back" onclick="ttsTierReturn()" title="Вернуться к строке переменных, из которой открыли эту фразу (Esc). Сохранили фразу (Enter) — вернётся само">&larr; К строке ${escapeHtml(ttsTierBack.name)} <kbd>Esc</kbd></button>`
+                      : `<button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button>`}</div>
                 <div class="tts-blocks">${blocks}</div>
                 ${u.tiers ? '<div class="tts-tiers" id="ttsTiers"></div>' : ''}
                 <div class="tts-tsyn" id="ttsTsyn" style="display:none"></div>
@@ -7436,9 +7437,26 @@ let isProcessing = false;
             if (res && res.error) showToast(res.error);
             if (res && res.tiers) { ttsTR = res; ttsTiersRender(); ttsTierPlay(-1); }
         }
+        // ✎ у «Начало/Конец»: правим дубль фразы — и обратно к строке, откуда пришли
+        // (кнопка «← к строке», Esc или само после сохранения).
+        let ttsTierBack = null;
         async function ttsTierOpenTake(k) {
             if (k === null || k === undefined) return;
+            let row = ttsCurTake();
+            ttsTierBack = row && tts.takes[k] ? { row: row.file, name: row.name || '', phrase: tts.takes[k].file } : null;
             await ttsSelect(k);
+            ttsShowAssembly(true);
+        }
+        const ttsTierBackHere = t => !!(ttsTierBack && t && t.file === ttsTierBack.phrase);
+        async function ttsTierReturn(msg) {
+            let back = ttsTierBack;
+            ttsTierBack = null;
+            if (!back) return;
+            let i = tts.takes.findIndex(x => x.file === back.row);
+            if (i < 0) { showToast('Строка, откуда пришли, уже удалена'); return; }
+            await ttsSelect(i);
+            ttsShowAssembly(true);
+            if (msg) showToast(msg, 2500);
         }
         async function ttsTierResaveAll() {
             let r = await pywebview.api.tts_tier_resave_all();
@@ -8175,6 +8193,7 @@ let isProcessing = false;
                         ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); ttsAsmAuto = true; ttsTogglePlay();
                     } else ttsShowAssembly(false);
                 }
+                else if (ttsTierBackHere(t) && !ttsRec.on) await ttsTierReturn(`Фраза сохранена — обратно к строке ${ttsTierBack.name}`);
                 else if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i);
                 else if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
                 ttsCutChipUpdate();
@@ -9915,6 +9934,8 @@ let isProcessing = false;
         }, true);
 
         function ttsShowAssembly(on) {
+            // правили фразу из строки переменных — закрыть = вернуться к строке
+            if (on === false && ttsTierBackHere(ttsCurTake()) && !ttsRec.on) { ttsTierReturn(); return; }
             let stage = document.getElementById('stage4-tts');
             stage.classList.toggle('show-assembly', on === undefined ? !stage.classList.contains('show-assembly') : on);
             let open = stage.classList.contains('show-assembly');
