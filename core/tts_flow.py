@@ -2102,6 +2102,9 @@ class TtsFlowMixin:
     def _tts_sum_piece(self, tier, n, lang):
         from core.num_words import kz_words, ru_words
         w = kz_words if lang == 'kz' else ru_words
+        if lang == 'kz' and tier == 'thousand':
+            # в сумме после сотен — «жүз бір мың»: «бір» не опускаем (1000 отдельно — просто «мың»)
+            return f"{kz_words(n)} мың"
         mult = {'million': 1_000_000, 'hundred_thousand': 1000, 'thousand': 1000}.get(tier, 1)
         text = w(n * mult)
         return f"{text} {'теңге' if lang == 'kz' else 'тенге'}" if tier == 'tenge' else text
