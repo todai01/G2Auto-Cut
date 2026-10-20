@@ -497,7 +497,8 @@ class TtsLiveMixin:
     def _tts_rec_prompt(self):
         """Суфлёр для опроса записи (5 раз в секунду): пересчитываем, только
         если что-то поменялось или прошла секунда, иначе — прошлый ответ."""
-        key = (getattr(self, '_tts_ver', 0), self._tts().get("prompt_pos"), self._tts().get("prompt_focus") and 1)
+        key = (getattr(self, '_tts_ver', 0), self._tts().get("prompt_pos"), self._tts().get("prompt_focus") and 1,
+               self._tts().get("sum_logic"), self._tts().get("prompt_mode"))
         now = time.monotonic()
         last = getattr(self, '_tts_rec_prompt_last', None)
         if last and last[0] == key and now - last[1] < 1.0:
@@ -939,7 +940,7 @@ class TtsLiveMixin:
             if u["kind"] == "value":
                 # читаем строками: сумма целиком (выбранной логики), дата — «первого января»;
                 # ярусы по отдельности не читаем — они вырезаются из строки в «Сборке»
-                if not u.get("tiers") or (u.get("logic") and u["logic"] != st.get("sum_logic", 1)):
+                if not u.get("tiers") or (u.get("logic") and u["logic"] != self._tts_logic_now()):
                     continue
             ch = st["chains"][u["chain"]] if u.get("chain") is not None and u["chain"] < len(st.get("chains", [])) else None
             if ch and ch.get("values"):
@@ -1059,6 +1060,13 @@ class TtsLiveMixin:
     def tts_prompt_info(self):
         """Суфлёр. Лист сумм: строки одной логики прочитаны, а у другой ещё
         есть что читать — сам переходим к ней (logic_switched)."""
+        lock = getattr(self, '_tts_live_lock', None) if getattr(self, '_tts_rec', None) else None
+        if lock is None:
+            return self._tts_prompt_info_locked()
+        with lock:                        # пока запись разбирается — не вмешиваемся в её суфлёр
+            return self._tts_prompt_info_locked()
+
+    def _tts_prompt_info_locked(self):
         # Файлы могли поменяться и вне программы — но не чаще раза в 2 с
         # (свои изменения и так сбрасывают кэш в _tts_save).
         now = time.monotonic()
@@ -1126,17 +1134,24 @@ class TtsLiveMixin:
         self._tts_save()
         return {"prompt": self.tts_prompt_info(), "state": self.tts_state()}
 
+    def _tts_logic_now(self):
+        """Логика сумм для этого потока: подсчёт «сколько осталось в другой
+        логике» смотрит на неё, не трогая общую (иначе в эти миллисекунды
+        поток записи брал строку чужой логики и суфлёр перескакивал)."""
+        view = getattr(self.__dict__.setdefault('_tts_logic_tl', threading.local()), 'logic', None)
+        return view if view is not None else self._tts().get("sum_logic", 1)
+
     def _tts_logic_left(self, logic):
         """Сколько строк суммы этой логики ещё читать."""
-        st = self._tts()
-        cur = st.get("sum_logic", 1)
-        st["sum_logic"] = logic
+        tl = self.__dict__.setdefault('_tts_logic_tl', threading.local())
+        prev = getattr(tl, 'logic', None)
+        tl.logic = logic
         try:
             items = self._tts_prompt_items()
             good = self._tts_good_units()
             return sum(1 for ids in items if self._tts_prompt_needed(ids, good))
         finally:
-            st["sum_logic"] = cur
+            tl.logic = prev
 
     def _tts_prompt_info_raw(self):
         st = self._tts()

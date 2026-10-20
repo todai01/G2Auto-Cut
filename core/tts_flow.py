@@ -2290,7 +2290,8 @@ class TtsFlowMixin:
     def _tts_tiers_done(self, sheet):
         """Сколько эталонов ярусов листа уже готово (уникальные файлы)."""
         paths = {self._tts_tier_path(u, t) for u in self._tts_row_units(sheet)
-                 if not (u.get("logic") and u["logic"] != self._tts().get("sum_logic", 1)) for t in u["tiers"]}
+                 if not (u.get("logic") and u["logic"] != (self._tts_logic_now() if hasattr(self, '_tts_logic_now')
+                                                           else self._tts().get("sum_logic", 1))) for t in u["tiers"]}
         return sum(1 for p in paths if not self._tts_tier_missing(sheet, p)), len(paths)
 
     # ---- разметка ярусов в дубле строки ----
