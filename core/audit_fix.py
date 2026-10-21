@@ -13,6 +13,8 @@ import wave
 import webview
 from pydub import AudioSegment
 
+from core.num_words import month_abbr
+
 AUDIT_TRASH_DIR = 'trash_аудит'      # «trash» в имени — аудит эту папку не сканирует
 
 
@@ -335,6 +337,12 @@ class AuditFixMixin:
             parts = rel.split('/')
             if self._audit_norm_dir(parts[0]) == 'значения':
                 dst = os.path.join(var, *parts[1:])
+                cat = parts[-2] if len(parts) >= 3 else ''
+                lm = re.search(r'_(ru|kz|kk)$', cat.lower())
+                ab = month_abbr(os.path.splitext(parts[-1])[0]) if re.sub(r'_(ru|kz|kk)$', '', cat.lower()) == 'month' else None
+                if ab:                                         # месяцы — коротко по-английски: jan_kz.wav, jan_ru.wav
+                    lang = 'kz' if lm and lm.group(1) in ('kz', 'kk') else 'ru'
+                    dst = os.path.join(os.path.dirname(dst), f"{ab}_{lang}{os.path.splitext(parts[-1])[1]}")
             else:
                 dst = os.path.join(perm, parts[-1])
                 key = parts[-1].lower()

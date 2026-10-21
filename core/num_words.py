@@ -182,6 +182,20 @@ for _kz in ('қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мам�
 KZ_MONTHS.pop('ма', None)
 KZ_MONTHS.pop('мае', None)
 
+MONTH_ABBR = ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')
+_KZ_ORDER = ('қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мамыр', 'маусым', 'шілде', 'тамыз', 'қыркүйек', 'қазан', 'қараша', 'желтоқсан')
+
+
+def month_abbr(value):
+    """Месяц (по-русски в любом падеже, по-казахски или числом 1–12) →
+    «jan»…«dec»; не месяц — None."""
+    v = str(value or '').strip().lower().replace('ё', 'е')
+    if re.fullmatch(r'\d{1,2}', v):
+        n = int(v)
+        return MONTH_ABBR[n - 1] if 1 <= n <= 12 else None
+    kz = KZ_MONTHS.get(v)
+    return MONTH_ABBR[_KZ_ORDER.index(kz)] if kz in _KZ_ORDER else None
+
 
 def synth_text(category_key, value, lang=None):
     """Текст для синтеза значения категории: «значение с единицей»."""
