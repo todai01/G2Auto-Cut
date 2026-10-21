@@ -6474,7 +6474,7 @@ let isProcessing = false;
         }
 
         async function startConstructor() {
-            let confirmed1 = await showBeautifulAlert('<b>Загрузите папку, где лежат суммы</b><br><br>Ту же папку «Суммы», где лежат подпапки ярусов.');
+            let confirmed1 = await showBeautifulAlert('<b>Загрузите папку со значениями</b><br><br>Папку «Значения» проекта (или сам проект) — конструктор найдёт листы сумм и дат: sum_kz, sum_ru, date_kz… Подойдёт и старая папка «Суммы» с подпапками ярусов.');
             if (!confirmed1) return;
             let state = await pywebview.api.constructor_pick_sum_folder();
             if (state && state.error === 'cancel') return;
@@ -6527,6 +6527,10 @@ let isProcessing = false;
             renderConstructorLangRow();
             renderConstructorReels();
         }
+        function constructorPrimaryLabel() {
+            let b = document.querySelector('#stage3-constructor .btn-tile--primary');
+            if (b && !b.disabled) b.innerText = constructorIsSum() ? 'Обновить сумму' : 'Обновить в Audacity';
+        }
 
         // RU/KZ: папка «Суммы» может содержать сразу обе версии — подпапки
         // «Суммы RU» и «Суммы KZ», каждая со своими 5 ярусами. Кнопки
@@ -6536,6 +6540,19 @@ let isProcessing = false;
         function renderConstructorLangRow() {
             let row = document.getElementById('constructorLangRow');
             if (!row) return;
+            let title = document.querySelector('#stage3-constructor .constructor-title__main');
+            let sheets = (constructorState && constructorState.sheets) || [];
+            if (sheets.length) {                                   // папка «Значения»: листы сумм и дат
+                if (!row.dataset.orig) row.dataset.orig = row.innerHTML;
+                row.innerHTML = sheets.map(x => `<button class="btn-tile constructor-lang-btn ${x.key === constructorState.sheet ? 'btn-tile--solid-mode' : ''}"
+                    onclick="setConstructorSheet('${escapeHtml(x.key)}')" title="Значения/${escapeHtml(x.key)}">${escapeHtml(x.label)}</button>`).join('');
+                row.style.display = 'flex';
+                let cur = sheets.find(x => x.key === constructorState.sheet);
+                if (title && cur) title.innerHTML = `${iconHTML('sliders')} Конструктор переменных — ${escapeHtml(cur.label)}`;
+                return;
+            }
+            if (row.dataset.orig) { row.innerHTML = row.dataset.orig; delete row.dataset.orig; }
+            if (title) title.innerHTML = `${iconHTML('sliders')} Конструктор переменных — Суммы`;
             let available = (constructorState && constructorState.lang_available) || [];
             row.style.display = available.length > 1 ? 'flex' : 'none';
             let ruBtn = document.getElementById('constructorLangRuBtn');
@@ -6543,6 +6560,16 @@ let isProcessing = false;
             let lang = constructorState ? constructorState.lang : 'ru';
             if (ruBtn) ruBtn.classList.toggle('btn-tile--solid-mode', lang === 'ru');
             if (kzBtn) kzBtn.classList.toggle('btn-tile--solid-mode', lang === 'kz');
+        }
+
+        async function setConstructorSheet(key) {
+            if (!constructorState || constructorState.sheet === key) return;
+            let state = await pywebview.api.constructor_set_sheet(key);
+            if (state && state.error) { showBeautifulAlert(`<b>Ошибка</b><br><br>${escapeHtml(state.error)}`); return; }
+            constructorState = state;
+            constructorBigMode = false;
+            renderConstructorLangRow();
+            renderConstructorReels();
         }
 
         async function setConstructorLang(lang) {
@@ -6565,7 +6592,14 @@ let isProcessing = false;
         // сейчас показано — и звучит либо «...900, 99 тысяч, 100 тенге»,
         // либо «...100 тысяч, 100 тенге», как и должно быть.
         let constructorBigMode = false;
+        // Лист «Значения» не сумма (даты…) — рулетки по его категориям, как есть.
+        const constructorIsSum = () => !constructorState || (constructorState.kind || 'sum') === 'sum';
+        const constructorAllTiers = () => constructorIsSum() ? CONSTRUCTOR_TIER_ORDER : (constructorState.order || []);
+        const CONSTRUCTOR_EXTRA_ACCENTS = ['var(--accent-info)', 'var(--accent-var)', 'var(--accent-good)', 'var(--accent-mode)', 'var(--accent-primary)'];
+        const constructorAccent = tier => CONSTRUCTOR_TIER_ACCENT[tier]
+            || CONSTRUCTOR_EXTRA_ACCENTS[Math.max(0, constructorAllTiers().indexOf(tier)) % CONSTRUCTOR_EXTRA_ACCENTS.length];
         function constructorVisibleTiers() {
+            if (!constructorIsSum()) return constructorAllTiers();
             return CONSTRUCTOR_TIER_ORDER.filter(t => {
                 if (t === 'hundred_thousands') return constructorBigMode;
                 if (t === 'hundreds' || t === 'thousands') return !constructorBigMode;
@@ -6591,7 +6625,7 @@ let isProcessing = false;
             let isEmpty = items.length === 0;
             let cls = 'reel-col' + (isEmpty ? ' reel-col--empty' : '') + (wide ? ' reel-col--wide' : '');
             return `
-            <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${CONSTRUCTOR_TIER_ACCENT[tier]}">
+            <div class="${cls}" data-tier="${tier}" style="--tier-accent: ${constructorAccent(tier)}">
                 <div class="reel-col__label">${escapeHtml(constructorState.tiers[tier].label)}</div>
                 <div class="reel" id="reel-${tier}">
                     <div class="reel-indicator"></div>
@@ -6611,7 +6645,7 @@ let isProcessing = false;
             let flipLabel = constructorBigMode
                 ? 'Обычные суммы (Сотни и Тысячи)'
                 : 'Сумма за миллион (Сотни тысяч)';
-            let flipGroup = `
+            let flipGroup = !constructorIsSum() ? '' : `
                 <div class="constructor-flip-group">
                     <div class="constructor-flip-group__reels">
                         ${constructorBigMode ? constructorReelColHTML('hundred_thousands', true)
@@ -6622,15 +6656,18 @@ let isProcessing = false;
                     </button>
                 </div>`;
 
-            wrap.innerHTML = constructorReelColHTML('millions') + flipGroup + constructorReelColHTML('tenge');
+            wrap.innerHTML = constructorIsSum()
+                ? constructorReelColHTML('millions') + flipGroup + constructorReelColHTML('tenge')
+                : constructorAllTiers().map(t => constructorReelColHTML(t)).join('');
 
             constructorReelInstances = {};
             constructorVisibleTiers().forEach(tier => {
-                let items = constructorState.tiers[tier].items.map(t => humanizeTierItem(tier, t));
+                let items = constructorState.tiers[tier].items.map(t => constructorIsSum() ? humanizeTierItem(tier, t) : t);
                 let container = document.getElementById(`reel-${tier}`);
                 constructorReelInstances[tier] = new Reel(container, items, 44, updateConstructorPreview);
             });
             updateConstructorPreview();
+            constructorPrimaryLabel();
             constructorSelectedTier = null;
             constructorEnsureSelection();
             constructorRenderSelection();
@@ -6653,7 +6690,7 @@ let isProcessing = false;
         }
 
         function constructorRenderSelection() {
-            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+            constructorAllTiers().forEach(tier => {
                 let col = document.querySelector(`.reel-col[data-tier="${tier}"]`);
                 if (col) col.classList.toggle('reel-col--selected', tier === constructorSelectedTier);
             });
@@ -6716,7 +6753,7 @@ let isProcessing = false;
                 let reel = constructorReelInstances[tier];
                 if (!items.length) { parts.push(`<em>${escapeHtml(constructorState.tiers[tier].label)} — пропущено</em>`); return; }
                 let idx = reel ? reel.getIndex() : 0;
-                let shown = reel ? reel.items[idx] : humanizeTierItem(tier, items[idx]);
+                let shown = reel ? reel.items[idx] : (constructorIsSum() ? humanizeTierItem(tier, items[idx]) : items[idx]);
                 parts.push(`<b>${escapeHtml(shown ?? '')}</b>`);
             });
             if (constructorState.end) parts.push(escapeHtml(constructorState.end));
@@ -6725,7 +6762,7 @@ let isProcessing = false;
 
         function constructorIndices() {
             let indices = {};
-            CONSTRUCTOR_TIER_ORDER.forEach(tier => {
+            constructorAllTiers().forEach(tier => {
                 let reel = constructorReelInstances[tier];
                 if (reel) {
                     let idx = reel.getIndex();

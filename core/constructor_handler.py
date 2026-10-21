@@ -25,6 +25,8 @@ class ConstructorMixin:
             return {"error": "Режим «Суммы» ещё не запущен в этом проекте — сначала включите его галочкой."}
 
         self.constructor_root = os.path.join(self.work_dir, cat_name)
+        self.constructor_sheets, self.constructor_kind = [], 'sum'
+        self.constructor_order, self.constructor_labels = list(SUM_TIER_ORDER), dict(SUM_TIER_LABELS)
         self.constructor_tier_files = {tier: list(tier_files.get(tier, [])) for tier in SUM_TIER_ORDER}
         self.constructor_start_file = getattr(self, 'var_start_phrase', None)
         self.constructor_end_file = getattr(self, 'var_end_phrase', None)
@@ -105,6 +107,95 @@ class ConstructorMixin:
             tiers[tier] = files
         return tiers
 
+    # ---- папка «Значения» (единый формат Студии): Значения/<лист>/<категория>/<значение>.wav ----
+    CTOR_CAT_ORDER = ('day', 'month', 'year')
+    CTOR_CAT_LABELS = {'day': 'День', 'month': 'Месяц', 'year': 'Год'}
+
+    @staticmethod
+    def _ctor_norm(name):
+        return re.sub(r'[\s\-–—_.]+', '', str(name or '').lower())
+
+    def _constructor_values_root(self, root):
+        """Папка «Значения» от выбранной: сама «Значения», папка проекта с ней
+        или лист внутри неё («Значения/sum_kz»). → (корень, лист или None)."""
+        root = os.path.normpath(root)
+        if self._ctor_norm(os.path.basename(root)) == 'значения':
+            return root, None
+        inner = next((os.path.join(root, d) for d in self._ctor_listdirs(root) if self._ctor_norm(d) == 'значения'), None)
+        if inner:
+            return inner, None
+        parent = os.path.dirname(root)
+        if self._ctor_norm(os.path.basename(parent)) == 'значения':
+            return parent, os.path.basename(root)
+        return None, None
+
+    @staticmethod
+    def _ctor_listdirs(path):
+        try:
+            return sorted(d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d)))
+        except OSError:
+            return []
+
+    @staticmethod
+    def _ctor_audio(path):
+        try:
+            return [os.path.join(path, f) for f in os.listdir(path)
+                    if os.path.isfile(os.path.join(path, f)) and f.lower().endswith(('.wav', '.mp3'))]
+        except OSError:
+            return []
+
+    def _constructor_values_sheets(self, vroot):
+        """Листы «Значения»: суммы (ярусы) и остальные (категории как есть)."""
+        sheets = []
+        for d in self._ctor_listdirs(vroot):
+            path = os.path.join(vroot, d)
+            cats = [c for c in self._ctor_listdirs(path) if self._ctor_audio(os.path.join(path, c))]
+            if not cats:
+                continue
+            from core.variables_handler import sum_tier_from_dirname
+            kind = 'sum' if any(sum_tier_from_dirname(c) for c in cats) else 'other'
+            lm = re.search(r'_(ru|kz|kk)$', d.lower())
+            lang = ('KZ' if lm.group(1) in ('kz', 'kk') else 'RU') if lm else ''
+            base = re.sub(r'_(ru|kz|kk)$', '', d.lower())
+            title = {'sum': 'Сумма', 'date': 'Дата'}.get(base, d)
+            sheets.append({"key": d, "label": f"{title} {lang}".strip(), "kind": kind, "path": path})
+        return sheets
+
+    def _constructor_load_sheet(self, sheet):
+        """Рулетки листа: сумма — 5 ярусов как раньше; другой лист — его категории."""
+        self.constructor_sheet = sheet["key"]
+        self.constructor_kind = sheet["kind"]
+        if sheet["kind"] == 'sum':
+            self.constructor_tier_files = self._constructor_scan_tiers(sheet["path"])
+            self.constructor_order = list(SUM_TIER_ORDER)
+            self.constructor_labels = dict(SUM_TIER_LABELS)
+            return
+        from core.num_words import month_abbr
+        cats = [c for c in self._ctor_listdirs(sheet["path"]) if self._ctor_audio(os.path.join(sheet["path"], c))]
+        base = lambda c: re.sub(r'_(ru|kz|kk)$', '', c.lower())
+        cats.sort(key=lambda c: (self.CTOR_CAT_ORDER.index(base(c)) if base(c) in self.CTOR_CAT_ORDER else 99, c.lower()))
+        files, labels = {}, {}
+        for c in cats:
+            fs = self._ctor_audio(os.path.join(sheet["path"], c))
+            if base(c) == 'month':                         # январь…декабрь по порядку, а не по алфавиту
+                order = ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')
+                fs.sort(key=lambda p: (order.index(month_abbr(os.path.splitext(os.path.basename(p))[0]))
+                                       if month_abbr(os.path.splitext(os.path.basename(p))[0]) else 99, p.lower()))
+            else:
+                fs.sort(key=_numeric_sort_key)
+            files[c] = fs
+            labels[c] = self.CTOR_CAT_LABELS.get(base(c), c)
+        self.constructor_tier_files = files
+        self.constructor_order = cats
+        self.constructor_labels = labels
+
+    def constructor_set_sheet(self, key):
+        sheet = next((x for x in getattr(self, 'constructor_sheets', None) or [] if x["key"] == key), None)
+        if not sheet:
+            return {"error": f"Лист «{key}» не найден в папке «Значения»."}
+        self._constructor_load_sheet(sheet)
+        return self._constructor_state()
+
     def constructor_pick_sum_folder(self):
         """Шаг 1: папка «Суммы». Поддерживает два формата — либо яруса
         лежат прямо в выбранной папке (как раньше), либо в ней есть
@@ -116,6 +207,24 @@ class ConstructorMixin:
             return {"error": "cancel"}
 
         root = folder[0]
+        vroot, want = self._constructor_values_root(root)
+        sheets = self._constructor_values_sheets(vroot) if vroot else []
+        if sheets:                                         # «Значения»: листы сумм и дат
+            self.constructor_root = vroot
+            self.constructor_sheets = sheets
+            self.constructor_lang_dirs = {}
+            sheet = next((x for x in sheets if x["key"] == want), None) or next((x for x in sheets if x["kind"] == 'sum'), sheets[0])
+            self._constructor_load_sheet(sheet)
+            self.constructor_lang = 'kz' if sheet["key"].lower().endswith(('_kz', '_kk')) else 'ru'
+            if not hasattr(self, 'constructor_start_file'):
+                self.constructor_start_file = None
+            if not hasattr(self, 'constructor_end_file'):
+                self.constructor_end_file = None
+            return self._constructor_state()
+        self.constructor_sheets = []
+        self.constructor_kind = 'sum'
+        self.constructor_order = list(SUM_TIER_ORDER)
+        self.constructor_labels = dict(SUM_TIER_LABELS)
         try:
             subdirs = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
         except Exception as e:
@@ -179,18 +288,25 @@ class ConstructorMixin:
     def _constructor_state(self):
         tiers = getattr(self, 'constructor_tier_files', {}) or {}
         lang_dirs = getattr(self, 'constructor_lang_dirs', None) or {}
+        order = getattr(self, 'constructor_order', None) or list(SUM_TIER_ORDER)
+        labels = getattr(self, 'constructor_labels', None) or SUM_TIER_LABELS
+        sheets = getattr(self, 'constructor_sheets', None) or []
         return {
             "root": getattr(self, 'constructor_root', None),
             "lang": getattr(self, 'constructor_lang', 'ru'),
             "lang_available": [l for l in ('ru', 'kz') if l in lang_dirs],
+            "sheets": [{k: x[k] for k in ("key", "label", "kind")} for x in sheets],
+            "sheet": getattr(self, 'constructor_sheet', None) if sheets else None,
+            "kind": getattr(self, 'constructor_kind', 'sum'),
+            "order": order,
             "start": os.path.basename(self.constructor_start_file) if getattr(self, 'constructor_start_file', None) else None,
             "end": os.path.basename(self.constructor_end_file) if getattr(self, 'constructor_end_file', None) else None,
             "tiers": {
                 tier: {
-                    "label": SUM_TIER_LABELS[tier],
+                    "label": labels.get(tier, tier),
                     "items": [os.path.splitext(os.path.basename(p))[0] for p in tiers.get(tier, [])],
                 }
-                for tier in SUM_TIER_ORDER
+                for tier in order
             },
         }
 
@@ -223,7 +339,7 @@ class ConstructorMixin:
             segments = []
             if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
                 segments.append(('start', self.constructor_start_file, False))
-            for tier in SUM_TIER_ORDER:
+            for tier in getattr(self, 'constructor_order', None) or SUM_TIER_ORDER:
                 files = tiers.get(tier, [])
                 idx = (indices or {}).get(tier)
                 if files and isinstance(idx, int) and 0 <= idx < len(files):
@@ -265,7 +381,8 @@ class ConstructorMixin:
             for _key, path, _saveable in segments:
                 seg = AudioSegment.from_file(path).set_frame_rate(8000)
                 combined = seg if combined is None else combined + seg
-            temp_path = os.path.join(self.constructor_root, f"temp_constructor_preview_{int(time.time() * 1000)}.wav")
+            import tempfile                                # не в папку с эталонами — аудит её читает
+            temp_path = os.path.join(tempfile.gettempdir(), f"gvox_constructor_preview_{int(time.time() * 1000)}.wav")
             combined.export(temp_path, format="wav")
             duration = FileUtils.get_exact_audio_duration(temp_path)
             self.player.play(temp_path)
