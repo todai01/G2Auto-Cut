@@ -6483,6 +6483,8 @@ let isProcessing = false;
                 return;
             }
             constructorState = state;
+            // Проект Студии: фразы вокруг переменной уже известны — start/end не спрашиваем.
+            if ((state.phrases || []).length) { openConstructorScreen(); return; }
 
             let confirmed2 = await showBeautifulAlert('<b>Теперь start</b><br><br>Выберите файл начальной фразы (start.wav).');
             if (!confirmed2) return;
@@ -6525,6 +6527,7 @@ let isProcessing = false;
             showStage('stage3-constructor');
             renderConstructorMeta();
             renderConstructorLangRow();
+            renderConstructorPhrase();
             renderConstructorReels();
         }
         function constructorPrimaryLabel() {
@@ -6562,6 +6565,33 @@ let isProcessing = false;
             if (kzBtn) kzBtn.classList.toggle('btn-tile--solid-mode', lang === 'kz');
         }
 
+        // Фраза вокруг переменной (start → значение → start_2 / end), «кратко» — только стык.
+        function renderConstructorPhrase() {
+            let el = document.getElementById('constructorPhrase');
+            if (!el) return;
+            let ph = (constructorState && constructorState.phrases) || [];
+            if (!ph.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+            let k = constructorState.phrase_pos || 0, x = ph[k];
+            let part = (role, name, text, ok) => name ? `<span class="constructor-phrase__part ${ok ? '' : 'is-miss'}" title="${escapeHtml(text || '')}${ok ? '' : ' — ещё не записана'}"><i>${escapeHtml(role)}</i>${escapeHtml(name)}</span>` : '';
+            el.style.display = 'flex';
+            el.innerHTML = `<span class="constructor-phrase__nav">
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="constructorPhraseNav(-1)" title="Предыдущая фраза с этой переменной">&#9664;</button>
+                    Фраза <b>${k + 1}</b> / ${ph.length}
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="constructorPhraseNav(1)" title="Следующая фраза с этой переменной">&#9654;</button></span>
+                <span class="constructor-phrase__name">${escapeHtml(x.name)}</span>
+                ${part(x.start_role, x.start_name, x.start_text, x.start_ok)} → <b>значение</b> → ${part(x.end_role || 'end', x.end_name, x.end_text, x.end_ok) || '<span class="tts-dim">без продолжения</span>'}
+                <label class="audit-switch" title="Играть только конец начала и начало продолжения (по ${(constructorState.short_ms || 2500) / 1000} с) — чтобы быстро сверить стык с боевыми записями">
+                    <input type="checkbox" ${constructorState.short ? 'checked' : ''} onchange="constructorSetShort(this.checked)"> кратко</label>`;
+        }
+        async function constructorPhraseNav(d) {
+            let st = await pywebview.api.constructor_phrase_nav(d);
+            if (st && !st.error) { constructorState = st; renderConstructorPhrase(); renderConstructorMeta(); updateConstructorPreview(); }
+        }
+        async function constructorSetShort(on) {
+            let st = await pywebview.api.constructor_set_short(on);
+            if (st && !st.error) { constructorState = st; renderConstructorPhrase(); }
+        }
+
         async function setConstructorSheet(key) {
             if (!constructorState || constructorState.sheet === key) return;
             let state = await pywebview.api.constructor_set_sheet(key);
@@ -6569,6 +6599,8 @@ let isProcessing = false;
             constructorState = state;
             constructorBigMode = false;
             renderConstructorLangRow();
+            renderConstructorMeta();
+            renderConstructorPhrase();
             renderConstructorReels();
         }
 

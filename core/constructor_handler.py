@@ -25,7 +25,7 @@ class ConstructorMixin:
             return {"error": "Режим «Суммы» ещё не запущен в этом проекте — сначала включите его галочкой."}
 
         self.constructor_root = os.path.join(self.work_dir, cat_name)
-        self.constructor_sheets, self.constructor_kind = [], 'sum'
+        self.constructor_sheets, self.constructor_kind, self.constructor_phrases = [], 'sum', []
         self.constructor_order, self.constructor_labels = list(SUM_TIER_ORDER), dict(SUM_TIER_LABELS)
         self.constructor_tier_files = {tier: list(tier_files.get(tier, [])) for tier in SUM_TIER_ORDER}
         self.constructor_start_file = getattr(self, 'var_start_phrase', None)
@@ -165,6 +165,11 @@ class ConstructorMixin:
         """Рулетки листа: сумма — 5 ярусов как раньше; другой лист — его категории."""
         self.constructor_sheet = sheet["key"]
         self.constructor_kind = sheet["kind"]
+        self.constructor_phrases = self._constructor_phrases()
+        if self.constructor_phrases:
+            pos = next((k for k, x in enumerate(self.constructor_phrases) if x["start_path"]), 0)
+            self.constructor_phrase_pos = pos
+            self._constructor_apply_phrase()
         if sheet["kind"] == 'sum':
             self.constructor_tier_files = self._constructor_scan_tiers(sheet["path"])
             self.constructor_order = list(SUM_TIER_ORDER)
@@ -188,6 +193,80 @@ class ConstructorMixin:
         self.constructor_tier_files = files
         self.constructor_order = cats
         self.constructor_labels = labels
+
+    # ---- фразы вокруг переменной: start / start_2 / end — коротко, для сверки с боевыми ----
+    CTOR_CTX_MS = 2500        # кратко: конец начала и начало продолжения — по столько
+
+    def _constructor_phrases(self):
+        """Фразы проекта, где стоит переменная открытого листа: кусочек перед ней
+        и после (start → значение → start_2 / end). Из проекта Студии (если
+        открыт этот же) или из его tts_project.json."""
+        from core.tts_flow import TTS_STATE_FILE, TTS_VAR_DIR
+        sheet = getattr(self, 'constructor_sheet', None)
+        vroot = getattr(self, 'constructor_root', None)
+        if not sheet or not vroot or not getattr(self, 'constructor_sheets', None):
+            return []
+        proj = os.path.dirname(os.path.normpath(vroot))
+        st = getattr(self, 'tts', None) or {}
+        if not (st.get("work_dir") and os.path.normcase(os.path.abspath(st["work_dir"])) == os.path.normcase(os.path.abspath(proj))):
+            try:
+                with open(os.path.join(proj, TTS_STATE_FILE), 'r', encoding='utf-8') as f:
+                    st = json.load(f)
+            except (OSError, ValueError):
+                return []
+        units = st.get("units") or []
+
+        def path(u):
+            if not u:
+                return None
+            p = os.path.join(proj, TTS_VAR_DIR, *([u["subdir"]] if u.get("subdir") else []), f"{u['name']}.wav")
+            return p if os.path.exists(p) else None
+        out = []
+        for ch in st.get("chains") or []:
+            parts = [units[i] for i in ch.get("parts", []) if i < len(units)]
+            for k, u in enumerate(parts):
+                if u.get("var_after") != sheet:
+                    continue
+                nxt = parts[k + 1] if k + 1 < len(parts) else None
+                out.append({"name": ch.get("name") or u["name"],
+                            "start_name": u["name"], "start_text": u.get("text", ''), "start_path": path(u),
+                            "end_name": nxt["name"] if nxt else None, "end_text": (nxt or {}).get("text", ''),
+                            "end_path": path(nxt), "start_role": 'start' if k == 0 else f'start_{k + 1}',
+                            "end_role": (f'start_{k + 2}' if k + 2 < len(parts) else 'end') if nxt else None})
+        return out
+
+    def _constructor_apply_phrase(self):
+        """Выбранная фраза → start / end конструктора."""
+        ph = getattr(self, 'constructor_phrases', None) or []
+        if not ph:
+            return
+        k = max(0, min(int(getattr(self, 'constructor_phrase_pos', 0) or 0), len(ph) - 1))
+        self.constructor_phrase_pos = k
+        self.constructor_start_file = ph[k]["start_path"]
+        self.constructor_end_file = ph[k]["end_path"]
+
+    def constructor_phrase_nav(self, delta=0, pos=None):
+        ph = getattr(self, 'constructor_phrases', None) or []
+        if not ph:
+            return self._constructor_state()
+        cur = getattr(self, 'constructor_phrase_pos', 0) or 0
+        self.constructor_phrase_pos = (int(pos) if pos is not None else cur + int(delta)) % len(ph)
+        self._constructor_apply_phrase()
+        return self._constructor_state()
+
+    def constructor_set_short(self, on):
+        self.constructor_short = bool(on)
+        return self._constructor_state()
+
+    def _constructor_short_file(self, path, tail):
+        """Кратко: только конец начала (tail) или начало продолжения — во временный файл."""
+        import tempfile
+        seg = AudioSegment.from_file(path)
+        ms = self.CTOR_CTX_MS
+        part = (seg[-ms:] if tail else seg[:ms]) if len(seg) > ms else seg
+        dst = os.path.join(tempfile.gettempdir(), f"gvox_ctor_{'start' if tail else 'end'}_{os.getpid()}.wav")
+        part.export(dst, format="wav")
+        return dst
 
     def constructor_set_sheet(self, key):
         sheet = next((x for x in getattr(self, 'constructor_sheets', None) or [] if x["key"] == key), None)
@@ -214,6 +293,7 @@ class ConstructorMixin:
             self.constructor_sheets = sheets
             self.constructor_lang_dirs = {}
             sheet = next((x for x in sheets if x["key"] == want), None) or next((x for x in sheets if x["kind"] == 'sum'), sheets[0])
+            self.constructor_short = getattr(self, 'constructor_short', True)
             self._constructor_load_sheet(sheet)
             self.constructor_lang = 'kz' if sheet["key"].lower().endswith(('_kz', '_kk')) else 'ru'
             if not hasattr(self, 'constructor_start_file'):
@@ -221,7 +301,7 @@ class ConstructorMixin:
             if not hasattr(self, 'constructor_end_file'):
                 self.constructor_end_file = None
             return self._constructor_state()
-        self.constructor_sheets = []
+        self.constructor_sheets, self.constructor_phrases = [], []
         self.constructor_kind = 'sum'
         self.constructor_order = list(SUM_TIER_ORDER)
         self.constructor_labels = dict(SUM_TIER_LABELS)
@@ -299,6 +379,12 @@ class ConstructorMixin:
             "sheet": getattr(self, 'constructor_sheet', None) if sheets else None,
             "kind": getattr(self, 'constructor_kind', 'sum'),
             "order": order,
+            "phrases": [{**{k: x[k] for k in ("name", "start_name", "start_text", "end_name", "end_text", "start_role", "end_role")},
+                         "start_ok": bool(x["start_path"]), "end_ok": bool(x["end_path"])}
+                        for x in (getattr(self, 'constructor_phrases', None) or [])],
+            "phrase_pos": getattr(self, 'constructor_phrase_pos', 0),
+            "short": bool(getattr(self, 'constructor_short', False)),
+            "short_ms": self.CTOR_CTX_MS,
             "start": os.path.basename(self.constructor_start_file) if getattr(self, 'constructor_start_file', None) else None,
             "end": os.path.basename(self.constructor_end_file) if getattr(self, 'constructor_end_file', None) else None,
             "tiers": {
@@ -337,15 +423,18 @@ class ConstructorMixin:
 
         if not columns:
             segments = []
+            short = bool(getattr(self, 'constructor_short', False)) and bool(getattr(self, 'constructor_sheets', None))
             if getattr(self, 'constructor_start_file', None) and os.path.exists(self.constructor_start_file):
-                segments.append(('start', self.constructor_start_file, False))
+                segments.append(('start', self._constructor_short_file(self.constructor_start_file, True)
+                                 if short else self.constructor_start_file, False))
             for tier in getattr(self, 'constructor_order', None) or SUM_TIER_ORDER:
                 files = tiers.get(tier, [])
                 idx = (indices or {}).get(tier)
                 if files and isinstance(idx, int) and 0 <= idx < len(files):
                     segments.append((tier, files[idx], True))
             if getattr(self, 'constructor_end_file', None) and os.path.exists(self.constructor_end_file):
-                segments.append(('end', self.constructor_end_file, False))
+                segments.append(('end', self._constructor_short_file(self.constructor_end_file, False)
+                                 if short else self.constructor_end_file, False))
             return segments
 
         connectors_by_key = {c['key']: c.get('path') for c in getattr(self, 'var_connectors', [])}
