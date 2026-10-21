@@ -303,6 +303,59 @@ class AuditFixMixin:
         return {"dest": dest, "copied": copied, "same": same, "kept": kept, "failed": failed[:10],
                 "folders": sorted({g["rel_dir"] for g in res.get("groups") or [] if g.get("rel_dir")})}
 
+    def audit_final_folder(self):
+        """Финальная папка сдачи по результату аудита: «Финал_<дата>/» с двумя
+        папками — «Перманентные_<дата>» (все фразы и кусочки фраз с
+        переменными одной папкой) и «Переменные_<дата>» (содержимое «Значения»:
+        <лист>/<категория>/<значение>.wav). Берутся только найденные аудитом
+        записи из рабочих папок; исходники не трогаем."""
+        res = getattr(self, '_audit_res', None)
+        if not res or res.get("mode") != "studio":
+            return {"error": "Сначала запустите аудит по таблице Студии записи."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER,
+                                                       directory=os.path.dirname(os.path.normpath(res.get("scan_dir") or '')))
+        if not picked:
+            return {"error": "cancel"}
+        base = picked if isinstance(picked, str) else picked[0]
+        date = time.strftime('%d.%m.%Y')
+        root = os.path.join(base, f"Финал_{date}")
+        n = 2
+        while os.path.exists(root):                            # уже собирали сегодня — рядом новая
+            root = os.path.join(base, f"Финал_{date} ({n})")
+            n += 1
+        perm, var = os.path.join(root, f"Перманентные_{date}"), os.path.join(root, f"Переменные_{date}")
+        os.makedirs(perm)
+        os.makedirs(var)
+        n_perm = n_var = 0
+        clash, failed, seen = [], [], {}
+        for f in res.get("files") or []:
+            rel = (f.get("rel") or '').replace('\\', '/')
+            if not rel or not os.path.exists(f["path"]):
+                continue
+            parts = rel.split('/')
+            if self._audit_norm_dir(parts[0]) == 'значения':
+                dst = os.path.join(var, *parts[1:])
+            else:
+                dst = os.path.join(perm, parts[-1])
+                key = parts[-1].lower()
+                if key in seen:                                # одно имя из двух папок — оставляем первый
+                    if os.path.normcase(seen[key]) != os.path.normcase(f["path"]):
+                        clash.append(parts[-1])
+                    continue
+                seen[key] = f["path"]
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(f["path"], dst)
+                if dst.startswith(var):
+                    n_var += 1
+                else:
+                    n_perm += 1
+            except OSError as e:
+                failed.append(f"{f['filename']}: {e}")
+        return {"dest": root, "perm": n_perm, "var": n_var, "perm_dir": os.path.basename(perm),
+                "var_dir": os.path.basename(var), "missing": res.get("missing_count", 0),
+                "duplicates": res.get("duplicates_count", 0), "clash": clash[:10], "failed": failed[:10]}
+
     def audit_rerun(self):
         """Проверить снова ту же папку (после записи в суфлёре)."""
         res = getattr(self, '_audit_res', None)

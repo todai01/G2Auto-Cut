@@ -5763,6 +5763,7 @@ let isProcessing = false;
                     <label class="audit-switch"><input type="checkbox" ${auditOnlyProblems ? 'checked' : ''} onchange="auditOnlyProblems = this.checked; auditApplyFilter()"> Только с проблемами</label>
                     <span class="audit-toolbar__spacer"></span>
                     ${res.mode === 'studio' ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="auditExportFolders()" title="Скопировать найденные записи в выбранную папку — в структуре, как у суфлёра: Проверенные/…, Фразы_Переменные/…, Значения/<лист>/<категория>/…">Разложить по папкам Студии</button>` : ''}
+                    ${res.mode === 'studio' ? `<button type="button" class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="auditFinalFolder()" title="Папка сдачи: «Финал_<дата>» → «Перманентные_<дата>» (все фразы одной папкой) и «Переменные_<дата>» (содержимое «Значения»)">Финальная папка</button>` : ''}
                     ${res.groups && res.missing_count ? `<button type="button" class="btn-ghost btn-ghost--compact audit-act is-rec" onclick="auditToPrompter('all')" title="Открыть суфлёр только с тем, чего не хватает — записывайте как обычно">● Записать все недостающие — ${res.missing_count}</button>` : ''}
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(true)">Развернуть все</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="auditToggleAll(false)">Свернуть все</button>
@@ -5818,6 +5819,23 @@ let isProcessing = false;
             let go = await showBeautifulConfirm(`✅ <b>Разложено по папкам Студии</b><br><br>${lines.join('<br>')}<br><br>`
                 + `<span style="word-break:break-all">${escapeHtml(r.dest)}</span><br><br>Папки: ${r.folders.map(f => '«' + escapeHtml(f) + '»').join(', ')}`,
                 'Открыть папку', 'Закрыть');
+            if (go) pywebview.api.audit_open_folder(r.dest);
+        }
+        async function auditFinalFolder() {
+            let res = window.auditRes || {};
+            let warn = [];
+            if (res.missing_count) warn.push(`не хватает записей: <b>${res.missing_count}</b>`);
+            if (res.duplicates_count) warn.push(`дублей: <b>${res.duplicates_count}</b> — возьмётся первый найденный`);
+            if (warn.length && !await showBeautifulConfirm(`⚠️ <b>Аудит ещё не чистый</b><br><br>${warn.join('<br>')}<br><br>Всё равно собрать финальную папку из того, что есть?`, 'Собрать', 'Отмена')) return;
+            let r = await pywebview.api.audit_final_folder();
+            if (!r || r.error) { if (r && r.error !== 'cancel') showToast(r.error); return; }
+            let lines = [`«${escapeHtml(r.perm_dir)}»: <b>${r.perm}</b> ${plural(r.perm, 'файл', 'файла', 'файлов')}`,
+                         `«${escapeHtml(r.var_dir)}»: <b>${r.var}</b> ${plural(r.var, 'файл', 'файла', 'файлов')}`];
+            if (r.missing) lines.push(`<span class="tts-dim">без недостающих: ${r.missing}</span>`);
+            if (r.clash.length) lines.push(`одинаковые имена в разных папках (взят первый): ${r.clash.map(escapeHtml).join(', ')}`);
+            if (r.failed.length) lines.push(`ошибки: ${r.failed.map(escapeHtml).join('<br>')}`);
+            let go = await showBeautifulConfirm(`✅ <b>Финальная папка собрана</b><br><br>${lines.join('<br>')}<br><br>`
+                + `<span style="word-break:break-all">${escapeHtml(r.dest)}</span>`, 'Открыть папку', 'Закрыть');
             if (go) pywebview.api.audit_open_folder(r.dest);
         }
         async function auditPlayExtra(i) {
