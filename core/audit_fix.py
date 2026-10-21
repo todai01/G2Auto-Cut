@@ -181,7 +181,7 @@ class AuditFixMixin:
         if not picked:
             return {"error": "cancel"}
         src_dir = picked if isinstance(picked, str) else picked[0]
-        res = self._audit_studio(src_dir, xl)
+        res = self._audit_studio(src_dir, xl, only_work=False)     # чужая папка — все подпапки, кроме корзины
         if res.get("error"):
             return res
         norm = lambda p: os.path.normcase(os.path.abspath(p))

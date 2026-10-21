@@ -5799,8 +5799,11 @@ let isProcessing = false;
             if (res.scanned && res.scanned.length) {
                 let total = res.scanned.reduce((a, d) => a + d.files, 0);
                 html = `<div class="audit-scanned">${res.widened ? `<b>Выбрана «${escapeHtml(res.widened.split(/[\\/]/).pop())}» — смотрю весь проект.</b> ` : ''}`
-                    + `Просмотрено ${total} ${plural(total, 'запись', 'записи', 'записей')} во всех вложенных папках: `
-                    + res.scanned.map(d => `<span class="audit-scanned__dir">${escapeHtml(d.folder)} <i>${d.files}</i></span>`).join('') + `</div>` + html;
+                    + `Просмотрено ${total} ${plural(total, "запись", "записи", "записей")} в рабочих папках: `
+                    + res.scanned.map(d => `<span class="audit-scanned__dir">${escapeHtml(d.folder)} <i>${d.files}</i></span>`).join('')
+                    + ((res.skipped || []).length ? `<br><span class="tts-dim" title="Корзина, черновики записи, нарезка, кэш и папки вне «Проверенные / Фразы_Переменные / Значения» — не считаются">Не смотрю: </span>`
+                        + res.skipped.map(d => `<span class="audit-scanned__dir is-skip">${escapeHtml(d.folder)} <i>${d.files}</i></span>`).join('') : '')
+                    + `</div>` + html;
             }
             auditSetDetails(html, quiet);
             document.getElementById('auditExportBtn').style.display = res.can_export ? '' : 'none';

@@ -671,7 +671,33 @@ class ProjectMixin:
                     self.__dict__[k] = v
         return out
 
-    def _audit_studio(self, scan_dir, excel_path):
+    AUDIT_WORK_DIRS = {'проверенные', 'фразыпеременные', 'значения'}
+    AUDIT_SKIP_DIRS = {'корзина', 'записи', 'чанки', 'кэш', 'суммысырые', 'фон', 'клон'}
+
+    def _audit_studio_only_work(self, scan_dir, found_files, only_work=True):
+        """Аудит по таблице Студии смотрит только рабочие папки: «Проверенные»,
+        «Фразы_Переменные», «Значения». Корзина, черновики записи, нарезка,
+        кэш — никогда (файл из корзины не должен считаться готовым).
+        В папке без рабочих папок и при импорте чужой папки (only_work=False) —
+        всё, кроме тех же служебных. → (файлы, {пропущенная папка: сколько})."""
+        work, here = self.AUDIT_WORK_DIRS, self._audit_norm_dir(os.path.basename(os.path.normpath(scan_dir)))
+        rel_parts = lambda pth: [self._audit_norm_dir(x) for x in os.path.relpath(os.path.dirname(pth), scan_dir).split(os.sep) if x != '.']
+        junk = lambda parts: any(x in self.AUDIT_SKIP_DIRS or 'trash' in x or 'корзин' in x or 'undo' in x for x in parts)
+        has_work = only_work and here in work or only_work and any(set(rel_parts(p)) & work for ps in found_files.values() for p in ps)
+        out, skipped = {}, {}
+        for f_low, paths in found_files.items():
+            for pth in paths:
+                parts = rel_parts(pth)
+                ok = not junk(parts) and (not has_work or here in work or bool(set(parts) & work))
+                if ok:
+                    out.setdefault(f_low, []).append(pth)
+                else:
+                    top = os.path.relpath(os.path.dirname(pth), scan_dir).split(os.sep)[0]
+                    top = '(корень)' if top == '.' else top
+                    skipped[top] = skipped.get(top, 0) + 1
+        return out, [{"folder": k, "files": v} for k, v in sorted(skipped.items(), key=lambda kv: kv[0].lower())]
+
+    def _audit_studio(self, scan_dir, excel_path, only_work=True):
         try:
             expected = self._audit_studio_expected(excel_path)
         except Exception as e:
@@ -691,6 +717,7 @@ class ProjectMixin:
             except OSError:
                 pass
         found_files, _all = self._audit_scan_folder(scan_dir)
+        found_files, skipped = self._audit_studio_only_work(scan_dir, found_files, only_work)
         cands = {}                                         # имя → [(путь, части пути от выбранной папки)]
         for f_low, paths in found_files.items():
             for pth in paths:
@@ -790,7 +817,7 @@ class ProjectMixin:
             "missing_count": len(missing_list), "duplicates_count": len(duplicates_list),
             "missing": missing_list, "duplicates": duplicates_list, "files": files, "can_edit": False,
             "studio_name": os.path.basename(excel_path), "extra": extra, "studio_note": note,
-            "scanned": scanned, "widened": widened,
+            "scanned": scanned, "widened": widened, "skipped": skipped,
             "studio_mtime": time.strftime('%d.%m.%Y %H:%M', time.localtime(os.path.getmtime(excel_path))),
         }
         return res
