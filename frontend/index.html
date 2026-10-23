@@ -574,6 +574,33 @@
     </div>
 
     <!-- Справка главного меню: порядок работы, папки, горячие клавиши -->
+    <div id="tutorialOverlay" class="custom-alert-overlay tut-overlay" onclick="if (event.target === this) closeTutorial()">
+        <div class="tut-box">
+            <aside class="tut-side">
+                <div class="tut-side__head">
+                    <div class="tut-side__title">Обучение</div>
+                    <div class="tut-side__progress" id="tutProgress"></div>
+                </div>
+                <div class="tut-list" id="tutList"></div>
+                <button type="button" class="tut-side__link" onclick="closeTutorial(); openMenuHelp()" title="Порядок нарезки, папки и горячие клавиши основного режима">Шпаргалка: клавиши нарезки</button>
+            </aside>
+            <section class="tut-main">
+                <div class="tut-main__head">
+                    <div><div class="tut-main__section" id="tutSection"></div><h3 class="tut-main__title" id="tutTitle"></h3></div>
+                    <button class="modal-close" onclick="closeTutorial()" title="Закрыть (Esc)">&times;</button>
+                </div>
+                <div class="tut-video"><video id="tutVideo" controls muted playsinline preload="metadata" onended="tutVideoEnded()"></video></div>
+                <ol class="tut-steps" id="tutSteps"></ol>
+                <div class="tut-actions">
+                    <button type="button" class="btn-ghost" id="tutPrev" onclick="tutStep(-1)">&larr; Назад</button>
+                    <button type="button" class="btn-ghost btn-ghost--good" id="tutOpenBtn" onclick="tutOpen()" title="Закрыть обучение и перейти в этот раздел (Enter)"></button>
+                    <button type="button" class="btn-ghost btn-ghost--info" id="tutNext" onclick="tutStep(1)"></button>
+                </div>
+                <div class="tut-hint"><kbd>←</kbd> <kbd>→</kbd> уроки · <kbd>Space</kbd> пауза · <kbd>Enter</kbd> открыть раздел · <kbd>Esc</kbd> закрыть</div>
+            </section>
+        </div>
+    </div>
+
     <div id="menuHelpOverlay" class="custom-alert-overlay" onclick="if (event.target === this) closeMenuHelp()">
         <div class="custom-alert-box modal--lg">
             <div class="modal-head">
@@ -657,6 +684,7 @@
         <div class="custom-alert-box modal--lg audit-box">
             <div class="modal-head">
                 <h3 class="modal-title">Аудит проекта</h3>
+                <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial('audit')" title="Обучение: ролик про аудит">?</button>
                 <button class="modal-close" onclick="closeAudit()" title="Закрыть">&times;</button>
             </div>
 
@@ -894,7 +922,7 @@
                     &#8592;&nbsp; Вернуться к работе
                 </button>
                 <div class="setup-status" id="setupStatus">Шаг 1 · Подключите таблицу с текстом</div>
-                <button class="btn-help" onclick="openMenuHelp()" title="Порядок работы, папки проекта, горячие клавиши"><span class="btn-help__icon">?</span>Справка</button>
+                <button class="btn-help" onclick="openTutorial()" title="Обучение: короткие ролики по каждому процессу и утилите"><span class="btn-help__icon">?</span>Обучение</button>
             </div>
         </header>
 
@@ -1389,6 +1417,7 @@
         <header class="workspace-header">
             <div class="header-actions">
                 <button class="btn-ghost" onclick="showMenu()">&#8592;&nbsp; Главное меню</button>
+                <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial('constructor')" title="Обучение: ролик про конструктор">?</button>
                 <div class="tile-row constructor-lang-row" id="constructorLangRow" style="display:none;">
                     <button class="btn-tile constructor-lang-btn" id="constructorLangRuBtn" onclick="setConstructorLang('ru')">RU</button>
                     <button class="btn-tile constructor-lang-btn" id="constructorLangKzBtn" onclick="setConstructorLang('kz')">KZ</button>
@@ -1439,6 +1468,7 @@
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
                 <button class="btn-ghost btn-ghost--compact tts-fs-btn" onclick="toggleFullscreen()" title="Полный экран (F11)">&#x26F6; <kbd>F11</kbd></button>
+                <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial(ttsTutTopic())" title="Обучение: ролики по Студии записи">?</button>
                 <button class="btn-ghost btn-alert btn-ghost--compact" id="ttsMarksBtn" style="display:none" onclick="ttsMarksRetry()" title="Отметки start/end и переменных ещё не записаны в таблицу (например, она открыта в Excel)"></button>
             </div>
             <div class="tts-title">
@@ -1567,5 +1597,6 @@
     </div>
 
     <script src="script.js?v=2"></script>
+    <script src="tutorial.js?v=1"></script>
 </body>
 </html>
