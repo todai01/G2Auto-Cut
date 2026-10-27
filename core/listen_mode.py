@@ -12,6 +12,7 @@ import re
 import shutil
 import tempfile
 import threading
+from collections import OrderedDict
 
 import webview
 from pydub import AudioSegment
@@ -48,6 +49,7 @@ def listen_lang_of(path, base):
 
 class ListenMixin:
     LISTEN_CTX_MS = 2500          # сколько конца начала и начала продолжения звучит рядом с переменной
+    LISTEN_CACHE = 24             # сколько декодированных записей / волн держать в памяти
 
     def _ls(self):
         ls = getattr(self, '_listen', None)
@@ -185,6 +187,77 @@ class ListenMixin:
         wb.close()
         return (best[1], best[2]) if best else ([], None)
 
+    # ---------------- кэш: декодированный звук и волны (ключ — путь + время + размер) ----------------
+    def _listen_cache_get(self, kind, key, make):
+        cache = getattr(self, '_listen_cache', None)
+        if cache is None:
+            cache = self._listen_cache = OrderedDict()
+            self._listen_cache_lock = threading.Lock()
+        k = (kind,) + key
+        with self._listen_cache_lock:
+            if k in cache:
+                cache.move_to_end(k)
+                return cache[k]
+        val = make()
+        with self._listen_cache_lock:
+            cache[k] = val
+            while len(cache) > self.LISTEN_CACHE:
+                cache.popitem(last=False)
+        return val
+
+    @staticmethod
+    def _listen_stamp(*paths):
+        out = []
+        for p in paths:
+            try:
+                st = os.stat(p)
+                out.append((p, st.st_mtime_ns, st.st_size))
+            except (OSError, TypeError):
+                out.append((p, None, None))
+        return tuple(out)
+
+    def _listen_seg(self, path):
+        return self._listen_cache_get('seg', self._listen_stamp(path), lambda: AudioSegment.from_file(path))
+
+    def _listen_prefetch(self, k):
+        """Следующая строка — заранее: звук и волна уже в кэше, когда до неё дойдут."""
+        ls = self._ls()
+        if not (0 <= k < len(ls["rows"])) or not ls["rows"][k]["path"]:
+            return
+        path = ls["rows"][k]["path"]
+
+        def run():
+            try:
+                self._listen_seg(path)
+                self.listen_edit_load(path)
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def _listen_row(self, k):
+        ls = self._ls()
+        r = ls["rows"][k]
+        return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
+                "dups": r["dups"], "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
+                "synth": ls["synth"].get(k, {}).get("status")}
+
+    def listen_go(self, pos, play=True):
+        """Переход на строку одним вызовом: сразу играет цепочку, отдаёт волну
+        правки и только эту строку (не всё состояние)."""
+        ls = self._ls()
+        if not ls["rows"]:
+            return {"error": "Таблица не загружена."}
+        ls["pos"] = k = max(0, min(int(pos), len(ls["rows"]) - 1))
+        ls["go"] = gen = ls.get("go", 0) + 1
+        path = ls["rows"][k]["path"]
+        out = {"pos": k, "row": self._listen_row(k)}
+        if play:
+            out["play"] = self.listen_play({"path": path} if path else None, _gen=gen)
+        if path:
+            out["edit"] = self.listen_edit_load(path)
+        self._listen_prefetch(k + 1)
+        return out
+
     def listen_state(self):
         ls = self._ls()
         rows = ls["rows"]
@@ -196,9 +269,7 @@ class ListenMixin:
             "short": ls["short"], "ctx_ms": self.LISTEN_CTX_MS,
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
-            "rows": [{"name": r["name"], "file": nm(r["path"]), "path": r["path"], "dups": r["dups"],
-                      "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
-                      "synth": ls["synth"].get(k, {}).get("status")} for k, r in enumerate(rows)],
+            "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
         }
 
@@ -221,9 +292,14 @@ class ListenMixin:
 
     def listen_edit_load(self, path):
         """Волна для правки (в координатах исходника) и сохранённая правка."""
-        r = self.audit_edit_load(path)
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        backup = self._audit_backup(path)
+        key = self._listen_stamp(path, backup, backup + '.json')
+        r = self._listen_cache_get('edit', key, lambda: self.audit_edit_load(path))
         if r.get("error"):
             return r
+        r = dict(r)
         r.update(gain=0.0, tempo=1.0)
         try:
             with open(self._listen_meta(path), 'r', encoding='utf-8') as f:
@@ -259,10 +335,10 @@ class ListenMixin:
         if not p or not os.path.exists(p):
             return None
         if part.get("ranges") is None and not part.get("gain") and not part.get("tempo"):
-            return AudioSegment.from_file(p)                     # без правки — файл как есть
+            return self._listen_seg(p)                           # без правки — файл как есть (из кэша)
         return self._listen_render(p, part.get("ranges"), part.get("gain", 0), part.get("tempo", 1))
 
-    def listen_play(self, var=None, start=None, end=None, only=None):
+    def listen_play(self, var=None, start=None, end=None, only=None, _gen=None):
         """Конец начала + переменная + начало продолжения (кратко — по LISTEN_CTX_MS),
         или один кусок (only). Возвращает длительность и где начинается каждый кусок."""
         self.player.stop()
@@ -292,8 +368,12 @@ class ListenMixin:
         out = AudioSegment.empty().set_frame_rate(rate)
         for s in segs:
             out += s.set_frame_rate(rate).set_channels(ch).set_sample_width(2)
+        if _gen is not None and ls.get("go") != _gen:
+            return {"error": "skip"}                          # уже перешли на другую строку
         dst = os.path.join(tempfile.gettempdir(), f"gvox_listen_{os.getpid()}.wav")
         out.export(dst, format='wav')
+        if _gen is not None and ls.get("go") != _gen:
+            return {"error": "skip"}
         self.player.play(dst)
         return {"playing": True, "duration": len(out) / 1000.0, "marks": marks}
 

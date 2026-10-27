@@ -62,13 +62,13 @@ async function listenPick(what) {
 }
 
 // ----- отрисовка -----
-function listenRender() {
+function listenRender(light) {
     if (!LS) return;
     lEl('listenLangTop').innerHTML = listenLangBtns();
     lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, LS.lang.toUpperCase(),
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
-    listenRenderList();
+    if (light) listenMarkList(); else listenRenderList();
     let r = lRow();
     lEl('listenPos').innerText = r ? `${LS.pos + 1} из ${LS.rows.length}` : 'Загрузите таблицу';
     lEl('listenName').innerText = r ? r.name : '—';
@@ -97,15 +97,33 @@ function listenRenderList() {
     if (on) on.scrollIntoView({ block: 'nearest' });
 }
 
-// ----- навигация -----
+// Шаг по списку — без перерисовки всех строк: только отметка текущей
+function listenMarkList() {
+    let list = lEl('listenList'), old = list.querySelector('.listen-row.is-on'), cur = list.querySelector(`.listen-row[data-k="${LS.pos}"]`);
+    if (old && old !== cur) old.classList.remove('is-on');
+    if (cur) {
+        cur.classList.add('is-on');
+        let r = LS.rows[LS.pos], tag = cur.querySelector('.listen-row__tag');
+        cur.classList.toggle('is-miss', !r.path);
+        if (tag) tag.innerText = r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет';
+        cur.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// ----- навигация: один вызов — сразу звук, волна и эта строка -----
 async function listenGo(k) {
     if (!LS || k === LS.pos) return;
     if (!(await listenLeave())) return;
-    LS = await pywebview.api.listen_set(k);
-    lTarget = 'var';
-    listenRender();
-    await listenLoadEditor();
-    listenPlayChain();
+    listenStopHead();
+    LS.pos = k; lTarget = 'var';
+    listenRender(true);                                  // имя — крупно сразу, не дожидаясь звука
+    let tok = ++lPlayTok;
+    let r = await pywebview.api.listen_go(k);
+    if (!r || r.error || LS.pos !== k) return;           // уже ушли дальше
+    LS.rows[k] = r.row;
+    listenRender(true);
+    listenSetEditor(r.edit || null, r.row.path);
+    if (r.play && r.play.error !== 'skip') listenAfterPlay(r.play, tok);
 }
 function listenStep(d) { if (LS && LS.rows.length) listenGo(Math.max(0, Math.min(LS.rows.length - 1, LS.pos + d))); }
 async function listenTarget(t) {
@@ -136,6 +154,11 @@ async function listenLoadEditor() {
     let path = LS && listenTargetPath();
     if (!path) { lEd = null; lEl('listenEd').classList.add('is-empty'); listenEdRender(); return; }
     let r = await pywebview.api.listen_edit_load(path);
+    if (path !== listenTargetPath()) return;             // пока грузили — перешли на другое
+    listenSetEditor(r, path);
+}
+function listenSetEditor(r, path) {
+    if (!path) { lEd = null; lEl('listenEd').classList.add('is-empty'); listenEdRender(); return; }
     if (!r || r.error) { lEd = null; showToast(r && r.error || 'Не открылась запись'); listenEdRender(); return; }
     lEl('listenEd').classList.remove('is-empty');
     lEd = { ...r, target: lTarget, sel: null, cur: 0, head: null, hist: [] };
