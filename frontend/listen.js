@@ -220,7 +220,7 @@ function listenEdRender() {
         <button class="btn-ghost btn-ghost--compact" onclick="listenEdKeep()" ${lEd.sel ? '' : 'disabled'} title="Оставить только выделенное">Оставить выделенное</button>
         <button class="btn-ghost btn-ghost--compact" onclick="listenEdUndo()" ${lEd.hist.length ? '' : 'disabled'}>&#8630; <kbd>Ctrl+Z</kbd></button>
         <button class="btn-ghost btn-ghost--compact" onclick="listenEdReset()" title="Вся исходная запись, громкость 0, темп 100%">Как было</button>
-        <span class="listen-knob" title="Громкость">дБ <button onclick="listenKnob('gain', -1)">&minus;</button><b>${lEd.gain > 0 ? '+' : ''}${lEd.gain}</b><button onclick="listenKnob('gain', 1)">+</button></span>
+        <span class="listen-knob" title="Громкость: + / − на клавиатуре">дБ <button onclick="listenKnob('gain', -1)">&minus;</button><b>${lEd.gain > 0 ? '+' : ''}${lEd.gain}</b><button onclick="listenKnob('gain', 1)">+</button></span>
         <span class="listen-knob" title="Темп (без смены высоты)">темп <button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
         <span class="tts-dim">${(len / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}</span>
         ${lEd.target === 'var' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
@@ -319,6 +319,18 @@ function listenKnob(k, d) {
     if (k === 'gain') lEd.gain = Math.max(-12, Math.min(12, lEd.gain + d));
     else lEd.tempo = Math.round(Math.max(0.8, Math.min(1.25, lEd.tempo + d)) * 100) / 100;
     listenEdRender();
+    listenReplaySoon();
+}
+// Шла прослушка — переиграть с новой громкостью / темпом (после паузы в нажатиях)
+let lReplayT = null, lPlayKind = 'chain';
+function listenReplaySoon() {
+    if (!lPlay) return;
+    clearTimeout(lReplayT);
+    lReplayT = setTimeout(() => {
+        if (!lPlay) return;
+        listenStopHead(); pywebview.api.listen_stop();
+        lPlayKind === 'only' ? listenPlayOnly() : listenPlayChain();
+    }, 350);
 }
 // next — после сохранения переменной перейти к следующей строке (и сразу её послушать)
 let lLastSaved = null;              // последняя сохранённая строка — Ctrl+Z отменит
@@ -385,6 +397,7 @@ function listenStopHead() { lPlayTok++; if (lPlay && lPlay.raf) cancelAnimationF
 async function listenPlayChain() {
     if (!LS) return;
     if (lPlay) { listenStopHead(); pywebview.api.listen_stop(); return; }
+    lPlayKind = 'chain';
     let tok = ++lPlayTok;
     let r = await pywebview.api.listen_play(listenPart('var'), listenPart('start'), listenPart('end'), null);
     listenAfterPlay(r, tok);
@@ -393,6 +406,7 @@ async function listenPlayOnly() {
     if (!LS || !lEd) return;
     if (lPlay) { listenStopHead(); pywebview.api.listen_stop(); return; }
     let p = listenPart(lEd.target);
+    lPlayKind = 'only';
     let tok = ++lPlayTok;
     let r = await pywebview.api.listen_play(lEd.target === 'var' ? p : null, lEd.target === 'start' ? p : null, lEd.target === 'end' ? p : null, lEd.target);
     listenAfterPlay(r, tok);
@@ -562,6 +576,9 @@ function listenKey(e) {
     if (e.code === 'KeyX' || e.code === 'Delete') { e.preventDefault(); listenEdCut(); return; }
     if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); listenSave(true); return; }
     if (e.code === 'KeyA') { e.preventDefault(); listenAuto(); return; }
+    // + / − (основная клавиатура и цифровой блок) — громкость правки на 1 дБ
+    if (e.code === 'NumpadAdd' || e.code === 'Equal') { e.preventDefault(); listenKnob('gain', 1); return; }
+    if (e.code === 'NumpadSubtract' || e.code === 'Minus') { e.preventDefault(); listenKnob('gain', -1); return; }
     if (e.code === 'Escape' && lEd && lEd.sel) { e.preventDefault(); lEd.sel = null; listenEdRender(); return; }
     if (e.code === 'Digit1') listenTarget('start');
     else if (e.code === 'Digit2') listenTarget('var');
