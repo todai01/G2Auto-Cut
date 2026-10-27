@@ -8,7 +8,13 @@ from harness import *
 import openpyxl
 D = os.path.join(VID, 'Прослушка_демо'); shutil.rmtree(D, ignore_errors=True)
 V = os.path.join(D, 'Имена'); os.makedirs(V)
-for n in ['Гизат', 'Айгерим', 'Иван', 'Мария', 'Ерлан']: write(os.path.join(V, n + '.wav'), speech(n, decl=1))
+import numpy as np
+rng = np.random.default_rng(7)
+for k, n in enumerate(['Гизат', 'Айгерим', 'Иван', 'Мария', 'Ерлан']):     # перед словом — вдох, громкость разная
+    b = np.convolve(rng.standard_normal(int(R * 0.35)), np.ones(8) / 8, 'same')
+    b = b / np.abs(b).max() * 0.05 * np.sin(np.pi * np.linspace(0, 1, len(b))) ** 0.7
+    sp = speech(n, decl=1) * (0.6, 1.0, 1.4, 0.8, 1.2)[k]
+    write(os.path.join(V, n + '.wav'), np.concatenate([0.002 * rng.standard_normal(int(R * 0.2)), b, sp]))
 F = os.path.join(D, 'Фразы_Переменные')                 # кусочки фраз, разложены по языкам
 for lang in ('ru', 'kz'):
     os.makedirs(os.path.join(F, lang))
@@ -50,18 +56,21 @@ with Rec('listen', a) as r:
     r.move('#listenLangTop', 700); r.wait(1600)
     r.cap('<b>Space</b> — слушать в фразе. «кратко» — конец начала и начало конца, для тайминга', 600)
     r.key('Space', 'Space', 3200)
-    r.key('↓', 'ArrowDown', 1200)
     r.top = 'top'
-    r.cap('Правка: тяните края, выделите лишнее и <b>X</b> — вырезать', 600)
+    r.cap('Запись уже срезана по голосу: вдох и шум по краям убраны (серым). Звучит — уже срезанное', 3000)
+    r.cap('<b>Enter</b> — сохранить и сразу к следующей. Первая сохранённая — <b>шаблон срезки</b>', 600)
+    r.key('Enter', 'Enter', 2200)
+    r.cap('Следующие — по шаблону: та же тишина по краям, громкость и темп', 3000)
+    r.cap('Подправить: тяните края, выделите и <b>X</b> — вырезать. <b>A</b> — снова авто', 600)
     bb = r.pg.locator('#listenEdCanvas').bounding_box()
     y = bb['y'] + bb['height'] / 2
-    r.drag(bb['x'] + 3, y, bb['x'] + bb['width'] * 0.18, y, 700)
-    r.drag(bb['x'] + bb['width'] * 0.47, y, bb['x'] + bb['width'] * 0.56, y, 600)
+    r.drag(bb['x'] + bb['width'] * 0.5, y, bb['x'] + bb['width'] * 0.58, y, 600)
     r.key('X', 'KeyX', 900)
-    r.cap('<b>P</b> — только правка, дБ и темп — кнопками', 600)
-    r.click('#listenEdBar button:has-text("+") >> nth=0', after=700)
-    r.cap('<b>Ctrl+S</b> — сохранить. Исходник — в «_до_правок», можно вернуть', 600)
-    r.key('Ctrl+S', 'Control+s', 1800)
+    r.key('A', 'KeyA', 1600)
+    r.cap('«Шаблон из этой» — сделать шаблоном эту запись. <b>P</b> — только правка, дБ и темп — кнопками', 600)
+    r.move('#listenEdBar button:has-text("Шаблон из этой")', 700); r.wait(1800)
+    r.key('Enter', 'Enter', 1800)
+    r.cap('Исходники — в «_до_правок»: «Вернуть исходник» вернёт запись как была', 2400)
     r.cap('<b>1 / 2 / 3</b> — править начало, переменную или конец (полностью)', 600)
     r.key('1', 'Digit1', 1600); r.key('2', 'Digit2', 1200)
     r.cap('Нет записи или она неудачная — синтез', 600)

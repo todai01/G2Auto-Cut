@@ -137,6 +137,7 @@ async function listenSetShort(on) { LS = await pywebview.api.listen_set(null, nu
 // Ушли с правленой записи — сохранить?
 async function listenLeave() {
     if (!lEd || !listenDirty()) return true;
+    if (lEd.auto && !lEd.hist.length) return true;       // автосрезку не трогали — уходим молча, файл как был
     let how = await showBeautifulChoice(`Правка «${escapeHtml(lEd.name)}» не сохранена.`, 'Сохранить', 'Не сохранять', 'N', 'Остаться');
     if (how === 'ok') return await listenSave();
     return how === 'alt';
@@ -163,10 +164,31 @@ function listenSetEditor(r, path) {
     lEl('listenEd').classList.remove('is-empty');
     lEd = { ...r, target: lTarget, sel: null, cur: 0, head: null, hist: [] };
     lEd.saved = listenSnap();
+    lEd.auto = null;
+    if (r.auto && lTarget === 'var') listenApplyAuto(r.auto);   // ещё не правили — сразу срезка по голосу / шаблону
     let cv = lEl('listenEdCanvas');
     cv.onmousedown = listenEdDown;
     cv.onmousemove = listenEdHover;
     listenEdRender();
+}
+function listenApplyAuto(a) {
+    lEd.ranges = a.ranges.map(x => [...x]); lEd.gain = a.gain; lEd.tempo = a.tempo;
+    lEd.auto = a; lEd.sel = null;
+}
+// «Авто» — срезать заново по голосу (и шаблону), можно отменить Ctrl+Z
+async function listenAuto() {
+    if (!lEd || lEd.target !== 'var') return;
+    let a = await pywebview.api.listen_auto(lEd.path);
+    if (!a || a.error) { showToast(a && a.error || 'Не получилось'); return; }
+    listenPush(); listenApplyAuto(a); listenEdRender();
+    listenPlayChain();
+}
+async function listenTplSet() {
+    if (!lEd || lEd.target !== 'var') return;
+    let r = await pywebview.api.listen_tpl_set(lEd.path, lEd.ranges, lEd.gain, lEd.tempo, lRow() && lRow().name);
+    if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+    LS.tpl = r.tpl; listenEdRender();
+    showToast(`Шаблон срезки — «${r.tpl.from}»: тишина по краям, громкость, темп`);
 }
 const listenSnap = () => JSON.stringify({ r: lEd.ranges, g: lEd.gain, t: lEd.tempo });
 const listenDirty = () => !!lEd && listenSnap() !== lEd.saved;
@@ -182,7 +204,9 @@ function listenEdRender() {
         return;
     }
     let kind = { var: 'переменная', start: 'начало фразы (целиком)', end: 'конец фразы (целиком)' }[lEd.target];
-    lEl('listenEdTitle').innerHTML = `Правка — ${escapeHtml(lEd.name)} <span class="tts-dim">· ${kind}</span>`;
+    let au = lEd.auto, sec = ms => (ms / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+    let autoTxt = au ? ` · <span class="listen-auto">срезано по голосу${au.breath ? ` · вдох / шум ${sec(au.breath)} с` : ''}${au.by_tpl ? ` · по шаблону «${escapeHtml(au.by_tpl)}»` : ''}</span>` : '';
+    lEl('listenEdTitle').innerHTML = `Правка — ${escapeHtml(lEd.name)} <span class="tts-dim">· ${kind}</span>${autoTxt}`;
     let sel = lEd.sel ? Math.round(lEd.sel.b - lEd.sel.a) : 0, len = lKept() / (lEd.tempo || 1);
     bar.innerHTML = `
         <button class="btn-ghost btn-ghost--compact" onclick="listenEdCut()" ${lEd.sel ? '' : 'disabled'} title="Убрать выделенное">Вырезать <kbd>X</kbd></button>
@@ -192,9 +216,12 @@ function listenEdRender() {
         <span class="listen-knob" title="Громкость">дБ <button onclick="listenKnob('gain', -1)">&minus;</button><b>${lEd.gain > 0 ? '+' : ''}${lEd.gain}</b><button onclick="listenKnob('gain', 1)">+</button></span>
         <span class="listen-knob" title="Темп (без смены высоты)">темп <button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
         <span class="tts-dim">${(len / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}</span>
+        ${lEd.target === 'var' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
+        <button class="btn-ghost btn-ghost--compact" onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : ''}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button>
+        <span class="listen-tpl">${LS.tpl ? `шаблон: «${escapeHtml(LS.tpl.from)}»` : 'шаблона нет — первая сохранённая станет им'}</span>` : ''}
         <span class="tts-ed__spacer"></span>
         ${lEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}
-        <button class="custom-alert-btn" onclick="listenSave()" ${listenDirty() ? '' : 'disabled'}>Сохранить <kbd>Ctrl+S</kbd></button>`;
+        <button class="custom-alert-btn" onclick="listenSave(true)" ${listenDirty() ? '' : 'disabled'} title="Сохранить и перейти к следующей">Сохранить <kbd>Enter</kbd></button>`;
     listenEdDraw();
 }
 function listenEdDraw() {
@@ -277,7 +304,7 @@ function listenEdUndo() {
     let s = JSON.parse(lEd.hist.pop());
     lEd.ranges = s.r; lEd.gain = s.g; lEd.tempo = s.t; lEd.sel = null; listenEdRender();
 }
-function listenEdReset() { if (!lEd) return; listenPush(); lEd.ranges = [[0, lEd.dur]]; lEd.gain = 0; lEd.tempo = 1; lEd.sel = null; listenEdRender(); }
+function listenEdReset() { if (!lEd) return; listenPush(); lEd.ranges = [[0, lEd.dur]]; lEd.gain = 0; lEd.tempo = 1; lEd.sel = null; lEd.auto = null; listenEdRender(); }
 function listenKnob(k, d) {
     if (!lEd) return;
     listenPush();
@@ -285,14 +312,18 @@ function listenKnob(k, d) {
     else lEd.tempo = Math.round(Math.max(0.8, Math.min(1.25, lEd.tempo + d)) * 100) / 100;
     listenEdRender();
 }
-async function listenSave() {
-    if (!lEd || !listenDirty()) return true;
-    let r = await pywebview.api.listen_edit_save(lEd.path, lEd.ranges, lEd.gain, lEd.tempo);
+// next — после сохранения переменной перейти к следующей строке (и сразу её послушать)
+async function listenSave(next) {
+    if (!lEd) { if (next && lTarget === 'var' && LS && LS.pos < LS.rows.length - 1) listenStep(1); return true; }
+    let go = next && lEd.target === 'var' && LS.pos < LS.rows.length - 1;
+    if (!listenDirty()) { if (go) listenStep(1); return true; }
+    let r = await pywebview.api.listen_edit_save(lEd.path, lEd.ranges, lEd.gain, lEd.tempo, lEd.target === 'var');
     if (!r || r.error) { showToast(r && r.error || 'Не сохранилось'); return false; }
-    lEd.saved = listenSnap(); lEd.has_backup = true;
-    if (r.state) LS = r.state;
+    lEd.saved = listenSnap(); lEd.has_backup = true; lEd.auto = null; lEd.hist = [];
+    if (r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
+    showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше' : ''}`);
+    if (go) { listenStep(1); return true; }
     listenRender(); listenEdRender();
-    showToast(`Сохранено: ${lEd.name} · исходник — в «_до_правок»`);
     return true;
 }
 async function listenRestore() {
@@ -489,6 +520,8 @@ function listenKey(e) {
     if (e.code === 'ArrowDown' || e.code === 'KeyS') { e.preventDefault(); listenStep(1); return; }
     if (e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); listenStep(-1); return; }
     if (e.code === 'KeyX' || e.code === 'Delete') { e.preventDefault(); listenEdCut(); return; }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); listenSave(true); return; }
+    if (e.code === 'KeyA') { e.preventDefault(); listenAuto(); return; }
     if (e.code === 'Escape' && lEd && lEd.sel) { e.preventDefault(); lEd.sel = null; listenEdRender(); return; }
     if (e.code === 'Digit1') listenTarget('start');
     else if (e.code === 'Digit2') listenTarget('var');

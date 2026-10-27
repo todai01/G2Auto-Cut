@@ -4764,7 +4764,7 @@ let isProcessing = false;
                 && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
                 && document.getElementById('customAlertOverlay').style.display !== 'flex') {
                 e.preventDefault();
-                if (e.code === 'KeyS') listenSave(); else listenEdUndo();
+                if (e.code === 'KeyS') listenSave(true); else listenEdUndo();
                 return;
             }
             // «Сборка» открыта: Ctrl+Z — отменить шаг, Ctrl+Y / Ctrl+Shift+Z — вернуть.

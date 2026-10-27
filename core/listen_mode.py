@@ -17,11 +17,13 @@ from collections import OrderedDict
 import webview
 from pydub import AudioSegment
 
+from core.voice_trim import voice_span
 from core.tts_synth import _SynthWorker, clean_wav, synth_collect, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX
 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
 LISTEN_SYNTH_DIR = '_синтез'
+LISTEN_TPL_FILE = '.gvox_listen_tpl.json'       # шаблон срезки — в папке записей
 LISTEN_LANG_DIRS = {'ru': 'ru', 'rus': 'ru', 'рус': 'ru', 'русский': 'ru',
                     'kz': 'kz', 'kk': 'kz', 'kaz': 'kz', 'каз': 'kz', 'қаз': 'kz', 'казахский': 'kz'}
 LISTEN_HEADER_WORDS = {'имя', 'имена', 'name', 'names', 'переменная', 'переменные', 'значение', 'значения',
@@ -50,6 +52,8 @@ def listen_lang_of(path, base):
 class ListenMixin:
     LISTEN_CTX_MS = 2500          # сколько конца начала и начала продолжения звучит рядом с переменной
     LISTEN_CACHE = 24             # сколько декодированных записей / волн держать в памяти
+    LISTEN_LEAD_MS = 40           # без шаблона: тишины до голоса
+    LISTEN_TAIL_MS = 60           # и после
 
     def _ls(self):
         ls = getattr(self, '_listen', None)
@@ -87,6 +91,12 @@ class ListenMixin:
             return {"error": "cancel"}
         ls = self._ls()
         ls["folder"] = picked if isinstance(picked, str) else picked[0]
+        ls["tpl"] = None
+        try:
+            with open(os.path.join(ls["folder"], LISTEN_TPL_FILE), 'r', encoding='utf-8') as f:
+                ls["tpl"] = json.load(f)
+        except (OSError, ValueError):
+            pass
         self._listen_scan()
         if not ls["index"]:
             return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
@@ -251,10 +261,15 @@ class ListenMixin:
         ls["go"] = gen = ls.get("go", 0) + 1
         path = ls["rows"][k]["path"]
         out = {"pos": k, "row": self._listen_row(k)}
-        if play:
-            out["play"] = self.listen_play({"path": path} if path else None, _gen=gen)
+        part = None
         if path:
-            out["edit"] = self.listen_edit_load(path)
+            out["edit"] = e = self.listen_edit_load(path)
+            part = {"path": path}
+            auto = e.get("auto")                               # ещё не правили — звучит уже срезанная
+            if auto:
+                part.update(ranges=auto["ranges"], gain=auto["gain"], tempo=auto["tempo"])
+        if play:
+            out["play"] = self.listen_play(part, _gen=gen)
         self._listen_prefetch(k + 1)
         return out
 
@@ -269,6 +284,7 @@ class ListenMixin:
             "short": ls["short"], "ctx_ms": self.LISTEN_CTX_MS,
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
+            "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None,
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
         }
@@ -300,15 +316,78 @@ class ListenMixin:
         if r.get("error"):
             return r
         r = dict(r)
-        r.update(gain=0.0, tempo=1.0)
+        r.update(gain=0.0, tempo=1.0, edited=False)
         try:
             with open(self._listen_meta(path), 'r', encoding='utf-8') as f:
                 m = json.load(f)
             if all(0 <= a < b <= r["dur"] for a, b in m.get("ranges") or []) and m.get("ranges"):
-                r.update(ranges=m["ranges"], gain=float(m.get("gain", 0)), tempo=float(m.get("tempo", 1)))
+                r.update(ranges=m["ranges"], gain=float(m.get("gain", 0)), tempo=float(m.get("tempo", 1)), edited=True)
         except (OSError, ValueError, TypeError):
             pass
+        if not r["edited"]:                                  # ещё не правили — предложить срезку
+            try:
+                r["auto"] = self.listen_auto(path)
+            except Exception:
+                pass
         return r
+
+    # ---------------- автосрезка и шаблон (как в суфлёре) ----------------
+    def _listen_voice(self, path):
+        """Голос в исходнике: (v0, v1, info) — см. voice_trim.voice_span."""
+        from utils.audio_player import _read_audio
+        src = self._audit_src(path)
+        return self._listen_cache_get('voice', self._listen_stamp(src), lambda: voice_span(*_read_audio(src)))
+
+    def listen_auto(self, path):
+        """Срезка по голосу: вдох и шум по краям — прочь, тишины до / после —
+        по шаблону (нет шаблона — LISTEN_LEAD_MS / LISTEN_TAIL_MS), громкость
+        и темп — как в шаблоне."""
+        ls = self._ls()
+        tpl = ls.get("tpl")
+        v0, v1, info = self._listen_voice(path)
+        dur = len(self._listen_seg(self._audit_src(path)))
+        lead = tpl["lead"] if tpl else self.LISTEN_LEAD_MS
+        tail = tpl["tail"] if tpl else self.LISTEN_TAIL_MS
+        a, b = max(0, v0 - lead), min(dur, v1 + tail)
+        gain, tempo = 0.0, 1.0
+        if tpl:
+            tempo = float(tpl.get("tempo", 1.0))
+            if tpl.get("loud") is not None:
+                loud = self._loudness(self._listen_seg(self._audit_src(path))[a:b])
+                if loud is not None:
+                    gain = float(max(-12, min(12, round(tpl["loud"] - loud))))
+        return {"ranges": [[int(a), int(b)]], "gain": gain, "tempo": tempo, "by_tpl": tpl["from"] if tpl else None,
+                "breath": info.get("breath", 0), "noise": info.get("noise", 0),
+                "cut": int(a + max(0, dur - b))}
+
+    def listen_tpl_set(self, path, ranges, gain=0.0, tempo=1.0, name=None):
+        """«Шаблон из этой записи»: сколько тишины до / после голоса, громкость,
+        темп — по ним режутся остальные записи."""
+        ls = self._ls()
+        if not path or not os.path.exists(path) or not ranges:
+            return {"error": "Нет записи."}
+        v0, v1, _ = self._listen_voice(path)
+        seg = self._listen_render(path, ranges, gain, tempo)
+        tpl = {"from": name or os.path.splitext(os.path.basename(path))[0],
+               "lead": int(max(0, v0 - ranges[0][0])), "tail": int(max(0, ranges[-1][1] - v1)),
+               "tempo": float(tempo), "loud": self._loudness(seg)}
+        ls["tpl"] = tpl
+        if ls["folder"]:
+            try:
+                with open(os.path.join(ls["folder"], LISTEN_TPL_FILE), 'w', encoding='utf-8') as f:
+                    json.dump(tpl, f, ensure_ascii=False)
+            except OSError:
+                pass
+        return {"ok": True, "tpl": {"from": tpl["from"]}}
+
+    def listen_tpl_clear(self):
+        ls = self._ls()
+        ls["tpl"] = None
+        try:
+            os.remove(os.path.join(ls["folder"] or '', LISTEN_TPL_FILE))
+        except OSError:
+            pass
+        return self.listen_state()
 
     def _listen_render(self, path, ranges=None, gain=0.0, tempo=1.0, src=None):
         """Звук файла с правкой → AudioSegment (исходник — «до правок», если правился)."""
@@ -381,7 +460,7 @@ class ListenMixin:
         self.player.stop()
         return {"ok": True}
 
-    def listen_edit_save(self, path, ranges, gain=0.0, tempo=1.0):
+    def listen_edit_save(self, path, ranges, gain=0.0, tempo=1.0, as_var=False):
         """Записать правку (от исходника — без накопления), исходник — в «_до_правок/»."""
         if not path or not os.path.exists(path):
             return {"error": "Файл не найден."}
@@ -404,7 +483,11 @@ class ListenMixin:
             return {"error": "Файл занят (открыт в другой программе) — закройте и повторите."}
         except Exception as e:
             return {"error": f"Не удалось сохранить: {e}"}
-        return {"ok": True, "ms": len(seg), "state": self.listen_state()}
+        tpl_new = None
+        if as_var and not self._ls().get("tpl"):              # первая сохранённая запись — шаблон
+            r = self.listen_tpl_set(path, ranges, gain, tempo)
+            tpl_new = (r.get("tpl") or {}).get("from")
+        return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "state": self.listen_state()}
 
     def listen_edit_restore(self, path):
         try:
