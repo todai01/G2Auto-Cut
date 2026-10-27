@@ -158,9 +158,23 @@ def synth_plan(text, lang, bank):
     return plan
 
 
-def synth_collect(page, submit_sel, raw):
+# Следим за страницей: любой новый / обновлённый результат (плеер, ссылка) — даже
+# если сервис отдаёт его по той же ссылке, что и в прошлый раз.
+_JS_ARM = """() => {
+    window.__gvoxNew = 0;
+    if (window.__gvoxObs) window.__gvoxObs.disconnect();
+    const sel = 'audio, source, a[download], #download';
+    const hit = n => n && n.nodeType === 1 && (n.matches(sel) || !!n.querySelector(sel));
+    const o = new MutationObserver(ms => { if (ms.some(m => m.type === 'attributes' ? hit(m.target) : [...m.addedNodes].some(hit))) window.__gvoxNew = 1; });
+    o.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
+    window.__gvoxObs = o;
+}"""
+
+
+def synth_collect(page, submit_sel, raw, after_click=None):
     """Нажать «Синтезировать» и сохранить результат в raw: сервис отдаёт файл на
-    скачивание, ссылку на него или плеер <audio>."""
+    скачивание, ссылку на него или плеер <audio>. after_click — что сделать сразу
+    после нажатия, до скачивания (например, заново выбрать сброшенный голос)."""
     before = page.evaluate(_JS_RESULT)
     downloads = []
 
@@ -168,7 +182,10 @@ def synth_collect(page, submit_sel, raw):
         downloads.append(d)
     page.on("download", handler)
     try:
+        page.evaluate(_JS_ARM)
         page.click(submit_sel)
+        if after_click:
+            after_click()
         t_end = time.time() + SYNTH_TIMEOUT_S
         now = before
         while time.time() < t_end:
@@ -178,11 +195,16 @@ def synth_collect(page, submit_sel, raw):
             now = page.evaluate(_JS_RESULT)
             if (now[0] and now[0] != before[0]) or (now[1] and now[1] != before[1]):
                 break
+            if (now[0] or now[1]) and page.evaluate("() => window.__gvoxNew"):
+                page.wait_for_timeout(300)                     # дать сервису дописать ссылку
+                now = page.evaluate(_JS_RESULT)
+                break
         else:
             raise RuntimeError("Сервис не вернул результат за 3 минуты.")
+        fresh_audio = now[1] and now[1] != before[1] and not (now[0] and now[0] != before[0])
         if downloads:
             downloads[0].save_as(raw)
-        elif now[0] and now[0] != before[0]:
+        elif now[0] and not fresh_audio:
             with page.expect_download(timeout=60000) as dl:
                 page.locator('section.panel.active #download, section.panel.active a[download], #download').first.click()
             dl.value.save_as(raw)

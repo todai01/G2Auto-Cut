@@ -450,11 +450,20 @@ class ListenMixin:
             try:
                 page = worker.page_ready()
                 sel = SYNTH_PRESET_SEL
-                page.select_option(sel["voice"], index=sel["voice_index"])
-                page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
+                voice = lambda: page.select_option(sel["voice"], index=sel["voice_index"])
+                # Голос — только в первый раз на этой странице; сервис сбрасывает его после
+                # первого «Синтезировать» — выбираем заново и уже потом скачиваем. Дальше —
+                # только текст, «Синтезировать» и скачивание (язык — если переключили).
+                first = getattr(worker, 'preset_page', None) is not page
+                if first:
+                    voice()
+                if first or getattr(worker, 'preset_lang', None) != lang:
+                    page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
                 page.fill(sel["text"], text)
                 raw = os.path.splitext(dst)[0] + '.download'
-                synth_collect(page, sel["submit"], raw)
+                worker.preset_page = None                        # сорвётся — в следующий раз снова с голосом
+                synth_collect(page, sel["submit"], raw, after_click=voice if first else None)
+                worker.preset_page, worker.preset_lang = page, lang
                 try:
                     clean_wav(raw, dst)
                 finally:

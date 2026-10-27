@@ -17,5 +17,7 @@ function wav(sec, f){ const r=16000,n=Math.floor(r*sec),b=new ArrayBuffer(44+n*2
 function go(){ const vi=document.getElementById('preset-voice').selectedIndex, li=document.getElementById('preset-lang').selectedIndex,
   t=document.querySelector('section.panel.active textarea').value;
   // длительность = 1 + голос*0.1 + язык*0.05 (+0.01 на букву) — проверка, что выбрали нужное
-  setTimeout(()=>{ document.getElementById('out').innerHTML='<audio controls src="'+wav(1+vi*0.1+li*0.05+t.length*0.01, 220)+'"></audio>'; }, 600); }
+  setTimeout(()=>{ document.getElementById('out').innerHTML='<audio controls src="'+wav(1+vi*0.1+li*0.05+t.length*0.01, 220)+'"></audio>'; }, 600);
+  // как настоящий сервис: после первого «Синтезировать» выбор голоса сбрасывается
+  if (!window.__once) { window.__once = 1; document.getElementById('preset-voice').selectedIndex = 0; } }
 </script></body></html>
