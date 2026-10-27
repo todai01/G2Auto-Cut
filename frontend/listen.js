@@ -89,14 +89,20 @@ function listenRenderList() {
     if (!LS) return;
     let q = (lEl('listenFilter').value || '').trim().toLowerCase();
     lEl('listenList').innerHTML = LS.rows.map((r, k) => ({ r, k })).filter(({ r }) => !q || r.name.toLowerCase().includes(q)).map(({ r, k }) =>
-        `<button type="button" class="listen-row ${k === LS.pos ? 'is-on' : ''} ${r.path ? '' : 'is-miss'}" data-k="${k}" onclick="listenGo(${k})">
+        `<button type="button" class="listen-row ${k === LS.pos ? 'is-on' : ''} ${listenRowCls(r)}" data-k="${k}" onclick="listenGo(${k})">
             <span class="listen-row__dot"></span><span class="listen-row__name">${escapeHtml(r.name)}</span>
             <span class="listen-row__tag">${r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет'}</span></button>`).join('');
-    lEl('listenStat').innerText = LS.rows.length ? `есть запись: ${LS.found} из ${LS.rows.length}` : '';
+    listenStatRender();
     let on = lEl('listenList').querySelector('.is-on');
     if (on) on.scrollIntoView({ block: 'nearest' });
 }
 
+// Кружок: красный — записи нет, жёлтый — есть, ещё не сохранена, зелёный — сохранена
+const listenRowCls = r => !r.path ? 'is-miss' : r.done ? '' : 'is-todo';
+function listenStatRender() {
+    let n = LS.rows.length, done = LS.rows.filter(r => r.path && r.done).length;
+    lEl('listenStat').innerText = n ? `сохранено ${done} из ${LS.found}${n > LS.found ? ` · без записи ${n - LS.found}` : ''}` : '';
+}
 // Шаг по списку — без перерисовки всех строк: только отметка текущей
 function listenMarkList() {
     let list = lEl('listenList'), old = list.querySelector('.listen-row.is-on'), cur = list.querySelector(`.listen-row[data-k="${LS.pos}"]`);
@@ -105,6 +111,7 @@ function listenMarkList() {
         cur.classList.add('is-on');
         let r = LS.rows[LS.pos], tag = cur.querySelector('.listen-row__tag');
         cur.classList.toggle('is-miss', !r.path);
+        cur.classList.toggle('is-todo', !!r.path && !r.done);
         if (tag) tag.innerText = r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет';
         cur.scrollIntoView({ block: 'nearest' });
     }
@@ -220,7 +227,8 @@ function listenEdRender() {
         <button class="btn-ghost btn-ghost--compact" onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : ''}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button>
         <span class="listen-tpl">${LS.tpl ? `шаблон: «${escapeHtml(LS.tpl.from)}»` : 'шаблона нет — первая сохранённая станет им'}</span>` : ''}
         <span class="tts-ed__spacer"></span>
-        ${lEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}
+        ${lEd.target === 'var' && lRow() && lRow().done ? '<button class="btn-ghost btn-ghost--compact" onclick="listenUnsave(LS.pos)" title="Запись — как до сохранения: подправить и сохранить заново (Ctrl+Z сразу после сохранения)">Отменить сохранение</button>'
+          : lEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}
         <button class="custom-alert-btn" onclick="listenSave(true)" ${listenDirty() ? '' : 'disabled'} title="Сохранить и перейти к следующей">Сохранить <kbd>Enter</kbd></button>`;
     listenEdDraw();
 }
@@ -300,7 +308,7 @@ function listenEdKeep() {
     lEd.sel = null; lEd.cur = lEd.ranges[0][0]; listenEdRender();
 }
 function listenEdUndo() {
-    if (!lEd || !lEd.hist.length) return;
+    if (!lEd || !lEd.hist.length) { listenUndoSave(); return; }
     let s = JSON.parse(lEd.hist.pop());
     lEd.ranges = s.r; lEd.gain = s.g; lEd.tempo = s.t; lEd.sel = null; listenEdRender();
 }
@@ -313,18 +321,49 @@ function listenKnob(k, d) {
     listenEdRender();
 }
 // next — после сохранения переменной перейти к следующей строке (и сразу её послушать)
+let lLastSaved = null;              // последняя сохранённая строка — Ctrl+Z отменит
 async function listenSave(next) {
     if (!lEd) { if (next && lTarget === 'var' && LS && LS.pos < LS.rows.length - 1) listenStep(1); return true; }
     let go = next && lEd.target === 'var' && LS.pos < LS.rows.length - 1;
-    if (!listenDirty()) { if (go) listenStep(1); return true; }
+    if (!listenDirty()) {
+        if (lEd.target === 'var' && lRow() && !lRow().done) {          // хороша как есть — отметить сохранённой
+            let r = await pywebview.api.listen_mark_done(lEd.path);
+            if (r && r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
+            lLastSaved = { pos: LS.pos, path: lEd.path };
+            listenMarkList(); listenStatRender();
+            if (!go) { listenRender(true); listenEdRender(); }
+        }
+        if (go) listenStep(1);
+        return true;
+    }
     let r = await pywebview.api.listen_edit_save(lEd.path, lEd.ranges, lEd.gain, lEd.tempo, lEd.target === 'var');
     if (!r || r.error) { showToast(r && r.error || 'Не сохранилось'); return false; }
     lEd.saved = listenSnap(); lEd.has_backup = true; lEd.auto = null; lEd.hist = [];
     if (r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
-    showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше' : ''}`);
+    if (lEd.target === 'var') { lLastSaved = { pos: LS.pos, path: lEd.path }; listenMarkList(); listenStatRender(); }
+    showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше · Ctrl+Z — отменить' : ''}`);
     if (go) { listenStep(1); return true; }
     listenRender(); listenEdRender();
     return true;
+}
+// «Отменить сохранение»: запись — как до сохранения (кружок снова жёлтый), срезка по голосу заново
+async function listenUnsave(pos) {
+    let row = LS.rows[pos];
+    if (!row || !row.path) return;
+    let r = await pywebview.api.listen_edit_restore(row.path);
+    if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+    let keep = LS.pos; LS = r.state; LS.pos = keep;
+    if (lLastSaved && lLastSaved.pos === pos) lLastSaved = null;
+    listenRender();
+    if (pos === LS.pos && lTarget === 'var') await listenLoadEditor();
+    showToast(`«${row.name}»: сохранение отменено — подправьте и сохраните заново (Enter)`);
+}
+// Ctrl+Z без правок на экране — отменить последнее сохранение (вернуться к той строке)
+async function listenUndoSave() {
+    if (!lLastSaved || !LS.rows[lLastSaved.pos] || LS.rows[lLastSaved.pos].path !== lLastSaved.path) return;
+    let pos = lLastSaved.pos;
+    if (pos !== LS.pos) { await listenGo(pos); if (LS.pos !== pos) return; }
+    await listenUnsave(pos);
 }
 async function listenRestore() {
     if (!(await showBeautifulConfirm(`Вернуть исходную запись «${escapeHtml(lEd.name)}»? Все правки пропадут.`, 'Вернуть', 'Отмена'))) return;

@@ -249,6 +249,7 @@ class ListenMixin:
         r = ls["rows"][k]
         return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
                 "dups": r["dups"], "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
+                "done": bool(r["path"]) and os.path.exists(self._listen_meta(r["path"])),     # прошла через «Сохранить»
                 "synth": ls["synth"].get(k, {}).get("status")}
 
     def listen_go(self, pos, play=True):
@@ -489,14 +490,28 @@ class ListenMixin:
             tpl_new = (r.get("tpl") or {}).get("from")
         return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "state": self.listen_state()}
 
+    def listen_mark_done(self, path):
+        """Запись хороша как есть — отметить проверенной, файл не трогаем."""
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        meta = self._listen_meta(path)
+        if not os.path.exists(meta):
+            os.makedirs(os.path.dirname(meta), exist_ok=True)
+            dur = len(self._listen_seg(self._audit_src(path)))
+            with open(meta, 'w', encoding='utf-8') as f:
+                json.dump({"ranges": [[0, dur]], "gain": 0.0, "tempo": 1.0}, f)
+        return {"ok": True, "state": self.listen_state()}
+
     def listen_edit_restore(self, path):
+        """Отменить сохранение: исходник обратно (если правилась), отметка «проверена» — прочь."""
         try:
             os.remove(self._listen_meta(path))
         except OSError:
             pass
-        r = self.audit_edit_restore(path)
-        if r.get("error"):
-            return r
+        if os.path.exists(self._audit_backup(path)):
+            r = self.audit_edit_restore(path)
+            if r.get("error"):
+                return r
         return {**self.listen_edit_load(path), "state": self.listen_state()}
 
     # ---------------- синтез (готовый голос сервиса) ----------------

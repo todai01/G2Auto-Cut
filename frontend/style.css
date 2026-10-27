@@ -3779,6 +3779,7 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-row.is-on{ background: var(--tint-var); border-color: rgba(238,172,62,.45); }
 .listen-row__dot{ width: 7px; height: 7px; border-radius: 50%; background: var(--accent-good); flex: none; }
 .listen-row.is-miss .listen-row__dot{ background: var(--accent-trash); }
+.listen-row.is-todo .listen-row__dot{ background: var(--accent-var); }      /* есть запись, ещё не сохранена */
 .listen-row__name{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .listen-row__tag{ font-size: 10.5px; color: var(--text-faint); }
 .listen-side__stat{ font-size: var(--fs-xs); color: var(--text-faint); font-family: var(--font-mono); }
