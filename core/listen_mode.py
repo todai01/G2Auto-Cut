@@ -21,6 +21,8 @@ from core.tts_synth import _SynthWorker, clean_wav, synth_collect, SYNTH_PRESET_
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
 LISTEN_SYNTH_DIR = '_синтез'
+LISTEN_LANG_DIRS = {'ru': 'ru', 'rus': 'ru', 'рус': 'ru', 'русский': 'ru',
+                    'kz': 'kz', 'kk': 'kz', 'kaz': 'kz', 'каз': 'kz', 'қаз': 'kz', 'казахский': 'kz'}
 LISTEN_HEADER_WORDS = {'имя', 'имена', 'name', 'names', 'переменная', 'переменные', 'значение', 'значения',
                        'фио', 'название', 'названия'}
 
@@ -32,6 +34,18 @@ def listen_norm(name):
     return re.sub(r'[\W_]+', '', s.lower().replace('ё', 'е'))
 
 
+def listen_lang_of(path, base):
+    """Язык по подпапке внутри base: …/ru/… → ru, …/kz/… → kz; иначе None."""
+    try:
+        parts = os.path.relpath(path, base).split(os.sep)[:-1]
+    except ValueError:
+        return None
+    for d in parts:
+        if d.lower() in LISTEN_LANG_DIRS:
+            return LISTEN_LANG_DIRS[d.lower()]
+    return None
+
+
 class ListenMixin:
     LISTEN_CTX_MS = 2500          # сколько конца начала и начала продолжения звучит рядом с переменной
 
@@ -39,25 +53,30 @@ class ListenMixin:
         ls = getattr(self, '_listen', None)
         if ls is None:
             ls = self._listen = {"folder": None, "index": {}, "start": None, "end": None, "table": None,
-                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "synth": {}}
+                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "synth": {},
+                                 "phr_folder": None, "phrases": [], "pick": {"ru": {}, "kz": {}}, "lang_dirs": {}}
         return ls
 
     # ---------------- папка, фразы, таблица ----------------
     def _listen_scan(self):
         ls = self._ls()
-        index = {}
+        index, lang_dirs = {}, {}
         for root, dirs, files in os.walk(ls["folder"] or ''):
             dirs[:] = [d for d in dirs if d not in LISTEN_SKIP_DIRS]
+            if os.path.basename(root).lower() in LISTEN_LANG_DIRS:
+                lang_dirs.setdefault(LISTEN_LANG_DIRS[os.path.basename(root).lower()], root)
             for f in sorted(files):
                 if f.lower().endswith(LISTEN_EXTS):
                     index.setdefault(listen_norm(f), []).append(os.path.join(root, f))
-        ls["index"] = index
+        ls["index"], ls["lang_dirs"] = index, lang_dirs
         self._listen_match()
 
     def _listen_match(self):
         ls = self._ls()
         for r in ls["rows"]:
             hits = ls["index"].get(listen_norm(r["name"]), [])
+            if ls["lang_dirs"]:                                # папка разделена на ru / kz — только свой язык
+                hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (ls["lang"], None)]
             r["path"], r["dups"] = (hits[0] if hits else None), max(0, len(hits) - 1)
 
     def listen_pick_folder(self):
@@ -71,17 +90,58 @@ class ListenMixin:
             return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
         return self.listen_state()
 
-    def listen_pick_phrase(self, which):
-        picked = webview.windows[0].create_file_dialog(
-            webview.FileDialog.OPEN, file_types=('Аудио (*.wav;*.mp3;*.ogg;*.flac)', 'Все файлы (*.*)'))
+    # Начало и конец — из папки кусочков («Фразы_Переменные», внутри ru / kz):
+    # пара своя для каждого языка, тумблер RU / KZ переключает и её.
+    def listen_pick_phrases(self):
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not picked:
             return {"error": "cancel"}
-        self._ls()["start" if which == 'start' else "end"] = picked if isinstance(picked, str) else picked[0]
+        ls = self._ls()
+        base = picked if isinstance(picked, str) else picked[0]
+        items = []
+        for root, dirs, files in os.walk(base):
+            dirs[:] = sorted(d for d in dirs if d not in LISTEN_SKIP_DIRS)
+            for f in sorted(files):
+                if f.lower().endswith(LISTEN_EXTS):
+                    p = os.path.join(root, f)
+                    items.append({"path": p, "name": os.path.splitext(f)[0],
+                                  "rel": os.path.relpath(p, base).replace(os.sep, '/'), "lang": listen_lang_of(p, base)})
+        if not items:
+            return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
+        ls["phr_folder"], ls["phrases"] = base, items
+        keep = {p["path"] for p in items}
+        for lang in ls["pick"]:
+            ls["pick"][lang] = {w: v for w, v in ls["pick"][lang].items() if v in keep}
+        self._listen_apply_pick()
         return self.listen_state()
 
-    def listen_clear_end(self):
-        self._ls()["end"] = None
+    def listen_set_phrase(self, which, path, lang=None):
+        """Отметить кусочек как начало / конец (path=None — снять) для языка lang."""
+        ls = self._ls()
+        lang = lang if lang in ('ru', 'kz') else ls["lang"]
+        if which not in ('start', 'end'):
+            return {"error": "Не то поле."}
+        if path:
+            for w in ('start', 'end'):                         # один кусок — не и начало, и конец
+                if ls["pick"][lang].get(w) == path:
+                    ls["pick"][lang].pop(w)
+            ls["pick"][lang][which] = path
+        else:
+            ls["pick"][lang].pop(which, None)
+        self._listen_apply_pick()
         return self.listen_state()
+
+    def listen_phrase_play(self, path):
+        if not path or not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        self.player.stop()
+        self.player.play(path)
+        return {"playing": True, "duration": len(AudioSegment.from_file(path)) / 1000.0}
+
+    def _listen_apply_pick(self):
+        ls = self._ls()
+        cur = ls["pick"].get(ls["lang"], {})
+        ls["start"], ls["end"] = cur.get("start"), cur.get("end")
 
     def listen_pick_table(self):
         picked = webview.windows[0].create_file_dialog(
@@ -134,6 +194,8 @@ class ListenMixin:
             "start": nm(ls["start"]), "end": nm(ls["end"]), "start_path": ls["start"], "end_path": ls["end"],
             "table": nm(ls["table"]), "pos": min(ls["pos"], max(0, len(rows) - 1)), "lang": ls["lang"],
             "short": ls["short"], "ctx_ms": self.LISTEN_CTX_MS,
+            "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
+            "split": bool(ls["lang_dirs"]),
             "rows": [{"name": r["name"], "file": nm(r["path"]), "path": r["path"], "dups": r["dups"],
                       "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
                       "synth": ls["synth"].get(k, {}).get("status")} for k, r in enumerate(rows)],
@@ -144,8 +206,10 @@ class ListenMixin:
         ls = self._ls()
         if pos is not None and ls["rows"]:
             ls["pos"] = max(0, min(int(pos), len(ls["rows"]) - 1))
-        if lang in ('ru', 'kz'):
+        if lang in ('ru', 'kz') and lang != ls["lang"]:
             ls["lang"] = lang
+            self._listen_apply_pick()
+            self._listen_match()
         if short is not None:
             ls["short"] = bool(short)
         return self.listen_state()
@@ -359,7 +423,8 @@ class ListenMixin:
         path = row["path"]
         if not path:
             safe = re.sub(r'[\\/:*?"<>|]+', '_', row["name"]).strip() or f'строка_{k + 1}'
-            path = os.path.join(ls["folder"] or os.path.dirname(s["file"]), f"{safe}.wav")
+            path = os.path.join(ls["lang_dirs"].get(s.get("lang") or ls["lang"]) or ls["folder"] or os.path.dirname(s["file"]),
+                                f"{safe}.wav")
         elif not os.path.exists(self._audit_backup(path)):
             os.makedirs(os.path.dirname(self._audit_backup(path)), exist_ok=True)
             shutil.copy2(path, self._audit_backup(path))

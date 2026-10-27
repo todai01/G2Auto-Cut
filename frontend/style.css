@@ -3818,3 +3818,15 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-lang{ display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .listen-lang button{ padding: 7px 12px; border: none; background: transparent; color: var(--text-dim); font: inherit; font-weight: 650; cursor: pointer; }
 .listen-lang button.is-on{ background: var(--accent-var); color: #111; }
+
+/* Прослушка: выбор начала и конца из папки кусочков */
+.listen-phr__folder{ margin-left: auto; margin-right: 6px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listen-phr__bar{ display: flex; gap: 8px; align-items: center; }
+.listen-phr__bar .tts-list-search{ flex: 1; width: auto; }
+.listen-phr__sel{ display: flex; gap: 18px; font-size: var(--fs-sm); color: var(--text-dim); }
+.listen-phr__sel b{ color: var(--text); font-family: var(--font-mono); font-weight: 600; }
+.listen-phr__row{ display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px; padding: 6px 10px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-soft); background: var(--panel); }
+.listen-phr__row.is-start, .listen-phr__row.is-end{ border-color: var(--accent-var); background: var(--tint-var); }
+.listen-phr__name{ font-family: var(--font-mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listen-phr__row .btn-ghost.is-on{ border-color: var(--accent-var); color: var(--accent-var); }

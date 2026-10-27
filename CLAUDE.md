@@ -26,8 +26,9 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   Python → JS: `webview.windows[0].evaluate_js(...)`, в Студии — `_tts_push(payload)` → `ttsProgress(p)`.
 - Студия записи: `core/tts_flow.py` (состояние, дубли, ярусы, сборка, кэши),
   `core/tts_live.py` (запись, суфлёр, распознавание), `core/tts_synth.py` (синтез).
-- Прослушка переменных: `core/listen_mode.py` + `frontend/listen.js` (папка записей → начало/конец →
-  таблица; запись ищется по имени; правка, синтез голосом пресета через `_SynthWorker`).
+- Прослушка переменных: `core/listen_mode.py` + `frontend/listen.js` (папка записей → папка кусочков
+  «Фразы_Переменные» с ru / kz, где отмечают начало и конец — пара своя на язык → таблица; запись ищется
+  по имени, при папке с ru / kz — в своём языке; правка, синтез голосом пресета через `_SynthWorker`).
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,

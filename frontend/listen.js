@@ -20,13 +20,12 @@ async function listenStart() {
     if (!r || r.error === 'cancel') return;
     if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
     LS = r;
-    ok = await showBeautifulAlert(`<b>Шаг 2 из 3</b><br><br>Найдено записей: <b>${r.files}</b>.<br><br>Теперь <b>начальная фраза</b> (то, что звучит перед переменной).`);
+    ok = await showBeautifulAlert(`<b>Шаг 2 из 3</b><br><br>Найдено записей: <b>${r.files}</b>.<br><br>Теперь папка с кусочками фраз — <b>«Фразы_Переменные»</b> `
+        + '(внутри — <b>ru</b> и <b>kz</b>). В ней отметите, какой кусок — начало, а какой — конец.');
     if (!ok) return;
-    r = await pywebview.api.listen_pick_phrase('start');
-    if (r && !r.error) LS = r;
-    let how = await showBeautifulChoice('<b>Конечная фраза</b><br><br>То, что звучит после переменной. Если её нет — пропустите.', 'Выбрать файл', 'Без конца', 'N', 'Отмена');
-    if (how === 'ok') { r = await pywebview.api.listen_pick_phrase('end'); if (r && !r.error) LS = r; }
-    else if (!how) return;
+    r = await pywebview.api.listen_pick_phrases();
+    if (r && r.error && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error));
+    if (r && !r.error) { LS = r; await listenPhrOpen(); }
     ok = await showBeautifulAlert('<b>Шаг 3 из 3</b><br><br><b>Таблица с названиями переменных</b> (.xlsx). Колонку найду сам — ту, где больше совпадений с папкой; '
         + 'по каждому названию ищу запись в папке, порядок в таблице не важен.');
     if (!ok) return;
@@ -54,9 +53,7 @@ function listenExit() {
 }
 
 async function listenPick(what) {
-    let r = what === 'folder' ? await pywebview.api.listen_pick_folder()
-        : what === 'table' ? await pywebview.api.listen_pick_table()
-        : await pywebview.api.listen_pick_phrase(what);
+    let r = what === 'folder' ? await pywebview.api.listen_pick_folder() : await pywebview.api.listen_pick_table();
     if (!r || r.error === 'cancel') return;
     if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); if (!r.state) return; r = r.state; }
     LS = r;
@@ -67,7 +64,8 @@ async function listenPick(what) {
 // ----- отрисовка -----
 function listenRender() {
     if (!LS) return;
-    lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`,
+    lEl('listenLangTop').innerHTML = listenLangBtns();
+    lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, LS.lang.toUpperCase(),
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
     listenRenderList();
@@ -340,7 +338,7 @@ function listenRenderSynth() {
     let st = r.synth;
     box.innerHTML = `<div class="listen-synth__head">Синтез <span class="tts-dim">— если запись неудачная или её нет</span></div>
         <div class="listen-synth__row">
-            <span class="listen-lang">${['ru', 'kz'].map(l => `<button type="button" class="${LS.lang === l ? 'is-on' : ''}" onclick="listenLang('${l}')">${l.toUpperCase()}</button>`).join('')}</span>
+            <span class="listen-lang">${listenLangBtns()}</span>
             <input class="listen-synth__text" id="listenSynthText" value="${escapeHtml(r.name)}" title="Текст для синтеза — можно поправить (ударение, написание)">
             <button class="custom-alert-btn" onclick="listenSynth()" ${st === 'busy' ? 'disabled' : ''}>${st === 'busy' ? 'Синтезирую…' : 'Синтезировать'}</button>
         </div>
@@ -350,7 +348,83 @@ function listenRenderSynth() {
             <button class="btn-ghost" onclick="listenSynthDrop()">Отклонить</button></div>` : ''}
         ${st === 'error' ? '<div class="listen-warn">Синтез не получился — попробуйте ещё раз</div>' : ''}`;
 }
-async function listenLang(l) { LS = await pywebview.api.listen_set(null, l); listenRenderSynth(); }
+const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
+    `<button type="button" class="${cur === l ? 'is-on' : ''}" onclick="${fn}('${l}')">${l.toUpperCase()}</button>`).join('');
+// Язык — для всего: пара начало / конец, записи из ru / kz (если папка разделена) и синтез
+async function listenLang(l) {
+    if (!LS || l === LS.lang) return;
+    if (!(await listenLeave())) return;
+    listenStopHead(); pywebview.api.listen_stop();
+    LS = await pywebview.api.listen_set(null, l);
+    listenRender();
+    await listenLoadEditor();
+}
+
+// ----- начало и конец: кусочки из «Фразы_Переменные» (ru / kz) -----
+let lPhr = null;                   // {lang, done} — окно выбора открыто
+async function listenPhrases() {
+    if (!LS) return;
+    if (!LS.phrases.length) {
+        let r = await pywebview.api.listen_pick_phrases();
+        if (!r || r.error === 'cancel') return;
+        if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+        LS = r;
+    }
+    if (!(await listenLeave())) return;
+    await listenPhrOpen();
+    if (isShown('stage5-listen')) { listenRender(); listenLoadEditor(); }
+}
+function listenPhrOpen() {
+    return new Promise(done => {
+        lPhr = { lang: LS.lang, done };
+        lEl('listenPhrFilter').value = '';
+        lEl('listenPhrOverlay').style.display = 'flex';
+        listenPhrRender();
+    });
+}
+function listenPhrClose() {
+    if (!lPhr) return;
+    pywebview.api.listen_stop();
+    lEl('listenPhrOverlay').style.display = 'none';
+    let d = lPhr.done; lPhr = null; d();
+}
+async function listenPhrFolder() {
+    let r = await pywebview.api.listen_pick_phrases();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showToast(r.error); return; }
+    LS = r; listenPhrRender();
+}
+function listenPhrLang(l) { lPhr.lang = l; listenPhrRender(); }
+async function listenPhrSet(which, k) {
+    let p = LS.phrases[k], cur = (LS.pick[lPhr.lang] || {})[which];
+    LS = await pywebview.api.listen_set_phrase(which, cur === p.path ? null : p.path, lPhr.lang);
+    listenPhrRender();
+}
+function listenPhrPlay(k) { pywebview.api.listen_phrase_play(LS.phrases[k].path); }
+function listenPhrRender() {
+    if (!lPhr) return;
+    let pick = LS.pick[lPhr.lang] || {}, q = lEl('listenPhrFilter').value.trim().toLowerCase();
+    let split = LS.phrases.some(p => p.lang);
+    lEl('listenPhrFolder').innerText = `папка «${LS.phr_folder_name}» · сменить`;
+    lEl('listenPhrLang').innerHTML = listenLangBtns(lPhr.lang, 'listenPhrLang');
+    let nm = p => p ? escapeHtml((LS.phrases.find(x => x.path === p) || {}).rel || p) : '—';
+    lEl('listenPhrSel').innerHTML = `<span>${lPhr.lang.toUpperCase()} · начало: <b>${nm(pick.start)}</b></span><span>конец: <b>${nm(pick.end)}</b></span>`;
+    let rows = LS.phrases.map((p, k) => ({ p, k })).filter(({ p }) => (!split || !p.lang || p.lang === lPhr.lang)
+        && (!q || p.rel.toLowerCase().includes(q)));
+    lEl('listenPhrList').innerHTML = rows.map(({ p, k }) => {
+        let st = pick.start === p.path, en = pick.end === p.path;
+        return `<div class="listen-phr__row ${st ? 'is-start' : ''} ${en ? 'is-end' : ''}">
+            <button class="btn-ghost btn-ghost--compact" onclick="listenPhrPlay(${k})" title="Послушать целиком">&#9654;</button>
+            <span class="listen-phr__name" title="${escapeHtml(p.rel)}">${escapeHtml(split ? p.rel.replace(/^[^/]*\//, '') : p.rel)}</span>
+            <button class="btn-ghost btn-ghost--compact ${st ? 'is-on' : ''}" onclick="listenPhrSet('start', ${k})">Начало</button>
+            <button class="btn-ghost btn-ghost--compact ${en ? 'is-on' : ''}" onclick="listenPhrSet('end', ${k})">Конец</button></div>`;
+    }).join('') || `<div class="tts-list__empty tts-dim">${split ? `В папке ${lPhr.lang} нет кусочков` : 'Ничего не нашлось'}</div>`;
+}
+document.addEventListener('keydown', e => {
+    if (!lPhr) return;
+    if (e.code === 'Escape' || (e.code === 'Enter' && e.target.tagName !== 'BUTTON')) { e.preventDefault(); listenPhrClose(); }
+    if (e.target.tagName !== 'INPUT') e.stopImmediatePropagation();
+}, true);
 async function listenSynth() {
     let r = await pywebview.api.listen_synth(LS.pos, lEl('listenSynthText').value, LS.lang);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
