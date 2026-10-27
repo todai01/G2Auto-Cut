@@ -39,6 +39,7 @@ async function listenStart() {
 
 function listenOpen() {
     showStage('stage5-listen');
+    lEl('listenGap').value = String(lAutoGap);
     let ctx = null; try { ctx = localStorage.getItem('gvox_listen_ctx'); } catch (e) {}
     if (ctx && +ctx !== LS.ctx_ms) listenSetCtx(ctx);
     lTarget = 'var';
@@ -483,12 +484,18 @@ function listenAutoRun() {
     if (r && r.path && !r.done) { listenStopHead(); pywebview.api.listen_stop(); listenPlayChain(); }
     else listenNext();
 }
+let lAutoGap = 600, lAutoGapT = null;
+try { let g = localStorage.getItem('gvox_listen_gap'); if (g !== null) lAutoGap = +g; } catch (e) {}
+function listenSetGap(ms) { lAutoGap = +ms; try { localStorage.setItem('gvox_listen_gap', ms); } catch (e) {} }
 function listenAutoPause() { if (lAuto) listenAutoSet(false, 'Автопрогон — пауза на этом имени. G — дальше'); }
 function listenAutoDone() {
     if (!lAuto || !isShown('stage5-listen')) return;
     let r = lRow();
     if (!r || !r.path || r.done || !lEd || lEd.target !== 'var' || lEd.hist.length) return;
-    if (!lPlay) listenSaveBg();
+    if (lPlay) return;
+    if (!lAutoGap) { listenSaveBg(); return; }
+    clearTimeout(lAutoGapT);                                // пауза: имя ещё текущее — F пометит его
+    lAutoGapT = setTimeout(() => { if (lAuto && lRow() === r && !lPlay && !lEd.hist.length) listenSaveBg(); }, lAutoGap);
 }
 // Сохранить в фоне и сразу дальше (автопрогон): кружок зелёный сразу, ошибка — вернём жёлтый
 function listenSaveBg() {
