@@ -546,7 +546,7 @@ function listenEvent(p) {
     if (p.state) { let pos = LS ? LS.pos : 0; LS = p.state; LS.pos = pos; }
     if (p.stage === 'synth') {
         let name = LS && LS.rows[p.k] ? LS.rows[p.k].name : '';
-        showToast(p.ok ? `Синтез готов: ${name} — «▶ Синтез в фразе»` : `Синтез «${name}»: ${p.error}`, 4500);
+        showToast(p.ok ? `Синтез готов: ${name}${p.voice ? ` · голос «${p.voice}»` : ''} — «▶ Синтез в фразе»` : `Синтез «${name}»: ${p.error}`, 4500);
         if (isShown('stage5-listen')) { listenRenderList(); if (LS && p.k === LS.pos) listenRenderSynth(); }
     }
 }

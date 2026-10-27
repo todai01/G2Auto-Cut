@@ -171,6 +171,21 @@ _JS_ARM = """() => {
 }"""
 
 
+def preset_pick(page, select_sel, index, tries=4):
+    """Выбрать в списке вариант № index+1 (option:nth-child) и убедиться, что выбор
+    остался: страница может догрузить / перерисовать список и сбросить его."""
+    opt = f'{select_sel} > option:nth-child({index + 1})'
+    page.wait_for_selector(opt, state='attached', timeout=20000)      # список голосов уже загружен
+    for _ in range(tries):
+        val = page.eval_on_selector(opt, 'o => o.value')
+        page.select_option(select_sel, value=val) if val else page.select_option(select_sel, index=index)
+        page.wait_for_timeout(250)
+        ok = page.eval_on_selector(select_sel, '(e, i) => e.selectedIndex === i', index)
+        if ok:
+            return page.eval_on_selector(opt, 'o => o.textContent.trim()')
+    raise RuntimeError("Сервис синтеза сбрасывает выбор голоса — не удалось выставить нужный.")
+
+
 def synth_collect(page, submit_sel, raw, after_click=None):
     """Нажать «Синтезировать» и сохранить результат в raw: сервис отдаёт файл на
     скачивание, ссылку на него или плеер <audio>. after_click — что сделать сразу

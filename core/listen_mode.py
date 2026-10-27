@@ -18,7 +18,7 @@ import webview
 from pydub import AudioSegment
 
 from core.voice_trim import voice_span
-from core.tts_synth import _SynthWorker, clean_wav, synth_collect, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX
+from core.tts_synth import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX
 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
@@ -548,20 +548,15 @@ class ListenMixin:
             try:
                 page = worker.page_ready()
                 sel = SYNTH_PRESET_SEL
-                voice = lambda: page.select_option(sel["voice"], index=sel["voice_index"])
-                # Голос — только в первый раз на этой странице; сервис сбрасывает его после
-                # первого «Синтезировать» — выбираем заново и уже потом скачиваем. Дальше —
-                # только текст, «Синтезировать» и скачивание (язык — если переключили).
-                first = getattr(worker, 'preset_page', None) is not page
-                if first:
-                    voice()
-                if first or getattr(worker, 'preset_lang', None) != lang:
-                    page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
+                voice = lambda: preset_pick(page, sel["voice"], sel["voice_index"])
+                # Сервис сбрасывает голос (после «Синтезировать», при догрузке списка) —
+                # голос и язык выставляем перед каждым синтезом с проверкой, голос — ещё раз
+                # сразу после нажатия, и только потом скачиваем.
                 page.fill(sel["text"], text)
+                preset_pick(page, sel["lang"], SYNTH_LANG_INDEX.get(lang, 0))
+                vname = voice()
                 raw = os.path.splitext(dst)[0] + '.download'
-                worker.preset_page = None                        # сорвётся — в следующий раз снова с голосом
-                synth_collect(page, sel["submit"], raw, after_click=voice if first else None)
-                worker.preset_page, worker.preset_lang = page, lang
+                synth_collect(page, sel["submit"], raw, after_click=voice)
                 try:
                     clean_wav(raw, dst)
                 finally:
@@ -571,7 +566,7 @@ class ListenMixin:
                         pass
                 self._listen_level(dst, row["path"] or ls["start"])
                 ls["synth"][k]["status"] = "ready"
-                self._listen_push({"stage": "synth", "k": k, "ok": True, "state": self.listen_state()})
+                self._listen_push({"stage": "synth", "k": k, "ok": True, "voice": vname, "state": self.listen_state()})
             except Exception as e:
                 ls["synth"][k]["status"] = "error"
                 self._listen_push({"stage": "synth", "k": k, "ok": False, "error": str(e), "state": self.listen_state()})

@@ -18,6 +18,9 @@ function go(){ const vi=document.getElementById('preset-voice').selectedIndex, l
   t=document.querySelector('section.panel.active textarea').value;
   // длительность = 1 + голос*0.1 + язык*0.05 (+0.01 на букву) — проверка, что выбрали нужное
   setTimeout(()=>{ document.getElementById('out').innerHTML='<audio controls src="'+wav(1+vi*0.1+li*0.05+t.length*0.01, 220)+'"></audio>'; }, 600);
-  // как настоящий сервис: после первого «Синтезировать» выбор голоса сбрасывается
-  if (!window.__once) { window.__once = 1; document.getElementById('preset-voice').selectedIndex = 0; } }
+  // как настоящий сервис: после «Синтезировать» выбор голоса сбрасывается
+  document.getElementById('preset-voice').selectedIndex = 0; }
+// список голосов догружается позже и перерисовывается (выбор сбрасывается)
+(function () { const s = document.getElementById('preset-voice'), keep = s.innerHTML; s.innerHTML = '<option>…</option>';
+  setTimeout(() => { s.innerHTML = keep; }, 1500); })();
 </script></body></html>
