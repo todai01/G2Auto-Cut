@@ -282,7 +282,7 @@ class ListenMixin:
             "folder": ls["folder"], "folder_name": nm(ls["folder"]), "files": sum(len(v) for v in ls["index"].values()),
             "start": nm(ls["start"]), "end": nm(ls["end"]), "start_path": ls["start"], "end_path": ls["end"],
             "table": nm(ls["table"]), "pos": min(ls["pos"], max(0, len(rows) - 1)), "lang": ls["lang"],
-            "short": ls["short"], "ctx_ms": self.LISTEN_CTX_MS,
+            "short": ls["short"], "ctx_ms": ls.get("ctx_ms") or self.LISTEN_CTX_MS,
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None,
@@ -290,8 +290,10 @@ class ListenMixin:
             "found": sum(1 for r in rows if r["path"]),
         }
 
-    def listen_set(self, pos=None, lang=None, short=None):
+    def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None):
         ls = self._ls()
+        if ctx_ms:
+            ls["ctx_ms"] = max(500, min(5000, int(ctx_ms)))
         if pos is not None and ls["rows"]:
             ls["pos"] = max(0, min(int(pos), len(ls["rows"]) - 1))
         if lang in ('ru', 'kz') and lang != ls["lang"]:
@@ -429,7 +431,7 @@ class ListenMixin:
         if only:
             chain = [c for c in chain if c[0] == only]
         segs, marks = [], []
-        ctx = self.LISTEN_CTX_MS
+        ctx = ls.get("ctx_ms") or self.LISTEN_CTX_MS
         for kind, part in chain:
             seg = self._listen_part(part) if part else None
             if seg is None:
@@ -529,7 +531,9 @@ class ListenMixin:
         except Exception:
             pass
 
-    def listen_synth(self, k, text, lang=None):
+    def listen_synth(self, k, text, lang=None, take=False):
+        """Синтез строки k в фоне. take — готовый сразу поставить вместо записи
+        (на дорожку: правка и прослушка — уже по нему)."""
         ls = self._ls()
         if not (0 <= int(k) < len(ls["rows"])):
             return {"error": "Нет такой строки."}
@@ -566,9 +570,14 @@ class ListenMixin:
                         pass
                 self._listen_level(dst, row["path"] or ls["start"])
                 ls["synth"][k]["status"] = "ready"
-                self._listen_push({"stage": "synth", "k": k, "ok": True, "voice": vname, "state": self.listen_state()})
+                if take:
+                    r = self.listen_synth_take(k, stop=False)
+                    if r.get("error"):
+                        raise RuntimeError(r["error"])
+                self._listen_push({"stage": "synth", "k": k, "ok": True, "voice": vname, "taken": bool(take),
+                                   "state": self.listen_state()})
             except Exception as e:
-                ls["synth"][k]["status"] = "error"
+                ls["synth"].setdefault(k, {"file": dst, "text": text, "lang": lang})["status"] = "error"
                 self._listen_push({"stage": "synth", "k": k, "ok": False, "error": str(e), "state": self.listen_state()})
         self._listen_worker().add(job)
         return {"queued": True, "state": self.listen_state()}
@@ -593,7 +602,7 @@ class ListenMixin:
             return {"error": "Синтеза для этой строки ещё нет."}
         return self.listen_play(var={"path": s["file"]})
 
-    def listen_synth_take(self, k):
+    def listen_synth_take(self, k, stop=True):
         """Синтез → вместо записи переменной. Синтез становится исходником для правки
         (на рабочем столе — он), прежняя запись — «_до_правок/<имя>_до_синтеза»."""
         ls = self._ls()
@@ -601,7 +610,8 @@ class ListenMixin:
         s = ls["synth"].get(k)
         if not s or s.get("status") != "ready" or not os.path.exists(s["file"]):
             return {"error": "Синтеза для этой строки ещё нет."}
-        self.player.stop()
+        if stop:
+            self.player.stop()
         row = ls["rows"][k]
         path = row["path"]
         if not path:

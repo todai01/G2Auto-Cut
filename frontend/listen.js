@@ -39,6 +39,8 @@ async function listenStart() {
 
 function listenOpen() {
     showStage('stage5-listen');
+    let ctx = null; try { ctx = localStorage.getItem('gvox_listen_ctx'); } catch (e) {}
+    if (ctx && +ctx !== LS.ctx_ms) listenSetCtx(ctx);
     lTarget = 'var';
     listenRender();
     listenLoadEditor();
@@ -68,6 +70,7 @@ function listenRender(light) {
     lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, LS.lang.toUpperCase(),
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
+    lEl('listenCtx').value = String(LS.ctx_ms);
     if (light) listenMarkList(); else listenRenderList();
     let r = lRow();
     lEl('listenPos').innerText = r ? `${LS.pos + 1} из ${LS.rows.length}` : 'Загрузите таблицу';
@@ -130,6 +133,7 @@ async function listenGo(k) {
     LS.rows[k] = r.row;
     listenRender(true);
     listenSetEditor(r.edit || null, r.row.path);
+    lPlayKind = 'chain';
     if (r.play && r.play.error !== 'skip') listenAfterPlay(r.play, tok);
 }
 function listenStep(d) { if (LS && LS.rows.length) listenGo(Math.max(0, Math.min(LS.rows.length - 1, LS.pos + d))); }
@@ -141,6 +145,12 @@ async function listenTarget(t) {
     listenLoadEditor();
 }
 async function listenSetShort(on) { LS = await pywebview.api.listen_set(null, null, on); listenRender(); }
+async function listenSetCtx(ms) {
+    let pos = LS.pos;
+    LS = await pywebview.api.listen_set(null, null, null, +ms); LS.pos = pos;
+    try { localStorage.setItem('gvox_listen_ctx', ms); } catch (e) {}
+    listenRender(true);
+}
 // Ушли с правленой записи — сохранить?
 async function listenLeave() {
     if (!lEd || !listenDirty()) return true;
@@ -200,7 +210,7 @@ async function listenTplSet() {
 const listenSnap = () => JSON.stringify({ r: lEd.ranges, g: lEd.gain, t: lEd.tempo });
 const listenDirty = () => !!lEd && listenSnap() !== lEd.saved;
 const lKept = () => lEd.ranges.reduce((s, [a, b]) => s + b - a, 0);
-function listenPush() { lEd.hist.push(listenSnap()); if (lEd.hist.length > 100) lEd.hist.shift(); }
+function listenPush() { listenAutoPause(); lEd.hist.push(listenSnap()); if (lEd.hist.length > 100) lEd.hist.shift(); }
 
 function listenEdRender() {
     let bar = lEl('listenEdBar');
@@ -265,6 +275,7 @@ function listenEdHit(cx) {
 function listenEdHover(e) { if (lEd) e.currentTarget.style.cursor = listenEdHit(e.clientX).edge ? 'ew-resize' : 'text'; }
 function listenEdDown(e) {
     if (!lEd) return;
+    listenAutoPause();
     e.preventDefault();
     let h = listenEdHit(e.clientX), moved = false, start = h.t, snap = listenSnap();
     let move = ev => {
@@ -334,8 +345,21 @@ function listenReplaySoon() {
 }
 // next — после сохранения переменной перейти к следующей строке (и сразу её послушать)
 let lLastSaved = null;              // последняя сохранённая строка — Ctrl+Z отменит
+// Следующая несохранённая строка после from (жёлтая; withMiss — и красная, без записи)
+function listenNextTodo(from, withMiss) {
+    for (let k = from + 1; k < LS.rows.length; k++) {
+        let r = LS.rows[k];
+        if (r.path ? !r.done : withMiss) return k;
+    }
+    return -1;
+}
+function listenNext() {
+    let k = listenNextTodo(LS.pos, !lAuto);
+    if (k < 0) { if (lAuto) listenAutoSet(false, 'Автопрогон: несохранённых записей дальше нет'); else listenStep(1); return; }
+    listenGo(k);
+}
 async function listenSave(next) {
-    if (!lEd) { if (next && lTarget === 'var' && LS && LS.pos < LS.rows.length - 1) listenStep(1); return true; }
+    if (!lEd) { if (next && lTarget === 'var' && LS && LS.pos < LS.rows.length - 1) listenNext(); return true; }
     let go = next && lEd.target === 'var' && LS.pos < LS.rows.length - 1;
     if (!listenDirty()) {
         if (lEd.target === 'var' && lRow() && !lRow().done) {          // хороша как есть — отметить сохранённой
@@ -345,7 +369,7 @@ async function listenSave(next) {
             listenMarkList(); listenStatRender();
             if (!go) { listenRender(true); listenEdRender(); }
         }
-        if (go) listenStep(1);
+        if (go) listenNext();
         return true;
     }
     let r = await pywebview.api.listen_edit_save(lEd.path, lEd.ranges, lEd.gain, lEd.tempo, lEd.target === 'var');
@@ -354,7 +378,7 @@ async function listenSave(next) {
     if (r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
     if (lEd.target === 'var') { lLastSaved = { pos: LS.pos, path: lEd.path }; listenMarkList(); listenStatRender(); }
     showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше · Ctrl+Z — отменить' : ''}`);
-    if (go) { listenStep(1); return true; }
+    if (go) { listenNext(); return true; }
     listenRender(); listenEdRender();
     return true;
 }
@@ -422,7 +446,7 @@ function listenAfterPlay(r, tok) {
     let step = () => {
         if (!lPlay) return;
         let t = performance.now() - lPlay.t0;
-        if (t > lPlay.d) { listenStopHead(); return; }
+        if (t > lPlay.d) { let chain = lPlayKind === 'chain'; listenStopHead(); if (chain) listenAutoDone(); return; }
         if (lEd && lPlay.mine) {
             let local = t - lPlay.mine.off, kept = lKept(), tail = lEd.target === 'start' && LS.short ? Math.max(0, kept / lEd.tempo - lPlay.mine.ms) : 0;
             lEd.head = local >= 0 && local <= lPlay.mine.ms ? listenSrcAt((local + tail) * lEd.tempo) : null;
@@ -431,6 +455,27 @@ function listenAfterPlay(r, tok) {
         lPlay.raf = requestAnimationFrame(step);
     };
     lPlay.raf = requestAnimationFrame(step);
+}
+// ----- автопрогон: имя прозвучало, ничего не нажали — сохранить и дальше -----
+let lAuto = false;
+function listenAutoSet(on, msg) {
+    lAuto = !!on;
+    lEl('listenAutoBtn').classList.toggle('is-on', lAuto);
+    if (msg) showToast(msg, 2600);
+}
+function listenAutoRun() {
+    if (lAuto) { listenAutoSet(false, 'Автопрогон — пауза'); return; }
+    listenAutoSet(true, 'Автопрогон: звучит — и само сохраняется. Любая клавиша — пауза');
+    let r = lRow();
+    if (r && r.path && !r.done) { listenStopHead(); pywebview.api.listen_stop(); listenPlayChain(); }
+    else listenNext();
+}
+function listenAutoPause() { if (lAuto) listenAutoSet(false, 'Автопрогон — пауза на этом имени. G — дальше'); }
+function listenAutoDone() {
+    if (!lAuto || !isShown('stage5-listen')) return;
+    let r = lRow();
+    if (!r || !r.path || r.done || !lEd || lEd.target !== 'var' || lEd.hist.length) return;
+    setTimeout(() => { if (lAuto && lRow() === r && !lPlay) listenSave(true); }, 250);
 }
 // время по оставленным кускам → время исходника
 function listenSrcAt(t) {
@@ -538,6 +583,18 @@ async function listenSynth() {
     LS = r.state; listenRenderList(); listenRenderSynth();
     showToast('Синтез запущен — можно слушать другие строки');
 }
+// R: синтез этого имени — готовый сам встаёт вместо записи (на дорожку)
+async function listenSynthQuick() {
+    let row = lRow();
+    if (!row) return;
+    if (row.synth === 'busy') { showToast('Синтез уже идёт'); return; }
+    let inp = lEl('listenSynthText'), text = inp && inp.value.trim() ? inp.value.trim() : row.name;
+    let r = await pywebview.api.listen_synth(LS.pos, text, LS.lang, true);
+    if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+    let pos = LS.pos; LS = r.state; LS.pos = pos;
+    listenMarkList(); listenRenderSynth();
+    showToast(`Синтез «${row.name}» (${LS.lang.toUpperCase()}) — встанет на дорожку сам, можно листать дальше`);
+}
 async function listenSynthPlay() {
     listenStopHead();
     let r = await pywebview.api.listen_synth_play(LS.pos);
@@ -561,14 +618,26 @@ function listenEvent(p) {
     if (p.state) { let pos = LS ? LS.pos : 0; LS = p.state; LS.pos = pos; }
     if (p.stage === 'synth') {
         let name = LS && LS.rows[p.k] ? LS.rows[p.k].name : '';
-        showToast(p.ok ? `Синтез готов: ${name}${p.voice ? ` · голос «${p.voice}»` : ''} — «▶ Синтез в фразе»` : `Синтез «${name}»: ${p.error}`, 4500);
-        if (isShown('stage5-listen')) { listenRenderList(); if (LS && p.k === LS.pos) listenRenderSynth(); }
+        let voice = p.voice ? ` · голос «${p.voice}»` : '';
+        showToast(!p.ok ? `Синтез «${name}»: ${p.error}` : p.taken ? `Синтез «${name}» — на дорожке${voice}` : `Синтез готов: ${name}${voice} — «▶ Синтез в фразе»`, 4500);
+        if (isShown('stage5-listen')) {
+            listenRenderList();
+            if (LS && p.k === LS.pos) {
+                if (p.ok && p.taken && !lAuto) {                     // мы на этом имени — сразу на дорожку и слушать
+                    lTarget = 'var'; listenRender(true);
+                    listenLoadEditor().then(() => { listenStopHead(); pywebview.api.listen_stop(); listenPlayChain(); });
+                } else listenRenderSynth();
+            }
+        }
     }
 }
 
 // ----- клавиши -----
 function listenKey(e) {
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+    if (e.code === 'KeyG') { e.preventDefault(); listenAutoRun(); return; }
+    if (e.code !== 'Enter' && e.code !== 'NumpadEnter') listenAutoPause();     // любая другая клавиша — пауза
+    if (e.code === 'KeyR') { e.preventDefault(); listenSynthQuick(); return; }
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
     if (e.code === 'KeyP') { e.preventDefault(); listenPlayOnly(); return; }
     if (e.code === 'ArrowDown' || e.code === 'KeyS') { e.preventDefault(); listenStep(1); return; }

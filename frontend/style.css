@@ -3834,3 +3834,5 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-phr__row .btn-ghost.is-on{ border-color: var(--accent-var); color: var(--accent-var); }
 .listen-auto{ color: var(--accent-good); font-size: var(--fs-xs); }
 .listen-tpl{ color: var(--text-faint); font-size: var(--fs-xs); }
+.listen-ctx{ height: var(--control-h); padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--panel); color: var(--text-dim); font: inherit; }
+.listen-autorun.is-on{ border-color: var(--accent-good); color: var(--accent-good); background: var(--tint-good, rgba(46,204,113,.12)); }

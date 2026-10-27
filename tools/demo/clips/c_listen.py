@@ -76,15 +76,19 @@ with Rec('listen', a) as r:
     r.key('Enter', 'Enter', 1600)
     r.cap('<b>1 / 2 / 3</b> — править начало, переменную или конец (полностью)', 600)
     r.key('1', 'Digit1', 1600); r.key('2', 'Digit2', 1200)
-    r.cap('Нет записи или она неудачная — синтез', 600)
-    r.click('#listenList .listen-row.is-miss', after=1200)
-    r.cap('Текст можно поправить — и «Синтезировать»', 600)
-    r.click('#listenSynth .custom-alert-btn', after=600)
+    r.cap('Контекст вокруг имени — 1 / 1,5 / 2,5 с: короче — быстрее', 600)
+    r.move('#listenCtx', 700); r.pg.select_option('#listenCtx', '1000'); r.wait(1400)
+    r.cap('<b>G</b> — автопрогон: имя звучит и само сохраняется, дальше — следующее. Любая клавиша — пауза', 600)
+    r.key('G', 'KeyG', 600)
+    for _ in range(80):
+        if r.js("!lAuto"): break
+        r.wait(250)
+    r.wait(600)
+    r.cap('Нет записи или неудачная — <b>R</b>: синтез сам встанет на дорожку', 600)
+    r.click('#listenList .listen-row.is-miss', after=1000)
+    r.key('R', 'KeyR', 600)
     for _ in range(60):
         if r.js("lRow() && lRow().synth") != 'busy': break
-        r.wait(500)
-    r.wait(800)
-    r.cap('Послушать синтез в фразе и «Взять синтез» — заменит запись', 600)
-    r.click('#listenSynth button:has-text("Синтез в фразе")', after=2600)
-    r.click('#listenSynth button:has-text("Взять синтез")', after=2200)
+        r.wait(400)
+    r.cap('Синтез — на дорожке и звучит в фразе: подрезать и <b>Enter</b>', 3200)
     r.cap('')
