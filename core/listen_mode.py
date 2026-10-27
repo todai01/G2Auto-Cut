@@ -24,6 +24,7 @@ LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
 LISTEN_SYNTH_DIR = '_синтез'
 LISTEN_TPL_FILE = '.gvox_listen_tpl.json'       # шаблон срезки — в папке записей
+LISTEN_FLAG_FILE = '.gvox_listen_flags.json'    # «исправить потом» — названия строк
 LISTEN_LANG_DIRS = {'ru': 'ru', 'rus': 'ru', 'рус': 'ru', 'русский': 'ru',
                     'kz': 'kz', 'kk': 'kz', 'kaz': 'kz', 'каз': 'kz', 'қаз': 'kz', 'казахский': 'kz'}
 LISTEN_HEADER_WORDS = {'имя', 'имена', 'name', 'names', 'переменная', 'переменные', 'значение', 'значения',
@@ -91,11 +92,16 @@ class ListenMixin:
             return {"error": "cancel"}
         ls = self._ls()
         ls["folder"] = picked if isinstance(picked, str) else picked[0]
-        ls["tpl"] = None
+        ls["tpl"], ls["flags"] = None, set()
         try:
             with open(os.path.join(ls["folder"], LISTEN_TPL_FILE), 'r', encoding='utf-8') as f:
                 ls["tpl"] = json.load(f)
         except (OSError, ValueError):
+            pass
+        try:
+            with open(os.path.join(ls["folder"], LISTEN_FLAG_FILE), 'r', encoding='utf-8') as f:
+                ls["flags"] = set(json.load(f))
+        except (OSError, ValueError, TypeError):
             pass
         self._listen_scan()
         if not ls["index"]:
@@ -244,12 +250,48 @@ class ListenMixin:
                 pass
         threading.Thread(target=run, daemon=True).start()
 
+    # ---------------- «исправить потом» ----------------
+    def _listen_flags_save(self):
+        ls = self._ls()
+        if ls["folder"]:
+            try:
+                with open(os.path.join(ls["folder"], LISTEN_FLAG_FILE), 'w', encoding='utf-8') as f:
+                    json.dump(sorted(ls.setdefault("flags", set())), f, ensure_ascii=False)
+            except OSError:
+                pass
+
+    def listen_flag(self, k, on=True):
+        """Пометить строку «исправить потом» (или снять пометку)."""
+        ls = self._ls()
+        k = int(k)
+        if not (0 <= k < len(ls["rows"])):
+            return {"error": "Нет такой строки."}
+        flags = ls.setdefault("flags", set())
+        key = listen_norm(ls["rows"][k]["name"])
+        (flags.add if on else flags.discard)(key)
+        self._listen_flags_save()
+        return {"row": self._listen_row(k), "flagged": self._listen_flagged()}
+
+    def _listen_flagged(self):
+        ls = self._ls()
+        flags = ls.get("flags") or set()
+        return sum(1 for r in ls["rows"] if listen_norm(r["name"]) in flags)
+
+    def _listen_unflag_path(self, path):
+        ls = self._ls()
+        flags = ls.get("flags") or set()
+        hit = [listen_norm(r["name"]) for r in ls["rows"] if r["path"] == path and listen_norm(r["name"]) in flags]
+        if hit:
+            flags.difference_update(hit)
+            self._listen_flags_save()
+
     def _listen_row(self, k):
         ls = self._ls()
         r = ls["rows"][k]
         return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
                 "dups": r["dups"], "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
                 "done": bool(r["path"]) and os.path.exists(self._listen_meta(r["path"])),     # прошла через «Сохранить»
+                "flag": listen_norm(r["name"]) in (ls.get("flags") or ()),                    # «исправить потом»
                 "synth": ls["synth"].get(k, {}).get("status")}
 
     def listen_go(self, pos, play=True):
@@ -286,6 +328,7 @@ class ListenMixin:
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None,
+            "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
         }
@@ -463,7 +506,7 @@ class ListenMixin:
         self.player.stop()
         return {"ok": True}
 
-    def listen_edit_save(self, path, ranges, gain=0.0, tempo=1.0, as_var=False):
+    def listen_edit_save(self, path, ranges, gain=0.0, tempo=1.0, as_var=False, light=False):
         """Записать правку (от исходника — без накопления), исходник — в «_до_правок/»."""
         if not path or not os.path.exists(path):
             return {"error": "Файл не найден."}
@@ -490,9 +533,12 @@ class ListenMixin:
         if as_var and not self._ls().get("tpl"):              # первая сохранённая запись — шаблон
             r = self.listen_tpl_set(path, ranges, gain, tempo)
             tpl_new = (r.get("tpl") or {}).get("from")
+        self._listen_unflag_path(path)
+        if light:                                             # автопрогон: без всего состояния — быстрее
+            return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "tpl": {"from": self._ls()["tpl"]["from"]} if self._ls().get("tpl") else None}
         return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "state": self.listen_state()}
 
-    def listen_mark_done(self, path):
+    def listen_mark_done(self, path, light=False):
         """Запись хороша как есть — отметить проверенной, файл не трогаем."""
         if not path or not os.path.exists(path):
             return {"error": "Файл не найден."}
@@ -502,7 +548,8 @@ class ListenMixin:
             dur = len(self._listen_seg(self._audit_src(path)))
             with open(meta, 'w', encoding='utf-8') as f:
                 json.dump({"ranges": [[0, dur]], "gain": 0.0, "tempo": 1.0}, f)
-        return {"ok": True, "state": self.listen_state()}
+        self._listen_unflag_path(path)
+        return {"ok": True} if light else {"ok": True, "state": self.listen_state()}
 
     def listen_edit_restore(self, path):
         """Отменить сохранение: исходник обратно (если правилась), отметка «проверена» — прочь."""

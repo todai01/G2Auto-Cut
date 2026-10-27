@@ -1447,9 +1447,11 @@
                     <span class="listen-lang" id="listenLangTop" title="Язык: пара начало / конец, записи из ru / kz и синтез"></span>
                     <label class="audit-switch" title="Звучит только конец начала и начало продолжения — для подгонки тайминга"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
                     <select class="listen-ctx" id="listenCtx" onchange="listenSetCtx(this.value)" title="Сколько конца начала и начала продолжения звучит рядом с переменной">
-                        <option value="1000">1 с</option><option value="1500">1,5 с</option><option value="2500">2,5 с</option></select>
+                        <option value="500">0,5 с</option><option value="1000">1 с</option><option value="1500">1,5 с</option><option value="2500">2,5 с</option></select>
                     <button class="btn-ghost" onclick="listenStep(1)" title="Следующая">След. <kbd>↓</kbd></button>
                     <button class="btn-ghost listen-autorun" id="listenAutoBtn" onclick="listenAutoRun()" title="Каждое имя звучит и само сохраняется (срезка — автоматически), дальше — следующее несохранённое. Любая клавиша — пауза на этом имени">&#9654;&#9654; Автопрогон <kbd>G</kbd></button>
+                    <button class="btn-ghost listen-flagbtn" onclick="listenFlag()" title="Пометить: исправить потом — и дальше (автопрогон не останавливается)">Исправить потом <kbd>F</kbd></button>
+                    <button class="btn-ghost listen-flagmode" id="listenFlagMode" onclick="listenFlagMode()" title="Второй круг: только помеченные «исправить потом»">Помеченные: 0</button>
                     <button class="btn-ghost" onclick="listenSynthQuick()" title="Синтезировать это имя и сразу поставить на дорожку вместо записи (прежняя — в «_до_правок»)">Синтез <kbd>R</kbd></button>
                 </div>
                 <div class="listen-ed" id="listenEd">
@@ -1663,7 +1665,7 @@
     </div>
 
     <script src="script.js?v=4"></script>
-    <script src="tutorial.js?v=7"></script>
-    <script src="listen.js?v=11"></script>
+    <script src="tutorial.js?v=8"></script>
+    <script src="listen.js?v=13"></script>
 </body>
 </html>

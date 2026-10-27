@@ -91,7 +91,7 @@ function listenRender(light) {
 function listenRenderList() {
     if (!LS) return;
     let q = (lEl('listenFilter').value || '').trim().toLowerCase();
-    lEl('listenList').innerHTML = LS.rows.map((r, k) => ({ r, k })).filter(({ r }) => !q || r.name.toLowerCase().includes(q)).map(({ r, k }) =>
+    lEl('listenList').innerHTML = LS.rows.map((r, k) => ({ r, k })).filter(({ r }) => (!q || r.name.toLowerCase().includes(q)) && (!lFlagOnly || r.flag)).map(({ r, k }) =>
         `<button type="button" class="listen-row ${k === LS.pos ? 'is-on' : ''} ${listenRowCls(r)}" data-k="${k}" onclick="listenGo(${k})">
             <span class="listen-row__dot"></span><span class="listen-row__name">${escapeHtml(r.name)}</span>
             <span class="listen-row__tag">${r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет'}</span></button>`).join('');
@@ -101,10 +101,12 @@ function listenRenderList() {
 }
 
 // Кружок: красный — записи нет, жёлтый — есть, ещё не сохранена, зелёный — сохранена
-const listenRowCls = r => !r.path ? 'is-miss' : r.done ? '' : 'is-todo';
+const listenRowCls = r => r.flag ? 'is-flag' : !r.path ? 'is-miss' : r.done ? '' : 'is-todo';
 function listenStatRender() {
     let n = LS.rows.length, done = LS.rows.filter(r => r.path && r.done).length;
     lEl('listenStat').innerText = n ? `сохранено ${done} из ${LS.found}${n > LS.found ? ` · без записи ${n - LS.found}` : ''}` : '';
+    let fl = LS.rows.filter(r => r.flag).length, b = lEl('listenFlagMode');
+    if (b) { b.innerText = `Помеченные: ${fl}`; b.classList.toggle('is-on', lFlagOnly); }
 }
 // Шаг по списку — без перерисовки всех строк: только отметка текущей
 function listenMarkList() {
@@ -113,8 +115,8 @@ function listenMarkList() {
     if (cur) {
         cur.classList.add('is-on');
         let r = LS.rows[LS.pos], tag = cur.querySelector('.listen-row__tag');
-        cur.classList.toggle('is-miss', !r.path);
-        cur.classList.toggle('is-todo', !!r.path && !r.done);
+        cur.classList.remove('is-miss', 'is-todo', 'is-flag');
+        let c = listenRowCls(r); if (c) cur.classList.add(c);
         if (tag) tag.innerText = r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет';
         cur.scrollIntoView({ block: 'nearest' });
     }
@@ -347,15 +349,26 @@ function listenReplaySoon() {
 let lLastSaved = null;              // последняя сохранённая строка — Ctrl+Z отменит
 // Следующая несохранённая строка после from (жёлтая; withMiss — и красная, без записи)
 function listenNextTodo(from, withMiss) {
-    for (let k = from + 1; k < LS.rows.length; k++) {
+    let n = LS.rows.length;
+    if (lFlagOnly) {                                       // второй круг: следующая помеченная (по кругу)
+        for (let i = 1; i <= n; i++) { let k = (from + i) % n; if (LS.rows[k].flag && k !== from) return k; }
+        return -1;
+    }
+    for (let k = from + 1; k < n; k++) {
         let r = LS.rows[k];
+        if (r.flag) continue;                              // помеченные — на второй круг
         if (r.path ? !r.done : withMiss) return k;
     }
     return -1;
 }
 function listenNext() {
     let k = listenNextTodo(LS.pos, !lAuto);
-    if (k < 0) { if (lAuto) listenAutoSet(false, 'Автопрогон: несохранённых записей дальше нет'); else listenStep(1); return; }
+    if (k < 0) {
+        if (lAuto) listenAutoSet(false, 'Автопрогон: несохранённых записей дальше нет');
+        else if (lFlagOnly) { showToast('Помеченных больше нет'); listenFlagMode(false); }
+        else listenStep(1);
+        return;
+    }
     listenGo(k);
 }
 async function listenSave(next) {
@@ -366,7 +379,7 @@ async function listenSave(next) {
             let r = await pywebview.api.listen_mark_done(lEd.path);
             if (r && r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
             lLastSaved = { pos: LS.pos, path: lEd.path };
-            listenMarkList(); listenStatRender();
+            listenRenderList();
             if (!go) { listenRender(true); listenEdRender(); }
         }
         if (go) listenNext();
@@ -376,7 +389,7 @@ async function listenSave(next) {
     if (!r || r.error) { showToast(r && r.error || 'Не сохранилось'); return false; }
     lEd.saved = listenSnap(); lEd.has_backup = true; lEd.auto = null; lEd.hist = [];
     if (r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
-    if (lEd.target === 'var') { lLastSaved = { pos: LS.pos, path: lEd.path }; listenMarkList(); listenStatRender(); }
+    if (lEd.target === 'var') { lLastSaved = { pos: LS.pos, path: lEd.path }; listenMarkList(); listenRenderList(); }
     showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше · Ctrl+Z — отменить' : ''}`);
     if (go) { listenNext(); return true; }
     listenRender(); listenEdRender();
@@ -475,7 +488,67 @@ function listenAutoDone() {
     if (!lAuto || !isShown('stage5-listen')) return;
     let r = lRow();
     if (!r || !r.path || r.done || !lEd || lEd.target !== 'var' || lEd.hist.length) return;
-    setTimeout(() => { if (lAuto && lRow() === r && !lPlay) listenSave(true); }, 250);
+    if (!lPlay) listenSaveBg();
+}
+// Сохранить в фоне и сразу дальше (автопрогон): кружок зелёный сразу, ошибка — вернём жёлтый
+function listenSaveBg() {
+    let pos = LS.pos, row = lRow(), e = lEd;
+    if (!row || !e) return;
+    let dirty = listenDirty(), args = [e.path, e.ranges, e.gain, e.tempo, true, true];
+    e.saved = listenSnap(); e.hist = [];
+    row.done = true; row.flag = false; lLastSaved = { pos, path: e.path };
+    lAutoMoved = { pos, t: performance.now() };
+    let q = dirty ? pywebview.api.listen_edit_save(...args) : pywebview.api.listen_mark_done(e.path, true);
+    q.then(r => {
+        if (!r || r.error) { row.done = false; showToast(`Не сохранилось «${row.name}»: ${r && r.error || ''}`, 4000); }
+        else if (r.tpl_new) { LS.tpl = r.tpl; showToast(`«${row.name}» — шаблон срезки для остальных`); }
+        listenRenderRow(pos); listenStatRender();
+    });
+    listenRenderRow(pos); listenStatRender();
+    listenNext();
+}
+function listenRenderRow(k) {
+    let el = lEl('listenList').querySelector(`.listen-row[data-k="${k}"]`), r = LS.rows[k];
+    if (!el || !r) return;
+    el.classList.remove('is-miss', 'is-todo', 'is-flag');
+    let c = listenRowCls(r); if (c) el.classList.add(c);
+}
+// ----- F: «исправить потом» — пометить и дальше; второй круг — только помеченные -----
+let lAutoMoved = null, lFlagOnly = false;
+async function listenFlag() {
+    if (!LS || !LS.rows.length) return;
+    // нажали чуть позже, чем автопрогон перешёл, — помечаем то, что только что прозвучало
+    // (пока у нового имени звучит только начало фразы — контекст, но не больше 0,8 с)
+    let win = LS.short ? Math.min(800, LS.ctx_ms) : 300;
+    let k = lAutoMoved && performance.now() - lAutoMoved.t < win && lAutoMoved.pos !== LS.pos ? lAutoMoved.pos : LS.pos;
+    let row = LS.rows[k], on = !row.flag;
+    if (on && k !== LS.pos && row.done) {                  // его уже успели сохранить — вернуть как было
+        await pywebview.api.listen_edit_restore(row.path);
+        row.done = false;
+    }
+    let r = await pywebview.api.listen_flag(k, on);
+    if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+    LS.rows[k] = { ...LS.rows[k], ...r.row };
+    listenRenderRow(k); listenStatRender();
+    showToast(on ? `«${row.name}» — исправить потом` : `«${row.name}»: пометка снята`, 1400);
+    if (on && k === LS.pos && !lFlagOnly) {                // текущее — сразу дальше
+        if (lEd) { lEd.hist = []; lEd.saved = listenSnap(); }   // правку не сохраняем и не спрашиваем
+        listenStopHead(); pywebview.api.listen_stop();
+        listenNext();
+    }
+}
+function listenFlagMode(on) {
+    lFlagOnly = on === undefined ? !lFlagOnly : !!on;
+    if (lFlagOnly) listenAutoSet(false);
+    listenRenderList();
+    if (lFlagOnly) {
+        if (!LS.rows[LS.pos] || !LS.rows[LS.pos].flag) {
+            let k = listenNextTodo(LS.pos, true);
+            if (k < 0) { showToast('Помеченных нет'); lFlagOnly = false; listenRenderList(); return; }
+            listenGo(k);
+        }
+        showToast('Второй круг: только помеченные. Исправили — Enter, дальше следующая');
+    }
 }
 // время по оставленным кускам → время исходника
 function listenSrcAt(t) {
@@ -636,6 +709,7 @@ function listenEvent(p) {
 function listenKey(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
     if (e.code === 'KeyG') { e.preventDefault(); listenAutoRun(); return; }
+    if (e.code === 'KeyF') { e.preventDefault(); listenFlag(); return; }       // пометить — автопрогон не останавливается
     if (e.code !== 'Enter' && e.code !== 'NumpadEnter') listenAutoPause();     // любая другая клавиша — пауза
     if (e.code === 'KeyR') { e.preventDefault(); listenSynthQuick(); return; }
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }

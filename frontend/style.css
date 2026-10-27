@@ -3836,3 +3836,5 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-tpl{ color: var(--text-faint); font-size: var(--fs-xs); }
 .listen-ctx{ height: var(--control-h); padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--panel); color: var(--text-dim); font: inherit; }
 .listen-autorun.is-on{ border-color: var(--accent-good); color: var(--accent-good); background: var(--tint-good, rgba(46,204,113,.12)); }
+.listen-row.is-flag .listen-row__dot{ background: #a875ff; box-shadow: 0 0 0 2px rgba(168,117,255,.25); }   /* исправить потом */
+.listen-flagmode.is-on{ border-color: #a875ff; color: #a875ff; }
