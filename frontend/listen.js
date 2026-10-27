@@ -536,8 +536,9 @@ async function listenSynthTake() {
     let r = await pywebview.api.listen_synth_take(LS.pos);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     LS = r.state; lTarget = 'var';
-    listenRender(); await listenLoadEditor();
-    showToast('Синтез записан вместо прежней записи — можно подрезать');
+    listenRender(); await listenLoadEditor();             // на рабочем столе — синтез (уже срезан по голосу)
+    showToast('Синтез — вместо прежней записи (она в «_до_правок»). Подрежьте и Enter — сохранить');
+    listenPlayChain();
 }
 async function listenSynthDrop() { LS = await pywebview.api.listen_synth_drop(LS.pos); listenRender(); }
 // Python → JS: синтез готов / ошибка

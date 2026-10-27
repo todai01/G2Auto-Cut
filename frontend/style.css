@@ -1906,6 +1906,7 @@ input:focus-visible + .opt-chip__box{
     box-shadow: var(--shadow-pop);
     display: flex; align-items: center; gap: 8px;
     animation: toastIn .22s var(--ease);
+    pointer-events: none;                 /* не перекрывать кнопки под сообщением */
 }
 @keyframes toastIn{ from{ opacity: 0; transform: translate(-50%, 10px); } to{ opacity: 1; transform: translate(-50%, 0); } }
 

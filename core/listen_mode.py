@@ -594,7 +594,8 @@ class ListenMixin:
         return self.listen_play(var={"path": s["file"]})
 
     def listen_synth_take(self, k):
-        """Синтез → вместо записи переменной (прежняя запись — в «_до_правок/»)."""
+        """Синтез → вместо записи переменной. Синтез становится исходником для правки
+        (на рабочем столе — он), прежняя запись — «_до_правок/<имя>_до_синтеза»."""
         ls = self._ls()
         k = int(k)
         s = ls["synth"].get(k)
@@ -607,11 +608,17 @@ class ListenMixin:
             safe = re.sub(r'[\\/:*?"<>|]+', '_', row["name"]).strip() or f'строка_{k + 1}'
             path = os.path.join(ls["lang_dirs"].get(s.get("lang") or ls["lang"]) or ls["folder"] or os.path.dirname(s["file"]),
                                 f"{safe}.wav")
-        elif not os.path.exists(self._audit_backup(path)):
-            os.makedirs(os.path.dirname(self._audit_backup(path)), exist_ok=True)
-            shutil.copy2(path, self._audit_backup(path))
+        else:
+            backup = self._audit_backup(path)
+            stem, ext = os.path.splitext(backup)
+            keep = f"{stem}_до_синтеза{ext}"
+            os.makedirs(os.path.dirname(backup), exist_ok=True)
+            if os.path.exists(backup):                         # самый первый исходник — его и храним
+                os.replace(backup, keep)
+            elif os.path.exists(path):
+                shutil.copy2(path, keep)
         if os.path.splitext(path)[1].lower() == '.wav':
-            shutil.copy2(s["file"], path)
+            shutil.copyfile(s["file"], path)                   # время файла — новое: кэш звука / волны обновится
         else:
             AudioSegment.from_file(s["file"]).export(path, format=os.path.splitext(path)[1].lstrip('.').lower())
         for meta in (self._listen_meta(path), self._audit_backup(path) + '.json'):
@@ -621,7 +628,7 @@ class ListenMixin:
                 pass
         ls["synth"].pop(k, None)
         self._listen_scan()
-        return {"ok": True, "state": self.listen_state()}
+        return {"ok": True, "path": path, "state": self.listen_state()}
 
     def listen_synth_drop(self, k):
         s = self._ls()["synth"].pop(int(k), None)
