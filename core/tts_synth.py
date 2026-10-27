@@ -39,7 +39,7 @@ from core.num_words import kz_words, ru_words
 from utils.audio_player import _read_audio, resample
 from utils.wav_io import _write_wav, wav_kind, wav_layout, wav_slice
 
-SYNTH_URL = 'http://ia-app5-lp3:3124/'
+SYNTH_URL = os.environ.get('GVOX_SYNTH_URL') or 'http://ia-app5-lp3:3124/'
 # Шаги на сайте — селекторы из вашей инструкции. Сайт поменяется — правим здесь.
 SYNTH_SEL = {
     "clone_tab": "body > main > nav > button:nth-child(2)",
@@ -47,6 +47,14 @@ SYNTH_SEL = {
     "etalon_file": "body > main > section.panel.active > form > label:nth-child(2) > input[type=file]",
     "etalon_text": "body > main > section.panel.active > form > label:nth-child(3) > input[type=text]",
     "text": "body > main > section.panel.active > form > label:nth-child(4) > textarea",
+    "submit": "body > main > section.panel.active > form > button",
+}
+# Готовый голос (без эталона) — «Прослушка переменных».
+SYNTH_PRESET_SEL = {
+    "tab": "body > main > nav > button:nth-child(1)",      # если вкладка не открыта сама
+    "voice": "#preset-voice", "voice_index": 3,             # option:nth-child(4)
+    "lang": "#preset-lang",
+    "text": "body > main > section.panel.active > form > label:nth-child(3) > textarea",
     "submit": "body > main > section.panel.active > form > button",
 }
 SYNTH_LANG_INDEX = {'ru': 0, 'kz': 1}     # option:nth-child(1) — русский, (2) — казахский
@@ -148,6 +156,46 @@ def synth_plan(text, lang, bank):
         else:
             plan.append(['synth', t])
     return plan
+
+
+def synth_collect(page, submit_sel, raw):
+    """Нажать «Синтезировать» и сохранить результат в raw: сервис отдаёт файл на
+    скачивание, ссылку на него или плеер <audio>."""
+    before = page.evaluate(_JS_RESULT)
+    downloads = []
+
+    def handler(d):                      # сервис мог сразу отдать файл на скачивание
+        downloads.append(d)
+    page.on("download", handler)
+    try:
+        page.click(submit_sel)
+        t_end = time.time() + SYNTH_TIMEOUT_S
+        now = before
+        while time.time() < t_end:
+            page.wait_for_timeout(300)
+            if downloads:
+                break
+            now = page.evaluate(_JS_RESULT)
+            if (now[0] and now[0] != before[0]) or (now[1] and now[1] != before[1]):
+                break
+        else:
+            raise RuntimeError("Сервис не вернул результат за 3 минуты.")
+        if downloads:
+            downloads[0].save_as(raw)
+        elif now[0] and now[0] != before[0]:
+            with page.expect_download(timeout=60000) as dl:
+                page.locator('section.panel.active #download, section.panel.active a[download], #download').first.click()
+            dl.value.save_as(raw)
+        else:
+            import base64
+            data = base64.b64decode(page.evaluate(_JS_FETCH_B64, now[1]))
+            with open(raw, 'wb') as f:
+                f.write(data)
+    finally:
+        try:
+            page.remove_listener("download", handler)
+        except Exception:
+            pass
 
 
 def _write_pcm16(dst, x, rate):
@@ -411,7 +459,13 @@ class _SynthWorker(threading.Thread):
         except Exception:
             self._close()
             raise RuntimeError(f"Сервис синтеза не открылся ({SYNTH_URL}). Проверьте, что он доступен из этой сети.")
-        self.page.click(SYNTH_SEL["clone_tab"])
+        if getattr(self, 'tab', 'clone') == 'preset':          # готовый голос: вкладка, где есть #preset-voice
+            active = 'section.panel.active ' + SYNTH_PRESET_SEL["voice"]
+            if not self.page.locator(active).count():
+                self.page.click(SYNTH_PRESET_SEL["tab"])
+                self.page.wait_for_selector(active, state="visible", timeout=10000)
+        else:
+            self.page.click(SYNTH_SEL["clone_tab"])
         self.page.wait_for_timeout(400)
         return self.page
 
@@ -735,42 +789,8 @@ class TtsSynthMixin:
         page.set_input_files(sel["etalon_file"], etalon)
         page.fill(sel["etalon_text"], etalon_text)
         page.fill(sel["text"], text)
-        before = page.evaluate(_JS_RESULT)
-        downloads = []
-
-        def handler(d):                      # сервис мог сразу отдать файл на скачивание
-            downloads.append(d)
-        page.on("download", handler)
         raw = os.path.splitext(dst)[0] + '.download'
-        try:
-            page.click(sel["submit"])
-            t_end = time.time() + SYNTH_TIMEOUT_S
-            now = before
-            while time.time() < t_end:
-                page.wait_for_timeout(300)
-                if downloads:
-                    break
-                now = page.evaluate(_JS_RESULT)
-                if (now[0] and now[0] != before[0]) or (now[1] and now[1] != before[1]):
-                    break
-            else:
-                raise RuntimeError("Сервис не вернул результат за 3 минуты.")
-            if downloads:
-                downloads[0].save_as(raw)
-            elif now[0] and now[0] != before[0]:
-                with page.expect_download(timeout=60000) as dl:
-                    page.locator('section.panel.active #download, section.panel.active a[download], #download').first.click()
-                dl.value.save_as(raw)
-            else:
-                import base64
-                data = base64.b64decode(page.evaluate(_JS_FETCH_B64, now[1]))
-                with open(raw, 'wb') as f:
-                    f.write(data)
-        finally:
-            try:
-                page.remove_listener("download", handler)
-            except Exception:
-                pass
+        synth_collect(page, sel["submit"], raw)
         try:
             clean_wav(raw, dst)
         finally:

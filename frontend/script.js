@@ -264,11 +264,12 @@ let isProcessing = false;
             'stage1-loading':     'flex',
             'stage2-workspace':   'block',
             'stage3-constructor': 'block',
-            'stage4-tts':         'flex'
+            'stage4-tts':         'flex',
+            'stage5-listen':      'flex'
         };
 
         // Рабочие экраны: «Вернуться к работе» в меню ведёт на последний из них.
-        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи' };
+        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи', 'stage5-listen': 'Прослушка' };
         let lastWork = null;
         function showStage(activeId) {
             Object.keys(STAGE_DISPLAY).forEach(id => {
@@ -278,7 +279,7 @@ let isProcessing = false;
             if (WORK_STAGES[activeId]) lastWork = { stage: activeId, area: embedAreaId, btn: embedBtnId };
             // цвет окон — по режиму: студия синяя, переменные янтарные
             if (activeId === 'stage4-tts') document.body.dataset.mode = 'new';
-            else if (activeId === 'stage3-constructor') document.body.dataset.mode = 'vars';
+            else if (activeId === 'stage3-constructor' || activeId === 'stage5-listen') document.body.dataset.mode = 'vars';
         }
         // Есть ли куда вернуться: пустой рабочий экран (ничего не загружено) — не считается.
         function canResumeWork() {
@@ -868,6 +869,8 @@ let isProcessing = false;
                 { title: 'Пакетная сборка', icon: 'refresh-cw', src: '.menu-row--var', cls: 'var' },
                 { title: 'Готовая папка', icon: 'folder', src: '.menu-row--good', cls: 'good' },
                 { title: 'Конструктор', icon: 'sliders', src: '.menu-row--info' },
+                { title: 'Прослушка', icon: 'headphones', run: () => listenStart(),
+                  desc: 'Записи переменных по таблице — послушать в фразе, подрезать, при нужде синтезировать' },
             ],
         };
         const RADIAL_CAT_KEY = 'gvox_radial_cat';
@@ -944,6 +947,7 @@ let isProcessing = false;
             let ring = radialEl('radialRing');
             if (!ring) return;
             let root = radialEl('radial');
+            if (animate) radial.animUntil = performance.now() + 1400;     // пока летят пункты — статус не перерисовываем
             if (!animate) {               // обновление статуса (✓, ×, недавние) — без пружины и прорисовки лучей
                 root.classList.add('is-static');
                 clearTimeout(radial.staticT);
@@ -1100,7 +1104,18 @@ let isProcessing = false;
             document.addEventListener('keydown', radialKey);
             // загрузили таблицу / проект — «✓» и «×» на кольце обновляются сами
             let grid = document.querySelector('.menu-grid'), t = null;
-            if (grid) new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { if (radial.open && isShown('stage1-loading')) radialRender(false); }, 120); })
+            // Перенос опций/настроек нарезки между меню и кольцом (radialExtraRender) — не изменение
+            // статуса: без этого кольцо перерисовывалось бы посреди анимации и пункты прыгали.
+            const own = n => n.nodeType === 1 && n.matches && n.matches('.menu-row__opts, details.menu-cut');
+            const refresh = () => {
+                let wait = (radial.animUntil || 0) - performance.now();
+                if (wait > 0) { t = setTimeout(refresh, wait + 20); return; }
+                if (radial.open && isShown('stage1-loading')) radialRender(false);
+            };
+            if (grid) new MutationObserver(muts => {
+                if (muts.every(m => m.type === 'childList' && [...m.addedNodes, ...m.removedNodes].every(own))) return;
+                clearTimeout(t); t = setTimeout(refresh, 120);
+            })
                 .observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true, characterData: true });
             radial.cat = radialLoadCat();
             if (radial.cat === 'recent' && !(recentProjectsCache || []).length) radial.cat = null;
@@ -4745,6 +4760,13 @@ let isProcessing = false;
                 if (e.code === 'KeyZ') { e.preventDefault(); auditEdUndo(); return; }
                 if (e.code === 'KeyS') { e.preventDefault(); auditEdSave(); return; }
             }
+            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyS' || e.code === 'KeyZ') && isShown('stage5-listen')
+                && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
+                && document.getElementById('customAlertOverlay').style.display !== 'flex') {
+                e.preventDefault();
+                if (e.code === 'KeyS') listenSave(); else listenEdUndo();
+                return;
+            }
             // «Сборка» открыта: Ctrl+Z — отменить шаг, Ctrl+Y / Ctrl+Shift+Z — вернуть.
             // По коду клавиши — работает и в русской раскладке (Ctrl+Я).
             if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.code === 'KeyY')
@@ -4873,6 +4895,7 @@ let isProcessing = false;
 
             // TTS-проект: свои клавиши (Space / Enter / стрелки / Del / F).
             if (isShown('stage4-tts')) { ttsHandleKey(e); return; }
+            if (isShown('stage5-listen')) { listenKey(e); return; }
 
             // Конструктор переменных — свой мини-режим со своим плеером:
             // Space играет/останавливает собранную сумму, остальные горячие

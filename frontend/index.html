@@ -1413,6 +1413,51 @@
         </div>
     </div>
 
+    <div id="stage5-listen" class="stage stage-listen" style="display: none;">
+        <header class="workspace-header">
+            <div class="header-actions">
+                <button class="btn-ghost" onclick="listenExit()">&#8592;&nbsp; Главное меню</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenPick('folder')" title="Папка с записями переменных">Папка</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenPick('start')" title="Начальная фраза (start)">Начало</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenPick('end')" title="Конечная фраза (end)">Конец</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenPick('table')" title="Таблица с названиями переменных">Таблица</button>
+                <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial('listen')" title="Обучение: ролик про прослушку">?</button>
+            </div>
+            <div class="constructor-title">
+                <span class="constructor-title__main"><svg class="icon"><use href="#icon-headphones"></use></svg> Прослушка переменных</span>
+                <span class="constructor-title__sub" id="listenMeta"></span>
+            </div>
+        </header>
+        <div class="listen-body">
+            <aside class="listen-side">
+                <input class="audit-files__filter" id="listenFilter" placeholder="Поиск по названию" oninput="listenRenderList()">
+                <div class="listen-list" id="listenList"></div>
+                <div class="listen-side__stat" id="listenStat"></div>
+            </aside>
+            <section class="listen-main">
+                <div class="listen-now">
+                    <div class="listen-now__pos" id="listenPos"></div>
+                    <div class="listen-now__name" id="listenName">—</div>
+                    <div class="listen-now__file" id="listenFile"></div>
+                </div>
+                <div class="listen-chain" id="listenChain"></div>
+                <div class="listen-actions">
+                    <button class="btn-ghost" onclick="listenStep(-1)" title="Предыдущая">Пред. <kbd>↑</kbd></button>
+                    <button class="custom-alert-btn listen-play" id="listenPlayBtn" onclick="listenPlayChain()">&#9654; Слушать в фразе <kbd>Space</kbd></button>
+                    <button class="btn-ghost" onclick="listenPlayOnly()" title="Только то, что правите (P)">&#9654; Только правку <kbd>P</kbd></button>
+                    <label class="audit-switch" title="Звучит только конец начала и начало продолжения — для подгонки тайминга"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
+                    <button class="btn-ghost" onclick="listenStep(1)" title="Следующая">След. <kbd>↓</kbd></button>
+                </div>
+                <div class="listen-ed" id="listenEd">
+                    <div class="listen-ed__title" id="listenEdTitle"></div>
+                    <canvas class="listen-ed__canvas" id="listenEdCanvas"></canvas>
+                    <div class="listen-ed__bar" id="listenEdBar"></div>
+                </div>
+                <div class="listen-synth" id="listenSynth"></div>
+            </section>
+        </div>
+    </div>
+
     <div id="stage3-constructor" class="stage stage-constructor" style="display: none;">
         <header class="workspace-header">
             <div class="header-actions">
@@ -1596,7 +1641,8 @@
         </div>
     </div>
 
-    <script src="script.js?v=2"></script>
-    <script src="tutorial.js?v=1"></script>
+    <script src="script.js?v=3"></script>
+    <script src="tutorial.js?v=2"></script>
+    <script src="listen.js?v=2"></script>
 </body>
 </html>

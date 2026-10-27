@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>mock synth</title><style>.panel{display:none}.panel.active{display:block}</style></head><body>
+<main><nav><button type="button" onclick="tab(0)">Голоса</button><button type="button" onclick="tab(1)">Клон</button></nav>
+<section class="panel" id="p0"><form onsubmit="return false">
+ <label>Голос <select id="preset-voice"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></label>
+ <label>Язык <select id="preset-lang"><option>ru</option><option>kz</option></select></label>
+ <label>Текст <textarea></textarea></label>
+ <button type="button" onclick="go()">Синтезировать</button></form><div id="out"></div></section>
+<section class="panel active" id="p1"><form onsubmit="return false"><label>x<textarea></textarea></label></form></section></main>
+<script>
+function tab(i){ document.querySelectorAll('section').forEach((s,k)=>s.classList.toggle('active',k===i)); }
+function wav(sec, f){ const r=16000,n=Math.floor(r*sec),b=new ArrayBuffer(44+n*2),v=new DataView(b);
+  const w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+  w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,r,true);v.setUint32(28,r*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++)v.setInt16(44+i*2,Math.round(Math.sin(i/r*2*Math.PI*f)*9000*Math.min(1,i/800,(n-i)/800)),true);
+  let s='',u=new Uint8Array(b);for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return 'data:audio/wav;base64,'+btoa(s);}
+function go(){ const vi=document.getElementById('preset-voice').selectedIndex, li=document.getElementById('preset-lang').selectedIndex,
+  t=document.querySelector('section.panel.active textarea').value;
+  // длительность = 1 + голос*0.1 + язык*0.05 (+0.01 на букву) — проверка, что выбрали нужное
+  setTimeout(()=>{ document.getElementById('out').innerHTML='<audio controls src="'+wav(1+vi*0.1+li*0.05+t.length*0.01, 220)+'"></audio>'; }, 600); }
+</script></body></html>
