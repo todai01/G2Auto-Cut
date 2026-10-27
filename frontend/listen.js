@@ -374,6 +374,8 @@ function listenNext() {
 }
 async function listenSave(next) {
     if (!lEd) { if (next && lTarget === 'var' && LS && LS.pos < LS.rows.length - 1) listenNext(); return true; }
+    // «Сохранить» переменной — сразу дальше, файл пишется в фоне (не ждём диска)
+    if (next && lEd.target === 'var' && lRow() && lRow().path === lEd.path) { listenStopHead(); pywebview.api.listen_stop(); listenSaveBg(); return true; }
     let go = next && lEd.target === 'var' && LS.pos < LS.rows.length - 1;
     if (!listenDirty()) {
         if (lEd.target === 'var' && lRow() && !lRow().done) {          // хороша как есть — отметить сохранённой
@@ -493,25 +495,26 @@ function listenAutoDone() {
     let r = lRow();
     if (!r || !r.path || r.done || !lEd || lEd.target !== 'var' || lEd.hist.length) return;
     if (lPlay) return;
-    if (!lAutoGap) { listenSaveBg(); return; }
+    if (!lAutoGap) { listenSaveBg(true); return; }
     clearTimeout(lAutoGapT);                                // пауза: имя ещё текущее — F пометит его
-    lAutoGapT = setTimeout(() => { if (lAuto && lRow() === r && !lPlay && !lEd.hist.length) listenSaveBg(); }, lAutoGap);
+    lAutoGapT = setTimeout(() => { if (lAuto && lRow() === r && !lPlay && !lEd.hist.length) listenSaveBg(true); }, lAutoGap);
 }
 // Сохранить в фоне и сразу дальше (автопрогон): кружок зелёный сразу, ошибка — вернём жёлтый
-function listenSaveBg() {
+function listenSaveBg(auto) {
     let pos = LS.pos, row = lRow(), e = lEd;
     if (!row || !e) return;
     let dirty = listenDirty(), args = [e.path, e.ranges, e.gain, e.tempo, true, true];
+    if (!dirty && row.done && !row.flag) { listenNext(); return; }      // уже сохранена, правок нет
     e.saved = listenSnap(); e.hist = [];
     row.done = true; row.flag = false; lLastSaved = { pos, path: e.path };
-    lAutoMoved = { pos, t: performance.now() };
+    lAutoMoved = auto ? { pos, t: performance.now() } : null;   // «поздняя F» — только после автоперехода
     let q = dirty ? pywebview.api.listen_edit_save(...args) : pywebview.api.listen_mark_done(e.path, true);
     q.then(r => {
         if (!r || r.error) { row.done = false; showToast(`Не сохранилось «${row.name}»: ${r && r.error || ''}`, 4000); }
         else if (r.tpl_new) { LS.tpl = r.tpl; showToast(`«${row.name}» — шаблон срезки для остальных`); }
         listenRenderRow(pos); listenStatRender();
     });
-    listenRenderRow(pos); listenStatRender();
+    if (lFlagOnly) listenRenderList(); else { listenRenderRow(pos); listenStatRender(); }
     listenNext();
 }
 function listenRenderRow(k) {

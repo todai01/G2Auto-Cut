@@ -3838,3 +3838,11 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-autorun.is-on{ border-color: var(--accent-good); color: var(--accent-good); background: var(--tint-good, rgba(46,204,113,.12)); }
 .listen-row.is-flag .listen-row__dot{ background: #a875ff; box-shadow: 0 0 0 2px rgba(168,117,255,.25); }   /* исправить потом */
 .listen-flagmode.is-on{ border-color: #a875ff; color: #a875ff; }
+/* Две главные кнопки прослушки: исправить / сохранить */
+.listen-decide{ display: flex; gap: 12px; justify-content: center; }
+.listen-decide__btn{ flex: 0 1 300px; min-height: 52px; border-radius: var(--radius-md); font: inherit; font-size: 17px; font-weight: 750; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px; transition: filter .15s, transform .1s; }
+.listen-decide__btn:active{ transform: scale(.98); }
+.listen-decide__btn--fix{ background: rgba(168,117,255,.14); color: #c4a2ff; border: 1px solid rgba(168,117,255,.55); }
+.listen-decide__btn--ok{ background: linear-gradient(180deg, #45cf8f, var(--accent-good)); color: #06281a; border: none; }
+.listen-decide__btn:hover{ filter: brightness(1.1); }
