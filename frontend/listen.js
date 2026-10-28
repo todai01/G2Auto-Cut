@@ -269,19 +269,32 @@ function listenAnimLoop() {
     if (lAnimRaf) return;
     lAnimRaf = requestAnimationFrame(() => { lAnimRaf = null; if (isShown('stage5-listen')) listenEdDraw(); });
 }
-function listenEdSkeleton(g, w, h, now, color) {
+let lSkel = null;                  // {k, t0} — когда началась заглушка (для плавного входа)
+function listenEdSkeleton(g, w, h, now, color, k = 1) {
     let mid = h / 2, n = Math.max(12, Math.floor(w / 7)), bw = Math.max(2, w / n - 3);
     for (let i = 0; i < n; i++) {
         let env = Math.pow(Math.sin(Math.PI * (i + 0.5) / n), 0.7);
         let a = env * (0.18 + 0.5 * Math.abs(Math.sin(now / 320 - i * 0.32)) * (0.6 + 0.4 * Math.sin(now / 900 + i * 0.07)));
-        let y = Math.max(2, a * (mid - 10));
-        g.globalAlpha = 0.25 + 0.55 * env;
+        let y = Math.max(1, a * (mid - 10) * k);
+        g.globalAlpha = (0.25 + 0.55 * env) * k;
         g.fillStyle = color;
         g.fillRect(i * (w / n) + 1.5, mid - y, bw, y * 2);
     }
     let sx = ((now / 1400) % 1.4 - 0.2) * w, grad = g.createLinearGradient(sx - 80, 0, sx + 80, 0);  // блик бежит слева направо
     grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(.5, 'rgba(255,255,255,.10)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
-    g.globalAlpha = 1; g.fillStyle = grad; g.fillRect(sx - 80, 0, 160, h);
+    g.globalAlpha = k; g.fillStyle = grad; g.fillRect(sx - 80, 0, 160, h);
+    g.globalAlpha = 1;
+}
+// Прежняя волна «опадает» к нулевой линии и гаснет (вход в загрузку)
+function listenEdFade(g, w, h, k, color) {
+    if (!lEd || k <= 0) return;
+    let mid = (h - 16) / 2, bw = w * lEd.bucket / lEd.dur;
+    g.globalAlpha = k; g.fillStyle = color;
+    for (let t = 0; t < lEd.dur; t += lEd.bucket) {
+        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, y = Math.max(1, p * (mid - 6) * k);
+        g.fillRect(t / lEd.dur * w, mid - y, Math.max(1, bw - (bw > 3 ? 1 : 0)), y * 2);
+    }
+    g.globalAlpha = 1;
 }
 function listenEdDraw() {
     let cv = lEl('listenEdCanvas'), dpr = window.devicePixelRatio || 1;
@@ -290,7 +303,15 @@ function listenEdDraw() {
     if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     let css = getComputedStyle(document.documentElement), varColor = css.getPropertyValue('--accent-var').trim() || '#eeac3e';
-    if (listenSynthBusy()) { listenEdSkeleton(g, w, h, performance.now(), varColor); listenAnimLoop(); return; }
+    if (listenSynthBusy()) {
+        let now = performance.now();
+        if (!lSkel || lSkel.k !== LS.pos) lSkel = { k: LS.pos, t0: now };
+        let p = Math.min(1, (now - lSkel.t0) / 550), e = p * p * (3 - 2 * p);          // плавно, без рывка
+        listenEdFade(g, w, h, 1 - Math.min(1, p * 1.6), varColor);
+        listenEdSkeleton(g, w, h, now, varColor, e);
+        listenAnimLoop(); return;
+    }
+    lSkel = null;
     if (!lEd) return;
     let rv = lEd.reveal ? Math.min(1, (performance.now() - lEd.reveal) / 600) : 1;     // готовый синтез проявляется
     if (rv < 1) listenAnimLoop(); else lEd.reveal = null;
