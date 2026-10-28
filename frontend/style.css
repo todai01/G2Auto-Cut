@@ -3846,3 +3846,36 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-decide__btn--fix{ background: rgba(168,117,255,.14); color: #c4a2ff; border: 1px solid rgba(168,117,255,.55); }
 .listen-decide__btn--ok{ background: linear-gradient(180deg, #45cf8f, var(--accent-good)); color: #06281a; border: none; }
 .listen-decide__btn:hover{ filter: brightness(1.1); }
+
+/* ===== Прослушка: компактная раскладка ===== */
+.listen-main{ gap: 12px; }
+.listen-now{ padding: 4px 10px 0; }
+.listen-chain{ gap: 6px; }
+.listen-part{ flex-direction: row; align-items: baseline; gap: 6px; min-width: 0; max-width: 300px; padding: 6px 26px 6px 11px; }
+.listen-part i{ font-size: 10px; flex: none; }
+.listen-part span{ top: 6px; right: 8px; font-size: 12px; }
+.listen-arrow{ font-size: 12px; }
+.listen-decide{ gap: 10px; }
+.listen-decide__btn{ flex: 0 1 240px; min-height: 48px; font-size: 16px; }
+.listen-decide__btn--play{ background: var(--panel-raised, var(--panel)); color: var(--text); border: 1px solid var(--border); }
+.listen-decide__btn--play.is-playing{ border-color: var(--accent-good); color: var(--accent-good); }
+.listen-opts{ display: flex; align-items: center; justify-content: center; gap: 12px; font-size: var(--fs-sm); color: var(--text-dim); }
+.listen-opt{ display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.listen-lang--sm button{ padding: 4px 10px; font-size: 12px; }
+.listen-opts .listen-ctx{ height: 28px; font-size: 12px; padding: 0 6px; }
+.listen-tabs{ display: flex; gap: 4px; }
+.listen-tabs button{ flex: 1; padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+    font: inherit; font-size: 12px; cursor: pointer; }
+.listen-tabs button.is-on{ border-color: var(--accent-var); color: var(--text); background: var(--tint-var); }
+.listen-tabs #listenFlagMode.is-on{ border-color: #a875ff; background: rgba(168,117,255,.12); }
+.listen-ed{ padding: 10px 12px; }
+.listen-ed__title{ font-size: 12px; color: var(--text-dim); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.listen-ed__canvas{ height: 140px; }
+.listen-ed__bar{ gap: 5px; margin-top: 6px; }
+.listen-synth{ flex-direction: row; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
+.listen-synth__label{ font-size: var(--fs-sm); color: var(--text-dim); flex: none; }
+.listen-synth__text{ height: 32px; }
+.listen-synth__go{ height: 32px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--accent-primary); background: transparent;
+    color: var(--accent-primary); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.listen-synth__go:disabled{ opacity: .6; cursor: default; }
+.listen-synth__go:not(:disabled):hover{ background: var(--tint-primary); }

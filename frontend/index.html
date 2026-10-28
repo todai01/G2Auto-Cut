@@ -1430,6 +1430,10 @@
         <div class="listen-body">
             <aside class="listen-side">
                 <input class="audit-files__filter" id="listenFilter" placeholder="Поиск по названию" oninput="listenRenderList()">
+                <div class="listen-tabs">
+                    <button type="button" id="listenFlagAll" class="is-on" onclick="listenFlagMode(false)">Все</button>
+                    <button type="button" id="listenFlagMode" onclick="listenFlagMode(true)" title="Второй круг: только помеченные «исправить»">Помеченные: 0</button>
+                </div>
                 <div class="listen-list" id="listenList"></div>
                 <div class="listen-side__stat" id="listenStat"></div>
             </aside>
@@ -1441,23 +1445,15 @@
                 </div>
                 <div class="listen-chain" id="listenChain"></div>
                 <div class="listen-decide">
-                    <button class="listen-decide__btn listen-decide__btn--fix" onclick="listenFlag()" title="Пометить «исправить» и дальше — исправите вторым кругом («Помеченные»)">Исправить <kbd>Backspace</kbd></button>
+                    <button class="listen-decide__btn listen-decide__btn--play" id="listenPlayBtn" onclick="listenPlayChain()" title="Слушать в фразе (P — только правку, ↑ / ↓ — строки)">&#9654; Слушать <kbd>Space</kbd></button>
+                    <button class="listen-decide__btn listen-decide__btn--fix" onclick="listenFlag()" title="Пометить «исправить» и дальше — исправите вторым кругом («Помеченные» слева)">Исправить <kbd>Backspace</kbd></button>
                     <button class="listen-decide__btn listen-decide__btn--ok" onclick="listenSave(true)" title="Сохранить и сразу следующее (файл пишется в фоне)">Сохранить <kbd>Enter</kbd></button>
                 </div>
-                <div class="listen-actions">
-                    <button class="btn-ghost" onclick="listenStep(-1)" title="Предыдущая">Пред. <kbd>↑</kbd></button>
-                    <button class="custom-alert-btn listen-play" id="listenPlayBtn" onclick="listenPlayChain()">&#9654; Слушать в фразе <kbd>Space</kbd></button>
-                    <button class="btn-ghost" onclick="listenPlayOnly()" title="Только то, что правите (P)">&#9654; Только правку <kbd>P</kbd></button>
-                    <span class="listen-lang" id="listenLangTop" title="Язык: пара начало / конец, записи из ru / kz и синтез"></span>
-                    <label class="audit-switch" title="Звучит только конец начала и начало продолжения — для подгонки тайминга"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
+                <div class="listen-opts">
+                    <span class="listen-lang listen-lang--sm" id="listenLangTop" title="Язык: пара начало / конец, записи из ru / kz и синтез"></span>
+                    <label class="listen-opt" title="Звучит только конец начала и начало продолжения"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
                     <select class="listen-ctx" id="listenCtx" onchange="listenSetCtx(this.value)" title="Сколько конца начала и начала продолжения звучит рядом с переменной">
                         <option value="500">0,5 с</option><option value="1000">1 с</option><option value="1500">1,5 с</option><option value="2500">2,5 с</option></select>
-                    <select class="listen-ctx" id="listenGap" onchange="listenSetGap(this.value)" title="Автопрогон: пауза после имени перед следующим — успеть нажать F">
-                        <option value="0">пауза 0</option><option value="300">пауза 0,3 с</option><option value="600">пауза 0,6 с</option><option value="1000">пауза 1 с</option></select>
-                    <button class="btn-ghost" onclick="listenStep(1)" title="Следующая">След. <kbd>↓</kbd></button>
-                    <button class="btn-ghost listen-autorun" id="listenAutoBtn" onclick="listenAutoRun()" title="Каждое имя звучит и само сохраняется (срезка — автоматически), дальше — следующее несохранённое. Любая клавиша — пауза на этом имени">&#9654;&#9654; Автопрогон <kbd>G</kbd></button>
-                    <button class="btn-ghost listen-flagmode" id="listenFlagMode" onclick="listenFlagMode()" title="Второй круг: только помеченные «исправить потом»">Помеченные: 0</button>
-                    <button class="btn-ghost" onclick="listenSynthQuick()" title="Синтезировать это имя и сразу поставить на дорожку вместо записи (прежняя — в «_до_правок»)">Синтез <kbd>R</kbd></button>
                 </div>
                 <div class="listen-ed" id="listenEd">
                     <div class="listen-ed__title" id="listenEdTitle"></div>
@@ -1670,7 +1666,7 @@
     </div>
 
     <script src="script.js?v=4"></script>
-    <script src="tutorial.js?v=9"></script>
-    <script src="listen.js?v=16"></script>
+    <script src="tutorial.js?v=10"></script>
+    <script src="listen.js?v=17"></script>
 </body>
 </html>

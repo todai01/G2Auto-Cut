@@ -39,7 +39,7 @@ async function listenStart() {
 
 function listenOpen() {
     showStage('stage5-listen');
-    lEl('listenGap').value = String(lAutoGap);
+    if (lEl('listenGap')) lEl('listenGap').value = String(lAutoGap);
     let ctx = null; try { ctx = localStorage.getItem('gvox_listen_ctx'); } catch (e) {}
     if (ctx && +ctx !== LS.ctx_ms) listenSetCtx(ctx);
     lTarget = 'var';
@@ -84,9 +84,9 @@ function listenRender(light) {
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
             <i>${label}</i><b>${escapeHtml(name || '—')}</b>${ok ? '<span>✎</span>' : ''}</button>`;
     let ctx = (LS.ctx_ms / 1000).toLocaleString('ru-RU');
-    lEl('listenChain').innerHTML = part('start', LS.short ? `начало · последние ${ctx} с` : 'начало', LS.start, !!LS.start_path)
-        + '<span class="listen-arrow">→</span>' + part('var', 'переменная', r && r.name, !!(r && r.path))
-        + '<span class="listen-arrow">→</span>' + part('end', LS.short ? `конец · первые ${ctx} с` : 'конец', LS.end, !!LS.end_path);
+    lEl('listenChain').innerHTML = part('start', 'начало', LS.start, !!LS.start_path)
+        + '<span class="listen-arrow">→</span>' + part('var', 'имя', r && r.name, !!(r && r.path))
+        + '<span class="listen-arrow">→</span>' + part('end', 'конец', LS.end, !!LS.end_path);
     listenRenderSynth();
 }
 function listenRenderList() {
@@ -108,6 +108,7 @@ function listenStatRender() {
     lEl('listenStat').innerText = n ? `сохранено ${done} из ${LS.found}${n > LS.found ? ` · без записи ${n - LS.found}` : ''}` : '';
     let fl = LS.rows.filter(r => r.flag).length, b = lEl('listenFlagMode');
     if (b) { b.innerText = `Помеченные: ${fl}`; b.classList.toggle('is-on', lFlagOnly); }
+    if (lEl('listenFlagAll')) lEl('listenFlagAll').classList.toggle('is-on', !lFlagOnly);
 }
 // Шаг по списку — без перерисовки всех строк: только отметка текущей
 function listenMarkList() {
@@ -182,7 +183,8 @@ function listenSetEditor(r, path) {
     if (!path) { lEd = null; lEl('listenEd').classList.add('is-empty'); listenEdRender(); return; }
     if (!r || r.error) { lEd = null; showToast(r && r.error || 'Не открылась запись'); listenEdRender(); return; }
     lEl('listenEd').classList.remove('is-empty');
-    lEd = { ...r, target: lTarget, sel: null, cur: 0, head: null, hist: [] };
+    lEd = { ...r, target: lTarget, sel: null, cur: 0, head: null, hist: [], reveal: lRevealNext ? performance.now() : null };
+    lRevealNext = false;
     lEd.saved = listenSnap();
     lEd.auto = null;
     if (r.auto && lTarget === 'var') listenApplyAuto(r.auto);   // ещё не правили — сразу срезка по голосу / шаблону
@@ -217,8 +219,10 @@ function listenPush() { listenAutoPause(); lEd.hist.push(listenSnap()); if (lEd.
 
 function listenEdRender() {
     let bar = lEl('listenEdBar');
+    lEl('listenEd').classList.toggle('is-empty', !lEd && !listenSynthBusy());
     if (!lEd) {
-        lEl('listenEdTitle').innerText = LS && LS.rows.length && lTarget === 'var' && !(lRow() || {}).path ? 'Записи нет — синтезируйте ниже' : '';
+        lEl('listenEdTitle').innerText = listenSynthBusy() ? `Синтез «${lRow().name}»…`
+            : LS && LS.rows.length && lTarget === 'var' && !(lRow() || {}).path ? 'Записи нет — синтез ниже (R)' : '';
         bar.innerHTML = '';
         listenEdDraw();
         return;
@@ -226,7 +230,8 @@ function listenEdRender() {
     let kind = { var: 'переменная', start: 'начало фразы (целиком)', end: 'конец фразы (целиком)' }[lEd.target];
     let au = lEd.auto, sec = ms => (ms / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
     let autoTxt = au ? ` · <span class="listen-auto">срезано по голосу${au.breath ? ` · вдох / шум ${sec(au.breath)} с` : ''}${au.by_tpl ? ` · по шаблону «${escapeHtml(au.by_tpl)}»` : ''}</span>` : '';
-    lEl('listenEdTitle').innerHTML = `Правка — ${escapeHtml(lEd.name)} <span class="tts-dim">· ${kind}</span>${autoTxt}`;
+    lEl('listenEdTitle').innerHTML = listenSynthBusy() ? `Синтез «${escapeHtml(lRow().name)}»…`
+        : `${escapeHtml(lEd.name)} <span class="tts-dim">· ${kind}</span>${autoTxt}`;
     let sel = lEd.sel ? Math.round(lEd.sel.b - lEd.sel.a) : 0, len = lKept() / (lEd.tempo || 1);
     bar.innerHTML = `
         <button class="btn-ghost btn-ghost--compact" onclick="listenEdCut()" ${lEd.sel ? '' : 'disabled'} title="Убрать выделенное">Вырезать <kbd>X</kbd></button>
@@ -237,13 +242,33 @@ function listenEdRender() {
         <span class="listen-knob" title="Темп (без смены высоты)">темп <button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
         <span class="tts-dim">${(len / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}</span>
         ${lEd.target === 'var' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
-        <button class="btn-ghost btn-ghost--compact" onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : ''}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button>
-        <span class="listen-tpl">${LS.tpl ? `шаблон: «${escapeHtml(LS.tpl.from)}»` : 'шаблона нет — первая сохранённая станет им'}</span>` : ''}
+        <button class="btn-ghost btn-ghost--compact" onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : 'Шаблона нет — первая сохранённая станет им. '}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button>
+` : ''}
         <span class="tts-ed__spacer"></span>
         ${lEd.target === 'var' && lRow() && lRow().done ? '<button class="btn-ghost btn-ghost--compact" onclick="listenUnsave(LS.pos)" title="Запись — как до сохранения: подправить и сохранить заново (Ctrl+Z сразу после сохранения)">Отменить сохранение</button>'
-          : lEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}
-        <button class="custom-alert-btn" onclick="listenSave(true)" ${listenDirty() ? '' : 'disabled'} title="Сохранить и перейти к следующей">Сохранить <kbd>Enter</kbd></button>`;
+          : lEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}`;
     listenEdDraw();
+}
+// Синтез этой строки идёт — на дорожке «дышащая» заглушка
+const listenSynthBusy = () => lTarget === 'var' && !!lRow() && lRow().synth === 'busy';
+let lAnimRaf = null, lRevealNext = false;
+function listenAnimLoop() {
+    if (lAnimRaf) return;
+    lAnimRaf = requestAnimationFrame(() => { lAnimRaf = null; if (isShown('stage5-listen')) listenEdDraw(); });
+}
+function listenEdSkeleton(g, w, h, now, color) {
+    let mid = h / 2, n = Math.max(12, Math.floor(w / 7)), bw = Math.max(2, w / n - 3);
+    for (let i = 0; i < n; i++) {
+        let env = Math.pow(Math.sin(Math.PI * (i + 0.5) / n), 0.7);
+        let a = env * (0.18 + 0.5 * Math.abs(Math.sin(now / 320 - i * 0.32)) * (0.6 + 0.4 * Math.sin(now / 900 + i * 0.07)));
+        let y = Math.max(2, a * (mid - 10));
+        g.globalAlpha = 0.25 + 0.55 * env;
+        g.fillStyle = color;
+        g.fillRect(i * (w / n) + 1.5, mid - y, bw, y * 2);
+    }
+    let sx = ((now / 1400) % 1.4 - 0.2) * w, grad = g.createLinearGradient(sx - 80, 0, sx + 80, 0);  // блик бежит слева направо
+    grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(.5, 'rgba(255,255,255,.10)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.globalAlpha = 1; g.fillStyle = grad; g.fillRect(sx - 80, 0, 160, h);
 }
 function listenEdDraw() {
     let cv = lEl('listenEdCanvas'), dpr = window.devicePixelRatio || 1;
@@ -251,12 +276,18 @@ function listenEdDraw() {
     if (!w) return;
     if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    let css = getComputedStyle(document.documentElement), varColor = css.getPropertyValue('--accent-var').trim() || '#eeac3e';
+    if (listenSynthBusy()) { listenEdSkeleton(g, w, h, performance.now(), varColor); listenAnimLoop(); return; }
     if (!lEd) return;
-    let x = ms => ms / lEd.dur * w, mid = h / 2, css = getComputedStyle(document.documentElement);
+    let rv = lEd.reveal ? Math.min(1, (performance.now() - lEd.reveal) / 600) : 1;     // готовый синтез проявляется
+    if (rv < 1) listenAnimLoop(); else lEd.reveal = null;
+    let ease = 1 - Math.pow(1 - rv, 3);
+    let x = ms => ms / lEd.dur * w, mid = h / 2;
     let kept = t => lEd.ranges.some(([a, b]) => t >= a && t < b);
     for (let t = 0; t < lEd.dur; t += lEd.bucket) {
-        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, y = Math.max(1, p * (mid - 8));
-        g.fillStyle = kept(t) ? (css.getPropertyValue('--accent-var').trim() || '#eeac3e') : 'rgba(255,255,255,.13)';
+        if (x(t) > ease * w * 1.05) break;
+        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, y = Math.max(1, p * (mid - 8) * Math.min(1, ease * 1.3));
+        g.fillStyle = kept(t) ? varColor : 'rgba(255,255,255,.13)';
         g.fillRect(x(t), mid - y, Math.max(1, w * lEd.bucket / lEd.dur), y * 2);
     }
     // края: ручки начала и конца записи
@@ -476,7 +507,7 @@ function listenAfterPlay(r, tok) {
 let lAuto = false;
 function listenAutoSet(on, msg) {
     lAuto = !!on;
-    lEl('listenAutoBtn').classList.toggle('is-on', lAuto);
+    if (lEl('listenAutoBtn')) lEl('listenAutoBtn').classList.toggle('is-on', lAuto);
     if (msg) showToast(msg, 2600);
 }
 function listenAutoRun() {
@@ -571,17 +602,15 @@ function listenRenderSynth() {
     let box = lEl('listenSynth'), r = lRow();
     if (!r) { box.innerHTML = ''; return; }
     let st = r.synth;
-    box.innerHTML = `<div class="listen-synth__head">Синтез <span class="tts-dim">— если запись неудачная или её нет</span></div>
-        <div class="listen-synth__row">
-            <span class="listen-lang">${listenLangBtns()}</span>
-            <input class="listen-synth__text" id="listenSynthText" value="${escapeHtml(r.name)}" title="Текст для синтеза — можно поправить (ударение, написание)">
-            <button class="custom-alert-btn" onclick="listenSynth()" ${st === 'busy' ? 'disabled' : ''}>${st === 'busy' ? 'Синтезирую…' : 'Синтезировать'}</button>
-        </div>
-        ${st === 'ready' ? `<div class="listen-synth__row">
-            <button class="btn-ghost" onclick="listenSynthPlay()">&#9654; Синтез в фразе</button>
-            <button class="btn-ghost btn-ghost--good" onclick="listenSynthTake()" title="Записать вместо текущей (прежняя — в «_до_правок»)">Взять синтез</button>
-            <button class="btn-ghost" onclick="listenSynthDrop()">Отклонить</button></div>` : ''}
-        ${st === 'error' ? '<div class="listen-warn">Синтез не получился — попробуйте ещё раз</div>' : ''}`;
+    let keep = lEl('listenSynthText'), txt = keep && keep.dataset.k === String(LS.pos) ? keep.value : r.name;
+    box.innerHTML = `<span class="listen-synth__label">Синтез ${LS.lang.toUpperCase()}</span>
+        <input class="listen-synth__text" id="listenSynthText" data-k="${LS.pos}" value="${escapeHtml(txt)}" title="Текст для синтеза — можно поправить (ударение, написание)">
+        <button class="listen-synth__go" onclick="listenSynthQuick()" ${st === 'busy' ? 'disabled' : ''} title="Синтез сразу встанет на дорожку вместо записи (прежняя — в «_до_правок»)">${st === 'busy' ? 'Синтезирую…' : 'Синтезировать <kbd>R</kbd>'}</button>
+        ${st === 'ready' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthPlay()">&#9654; в фразе</button>
+            <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
+            <button class="btn-ghost btn-ghost--compact" onclick="listenSynthDrop()">Отклонить</button>` : ''}
+        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}`;
+    listenEdRender();
 }
 const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
     `<button type="button" class="${cur === l ? 'is-on' : ''}" onclick="${fn}('${l}')">${l.toUpperCase()}</button>`).join('');
@@ -706,8 +735,9 @@ function listenEvent(p) {
         if (isShown('stage5-listen')) {
             listenRenderList();
             if (LS && p.k === LS.pos) {
+                if (!p.ok) listenEdRender();
                 if (p.ok && p.taken && !lAuto) {                     // мы на этом имени — сразу на дорожку и слушать
-                    lTarget = 'var'; listenRender(true);
+                    lTarget = 'var'; lRevealNext = true; listenRender(true);
                     listenLoadEditor().then(() => { listenStopHead(); pywebview.api.listen_stop(); listenPlayChain(); });
                 } else listenRenderSynth();
             }
