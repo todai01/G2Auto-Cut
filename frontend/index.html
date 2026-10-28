@@ -1438,7 +1438,8 @@
                 <input class="lp-search" id="listenFilter" placeholder="Поиск по названию" oninput="listenRenderList()">
                 <div class="listen-tabs">
                     <button type="button" id="listenFlagAll" class="is-on" onclick="listenFlagMode(false)">Все</button>
-                    <button type="button" id="listenFlagMode" onclick="listenFlagMode(true)" title="Второй круг: только помеченные «исправить»">Помеченные: 0</button>
+                    <button type="button" id="listenTodoMode" onclick="listenTodoMode()" title="Только не проверенные: запись есть, ещё не сохранена и не помечена">Не проверены <b>0</b></button>
+                    <button type="button" id="listenFlagMode" onclick="listenFlagMode(true)" title="Второй круг: только помеченные «исправить»">Помеченные <b>0</b></button>
                 </div>
                 <div class="listen-list" id="listenList"></div>
             </aside>
@@ -1678,6 +1679,6 @@
 
     <script src="script.js?v=4"></script>
     <script src="tutorial.js?v=11"></script>
-    <script src="listen.js?v=21"></script>
+    <script src="listen.js?v=22"></script>
 </body>
 </html>

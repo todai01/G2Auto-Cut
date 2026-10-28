@@ -3960,3 +3960,7 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 
 .listen-synth{ width: 100%; max-width: 1180px; margin: 0 auto; box-sizing: border-box; padding: 10px 14px; box-shadow: var(--shadow-panel); }
 .listen-synth__label{ font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); }
+.listen-tabs button{ flex: auto; white-space: nowrap; padding: 6px 6px; }
+.listen-tabs button b{ font-family: var(--font-mono); font-weight: 600; margin-left: 3px; color: var(--text-faint); }
+.listen-tabs button.is-on b{ color: inherit; }
+.listen-tabs #listenTodoMode.is-on{ color: var(--accent-var); background: var(--tint-var); }

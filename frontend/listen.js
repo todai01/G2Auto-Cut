@@ -94,7 +94,7 @@ function listenRender(light) {
 function listenRenderList() {
     if (!LS) return;
     let q = (lEl('listenFilter').value || '').trim().toLowerCase();
-    lEl('listenList').innerHTML = LS.rows.map((r, k) => ({ r, k })).filter(({ r }) => (!q || r.name.toLowerCase().includes(q)) && (!lFlagOnly || r.flag)).map(({ r, k }) =>
+    lEl('listenList').innerHTML = LS.rows.map((r, k) => ({ r, k })).filter(({ r }) => (!q || r.name.toLowerCase().includes(q)) && (!lFlagOnly || r.flag) && (!lTodoOnly || listenIsTodo(r))).map(({ r, k }) =>
         `<button type="button" class="listen-row ${k === LS.pos ? 'is-on' : ''} ${listenRowCls(r)}" data-k="${k}" onclick="listenGo(${k})">
             <span class="listen-row__dot"></span><span class="listen-row__name">${escapeHtml(r.name)}</span>
             <span class="listen-row__tag">${r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет'}</span></button>`).join('');
@@ -118,10 +118,12 @@ function listenStatRender() {
     let fl0 = LS.rows.filter(r => r.flag).length;
     lEl('listenProgNum').innerText = `${done} / ${LS.found}`;
     lEl('listenProgBar').style.width = LS.found ? `${Math.round(done / LS.found * 1000) / 10}%` : '0';
-    lEl('listenStat').innerText = n ? [`осталось ${Math.max(0, LS.found - done)}`, fl0 && `исправить ${fl0}`, n > LS.found && `без записи ${n - LS.found}`].filter(Boolean).join(' · ') : '';
+    lEl('listenStat').innerText = n ? [`не проверено ${LS.rows.filter(listenIsTodo).length}`, fl0 && `исправить ${fl0}`, n > LS.found && `без записи ${n - LS.found}`].filter(Boolean).join(' · ') : '';
     let fl = LS.rows.filter(r => r.flag).length, b = lEl('listenFlagMode');
-    if (b) { b.innerText = `Помеченные: ${fl}`; b.classList.toggle('is-on', lFlagOnly); }
-    if (lEl('listenFlagAll')) lEl('listenFlagAll').classList.toggle('is-on', !lFlagOnly);
+    if (b) { b.innerHTML = `Помеченные <b>${fl}</b>`; b.classList.toggle('is-on', lFlagOnly); }
+    let td = lEl('listenTodoMode');
+    if (td) { td.innerHTML = `Не проверены <b>${LS.rows.filter(listenIsTodo).length}</b>`; td.classList.toggle('is-on', lTodoOnly); }
+    if (lEl('listenFlagAll')) lEl('listenFlagAll').classList.toggle('is-on', !lFlagOnly && !lTodoOnly);
 }
 // Шаг по списку — без перерисовки всех строк: только отметка текущей
 function listenMarkList() {
@@ -448,6 +450,10 @@ let lLastSaved = null;              // последняя сохранённая
 // Следующая несохранённая строка после from (жёлтая; withMiss — и красная, без записи)
 function listenNextTodo(from, withMiss) {
     let n = LS.rows.length;
+    if (lTodoOnly) {                                       // «Не проверены»: следующая жёлтая (по кругу)
+        for (let i = 1; i <= n; i++) { let k = (from + i) % n; if (k !== from && listenIsTodo(LS.rows[k])) return k; }
+        return -1;
+    }
     if (lFlagOnly) {                                       // второй круг: следующая помеченная (по кругу)
         for (let i = 1; i <= n; i++) { let k = (from + i) % n; if (LS.rows[k].flag && k !== from) return k; }
         return -1;
@@ -464,6 +470,7 @@ function listenNext() {
     if (k < 0) {
         if (lAuto) listenAutoSet(false, 'Автопрогон: несохранённых записей дальше нет');
         else if (lFlagOnly) { showToast('Помеченных больше нет'); listenFlagMode(false); }
+        else if (lTodoOnly) { showToast('Непроверенных больше нет'); listenFlagMode(false); }
         else listenStep(1);
         return;
     }
@@ -611,7 +618,7 @@ function listenSaveBg(auto) {
         else if (r.tpl_new) { LS.tpl = r.tpl; showToast(`«${row.name}» — шаблон срезки для остальных`); }
         listenRenderRow(pos); listenStatRender();
     });
-    if (lFlagOnly) listenRenderList(); else { listenRenderRow(pos); listenStatRender(); }
+    if (lFlagOnly || lTodoOnly) listenRenderList(); else { listenRenderRow(pos); listenStatRender(); }
     listenNext();
 }
 function listenRenderRow(k) {
@@ -622,7 +629,8 @@ function listenRenderRow(k) {
     let c = listenRowCls(r); if (c) el.classList.add(c);
 }
 // ----- Backspace: «исправить потом» — пометить и дальше; второй круг — только помеченные -----
-let lAutoMoved = null, lFlagOnly = false;
+let lAutoMoved = null, lFlagOnly = false, lTodoOnly = false;
+const listenIsTodo = r => !!r.path && !r.done && !r.flag;     // жёлтая: запись есть, не сохранена, не помечена
 async function listenFlag() {
     if (!LS || !LS.rows.length) return;
     // нажали чуть позже, чем автопрогон перешёл, — помечаем то, что только что прозвучало
@@ -637,7 +645,7 @@ async function listenFlag() {
     let r = await pywebview.api.listen_flag(k, on);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     LS.rows[k] = { ...LS.rows[k], ...r.row };
-    listenRenderRow(k); listenStatRender();
+    if (lFlagOnly || lTodoOnly) listenRenderList(); else { listenRenderRow(k); listenStatRender(); }
     showToast(on ? `«${row.name}» — исправить потом` : `«${row.name}»: пометка снята`, 1400);
     if (on && k === LS.pos && !lFlagOnly) {                // текущее — сразу дальше
         if (lEd) { lEd.hist = []; lEd.saved = listenSnap(); }   // правку не сохраняем и не спрашиваем
@@ -645,7 +653,18 @@ async function listenFlag() {
         listenNext();
     }
 }
+function listenTodoMode() {
+    lTodoOnly = true; lFlagOnly = false;
+    listenAutoSet(false);
+    listenRenderList();
+    if (!LS.rows[LS.pos] || !listenIsTodo(LS.rows[LS.pos])) {
+        let k = listenNextTodo(LS.pos, false);
+        if (k < 0) { showToast('Непроверенных нет — всё проверено'); lTodoOnly = false; listenRenderList(); return; }
+        listenGo(k);
+    }
+}
 function listenFlagMode(on) {
+    lTodoOnly = false;
     lFlagOnly = on === undefined ? !lFlagOnly : !!on;
     if (lFlagOnly) listenAutoSet(false);
     listenRenderList();
