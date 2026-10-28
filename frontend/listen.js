@@ -74,12 +74,14 @@ function listenRender(light) {
     lEl('listenCtx').value = String(LS.ctx_ms);
     if (light) listenMarkList(); else listenRenderList();
     let r = lRow();
-    lEl('listenPos').innerText = r ? `${LS.pos + 1} из ${LS.rows.length}` : 'Загрузите таблицу';
+    lEl('listenPos').innerText = r ? `${LS.pos + 1} / ${LS.rows.length}` : 'Загрузите таблицу';
+    listenStatusRender();
     lEl('listenName').innerText = r ? r.name : '—';
     lEl('listenName').classList.toggle('is-miss', !!r && !r.path);
+    listenStatusRender();
     lEl('listenFile').innerHTML = !r ? '' : r.path
         ? `${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
-        : '<span class="listen-warn">записи с таким именем в папке нет — синтезируйте</span>';
+        : 'записи с таким именем в папке нет — синтез (R)';
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
             <i>${label}</i><b>${escapeHtml(name || '—')}</b>${ok ? '<span>✎</span>' : ''}</button>`;
@@ -103,9 +105,20 @@ function listenRenderList() {
 
 // Кружок: красный — записи нет, жёлтый — есть, ещё не сохранена, зелёный — сохранена
 const listenRowCls = r => r.flag ? 'is-flag' : !r.path ? 'is-miss' : r.done ? '' : 'is-todo';
+// Статус текущей записи — плашка над именем
+function listenStatusRender() {
+    let el = lEl('listenStatus'), r = lRow();
+    if (!el) return;
+    let [c, t] = !r ? ['', ''] : r.synth === 'busy' ? ['is-busy', 'Синтез…'] : r.flag ? ['is-flag', 'Исправить']
+        : !r.path ? ['is-miss', 'Нет записи'] : r.done ? ['is-done', 'Сохранена'] : ['is-todo', 'Не проверена'];
+    el.className = 'lp-status ' + c; el.innerText = t;
+}
 function listenStatRender() {
     let n = LS.rows.length, done = LS.rows.filter(r => r.path && r.done).length;
-    lEl('listenStat').innerText = n ? `сохранено ${done} из ${LS.found}${n > LS.found ? ` · без записи ${n - LS.found}` : ''}` : '';
+    let fl0 = LS.rows.filter(r => r.flag).length;
+    lEl('listenProgNum').innerText = `${done} / ${LS.found}`;
+    lEl('listenProgBar').style.width = LS.found ? `${Math.round(done / LS.found * 1000) / 10}%` : '0';
+    lEl('listenStat').innerText = n ? [`осталось ${Math.max(0, LS.found - done)}`, fl0 && `исправить ${fl0}`, n > LS.found && `без записи ${n - LS.found}`].filter(Boolean).join(' · ') : '';
     let fl = LS.rows.filter(r => r.flag).length, b = lEl('listenFlagMode');
     if (b) { b.innerText = `Помеченные: ${fl}`; b.classList.toggle('is-on', lFlagOnly); }
     if (lEl('listenFlagAll')) lEl('listenFlagAll').classList.toggle('is-on', !lFlagOnly);
@@ -234,19 +247,19 @@ function listenEdRender() {
         : `${escapeHtml(lEd.name)} <span class="tts-dim">· ${kind}</span>${autoTxt}`;
     let sel = lEd.sel ? Math.round(lEd.sel.b - lEd.sel.a) : 0, len = lKept() / (lEd.tempo || 1);
     bar.innerHTML = `
-        <button class="btn-ghost btn-ghost--compact" onclick="listenEdCut()" ${lEd.sel ? '' : 'disabled'} title="Убрать выделенное">Вырезать <kbd>X</kbd></button>
-        <button class="btn-ghost btn-ghost--compact" onclick="listenEdKeep()" ${lEd.sel ? '' : 'disabled'} title="Оставить только выделенное">Оставить выделенное</button>
-        <button class="btn-ghost btn-ghost--compact" onclick="listenEdUndo()" ${lEd.hist.length ? '' : 'disabled'}>&#8630; <kbd>Ctrl+Z</kbd></button>
-        <button class="btn-ghost btn-ghost--compact" onclick="listenEdReset()" title="Вся исходная запись, громкость 0, темп 100%">Как было</button>
-        <span class="listen-knob" title="Громкость: + / − на клавиатуре">дБ <button onclick="listenKnob('gain', -1)">&minus;</button><b>${lEd.gain > 0 ? '+' : ''}${lEd.gain}</b><button onclick="listenKnob('gain', 1)">+</button></span>
-        <span class="listen-knob" title="Темп (без смены высоты)">темп <button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
-        <span class="tts-dim">${(len / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}</span>
-        ${lEd.target === 'var' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
-        <button class="btn-ghost btn-ghost--compact" onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : 'Шаблона нет — первая сохранённая станет им. '}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button>
-` : ''}
+        <span class="lp-group">
+            <button onclick="listenEdCut()" ${lEd.sel ? '' : 'disabled'} title="Убрать выделенное">Вырезать <kbd>X</kbd></button>
+            <button onclick="listenEdKeep()" ${lEd.sel ? '' : 'disabled'} title="Оставить только выделенное">Оставить</button>
+            <button onclick="listenEdUndo()" ${lEd.hist.length ? '' : 'disabled'} title="Отменить шаг (Ctrl+Z)">&#8630;</button>
+            <button onclick="listenEdReset()" title="Вся исходная запись, громкость 0, темп 100%">Как было</button></span>
+        <span class="lp-group" title="Громкость: + / − на клавиатуре"><span>дБ</span><button onclick="listenKnob('gain', -1)">&minus;</button><b>${lEd.gain > 0 ? '+' : ''}${lEd.gain}</b><button onclick="listenKnob('gain', 1)">+</button></span>
+        <span class="lp-group" title="Темп (без смены высоты)"><span>темп</span><button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
+        ${lEd.target === 'var' ? `<span class="lp-group"><button onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
+        <button onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : 'Шаблона нет — первая сохранённая станет им. '}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button></span>` : ''}
         <span class="tts-ed__spacer"></span>
-        ${lEd.target === 'var' && lRow() && lRow().done ? '<button class="btn-ghost btn-ghost--compact" onclick="listenUnsave(LS.pos)" title="Запись — как до сохранения: подправить и сохранить заново (Ctrl+Z сразу после сохранения)">Отменить сохранение</button>'
-          : lEd.has_backup ? '<button class="btn-ghost btn-ghost--compact" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}`;
+        <span class="lp-len">${(len / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}</span>
+        ${lEd.target === 'var' && lRow() && lRow().done ? '<button class="lp-link" onclick="listenUnsave(LS.pos)" title="Запись — как до сохранения: подправить и сохранить заново (Ctrl+Z сразу после сохранения)">Отменить сохранение</button>'
+          : lEd.has_backup ? '<button class="lp-link" onclick="listenRestore()" title="Записать обратно исходник из «_до_правок»">Вернуть исходник</button>' : ''}`;
     listenEdDraw();
 }
 // Синтез этой строки идёт — на дорожке «дышащая» заглушка
@@ -282,23 +295,50 @@ function listenEdDraw() {
     let rv = lEd.reveal ? Math.min(1, (performance.now() - lEd.reveal) / 600) : 1;     // готовый синтез проявляется
     if (rv < 1) listenAnimLoop(); else lEd.reveal = null;
     let ease = 1 - Math.pow(1 - rv, 3);
-    let x = ms => ms / lEd.dur * w, mid = h / 2;
+    let x = ms => ms / lEd.dur * w, rul = 16, H = h - rul, mid = H / 2;
     let kept = t => lEd.ranges.some(([a, b]) => t >= a && t < b);
+    let bar = (x0, y0, bw, bh) => { if (g.roundRect && bw >= 2) { g.beginPath(); g.roundRect(x0, y0, bw, bh, Math.min(1.5, bw / 2)); g.fill(); } else g.fillRect(x0, y0, bw, bh); };
+    g.fillStyle = 'rgba(255,255,255,.05)'; g.fillRect(0, mid, w, 1);                      // нулевая линия
+    let bw = w * lEd.bucket / lEd.dur, gap = bw > 3 ? 1 : 0;
     for (let t = 0; t < lEd.dur; t += lEd.bucket) {
         if (x(t) > ease * w * 1.05) break;
-        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, y = Math.max(1, p * (mid - 8) * Math.min(1, ease * 1.3));
-        g.fillStyle = kept(t) ? varColor : 'rgba(255,255,255,.13)';
-        g.fillRect(x(t), mid - y, Math.max(1, w * lEd.bucket / lEd.dur), y * 2);
+        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, y = Math.max(1, p * (mid - 6) * Math.min(1, ease * 1.3));
+        g.fillStyle = kept(t) ? varColor : 'rgba(255,255,255,.16)';
+        bar(x(t), mid - y, Math.max(1, bw - gap), y * 2);
     }
-    // края: ручки начала и конца записи
     let a0 = lEd.ranges[0][0], b1 = lEd.ranges[lEd.ranges.length - 1][1];
-    g.fillStyle = '#fff';
-    [a0, b1].forEach(t => { g.fillRect(x(t) - 1, 0, 2, h); g.fillRect(x(t) - 5, h - 14, 10, 14); });
-    g.fillStyle = 'rgba(239,91,80,.85)';                                  // вырезанное в середине
-    lEd.ranges.slice(1).forEach(([a], i) => { let b = lEd.ranges[i][1]; g.fillRect(x(b), 0, Math.max(2, x(a) - x(b)), 3); });
-    if (lEd.sel) { g.fillStyle = 'rgba(90,150,255,.32)'; g.fillRect(x(lEd.sel.a), 0, x(lEd.sel.b) - x(lEd.sel.a), h); }
-    g.fillStyle = '#5a96ff'; g.fillRect(x(lEd.cur) - 1, 0, 2, h);
-    if (lEd.head !== null) { g.fillStyle = css.getPropertyValue('--accent-good').trim() || '#2fbf7d'; g.fillRect(x(lEd.head) - 1, 0, 2, h); }
+    g.fillStyle = 'rgba(0,0,0,.38)';                                                       // срезанное по краям — в тень
+    g.fillRect(0, 0, x(a0), H); g.fillRect(x(b1), 0, w - x(b1), H);
+    lEd.ranges.slice(1).forEach(([a], i) => {                                             // вырезанное в середине
+        let b = lEd.ranges[i][1]; g.fillStyle = 'rgba(239,91,80,.16)'; g.fillRect(x(b), 0, x(a) - x(b), H);
+        g.fillStyle = 'rgba(239,91,80,.85)'; g.fillRect(x(b), 0, Math.max(2, x(a) - x(b)), 2);
+    });
+    if (lEd.sel) {
+        let s0 = x(lEd.sel.a), s1 = x(lEd.sel.b);
+        g.fillStyle = 'rgba(90,150,255,.22)'; g.fillRect(s0, 0, s1 - s0, H);
+        g.fillStyle = 'rgba(90,150,255,.8)'; g.fillRect(s0, 0, 1, H); g.fillRect(s1 - 1, 0, 1, H);
+    }
+    [a0, b1].forEach(t => {                                                               // ручки краёв
+        let px = Math.round(x(t));
+        g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(px - 1, 0, 2, H);
+        g.fillStyle = '#fff'; bar(px - 4, mid - 11, 8, 22);
+        g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(px - 1, mid - 5, 2, 10);
+    });
+    g.fillStyle = 'rgba(90,150,255,.9)'; g.fillRect(x(lEd.cur) - 0.5, 0, 1, H);
+    if (lEd.head !== null) {
+        let gc = css.getPropertyValue('--accent-good').trim() || '#2fbf7d';
+        g.save(); g.shadowColor = gc; g.shadowBlur = 8; g.fillStyle = gc; g.fillRect(x(lEd.head) - 1, 0, 2, H); g.restore();
+    }
+    // шкала времени
+    let step = lEd.dur > 6000 ? 1000 : lEd.dur > 2500 ? 500 : lEd.dur > 1000 ? 250 : 100;
+    g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, H, w, 1);
+    g.font = '10px ' + (css.getPropertyValue('--font-mono').trim() || 'monospace'); g.textBaseline = 'top';
+    for (let t = 0, k = 0; t <= lEd.dur; t += step, k++) {
+        let px = Math.round(x(t)), major = k % 2 === 0;
+        g.fillStyle = major ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)';
+        g.fillRect(px, H + 1, 1, major ? 5 : 3);
+        if (major && px < w - 24) { g.fillStyle = 'rgba(255,255,255,.32)'; g.fillText((t / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 2 }), px + 3, H + 3); }
+    }
 }
 function listenEdHit(cx) {
     let cv = lEl('listenEdCanvas'), r = cv.getBoundingClientRect(), t = (cx - r.left) / cv.clientWidth * lEd.dur;
@@ -550,6 +590,7 @@ function listenSaveBg(auto) {
 }
 function listenRenderRow(k) {
     let el = lEl('listenList').querySelector(`.listen-row[data-k="${k}"]`), r = LS.rows[k];
+    if (k === LS.pos) listenStatusRender();
     if (!el || !r) return;
     el.classList.remove('is-miss', 'is-todo', 'is-flag');
     let c = listenRowCls(r); if (c) el.classList.add(c);
@@ -610,7 +651,7 @@ function listenRenderSynth() {
             <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
             <button class="btn-ghost btn-ghost--compact" onclick="listenSynthDrop()">Отклонить</button>` : ''}
         ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}`;
-    listenEdRender();
+    listenStatusRender(); listenEdRender();
 }
 const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
     `<button type="button" class="${cur === l ? 'is-on' : ''}" onclick="${fn}('${l}')">${l.toUpperCase()}</button>`).join('');
