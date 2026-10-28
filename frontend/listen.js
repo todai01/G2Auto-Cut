@@ -664,6 +664,26 @@ function listenSrcAt(t) {
     return null;
 }
 
+// ----- финальная папка для сдачи -----
+async function listenExport() {
+    if (!LS || !LS.rows.length) { showToast('Сначала откройте папку и таблицу'); return; }
+    let seen = new Set(), done = 0, todo = 0;
+    LS.rows.forEach(r => { if (!r.path || r.flag || seen.has(r.path)) return; seen.add(r.path); r.done ? done++ : todo++; });
+    let fl = LS.rows.filter(r => r.flag).length, miss = LS.rows.filter(r => !r.path).length;
+    let how = await showBeautifulChoice(`<b>Финальная папка</b><br><br>Только аудио, без «_до_правок», «_синтез» и служебных файлов; ru / kz — как в папке.<br><br>`
+        + `Сохранено: <b>${done}</b> · не проверено: <b>${todo}</b> · помечено: <b>${fl}</b> · без записи: <b>${miss}</b><br><br>`
+        + 'Дальше — выберите, куда положить папку.', `Только сохранённые (${done})`, 'Все найденные', 'A', 'Отмена');
+    if (!how) return;
+    showToast('Собираю финальную папку…', 2500);
+    let r = await pywebview.api.listen_export(how === 'ok' ? 'done' : 'all');
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    let rest = [r.todo && `не проверено ${r.todo}`, r.flagged && `помечено ${r.flagged}`, r.missing && `без записи ${r.missing}`, r.failed && `не скопировалось ${r.failed}`].filter(Boolean);
+    let open = await showBeautifulConfirm(`<b>Готово: ${r.copied} аудио</b><br><br><span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(r.dest)}</span>`
+        + (rest.length ? `<br><br>Не вошло: ${rest.join(' · ')} — список рядом с папкой, в «${escapeHtml(r.report.split(/[\\/]/).pop())}».` : ''), 'Открыть папку', 'Закрыть');
+    if (open) pywebview.api.audit_open_folder(r.dest);
+}
+
 // ----- синтез -----
 function listenRenderSynth() {
     let box = lEl('listenSynth'), r = lRow();

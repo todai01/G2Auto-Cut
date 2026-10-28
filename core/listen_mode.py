@@ -538,6 +538,76 @@ class ListenMixin:
             return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "tpl": {"from": self._ls()["tpl"]["from"]} if self._ls().get("tpl") else None}
         return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "state": self.listen_state()}
 
+    def listen_export(self, mode='done'):
+        """Финальная папка для сдачи: только аудио (раскладка ru / kz — как в папке
+        записей), без «_до_правок», «_синтез» и служебных файлов. mode: done —
+        только сохранённые, all — все найденные. Что не готово — списком рядом."""
+        ls = self._ls()
+        if not ls["folder"] or not ls["rows"]:
+            return {"error": "Сначала откройте папку записей и таблицу."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        parent = picked if isinstance(picked, str) else picked[0]
+        base = os.path.basename(os.path.normpath(ls["folder"])) + '_финал'
+        dest, n = os.path.join(parent, base), 2
+        while os.path.exists(dest):
+            dest, n = os.path.join(parent, f"{base}_{n}"), n + 1
+        flags = ls.get("flags") or set()
+        take, todo, flagged, missing, seen = [], [], [], [], set()
+        # папка разделена на ru / kz — собираем оба языка (поиск как в _listen_match, без смены общего языка)
+        langs = sorted(ls["lang_dirs"]) if ls["lang_dirs"] else [None]
+        rows = []
+        for lang in langs:
+            tag = f" ({lang})" if lang else ''
+            for r in ls["rows"]:
+                hits = ls["index"].get(listen_norm(r["name"]), [])
+                if lang:
+                    hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (lang, None)]
+                rows.append((r["name"] + tag, listen_norm(r["name"]), hits[0] if hits else None))
+        for name, key, p in rows:
+            if not p:
+                missing.append(name)
+                continue
+            if key in flags:
+                flagged.append(name)
+                if mode != 'all':
+                    continue
+            if p in seen:
+                continue
+            seen.add(p)
+            if mode != 'all' and not os.path.exists(self._listen_meta(p)):
+                todo.append(name)
+                continue
+            take.append(p)
+        if not take:
+            return {"error": "Нечего собирать — нет сохранённых записей."}
+        self.player.stop()
+        copied, failed = 0, []
+        for p in take:
+            try:
+                rel = os.path.relpath(p, ls["folder"])
+                if rel.startswith('..'):
+                    rel = os.path.basename(p)
+                out = os.path.join(dest, rel)
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                shutil.copy2(p, out)
+                copied += 1
+            except OSError as e:
+                failed.append(f"{os.path.basename(p)}: {e}")
+        report = None
+        if todo or flagged or missing or failed:
+            report = dest + '_не_готово.txt'
+            parts = [("Не проверены (жёлтые)", todo), ("Помечены «исправить»", flagged),
+                     ("Нет записи", sorted(set(missing))), ("Не скопировались", failed)]
+            with open(report, 'w', encoding='utf-8') as f:
+                for title, items in parts:
+                    if items:
+                        f.write(f"{title} — {len(items)}:\n" + "\n".join(items) + "\n\n")
+        flagged = sorted(set(flagged))
+        return {"ok": True, "dest": dest, "copied": copied, "todo": len(todo), "flagged": len(flagged),
+                "missing": len(set(missing)), "failed": len(failed), "report": report}
+
     def listen_mark_done(self, path, light=False):
         """Запись хороша как есть — отметить проверенной, файл не трогаем."""
         if not path or not os.path.exists(path):
