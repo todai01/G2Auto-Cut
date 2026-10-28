@@ -496,7 +496,7 @@ function listenAutoDone() {
     if (!r || !r.path || r.done || !lEd || lEd.target !== 'var' || lEd.hist.length) return;
     if (lPlay) return;
     if (!lAutoGap) { listenSaveBg(true); return; }
-    clearTimeout(lAutoGapT);                                // пауза: имя ещё текущее — F пометит его
+    clearTimeout(lAutoGapT);                                // пауза: имя ещё текущее — Backspace пометит его
     lAutoGapT = setTimeout(() => { if (lAuto && lRow() === r && !lPlay && !lEd.hist.length) listenSaveBg(true); }, lAutoGap);
 }
 // Сохранить в фоне и сразу дальше (автопрогон): кружок зелёный сразу, ошибка — вернём жёлтый
@@ -507,7 +507,7 @@ function listenSaveBg(auto) {
     if (!dirty && row.done && !row.flag) { listenNext(); return; }      // уже сохранена, правок нет
     e.saved = listenSnap(); e.hist = [];
     row.done = true; row.flag = false; lLastSaved = { pos, path: e.path };
-    lAutoMoved = auto ? { pos, t: performance.now() } : null;   // «поздняя F» — только после автоперехода
+    lAutoMoved = auto ? { pos, t: performance.now() } : null;   // «поздний Backspace» — только после автоперехода
     let q = dirty ? pywebview.api.listen_edit_save(...args) : pywebview.api.listen_mark_done(e.path, true);
     q.then(r => {
         if (!r || r.error) { row.done = false; showToast(`Не сохранилось «${row.name}»: ${r && r.error || ''}`, 4000); }
@@ -523,7 +523,7 @@ function listenRenderRow(k) {
     el.classList.remove('is-miss', 'is-todo', 'is-flag');
     let c = listenRowCls(r); if (c) el.classList.add(c);
 }
-// ----- F: «исправить потом» — пометить и дальше; второй круг — только помеченные -----
+// ----- Backspace: «исправить потом» — пометить и дальше; второй круг — только помеченные -----
 let lAutoMoved = null, lFlagOnly = false;
 async function listenFlag() {
     if (!LS || !LS.rows.length) return;
@@ -719,7 +719,7 @@ function listenEvent(p) {
 function listenKey(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
     if (e.code === 'KeyG') { e.preventDefault(); listenAutoRun(); return; }
-    if (e.code === 'KeyF') { e.preventDefault(); listenFlag(); return; }       // пометить — автопрогон не останавливается
+    if (e.code === 'Backspace') { e.preventDefault(); listenFlag(); return; }  // пометить — автопрогон не останавливается
     if (e.code !== 'Enter' && e.code !== 'NumpadEnter') listenAutoPause();     // любая другая клавиша — пауза
     if (e.code === 'KeyR') { e.preventDefault(); listenSynthQuick(); return; }
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
