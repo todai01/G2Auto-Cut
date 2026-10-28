@@ -285,16 +285,18 @@ function listenEdSkeleton(g, w, h, now, color, k = 1) {
     g.globalAlpha = k; g.fillStyle = grad; g.fillRect(sx - 80, 0, 160, h);
     g.globalAlpha = 1;
 }
-// Прежняя волна «опадает» к нулевой линии и гаснет (вход в загрузку)
-function listenEdFade(g, w, h, k, color) {
-    if (!lEd || k <= 0) return;
+// Вход в загрузку — появление наоборот: прежняя волна стирается справа налево до front (px)
+function listenEdWipe(g, w, h, front, color) {
+    if (!lEd || front <= 0) return;
     let mid = (h - 16) / 2, bw = w * lEd.bucket / lEd.dur;
-    g.globalAlpha = k; g.fillStyle = color;
+    g.fillStyle = color;
     for (let t = 0; t < lEd.dur; t += lEd.bucket) {
-        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, y = Math.max(1, p * (mid - 6) * k);
-        g.fillRect(t / lEd.dur * w, mid - y, Math.max(1, bw - (bw > 3 ? 1 : 0)), y * 2);
+        let px = t / lEd.dur * w;
+        if (px > front) break;
+        let p = lEd.peaks[Math.floor(t / lEd.bucket)] || 0, near = Math.min(1, (front - px) / 60);   // у фронта — опадает
+        let y = Math.max(1, p * (mid - 6) * near);
+        g.fillRect(px, mid - y, Math.max(1, bw - (bw > 3 ? 1 : 0)), y * 2);
     }
-    g.globalAlpha = 1;
 }
 function listenEdDraw() {
     let cv = lEl('listenEdCanvas'), dpr = window.devicePixelRatio || 1;
@@ -306,9 +308,12 @@ function listenEdDraw() {
     if (listenSynthBusy()) {
         let now = performance.now();
         if (!lSkel || lSkel.k !== LS.pos) lSkel = { k: LS.pos, t0: now };
-        let p = Math.min(1, (now - lSkel.t0) / 550), e = p * p * (3 - 2 * p);          // плавно, без рывка
-        listenEdFade(g, w, h, 1 - Math.min(1, p * 1.6), varColor);
-        listenEdSkeleton(g, w, h, now, varColor, e);
+        let p = Math.min(1, (now - lSkel.t0) / 600), e = 1 - Math.pow(1 - p, 3);   // та же кривая, что у появления
+        let front = (1 - e) * w * 1.05;
+        listenEdWipe(g, w, h, lEd ? front : 0, varColor);
+        g.save(); g.beginPath(); g.rect(lEd ? front : 0, 0, w, h); g.clip();             // за фронтом — заглушка
+        listenEdSkeleton(g, w, h, now, varColor, lEd ? 1 : e);
+        g.restore();
         listenAnimLoop(); return;
     }
     lSkel = null;
