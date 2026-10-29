@@ -5112,8 +5112,11 @@ let isProcessing = false;
             let r = await pywebview.api.clone_pick_folder();
             if (!r) return;
             cloneSt.folder = r.count ? r.folder : null;
+            let langs = r.langs || {}, lk = Object.keys(langs).sort((a, b) => ({ ru: 0, kz: 1 }[a] ?? 2) - ({ ru: 0, kz: 1 }[b] ?? 2));
             document.getElementById('cloneFolderLabel').innerText = r.count
-                ? `${r.folder} — файлов: ${r.count}${r.subdirs ? `, подпапок: ${r.subdirs}` : ''}` : `${r.folder} — аудиофайлов нет`;
+                ? `${r.folder} — файлов: ${r.count}${lk.length > 1 ? ' (' + lk.map(k => `${k.replace('_', ' ')}: ${langs[k]}`).join(', ') + ')' : r.subdirs ? `, подпапок: ${r.subdirs}` : ''}` : `${r.folder} — аудиофайлов нет`;
+            document.getElementById('cloneSplitRow').style.display = lk.length > 1 ? '' : 'none';
+            document.getElementById('cloneSplitText').innerText = 'Отдельно по языкам — ' + lk.map(k => k.replace('_', ' ')).join(' / ');
             if (r.prev) {                                   // уже собирали — тайминги подхватим
                 let j = await pywebview.api.clone_load_json(r.prev);
                 if (j && !j.error) cloneSetJson(j, 'прошлая сборка этой папки');
@@ -5122,20 +5125,25 @@ let isProcessing = false;
         }
         function cloneSetJson(j, note) {
             cloneSt.json = j.json;
-            document.getElementById('cloneJsonLabel').innerText = `${note ? note + ': ' : ''}${j.count} файлов, ${cloneDur(j.total_s)}`;
+            document.getElementById('cloneJsonLabel').innerText = `${note ? note + ': ' : ''}` + (j.parts
+                ? j.parts.map(p => `${(p.lang || '').replace('_', ' ')} — ${p.count} файлов, ${cloneDur(p.total_s)}`).join(' · ')
+                : `${j.count} файлов, ${cloneDur(j.total_s)}`);
             cloneRefresh();
         }
         async function cloneBuild() {
             let btn = document.getElementById('btnCloneBuild'), out = document.getElementById('cloneBuildResult');
             btn.disabled = true; btn.innerText = 'Собираю…'; out.innerHTML = '';
             try {
+                let split = document.getElementById('cloneSplitRow').style.display !== 'none' && document.getElementById('cloneSplit').checked;
                 let r = await pywebview.api.clone_build(+document.querySelector('input[name="cloneGap"]:checked').value,
-                                                        +document.querySelector('input[name="cloneRate"]:checked').value);
+                                                        +document.querySelector('input[name="cloneRate"]:checked').value, split);
                 if (!r || r.error) { out.innerHTML = `<span class="clone-bad">${escapeHtml(r && r.error || 'Не получилось')}</span>`; return; }
-                out.innerHTML = `Готово: <b>${escapeHtml(r.wav)}</b><br>${r.count} файлов · ${cloneDur(r.total_s)} · ${r.rate} Гц · тайминги — «Клон_исходник.json» рядом
+                out.innerHTML = (r.parts ? `Готово по языкам (${r.rate} Гц), тайминги — рядом с каждым:<br>` + r.parts.map(p =>
+                        `<b>${escapeHtml(p.wav.split(/[\\/]/).pop())}</b> — ${p.count} файлов · ${cloneDur(p.total_s)}`).join('<br>') + '<br>'
+                    : `Готово: <b>${escapeHtml(r.wav)}</b><br>${r.count} файлов · ${cloneDur(r.total_s)} · ${r.rate} Гц · тайминги — «Клон_исходник.json» рядом`) + `
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="pywebview.api.clone_open_folder(${escapeHtml(JSON.stringify(r.wav.replace(/[\\/][^\\/]*$/, '')))})">Открыть папку</button>`
                     + (r.errors && r.errors.length ? `<div class="clone-bad">Не прочитались: ${r.errors.map(escapeHtml).join('; ')}</div>` : '');
-                cloneSetJson({ json: r.json, count: r.count, total_s: r.total_s }, 'из шага 1');
+                cloneSetJson({ json: r.json, count: r.count, total_s: r.total_s, parts: r.parts }, 'из шага 1');
             } finally { btn.innerText = 'Собрать WAV'; cloneRefresh(); }
         }
         async function clonePickJson() {
@@ -5158,7 +5166,7 @@ let isProcessing = false;
                 let r = await pywebview.api.clone_cut(document.querySelector('input[name="cloneOutRate"]:checked').value);
                 if (!r || r.error) { out.innerHTML = `<span class="clone-bad">${escapeHtml(r && r.error || 'Не получилось')}</span>`; return; }
                 out.innerHTML = r.report.map(c => c.error ? `<div class="clone-bad">${escapeHtml(c.clone)}: ${escapeHtml(c.error)}</div>`
-                    : `<div class="clone-row"><b>${escapeHtml(c.clone)}</b> — файлов: ${c.files}
+                    : `<div class="clone-row"><b>${escapeHtml(c.clone)}</b>${c.lang ? ` → тайминги ${escapeHtml(c.lang.replace('_', ' '))}${c.by ? ` (${c.by === 'name' ? 'по имени' : 'по длительности'})` : ''}` : ''} — файлов: ${c.files}
                         <span class="tts-dim">· сдвиг ${c.offset_ms} мс${c.scale !== 1 ? ` · растяжение ${((c.scale - 1) * 100).toFixed(2)}%` : ''}${c.fix_max_ms ? ` · подравнено до ${c.fix_max_ms} мс` : ''}</span>
                         <button type="button" class="btn-ghost btn-ghost--compact" onclick="pywebview.api.clone_open_folder(${escapeHtml(JSON.stringify(c.folder))})">Открыть</button>
                         ${c.warnings.length ? `<div class="clone-bad">${c.warnings.map(escapeHtml).join('<br>')}</div>` : ''}</div>`).join('');

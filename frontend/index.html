@@ -404,6 +404,7 @@
                     <label class="opt-chip"><input type="radio" name="cloneRate" value="44100"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">44100 Гц</span></label>
                     <label class="opt-chip"><input type="radio" name="cloneRate" value="48000"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">48000 Гц</span></label>
                 </div>
+                <label class="opt-chip" id="cloneSplitRow" style="display:none;"><input type="checkbox" id="cloneSplit" checked><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text" id="cloneSplitText">Отдельно по языкам — ru и kz</span></label>
                 <button class="splash-btn" style="width:100%;" id="btnCloneBuild" onclick="cloneBuild()" disabled>Собрать WAV</button>
                 <div id="cloneBuildResult" class="clone-result"></div>
             </div>
@@ -412,11 +413,11 @@
                 <div class="clone-step__head"><b>2</b> Нарезать клоны по таймингам</div>
                 <div class="field-row">
                     <button class="custom-alert-btn" onclick="clonePickJson()">Тайминги…</button>
-                    <span id="cloneJsonLabel" class="modal-hint" style="margin:0;">Соберите WAV или выберите «Клон_исходник.json»</span>
+                    <span id="cloneJsonLabel" class="modal-hint" style="margin:0;">Соберите WAV или выберите «Клон_исходник….json» (по языкам — подхватятся оба)</span>
                 </div>
                 <div class="field-row">
                     <button class="custom-alert-btn" onclick="clonePickClones()">Файлы клонов…</button>
-                    <span id="cloneClonesLabel" class="modal-hint" style="margin:0;">Клоны не выбраны</span>
+                    <span id="cloneClonesLabel" class="modal-hint" style="margin:0;">Клоны не выбраны — можно сразу ru и kz</span>
                 </div>
                 <div class="mode-options">
                     <span class="mode-options__label">Частота файлов</span>
@@ -1677,8 +1678,8 @@
         </div>
     </div>
 
-    <script src="script.js?v=4"></script>
-    <script src="tutorial.js?v=11"></script>
+    <script src="script.js?v=5"></script>
+    <script src="tutorial.js?v=12"></script>
     <script src="listen.js?v=22"></script>
 </body>
 </html>

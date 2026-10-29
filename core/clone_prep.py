@@ -3,6 +3,8 @@
 1. Папка с аудиофайлами (с подпапками) → один WAV: файлы подряд, между
    ними пауза тишины. Рядом — тайминги: где в общем WAV начинается и
    кончается каждый файл (Клон_исходник.json).
+   Отдельно по языкам: файлы с меткой ru / kz (подпапка или слово в имени)
+   — два WAV со своими таймингами (Клон_исходник_ru.wav / _kz.wav).
 2. Общий WAV прогоняете через клон (сколько угодно голосов) и
    возвращаете сюда готовые клоны. Каждый клон режется по таймингам
    исходника: файлы получают те же имена и ту же раскладку по папкам.
@@ -29,6 +31,20 @@ CLONE_LEAD_MS = 500                    # тишина в начале общег
 CLONE_FRAME_MS = 10
 CLONE_GLOBAL_MS = 4000                 # общий сдвиг клона ищется в ± стольких мс
 CLONE_LOCAL_MS = 200                   # каждый файл подравнивается в ± стольких мс
+CLONE_LANG_DIRS = {'ru': 'ru', 'rus': 'ru', 'рус': 'ru', 'kz': 'kz', 'kk': 'kz', 'kaz': 'kz', 'каз': 'kz', 'қаз': 'kz'}
+CLONE_NOLANG = 'без_языка'
+
+
+def _clone_lang(rel):
+    """Язык файла: подпапка ru / kz или отдельное слово ru / kz в имени (…_ru_…); иначе None."""
+    parts = rel.replace('\\', '/').split('/')
+    for d in parts[:-1]:
+        if d.lower() in CLONE_LANG_DIRS:
+            return CLONE_LANG_DIRS[d.lower()]
+    for w in re.split(r'[_\-\s.()\[\]]+', os.path.splitext(parts[-1])[0].lower()):
+        if w in CLONE_LANG_DIRS:
+            return CLONE_LANG_DIRS[w]
+    return None
 
 
 def _natural(s):
@@ -125,14 +141,20 @@ class ClonePrepMixin:
         self._clone_folder = folder
         self._clone_files = files
         out = os.path.join(folder, CLONE_DIR)
-        prev = os.path.join(out, CLONE_JSON)
+        prev = [os.path.join(out, f) for f in sorted(os.listdir(out))
+                if f.startswith(os.path.splitext(CLONE_JSON)[0]) and f.endswith('.json')] if os.path.isdir(out) else []
+        langs = {}
+        for f in files:
+            k = _clone_lang(f) or CLONE_NOLANG
+            langs[k] = langs.get(k, 0) + 1
         return {"folder": folder, "count": len(files), "files": files[:12],
                 "subdirs": len({os.path.dirname(f) for f in files if os.path.dirname(f)}),
-                "prev": prev if os.path.exists(prev) else None}
+                "langs": langs, "prev": max(prev, key=os.path.getmtime) if prev else None}
 
-    def clone_build(self, gap_ms=1000, rate=0):
+    def clone_build(self, gap_ms=1000, rate=0, split=False):
         """Все файлы — в один WAV (моно, 16 бит) с паузой gap_ms между ними.
-        rate 0 — частота самого «высокого» файла. Тайминги — в JSON рядом."""
+        rate 0 — частота самого «высокого» файла. Тайминги — в JSON рядом.
+        split — отдельный WAV на каждый язык (ru / kz, без метки — «без_языка»)."""
         folder = getattr(self, '_clone_folder', None)
         files = getattr(self, '_clone_files', None)
         if not folder or not files:
@@ -148,6 +170,26 @@ class ClonePrepMixin:
         if not loaded:
             return {"error": "Не удалось прочитать ни одного файла.", "errors": errors}
         out_rate = int(rate) if rate else max(r for _n, _x, r in loaded)
+        out_dir = os.path.join(folder, CLONE_DIR)
+        os.makedirs(out_dir, exist_ok=True)
+        groups = {}
+        for item in loaded:
+            groups.setdefault((_clone_lang(item[0]) or CLONE_NOLANG) if split else None, []).append(item)
+        if split and len(groups) < 2:
+            split, groups = False, {None: loaded}
+        set_id = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+        parts = []
+        for lang in sorted(groups, key=lambda k: (k is None, k == CLONE_NOLANG, k or '')):
+            parts.append(self._clone_write(out_dir, groups[lang], out_rate, gap_ms, folder, lang, set_id if split else None))
+        self._clone_jsons = [p["json"] for p in parts]
+        self._clone_json = parts[0]["json"]
+        first = parts[0]
+        return {"wav": first["wav"], "json": first["json"], "count": sum(p["count"] for p in parts), "rate": out_rate,
+                "total_s": round(sum(p["total_s"] for p in parts), 1), "parts": parts if split else None, "errors": errors}
+
+    def _clone_write(self, out_dir, loaded, out_rate, gap_ms, folder, lang, set_id):
+        """Один WAV + тайминги для группы файлов (lang — язык группы или None)."""
+        suffix = f"_{lang}" if lang else ''
         gap = np.zeros(out_rate * gap_ms // 1000, dtype=np.float32)
         parts = [np.zeros(out_rate * CLONE_LEAD_MS // 1000, dtype=np.float32)]
         pos = len(parts[0])
@@ -159,20 +201,18 @@ class ClonePrepMixin:
             parts += [y, gap]
             pos += len(y) + len(gap)
         whole = np.concatenate(parts)
-        out_dir = os.path.join(folder, CLONE_DIR)
-        os.makedirs(out_dir, exist_ok=True)
-        wav = os.path.join(out_dir, CLONE_WAV)
+        stem_w, ext_w = os.path.splitext(CLONE_WAV)
+        stem_j, ext_j = os.path.splitext(CLONE_JSON)
+        wav = os.path.join(out_dir, stem_w + suffix + ext_w)
         _write16(wav, whole, out_rate)
         meta = {"version": 1, "created": datetime.datetime.now().isoformat(timespec='seconds'),
-                "source_folder": folder, "wav": CLONE_WAV, "rate": out_rate, "gap_ms": gap_ms,
+                "source_folder": folder, "wav": os.path.basename(wav), "rate": out_rate, "gap_ms": gap_ms,
                 "lead_ms": CLONE_LEAD_MS, "samples": len(whole), "total_ms": round(len(whole) * 1000 / out_rate, 1),
-                "files": items}
-        js = os.path.join(out_dir, CLONE_JSON)
+                "lang": lang, "set": set_id, "files": items}
+        js = os.path.join(out_dir, stem_j + suffix + ext_j)
         with open(js, 'w', encoding='utf-8') as f:
             json.dump(meta, f, ensure_ascii=False, indent=1)
-        self._clone_json = js
-        return {"wav": wav, "json": js, "count": len(items), "rate": out_rate,
-                "total_s": round(len(whole) / out_rate, 1), "errors": errors}
+        return {"lang": lang, "wav": wav, "json": js, "count": len(items), "total_s": round(len(whole) / out_rate, 1)}
 
     # ---------------- 2. нарезать клоны ----------------
 
@@ -191,8 +231,24 @@ class ClonePrepMixin:
         except Exception:
             return {"error": "Это не файл таймингов клона."}
         self._clone_json = path
-        return {"json": path, "count": len(meta["files"]), "total_s": round(meta["total_ms"] / 1000, 1),
-                "source_folder": meta.get("source_folder")}
+        self._clone_jsons = [path]
+        parts = [{"lang": meta.get("lang"), "count": len(meta["files"]), "total_s": round(meta["total_ms"] / 1000, 1)}]
+        if meta.get("set"):                                   # сборка по языкам — подхватить соседние тайминги
+            base = os.path.dirname(path)
+            for f in sorted(os.listdir(base)):
+                p = os.path.join(base, f)
+                if p == path or not f.endswith('.json'):
+                    continue
+                try:
+                    with open(p, encoding='utf-8') as fh:
+                        m = json.load(fh)
+                except Exception:
+                    continue
+                if m.get("set") == meta["set"] and m.get("files"):
+                    self._clone_jsons.append(p)
+                    parts.append({"lang": m.get("lang"), "count": len(m["files"]), "total_s": round(m["total_ms"] / 1000, 1)})
+        return {"json": path, "count": sum(p["count"] for p in parts), "total_s": round(sum(p["total_s"] for p in parts), 1),
+                "parts": parts if len(parts) > 1 else None, "source_folder": meta.get("source_folder")}
 
     def clone_pick_clones(self):
         f = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, allow_multiple=True,
@@ -241,23 +297,29 @@ class ClonePrepMixin:
         """Каждый клон → папка «<имя клона>» рядом с таймингами: файлы с теми
         же именами и подпапками. out_rate_mode 'source' — частота как у
         исходного файла, 'clone' — как у клона."""
-        js = getattr(self, '_clone_json', None)
+        jsons = [j for j in (getattr(self, '_clone_jsons', None) or [getattr(self, '_clone_json', None)]) if j and os.path.exists(j)]
         clones = getattr(self, '_clone_inputs', None) or []
-        if not js or not os.path.exists(js):
+        if not jsons:
             return {"error": "Нет таймингов — соберите WAV (шаг 1) или выберите файл таймингов."}
         if not clones:
             return {"error": "Выберите файлы клонов."}
-        with open(js, encoding='utf-8') as fh:
-            meta = json.load(fh)
-        base = os.path.dirname(js)
-        src_wav = os.path.join(base, meta.get("wav") or CLONE_WAV)
-        src_voice = None
-        if os.path.exists(src_wav):
-            try:
-                sx, sr = _mono(src_wav)
-                src_voice = _voice(_env(sx, sr))
-            except Exception:
-                src_voice = None
+        metas = []
+        for js in jsons:
+            with open(js, encoding='utf-8') as fh:
+                metas.append((js, json.load(fh)))
+        voices = {}
+
+        def src_voice_of(js, meta):
+            if js not in voices:
+                src_wav = os.path.join(os.path.dirname(js), meta.get("wav") or CLONE_WAV)
+                voices[js] = None
+                if os.path.exists(src_wav):
+                    try:
+                        sx, sr = _mono(src_wav)
+                        voices[js] = _voice(_env(sx, sr))
+                    except Exception:
+                        pass
+            return voices[js]
         report = []
         for cpath in clones:
             name = os.path.splitext(os.path.basename(cpath))[0]
@@ -266,6 +328,9 @@ class ClonePrepMixin:
             except Exception as e:
                 report.append({"clone": name, "error": f"не читается: {e}"})
                 continue
+            js, meta, how = self._clone_pick_meta(metas, name, len(x) * 1000 / rate)
+            base = os.path.dirname(js)
+            src_voice = src_voice_of(js, meta)
             off_ms, scale, cv = self._clone_align(meta, src_voice, x, rate)
             out_dir = os.path.join(base, name)
             fr = CLONE_FRAME_MS
@@ -310,9 +375,24 @@ class ClonePrepMixin:
             if abs(scale - 1) > 0.03:
                 warn.insert(0, f"длина клона отличается от исходника на {abs(scale - 1) * 100:.1f}% — проверьте на слух")
             report.append({"clone": name, "folder": out_dir, "files": done, "offset_ms": round(off_ms),
+                           "lang": meta.get("lang"), "by": how,
                            "scale": round(scale, 4), "fix_max_ms": round(max(moved), 0) if moved else 0,
                            "warnings": warn[:8]})
-        return {"report": report, "json": js}
+        return {"report": report, "json": jsons[0]}
+
+    @staticmethod
+    def _clone_pick_meta(metas, clone_name, clone_ms):
+        """Тайминги для клона: одни — они; по языкам — по метке ru / kz в имени
+        клона, иначе — по длительности (клон дописывает тишину в конце, бывает
+        чуть растянут)."""
+        if len(metas) == 1:
+            return metas[0][0], metas[0][1], None
+        lang = _clone_lang(clone_name)
+        for js, m in metas:
+            if lang and m.get("lang") == lang:
+                return js, m, 'name'
+        js, m = min(metas, key=lambda jm: abs(clone_ms - jm[1]["total_ms"]) + (jm[1]["total_ms"] * 0.5 if clone_ms < jm[1]["total_ms"] * 0.9 else 0))
+        return js, m, 'length'
 
     def clone_open_folder(self, path):
         try:
