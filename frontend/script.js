@@ -6951,6 +6951,7 @@ let isProcessing = false;
             }
             if (!st || st.error === 'cancel') return null;
             if (st.error) { showBeautifulAlert('⚠️ ' + escapeHtml(st.error)); return null; }
+            if (st.auto_head) showToast(`Лист «${st.auto_head}» без шапки: A — фразы, B — названия аудио`, 4000);
             return st;
         }
 

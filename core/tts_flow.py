@@ -141,6 +141,28 @@ def _name_tag(t):
     return bool(t) and re.fullmatch(r'name_(full_)?phrase(_(ru|kz|kk))?', t) is not None
 
 
+_AUTO_HEAD_WORDS = {'фраза', 'фразы', 'текст', 'текст фразы', 'phrase', 'text', 'название', 'названия', 'имя', 'имя файла',
+                    'название файла', 'название аудио', 'name', 'file', 'filename', 'файл', '№', 'n'}
+
+
+def _auto_head(rows):
+    """Лист без тегов: колонка A — фразы, B — имена аудио (как <phrase> / <name_phrase>).
+    Возвращает (head, head_idx): своя шапка и номер строки-заголовка (-1 — заголовка нет),
+    или None, если лист на такой не похож."""
+    s = lambda r, c: str(r[c] if r and c < len(r) and r[c] is not None else '').strip()
+    first = rows[0] if rows else ()
+    is_head = s(first, 0).lower().strip(':') in _AUTO_HEAD_WORDS or s(first, 1).lower().strip(':') in _AUTO_HEAD_WORDS
+    body = rows[1:] if is_head else rows
+    texts = [r for r in body if s(r, 0)]
+    good = [r for r in texts if s(r, 1)]
+    if not good or len(good) < len(texts) * 0.5:
+        return None
+    # B — имя файла: одним словом (gizat_ru_da_1_1, phrase_01.wav), не второй текст
+    if sum(1 for r in good if ' ' not in s(r, 1)) < len(good) * 0.7:
+        return None
+    return ('<phrase>', '<name_phrase>'), (0 if is_head else -1)
+
+
 def parse_tts_workbook(path):
     """Разбирает таблицу. {phrase_sheets: [...], var_sheets: {...}}."""
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
@@ -160,6 +182,11 @@ def parse_tts_workbook(path):
         head = rows[0]
         cols = [(c, _tag(h)) for c, h in enumerate(head) if _tag(h)]
         if not cols:
+            auto = _auto_head(rows)                    # без шапки: A — фразы, B — имена аудио
+            if auto:
+                sh = _parse_phrase_sheet(ws.title, rows, auto[1], head=auto[0])
+                sh["auto_head"] = True
+                sheets.append(sh)
             continue
         cats = []
         seen_by = {key: set() for _c, key in cols}
@@ -216,8 +243,8 @@ def text_lang(text):
     return None
 
 
-def _parse_phrase_sheet(title, rows, head_idx):
-    head = rows[head_idx]
+def _parse_phrase_sheet(title, rows, head_idx, head=None):
+    head = head or rows[head_idx]
     col = {}
     for c, h in enumerate(head):
         t = _tag(h)
@@ -887,7 +914,7 @@ class TtsFlowMixin:
             return {"error": f"Не удалось прочитать таблицу «{os.path.basename(path)}».\n\n{e}"}
         sheets = parsed["phrase_sheets"]
         if not sheets:
-            return {"error": "В таблице нет листа фраз: нужна шапка с колонкой <phrase> (или <full_phrase_ru>)."}
+            return {"error": "В таблице нет листа фраз: нужна шапка с колонкой <phrase> (или <full_phrase_ru>) — либо лист, где в A фразы, а в B названия аудио."}
         if sheet is None and len(sheets) > 1:
             self._tts_pending = (path, parsed)
             return {"choose_sheet": [{"title": s["title"], "lang": s["lang"], "units": len(s["units"])}
@@ -924,7 +951,10 @@ class TtsFlowMixin:
                                        None if ou.get("kind") == "value" else by_name.get(ou["name"]))
         st["index"] = 0
         self._tts_save()
-        return self.tts_state()
+        res = self.tts_state()
+        if chosen.get("auto_head"):
+            res["auto_head"] = chosen["title"]            # шапки не было — A фразы, B имена
+        return res
 
     def tts_choose_sheet(self, title):
         pend = getattr(self, '_tts_pending', None)
