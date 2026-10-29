@@ -5097,7 +5097,7 @@ let isProcessing = false;
 
         // === Конвертер MP4 -> MP3/WAV ===
         // ----- Подготовка к клону -----
-        let cloneSt = { folder: null, json: null, clones: 0 };
+        let cloneSt = { folder: null, json: null, voices: [] };
         function openClonePrep() {
             document.getElementById('cloneOverlay').style.display = 'flex';
             cloneRefresh();
@@ -5105,7 +5105,7 @@ let isProcessing = false;
         function closeClonePrep() { document.getElementById('cloneOverlay').style.display = 'none'; }
         function cloneRefresh() {
             document.getElementById('btnCloneBuild').disabled = !cloneSt.folder;
-            document.getElementById('btnCloneCut').disabled = !(cloneSt.json && cloneSt.clones);
+            document.getElementById('btnCloneCut').disabled = !(cloneSt.json && cloneSt.voices.length);
         }
         const cloneDur = s => s >= 60 ? `${Math.floor(s / 60)} мин ${Math.round(s % 60)} с` : `${s} с`;
         async function clonePickFolder() {
@@ -5115,10 +5115,8 @@ let isProcessing = false;
             let langs = r.langs || {}, lk = Object.keys(langs).sort((a, b) => ({ ru: 0, kz: 1 }[a] ?? 2) - ({ ru: 0, kz: 1 }[b] ?? 2));
             document.getElementById('cloneFolderLabel').innerText = r.count
                 ? `${r.folder} — файлов: ${r.count}${lk.length > 1 ? ' (' + lk.map(k => `${k.replace('_', ' ')}: ${langs[k]}`).join(', ') + ')' : r.subdirs ? `, подпапок: ${r.subdirs}` : ''}` : `${r.folder} — аудиофайлов нет`;
-            document.getElementById('cloneSplitRow').style.display = lk.length > 1 ? '' : 'none';
-            document.getElementById('cloneSplitText').innerText = 'Отдельно по языкам — ' + lk.map(k => k.replace('_', ' ')).join(' / ');
             if (r.prev) {                                   // уже собирали — тайминги подхватим
-                let j = await pywebview.api.clone_load_json(r.prev);
+                let j = await pywebview.api.clone_load_timings(r.prev.replace(/[\\/][^\\/]*$/, ''));
                 if (j && !j.error) cloneSetJson(j, 'прошлая сборка этой папки');
             }
             cloneRefresh();
@@ -5134,9 +5132,8 @@ let isProcessing = false;
             let btn = document.getElementById('btnCloneBuild'), out = document.getElementById('cloneBuildResult');
             btn.disabled = true; btn.innerText = 'Собираю…'; out.innerHTML = '';
             try {
-                let split = document.getElementById('cloneSplitRow').style.display !== 'none' && document.getElementById('cloneSplit').checked;
                 let r = await pywebview.api.clone_build(+document.querySelector('input[name="cloneGap"]:checked').value,
-                                                        +document.querySelector('input[name="cloneRate"]:checked').value, split);
+                                                        +document.querySelector('input[name="cloneRate"]:checked').value, true);
                 if (!r || r.error) { out.innerHTML = `<span class="clone-bad">${escapeHtml(r && r.error || 'Не получилось')}</span>`; return; }
                 out.innerHTML = (r.parts ? `Готово по языкам (${r.rate} Гц), тайминги — рядом с каждым:<br>` + r.parts.map(p =>
                         `<b>${escapeHtml(p.wav.split(/[\\/]/).pop())}</b> — ${p.count} файлов · ${cloneDur(p.total_s)}`).join('<br>') + '<br>'
@@ -5146,31 +5143,44 @@ let isProcessing = false;
                 cloneSetJson({ json: r.json, count: r.count, total_s: r.total_s, parts: r.parts }, 'из шага 1');
             } finally { btn.innerText = 'Собрать WAV'; cloneRefresh(); }
         }
-        async function clonePickJson() {
-            let j = await pywebview.api.clone_pick_json();
+        const cloneCatName = l => l ? l.replace('_', ' ') : 'запись';
+        async function clonePickTimings() {
+            let j = await pywebview.api.clone_pick_timings();
             if (!j) return;
-            if (j.error) { showToast(j.error); return; }
+            if (j.error) { showBeautifulAlert('⚠️ ' + escapeHtml(j.error)); return; }
             cloneSetJson(j, '');
         }
-        async function clonePickClones() {
-            let r = await pywebview.api.clone_pick_clones();
-            if (!r) return;
-            cloneSt.clones = r.clones.length;
-            document.getElementById('cloneClonesLabel').innerText = r.clones.join(', ');
+        // Сколько голосов — столько папок по очереди; в каждой — клоны цельных записей
+        async function clonePickVoices() {
+            let n = Math.max(1, Math.min(20, +document.getElementById('cloneVoiceCount').value || 1)), got = [];
+            for (let i = 1; i <= n; i++) {
+                if (!(await showBeautifulAlert(`<b>Папка голоса ${i} из ${n}</b><br><br>В ней — клоны цельных записей этого голоса: ru, kz, без языка.`))) break;
+                let v = await pywebview.api.clone_pick_voice_folder();
+                if (!v) break;
+                got.push(v);
+            }
+            if (!got.length) return;
+            cloneSt.voices = got;
+            document.getElementById('cloneClonesLabel').innerText = `голосов: ${got.length}`;
+            document.getElementById('cloneVoices').innerHTML = got.map(v => `<div class="clone-voice"><b>${escapeHtml(v.name)}</b>`
+                + (v.files.length ? v.files.map(f => `<span class="clone-voice__f">${escapeHtml(f.name)}${f.cat ? `<i>${escapeHtml(cloneCatName(f.cat))}</i>` : ''}</span>`).join('')
+                    : '<span class="clone-bad">аудиофайлов нет</span>') + '</div>').join('');
             cloneRefresh();
         }
         async function cloneCut() {
             let btn = document.getElementById('btnCloneCut'), out = document.getElementById('cloneCutResult');
             btn.disabled = true; btn.innerText = 'Режу…'; out.innerHTML = '';
             try {
-                let r = await pywebview.api.clone_cut(document.querySelector('input[name="cloneOutRate"]:checked').value);
+                let r = await pywebview.api.clone_cut_voices(cloneSt.voices.map(v => v.folder), document.querySelector('input[name="cloneOutRate"]:checked').value);
                 if (!r || r.error) { out.innerHTML = `<span class="clone-bad">${escapeHtml(r && r.error || 'Не получилось')}</span>`; return; }
-                out.innerHTML = r.report.map(c => c.error ? `<div class="clone-bad">${escapeHtml(c.clone)}: ${escapeHtml(c.error)}</div>`
-                    : `<div class="clone-row"><b>${escapeHtml(c.clone)}</b>${c.lang ? ` → тайминги ${escapeHtml(c.lang.replace('_', ' '))}${c.by ? ` (${c.by === 'name' ? 'по имени' : 'по длительности'})` : ''}` : ''} — файлов: ${c.files}
-                        <span class="tts-dim">· сдвиг ${c.offset_ms} мс${c.scale !== 1 ? ` · растяжение ${((c.scale - 1) * 100).toFixed(2)}%` : ''}${c.fix_max_ms ? ` · подравнено до ${c.fix_max_ms} мс` : ''}</span>
-                        <button type="button" class="btn-ghost btn-ghost--compact" onclick="pywebview.api.clone_open_folder(${escapeHtml(JSON.stringify(c.folder))})">Открыть</button>
-                        ${c.warnings.length ? `<div class="clone-bad">${c.warnings.map(escapeHtml).join('<br>')}</div>` : ''}</div>`).join('');
-            } finally { btn.innerText = 'Нарезать'; cloneRefresh(); }
+                out.innerHTML = `Финальная папка: <b>${escapeHtml(r.final)}</b>
+                    <button type="button" class="btn-ghost btn-ghost--compact" onclick="pywebview.api.clone_open_folder(${escapeHtml(JSON.stringify(r.final))})">Открыть</button>`
+                    + r.report.map(v => `<div class="clone-row"><b>${escapeHtml(v.voice)}</b> — `
+                        + v.cats.map(c => `${escapeHtml(cloneCatName(c.lang))}: ${c.files} файлов <span class="tts-dim">(${escapeHtml(c.clone)}, ${c.by === 'name' ? 'по имени' : 'по длительности'}, сдвиг ${c.offset_ms} мс${c.scale !== 1 ? `, растяжение ${((c.scale - 1) * 100).toFixed(2)}%` : ''})</span>`).join(' · ')
+                        + ([...v.warnings, ...v.cats.flatMap(c => c.warnings.map(w => cloneCatName(c.lang) + ': ' + w))].length
+                            ? `<div class="clone-bad">${[...v.warnings, ...v.cats.flatMap(c => c.warnings.map(w => cloneCatName(c.lang) + ': ' + w))].map(escapeHtml).join('<br>')}</div>` : '')
+                        + '</div>').join('');
+            } finally { btn.innerText = 'Нарезать в финальную папку'; cloneRefresh(); }
         }
 
         function openConverter() {

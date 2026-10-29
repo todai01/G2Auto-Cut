@@ -3964,3 +3964,12 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .listen-tabs button b{ font-family: var(--font-mono); font-weight: 600; margin-left: 3px; color: var(--text-faint); }
 .listen-tabs button.is-on b{ color: inherit; }
 .listen-tabs #listenTodoMode.is-on{ color: var(--accent-var); background: var(--tint-var); }
+
+/* Подготовка к клону: голоса */
+.clone-count{ width: 56px; height: 34px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--screen); color: var(--text); font: inherit; }
+.clone-voices{ display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
+.clone-voices:empty{ display: none; }
+.clone-voice{ display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--screen); font-size: var(--fs-sm); }
+.clone-voice b{ color: var(--text); }
+.clone-voice__f{ font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); }
+.clone-voice__f i{ font-style: normal; color: var(--accent-var); margin-left: 3px; }

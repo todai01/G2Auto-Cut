@@ -33,6 +33,8 @@ CLONE_GLOBAL_MS = 4000                 # общий сдвиг клона ище
 CLONE_LOCAL_MS = 200                   # каждый файл подравнивается в ± стольких мс
 CLONE_LANG_DIRS = {'ru': 'ru', 'rus': 'ru', 'рус': 'ru', 'kz': 'kz', 'kk': 'kz', 'kaz': 'kz', 'каз': 'kz', 'қаз': 'kz'}
 CLONE_NOLANG = 'без_языка'
+CLONE_NOLANG_WORDS = {'без', 'безязыка', 'без_языка', 'nolang', 'other', 'прочее', 'none'}
+CLONE_FINAL = 'Клоны_финал'
 
 
 def _clone_lang(rel):
@@ -45,6 +47,18 @@ def _clone_lang(rel):
         if w in CLONE_LANG_DIRS:
             return CLONE_LANG_DIRS[w]
     return None
+
+
+def _clone_cat(name):
+    """Категория клона по имени файла: ru / kz / без_языка; не понять — None."""
+    lang = _clone_lang(name)
+    if lang:
+        return lang
+    low = os.path.splitext(os.path.basename(name))[0].lower()
+    if 'без_языка' in low or 'без языка' in low:
+        return CLONE_NOLANG
+    words = set(re.split(r'[_\-\s.()\[\]]+', low))
+    return CLONE_NOLANG if words & CLONE_NOLANG_WORDS else None
 
 
 def _natural(s):
@@ -175,11 +189,9 @@ class ClonePrepMixin:
         groups = {}
         for item in loaded:
             groups.setdefault((_clone_lang(item[0]) or CLONE_NOLANG) if split else None, []).append(item)
-        if split and len(groups) < 2:
-            split, groups = False, {None: loaded}
         set_id = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
         parts = []
-        for lang in sorted(groups, key=lambda k: (k is None, k == CLONE_NOLANG, k or '')):
+        for lang in sorted(groups, key=lambda k: {'ru': 0, 'kz': 1, CLONE_NOLANG: 2}.get(k, 3)):
             parts.append(self._clone_write(out_dir, groups[lang], out_rate, gap_ms, folder, lang, set_id if split else None))
         self._clone_jsons = [p["json"] for p in parts]
         self._clone_json = parts[0]["json"]
@@ -333,52 +345,220 @@ class ClonePrepMixin:
             src_voice = src_voice_of(js, meta)
             off_ms, scale, cv = self._clone_align(meta, src_voice, x, rate)
             out_dir = os.path.join(base, name)
-            fr = CLONE_FRAME_MS
-            moved, done, warn = [], 0, []
-            for it in meta["files"]:
-                st = off_ms + it["start_ms"] * scale
-                dur = it["dur_ms"] * scale
-                # подровнять по паузам: голос файла в исходнике ↔ в клоне рядом
-                if src_voice is not None:
-                    a0 = int(it["start_ms"] / fr)
-                    sv = src_voice[a0:a0 + max(1, int(it["dur_ms"] / fr))]
-                    if scale != 1.0 and len(sv):
-                        idx = np.minimum((np.arange(max(1, int(len(sv) * scale))) / scale).astype(int), len(sv) - 1)
-                        sv = sv[idx]
-                    L = CLONE_LOCAL_MS // fr
-                    w0 = max(0, int(st / fr) - L)
-                    win = cv[w0:w0 + len(sv) + 2 * L]
-                    if sv.any() and len(win) > len(sv):
-                        p = _best_pos(sv, win, int(st / fr) - w0)
-                        corr = (w0 + p) * fr - st
-                        if fr < abs(corr) <= CLONE_LOCAL_MS + fr:     # сдвиг меньше кадра — не трогаем
-                            st += corr
-                            moved.append(abs(corr))
-                a = max(0, int(round(st * rate / 1000)))
-                b = min(len(x), a + int(round(dur * rate / 1000)))
-                seg = x[a:b]
-                if len(seg) < int(dur * rate / 1000) * 0.9:
-                    warn.append(f"{it['name']}: клон кончился раньше")
-                if not len(seg):
-                    continue
-                r_out = it.get("rate", rate) if out_rate_mode == 'source' else rate
-                if r_out != rate:
-                    seg = resample(seg[:, None], rate, r_out)[:, 0]
-                f = max(1, int(r_out * 0.003))                  # без щелчка на краях
-                if len(seg) > 2 * f:
-                    seg = seg.copy()
-                    seg[:f] *= np.linspace(0, 1, f, dtype=np.float32)
-                    seg[-f:] *= np.linspace(1, 0, f, dtype=np.float32)
-                dst = os.path.join(out_dir, os.path.splitext(it["name"])[0] + '.wav')
-                _write16(dst, seg, r_out)
-                done += 1
-            if abs(scale - 1) > 0.03:
-                warn.insert(0, f"длина клона отличается от исходника на {abs(scale - 1) * 100:.1f}% — проверьте на слух")
+            done, moved, warn = self._clone_cut_one(meta, src_voice, x, rate, off_ms, scale, cv, out_dir, out_rate_mode,
+                                                    lambda n: os.path.splitext(n)[0] + '.wav')
             report.append({"clone": name, "folder": out_dir, "files": done, "offset_ms": round(off_ms),
                            "lang": meta.get("lang"), "by": how,
                            "scale": round(scale, 4), "fix_max_ms": round(max(moved), 0) if moved else 0,
                            "warnings": warn[:8]})
         return {"report": report, "json": jsons[0]}
+
+
+    def _clone_cut_one(self, meta, src_voice, x, rate, off_ms, scale, cv, out_dir, out_rate_mode, dst_of):
+        """Один клон по таймингам meta → файлы в out_dir (имя — dst_of(имя из таймингов)).
+        Возвращает (сколько файлов, подравнивания мс, предупреждения)."""
+        fr = CLONE_FRAME_MS
+        moved, done, warn = [], 0, []
+        for it in meta["files"]:
+            st = off_ms + it["start_ms"] * scale
+            dur = it["dur_ms"] * scale
+            # подровнять по паузам: голос файла в исходнике ↔ в клоне рядом
+            if src_voice is not None:
+                a0 = int(it["start_ms"] / fr)
+                sv = src_voice[a0:a0 + max(1, int(it["dur_ms"] / fr))]
+                if scale != 1.0 and len(sv):
+                    idx = np.minimum((np.arange(max(1, int(len(sv) * scale))) / scale).astype(int), len(sv) - 1)
+                    sv = sv[idx]
+                L = CLONE_LOCAL_MS // fr
+                w0 = max(0, int(st / fr) - L)
+                win = cv[w0:w0 + len(sv) + 2 * L]
+                if sv.any() and len(win) > len(sv):
+                    p = _best_pos(sv, win, int(st / fr) - w0)
+                    corr = (w0 + p) * fr - st
+                    if fr < abs(corr) <= CLONE_LOCAL_MS + fr:     # сдвиг меньше кадра — не трогаем
+                        st += corr
+                        moved.append(abs(corr))
+            a = max(0, int(round(st * rate / 1000)))
+            b = min(len(x), a + int(round(dur * rate / 1000)))
+            seg = x[a:b]
+            if len(seg) < int(dur * rate / 1000) * 0.9:
+                warn.append(f"{it['name']}: клон кончился раньше")
+            if not len(seg):
+                continue
+            r_out = it.get("rate", rate) if out_rate_mode == 'source' else rate
+            if r_out != rate:
+                seg = resample(seg[:, None], rate, r_out)[:, 0]
+            f = max(1, int(r_out * 0.003))                  # без щелчка на краях
+            if len(seg) > 2 * f:
+                seg = seg.copy()
+                seg[:f] *= np.linspace(0, 1, f, dtype=np.float32)
+                seg[-f:] *= np.linspace(1, 0, f, dtype=np.float32)
+            dst = os.path.join(out_dir, dst_of(it["name"]))
+            _write16(dst, seg, r_out)
+            done += 1
+        if abs(scale - 1) > 0.03:
+            warn.insert(0, f"длина клона отличается от исходника на {abs(scale - 1) * 100:.1f}% — проверьте на слух")
+        return done, moved, warn
+
+    # ---------------- 2'. тайминги из папки, клоны — по папкам голосов ----------------
+
+    def clone_pick_timings(self):
+        d = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not d:
+            return None
+        return self.clone_load_timings(d[0] if isinstance(d, (list, tuple)) else d)
+
+    def clone_load_timings(self, folder):
+        """Все тайминги из папки (или её «_Клон»): последняя сборка — ru, kz, без языка."""
+        cands = []
+        for base in (folder, os.path.join(folder, CLONE_DIR)):
+            if not os.path.isdir(base):
+                continue
+            for f in sorted(os.listdir(base)):
+                if not f.lower().endswith('.json'):
+                    continue
+                p = os.path.join(base, f)
+                try:
+                    with open(p, encoding='utf-8') as fh:
+                        m = json.load(fh)
+                except Exception:
+                    continue
+                if isinstance(m, dict) and m.get("files") and m.get("total_ms"):
+                    cands.append((p, m))
+        if not cands:
+            return {"error": "В этой папке нет таймингов (Клон_исходник….json) — выберите папку, где они лежат."}
+        groups = {}
+        for p, m in cands:
+            groups.setdefault(m.get("set") or p, []).append((p, m))
+        best = max(groups.values(), key=lambda g: max(os.path.getmtime(p) for p, _m in g))
+        order = {'ru': 0, 'kz': 1, CLONE_NOLANG: 2}
+        best.sort(key=lambda pm: order.get(pm[1].get("lang"), 3))
+        self._clone_jsons = [p for p, _m in best]
+        self._clone_json = self._clone_jsons[0]
+        self._clone_timings_dir = os.path.dirname(self._clone_json)
+        parts = [{"lang": m.get("lang"), "count": len(m["files"]), "total_s": round(m["total_ms"] / 1000, 1),
+                  "json": os.path.basename(p)} for p, m in best]
+        return {"folder": self._clone_timings_dir, "json": self._clone_json, "parts": parts,
+                "count": sum(p["count"] for p in parts), "total_s": round(sum(p["total_s"] for p in parts), 1)}
+
+    def clone_pick_voice_folder(self):
+        """Папка одного голоса: в ней клоны цельных записей (ru / kz / без языка)."""
+        d = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not d:
+            return None
+        folder = d[0] if isinstance(d, (list, tuple)) else d
+        files = self._clone_voice_files(folder)
+        return {"folder": folder, "name": os.path.basename(os.path.normpath(folder)),
+                "files": [{"name": os.path.basename(f), "cat": _clone_cat(f)} for f in files]}
+
+    @staticmethod
+    def _clone_voice_files(folder):
+        top = [os.path.join(folder, f) for f in sorted(os.listdir(folder), key=_natural)
+               if f.lower().endswith(CLONE_EXTS) and os.path.isfile(os.path.join(folder, f))]
+        if top:
+            return top
+        out = []
+        for root, dirs, names in os.walk(folder):
+            dirs[:] = sorted((d for d in dirs if not d.startswith(CLONE_DIR) and d != CLONE_FINAL), key=_natural)
+            out += [os.path.join(root, n) for n in sorted(names, key=_natural) if n.lower().endswith(CLONE_EXTS)]
+        return out
+
+    def clone_cut_voices(self, folders, out_rate_mode='source'):
+        """Каждая папка голоса → «Клоны_финал/<голос>/ru | kz | без_языка/…»: клоны
+        цельных записей сопоставляются с таймингами (по метке в имени, иначе по
+        длительности) и режутся на файлы с исходными именами."""
+        jsons = [j for j in (getattr(self, '_clone_jsons', None) or []) if os.path.exists(j)]
+        if not jsons:
+            return {"error": "Сначала выберите папку с таймингами."}
+        if not folders:
+            return {"error": "Выберите папки с клонами."}
+        metas = []
+        for js in jsons:
+            with open(js, encoding='utf-8') as fh:
+                metas.append((js, json.load(fh)))
+        tdir = getattr(self, '_clone_timings_dir', None) or os.path.dirname(jsons[0])
+        final, n = os.path.join(tdir, CLONE_FINAL), 2
+        while os.path.exists(final):
+            final, n = os.path.join(tdir, f"{CLONE_FINAL}_{n}"), n + 1
+        voices = {}
+
+        def src_voice_of(js, meta):
+            if js not in voices:
+                voices[js] = None
+                src_wav = os.path.join(os.path.dirname(js), meta.get("wav") or CLONE_WAV)
+                if os.path.exists(src_wav):
+                    try:
+                        sx, sr = _mono(src_wav)
+                        voices[js] = _voice(_env(sx, sr))
+                    except Exception:
+                        pass
+            return voices[js]
+
+        def dst_of(lang):
+            def f(rel):
+                parts = rel.replace('\\', '/').split('/')
+                if len(parts) > 1 and parts[0].lower() in CLONE_LANG_DIRS:
+                    parts = parts[1:]                         # ru/Гизат.wav → Гизат.wav (папка языка — своя)
+                parts[-1] = os.path.splitext(parts[-1])[0] + '.wav'
+                return os.path.join(*([lang] if lang else []), *parts)
+            return f
+
+        report, used_names = [], set()
+        for folder in folders:
+            vname = os.path.basename(os.path.normpath(folder)) or 'голос'
+            base_name, k = vname, 2
+            while vname in used_names:
+                vname, k = f"{base_name}_{k}", k + 1
+            used_names.add(vname)
+            out_dir = os.path.join(final, vname)
+            loaded, warns = [], []
+            for p in self._clone_voice_files(folder):
+                try:
+                    x, rate = _mono(p)
+                    loaded.append((p, x, rate))
+                except Exception as e:
+                    warns.append(f"{os.path.basename(p)}: не читается ({e})")
+            pairs = self._clone_match(metas, loaded)
+            cats = []
+            for (p, x, rate), (js, meta), how in pairs:
+                src_voice = src_voice_of(js, meta)
+                off_ms, scale, cv = self._clone_align(meta, src_voice, x, rate)
+                lang = meta.get("lang") or (CLONE_NOLANG if len(metas) > 1 else None)
+                done, moved, warn = self._clone_cut_one(meta, src_voice, x, rate, off_ms, scale, cv, out_dir,
+                                                        out_rate_mode, dst_of(lang))
+                if abs(scale - 1) > 0.03:
+                    warn.insert(0, f"длина клона отличается от исходника на {abs(scale - 1) * 100:.1f}% — проверьте на слух")
+                cats.append({"lang": lang, "clone": os.path.basename(p), "by": how, "files": done,
+                             "offset_ms": round(off_ms), "scale": round(scale, 4),
+                             "fix_max_ms": round(max(moved), 0) if moved else 0, "warnings": warn[:6]})
+            got = {id(m) for (_p, _x, _r), (_j, m), _h in pairs}
+            for js, m in metas:
+                if id(m) not in got:
+                    warns.append(f"нет клона для «{m.get('lang') or 'записи'}» ({len(m['files'])} файлов)")
+            for p, _x, _r in loaded:
+                if all(p != pp for (pp, _a, _b), _m, _h in pairs):
+                    warns.append(f"{os.path.basename(p)}: лишний файл — не понял, к какой записи")
+            report.append({"voice": vname, "source": folder, "folder": out_dir, "cats": cats, "warnings": warns})
+        return {"final": final, "report": report}
+
+    @staticmethod
+    def _clone_match(metas, loaded):
+        """Клоны папки ↔ тайминги: по метке ru / kz / без в имени, остальное — по длительности
+        (клон дописывает тишину в конце, бывает чуть растянут). [((путь, x, rate), (js, meta), how)]."""
+        pairs, free_m, free_c = [], list(metas), list(loaded)
+        for c in list(free_c):
+            cat = _clone_cat(c[0])
+            m = next((jm for jm in free_m if cat and (jm[1].get("lang") or None) == cat), None)
+            if m:
+                pairs.append((c, m, 'name')); free_m.remove(m); free_c.remove(c)
+
+        def cost(c, jm):
+            ms, tot = len(c[1]) * 1000 / c[2], jm[1]["total_ms"]
+            return abs(ms - tot) / tot + (1.0 if ms < tot * 0.9 else 0)
+        while free_m and free_c:
+            c, jm = min(((c, jm) for c in free_c for jm in free_m), key=lambda t: cost(*t))
+            pairs.append((c, jm, 'length')); free_m.remove(jm); free_c.remove(c)
+        return pairs
 
     @staticmethod
     def _clone_pick_meta(metas, clone_name, clone_ms):

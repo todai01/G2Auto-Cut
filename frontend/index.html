@@ -387,7 +387,7 @@
             </div>
 
             <div class="clone-step">
-                <div class="clone-step__head"><b>1</b> Собрать один WAV</div>
+                <div class="clone-step__head"><b>1</b> Собрать WAV по языкам — ru, kz, без языка</div>
                 <div class="field-row">
                     <button class="custom-alert-btn" onclick="clonePickFolder()">Папка с аудио</button>
                     <span id="cloneFolderLabel" class="modal-hint" style="margin:0;">Папка не выбрана</span>
@@ -404,27 +404,29 @@
                     <label class="opt-chip"><input type="radio" name="cloneRate" value="44100"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">44100 Гц</span></label>
                     <label class="opt-chip"><input type="radio" name="cloneRate" value="48000"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">48000 Гц</span></label>
                 </div>
-                <label class="opt-chip" id="cloneSplitRow" style="display:none;"><input type="checkbox" id="cloneSplit" checked><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text" id="cloneSplitText">Отдельно по языкам — ru и kz</span></label>
                 <button class="splash-btn" style="width:100%;" id="btnCloneBuild" onclick="cloneBuild()" disabled>Собрать WAV</button>
                 <div id="cloneBuildResult" class="clone-result"></div>
             </div>
 
             <div class="clone-step">
-                <div class="clone-step__head"><b>2</b> Нарезать клоны по таймингам</div>
+                <div class="clone-step__head"><b>2</b> Нарезать клоны по голосам</div>
                 <div class="field-row">
-                    <button class="custom-alert-btn" onclick="clonePickJson()">Тайминги…</button>
-                    <span id="cloneJsonLabel" class="modal-hint" style="margin:0;">Соберите WAV или выберите «Клон_исходник….json» (по языкам — подхватятся оба)</span>
+                    <button class="custom-alert-btn" onclick="clonePickTimings()">Папка с таймингами…</button>
+                    <span id="cloneJsonLabel" class="modal-hint" style="margin:0;">Где лежат Клон_исходник_ru / _kz / _без_языка.json — подхвачу все сразу</span>
                 </div>
                 <div class="field-row">
-                    <button class="custom-alert-btn" onclick="clonePickClones()">Файлы клонов…</button>
-                    <span id="cloneClonesLabel" class="modal-hint" style="margin:0;">Клоны не выбраны — можно сразу ru и kz</span>
+                    <span class="mode-options__label">Голосов</span>
+                    <input type="number" id="cloneVoiceCount" class="clone-count" value="3" min="1" max="20">
+                    <button class="custom-alert-btn" onclick="clonePickVoices()">Папки с клонами…</button>
+                    <span id="cloneClonesLabel" class="modal-hint" style="margin:0;">По папке на голос: в каждой — клоны цельных записей ru / kz / без языка</span>
                 </div>
+                <div id="cloneVoices" class="clone-voices"></div>
                 <div class="mode-options">
                     <span class="mode-options__label">Частота файлов</span>
                     <label class="opt-chip"><input type="radio" name="cloneOutRate" value="source" checked><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">как у исходных</span></label>
                     <label class="opt-chip"><input type="radio" name="cloneOutRate" value="clone"><span class="opt-chip__box" aria-hidden="true"></span><span class="opt-chip__text">как у клона</span></label>
                 </div>
-                <button class="splash-btn" style="width:100%;" id="btnCloneCut" onclick="cloneCut()" disabled>Нарезать</button>
+                <button class="splash-btn" style="width:100%;" id="btnCloneCut" onclick="cloneCut()" disabled>Нарезать в финальную папку</button>
                 <div id="cloneCutResult" class="clone-result"></div>
             </div>
         </div>
@@ -1678,8 +1680,8 @@
         </div>
     </div>
 
-    <script src="script.js?v=6"></script>
-    <script src="tutorial.js?v=12"></script>
+    <script src="script.js?v=7"></script>
+    <script src="tutorial.js?v=13"></script>
     <script src="listen.js?v=22"></script>
 </body>
 </html>
