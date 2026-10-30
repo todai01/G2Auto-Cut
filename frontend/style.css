@@ -2777,7 +2777,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 }
 .tts-assembly__title{ font-weight: 700; font-size: var(--fs-md); display: flex; gap: 8px; align-items: baseline; }
 .tts-assembly__title .tts-dim{ font-weight: 500; font-size: var(--fs-xs); }
-.tts-blocks{ display: flex; flex-wrap: wrap; gap: 6px; }
+.tts-blocks{ display: flex; flex-wrap: wrap; gap: 6px; height: 128px; align-content: flex-start; overflow-y: auto; }   /* фиксированная высота: длинный текст прокручивается, окно не двигается */
 .tts-block{
     display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 9px; min-width: 0; max-width: 100%;
     background: var(--screen); border: 1px solid var(--border-soft);
@@ -2786,7 +2786,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .tts-block__role{ font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
 .tts-block__name{ font-family: var(--font-mono); font-size: 11.5px; font-weight: 700; color: var(--text-dim); }
 .tts-block--var .tts-block__name{ color: var(--accent-var); }
-.tts-block__text{ font-size: var(--fs-sm); }
+.tts-block__text{ font-size: 17px; line-height: 1.45; }
 .tts-assembly .btn-ghost{ align-self: flex-start; }
 
 /* Audacity (справа снизу) */
