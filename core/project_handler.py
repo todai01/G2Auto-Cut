@@ -632,7 +632,8 @@ class ProjectMixin:
                 # временное состояние без папки — пути выходят относительными
                 self.tts = {"v": 0, "excel_path": excel_path, "sheet": sh.get("title"), "lang": sh.get("lang", "ru"),
                             "units": [dict(u) for u in sh.get("units", [])], "chains": sh.get("chains", []),
-                            "var_sheets": parsed["var_sheets"], "work_dir": '', "takes": [], "index": 0}
+                            "var_sheets": parsed["var_sheets"], "work_dir": '', "takes": [], "index": 0,
+                            "var_bilingual": dict((saved or {}).get("var_bilingual") or {})}
                 self._tts_ensure_value_units()
                 st = self.tts
                 for u in st["units"]:

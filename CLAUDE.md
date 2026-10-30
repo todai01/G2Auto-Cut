@@ -35,6 +35,8 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   в шапке фраз, читается; `tts_table_analysis` (что записано / новое) → выбор «Только переменные» (`tts_set_scope`,
   `st["vars_only"]`); свои начало и конец (аудиофайлы) для листа — `st["var_ctx"]`, подставляются в `_tts_var_chains`
   и `_tts_value_context`.
+- Один лист переменных — оба языка в одной записи: `st["var_bilingual"][лист]` → строка = два яруса (RU, KZ),
+  файлы — `Значения/<лист>_ru/<кат>_ru/…` и `…_kz/…` (`_tts_tier_path`, `tier["lang"]`); аудит учитывает.
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,

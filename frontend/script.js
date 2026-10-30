@@ -7023,6 +7023,15 @@ let isProcessing = false;
             ttsLoadPrompt();
             if (cur && cur.custom) showToast(`Начало${cur.end ? ' и конец' : ''} фразы выбраны — «▶ Начало» и «В фразе» играют с ними`, 4000);
         }
+        // Один лист — два языка в одной записи: строка = два яруса (RU и KZ), каждый — в свой файл.
+        async function ttsBilSet(on, order) {
+            let r = await pywebview.api.tts_var_bilingual(null, on, order || null);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            tts = r.state; ttsEd = null; ttsTR = null; ttsRender(); ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+            if (!order) showToast(on ? 'Читайте значение подряд на двух языках, между ними — пауза. В «Сборке» — два яруса, RU и KZ: граница двигается, каждый сохранится в свой язык (Значения/…_ru и …_kz)'
+                : 'Обычный режим: одна запись — один файл', 7000);
+        }
         async function ttsVarCtxMaybeAsk() {
             let pr = await pywebview.api.tts_prompt_info();
             if (pr && pr.mode && pr.mode !== 'phrases') await ttsVarCtxAsk(pr.mode, false);
@@ -9542,7 +9551,8 @@ let isProcessing = false;
             let line = (parts, tail) => parts.map(p => pill(p.var_before)
                 + (p.kind === 'value' ? `<span class="tts-vcat">${escapeHtml(p.cat_label || '')}</span> ` : '')
                 + (p.role === 'var' ? `<span class="tts-ivar" title="Значение переменной — сохранится отдельно">${escapeHtml(p.text)}</span>`
-                   : p.tiers ? p.tiers.map(escapeHtml).join('<span class="tts-tiersep" title="Здесь программа разрежет на ярусы — небольшая пауза поможет"></span>')
+                   : p.tiers ? p.tiers.map((t, n) => (p.tier_langs && p.tier_langs[n] ? `<span class="tts-tlang">${p.tier_langs[n].toUpperCase()}</span> ` : '') + escapeHtml(t))
+                        .join('<span class="tts-tiersep" title="Здесь программа разрежет на ярусы — небольшая пауза поможет"></span>')
                    : escapeHtml(p.text))
                 + pill(p.var_after)).join(' ')
                 + (tail ? ` <span class="tts-tail" title="Только начало продолжения — целиком прочитаете с последним значением">${escapeHtml(tail)}</span>` : '');
@@ -9576,6 +9586,12 @@ let isProcessing = false;
                 modes += ` <button type="button" class="tts-reuse-chip ${vc.custom ? 'is-on' : ''}" onclick="ttsVarCtxAsk('${escapeHtml(pr.mode)}', true)"
                     title="${vc.custom ? 'Начало «' + escapeHtml(vc.start || '—') + '», конец «' + escapeHtml(vc.end || 'нет') + '» — нажмите, чтобы выбрать другие'
                         : 'Начальная и конечная фразы вокруг значения — аудиофайлы'}">${vc.custom ? 'начало и конец ✎' : 'начало и конец…'}</button>`;
+            }
+            if (pr.bil_allowed) {
+                modes += ` <button type="button" class="tts-reuse-chip ${pr.bil ? 'is-on' : ''}" onclick="ttsBilSet(${!pr.bil})"
+                    title="${pr.bil ? 'Читаете значение подряд на двух языках; в «Сборке» — два яруса, каждый в свой язык. Нажмите — вернуть обычный режим' : 'Значение читается на двух языках в одной записи (марки с цифрами). В «Сборке» отметите, где русский, а где казахский'}">RU + KZ в одной записи${pr.bil ? ' ✓' : ''}</button>`;
+                if (pr.bil) modes += ` <button type="button" class="tts-reuse-chip" onclick="ttsBilSet(true, '${pr.bil.order.slice().reverse().join('-')}')"
+                    title="Порядок чтения — нажмите, чтобы поменять">${pr.bil.order.map(x => x.toUpperCase()).join(' → ')}</button>`;
             }
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);

@@ -1165,6 +1165,7 @@ class TtsLiveMixin:
             return [{"id": i, "name": units[i]["name"], "text": units[i]["text"], "role": units[i]["role"],
                      "kind": units[i]["kind"], "cat_label": units[i].get("cat_label"),
                      "tiers": [x["text"] for x in units[i]["tiers"]] if units[i].get("tiers") else None,
+                     "tier_langs": [x.get("lang") for x in units[i]["tiers"]] if units[i].get("tiers") else None,
                      "vars": units[i].get("vars", []),
                      "var_before": units[i].get("var_before") if k == 0 else None,
                      "var_after": units[i].get("var_after")} for k, i in enumerate(ids)]
@@ -1202,6 +1203,8 @@ class TtsLiveMixin:
                 "modes": ([] if st.get("vars_only") else [{"key": "phrases", "label": "Фразы"}])
                          + [{"key": k, "label": sh["label"]} for k, sh in (st.get("var_sheets") or {}).items()],
                 "vars_only": bool(st.get("vars_only")),
+                "bil": self._tts_bilingual(st.get("prompt_mode")) if st.get("prompt_mode", "phrases") != "phrases" else None,
+                "bil_allowed": st.get("prompt_mode", "phrases") != "phrases" and self._tts_bil_allowed(st.get("prompt_mode")),
                 "var_ctx": self.tts_var_ctx_info(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" else None,
                 "value_n": self._tts_item_value_n(items[pos])}
 

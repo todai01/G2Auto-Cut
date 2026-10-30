@@ -888,6 +888,7 @@ class TtsFlowMixin:
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
             "prompt_mode": st.get("prompt_mode", "phrases"), "sum_logic": st.get("sum_logic", 1),
             "vars_only": bool(st.get("vars_only")),
+            "var_bilingual": {k: v for k, v in (st.get("var_bilingual") or {}).items() if k in (st.get("var_sheets") or {})},
             "vars_progress": self._tts_vars_progress() if st.get("vars_only") and wd else None,
             "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
                       "values": len(rows_now),
@@ -1030,7 +1031,7 @@ class TtsFlowMixin:
             done, total = self._tts_tiers_done(sheet)
         except Exception:
             return None
-        return {"label": f"{st['var_sheets'][sheet]['label']}: записано", "done": done, "total": total}
+        return {"label": f"{st['var_sheets'][sheet]['label']} · записано", "done": done, "total": total}
 
     def tts_set_scope(self, scope, sheet=None):
         """'vars' — записывать только переменные (фразы не показывать); 'all' — как раньше."""
@@ -2364,9 +2365,47 @@ class TtsFlowMixin:
         text = w(n * mult)
         return f"{text} {'теңге' if lang == 'kz' else 'тенге'}" if tier == 'tenge' else text
 
+    # ---- один лист переменных — оба языка в одной записи (марки с цифрами: «Q4» — «кью четыре» / «кью төрт») ----
+    # Строка таблицы = два яруса: сначала читают одним языком, потом другим; ярусы режутся в «Сборке»
+    # как обычно, каждый ложится в свой язык: «Значения/mark_ru/mark_ru/…», «Значения/mark_kz/mark_kz/…».
+    def _tts_bilingual(self, sheet):
+        b = (self._tts().get("var_bilingual") or {}).get(sheet)
+        if not b:
+            return None
+        order = [x for x in (b.get("order") or ['ru', 'kz']) if x in ('ru', 'kz')]
+        return {"order": order if sorted(order) == ['kz', 'ru'] else ['ru', 'kz']}
+
+    def _tts_bil_allowed(self, sheet):
+        sh = (self._tts().get("var_sheets") or {}).get(sheet)
+        return bool(sh) and not self._tts_is_sum_sheet(sh) and not re.search(r'_(ru|kz|kk)$', sheet)
+
+    def tts_var_bilingual(self, sheet=None, on=True, order=None):
+        """Лист переменных: оба языка в одной записи (on) — или обычный режим; order — 'ru-kz' / 'kz-ru'."""
+        st = self._tts()
+        sheet = sheet or st.get("prompt_mode")
+        if not self._tts_bil_allowed(sheet):
+            return {"error": "Для этого листа язык уже в названии (…_ru / …_kz) или это суммы — отдельный режим не нужен."}
+        bil = st.setdefault("var_bilingual", {})
+        if on:
+            old = bil.get(sheet) or {}
+            o = (order or ('-'.join(old.get("order") or ['ru', 'kz']))).split('-')
+            bil[sheet] = {"order": o if sorted(o) == ['kz', 'ru'] else ['ru', 'kz']}
+        else:
+            bil.pop(sheet, None)
+        self.__dict__['_tts_claims_cache'] = {}
+        self._tts_ensure_value_units()
+        for t in st["takes"]:                                    # старая разметка ярусов — под другое число ярусов
+            t.pop("tier_clips", None)
+        if hasattr(self, '_tts_prompt_fix'):
+            self._tts_prompt_fix()
+        self._tts_save()
+        return {"state": self.tts_state(), "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None}
+
     def _tts_tier_path(self, unit, tier):
         """Эталон яруса — в едином формате «Значения/<лист>/<категория>/<значение>.wav»
-        (суммы тоже: «Значения/sum_ru/million_ru/5.wav»)."""
+        (суммы тоже: «Значения/sum_ru/million_ru/5.wav»; два языка в одной записи — «mark_ru/mark_ru/…»)."""
+        if tier.get("lang"):
+            return self._tts_value_file(f"{unit['sheet']}_{tier['lang']}", tier["cat"], tier["value"])
         if str(unit.get("cat", '')).startswith('sum_l'):
             return self._tts_value_file(unit["sheet"], tier["cat"], self._tts_sum_raw_value(unit["sheet"], tier["cat"], tier["value"]))
         return self._tts_value_file(unit["sheet"], tier["cat"], tier["value"])
@@ -2465,13 +2504,20 @@ class TtsFlowMixin:
                 put(key, cat, v, {"name": clean_name(v), "text": text, "row": f"{key}:{row}:{cat}", "tiers": None,
                                   "lang": lang, "cat_label": var_label(cat)})
             cats = [c for c in sh["categories"] if c["values"]]
+            bil = self._tts_bilingual(key)
             for k in range(max((len(c["values"]) for c in cats), default=0)):
-                tiers = []
+                tiers, vals = [], []
                 for c in cats:
                     v = c["values"][min(k, len(c["values"]) - 1)]
-                    tiers.append({"tier": c["key"], "cat": c["key"], "value": v, "label": var_label(c["key"]),
-                                  "text": self._tts_value_text(key, c["key"], v)[0]})
-                put(key, "rows", str(k), {"name": f"{k + 1:04d}_" + '_'.join(clean_name(x["value"]) for x in tiers),
+                    vals.append(clean_name(v))
+                    txt = self._tts_value_text(key, c["key"], v)[0]
+                    if bil:                       # одна запись — два языка: два яруса строки, у каждого свой файл
+                        for lg in bil["order"]:
+                            tiers.append({"tier": f"{c['key']}_{lg}", "cat": f"{c['key']}_{lg}", "lang": lg, "value": v,
+                                          "label": f"{var_label(c['key'])} {lg.upper()}", "text": txt})
+                    else:
+                        tiers.append({"tier": c["key"], "cat": c["key"], "value": v, "label": var_label(c["key"]), "text": txt})
+                put(key, "rows", str(k), {"name": f"{k + 1:04d}_" + '_'.join(vals),
                                           "text": ' '.join(x["text"] for x in tiers), "row": f"{key}:rows:{k}",
                                           "tiers": tiers, "lang": lang, "cat_label": "Строка таблицы"})
         if changed:
@@ -3630,8 +3676,10 @@ class TtsFlowMixin:
                 values = []
                 for v in c["values"]:
                     text, custom = self._tts_value_text(key, c["key"], v)
-                    values.append({"value": v, "text": text, "custom": custom,
-                                   "ready": has_dir and os.path.exists(self._tts_value_file(key, c["key"], v))})
+                    bil = self._tts_bilingual(key)
+                    ready = has_dir and (all(os.path.exists(self._tts_value_file(f"{key}_{lg}", f"{c['key']}_{lg}", v)) for lg in bil["order"])
+                                         if bil else os.path.exists(self._tts_value_file(key, c["key"], v)))
+                    values.append({"value": v, "text": text, "custom": custom, "ready": ready})
                 cats.append({"key": c["key"], "label": c["label"], "values": values,
                              "ready": sum(1 for x in values if x["ready"])})
             sheets.append({"key": key, "label": sh["label"], "categories": cats})
