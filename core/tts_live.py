@@ -1205,6 +1205,7 @@ class TtsLiveMixin:
                 "vars_only": bool(st.get("vars_only")),
                 "bil": self._tts_bilingual(st.get("prompt_mode")) if st.get("prompt_mode", "phrases") != "phrases" else None,
                 "bil_allowed": st.get("prompt_mode", "phrases") != "phrases" and self._tts_bil_allowed(st.get("prompt_mode")),
+                "bil_old": self._tts_bil_old_count(st.get("prompt_mode")) if st.get("prompt_mode", "phrases") != "phrases" else 0,
                 "var_ctx": self.tts_var_ctx_info(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" else None,
                 "value_n": self._tts_item_value_n(items[pos])}
 

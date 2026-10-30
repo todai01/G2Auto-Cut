@@ -2392,6 +2392,7 @@ class TtsFlowMixin:
             bil[sheet] = {"order": o if sorted(o) == ['kz', 'ru'] else ['ru', 'kz']}
         else:
             bil.pop(sheet, None)
+            self.__dict__.setdefault('_tts_bil_old', {}).pop(sheet, None)
         self.__dict__['_tts_claims_cache'] = {}
         self._tts_ensure_value_units()
         for t in st["takes"]:                                    # старая разметка ярусов — под другое число ярусов
@@ -2399,7 +2400,158 @@ class TtsFlowMixin:
         if hasattr(self, '_tts_prompt_fix'):
             self._tts_prompt_fix()
         self._tts_save()
-        return {"state": self.tts_state(), "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None}
+        return {"state": self.tts_state(), "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
+                "old": self.tts_var_bil_scan(sheet) if on else None}
+
+    # ---- готовые значения, записанные одним файлом на два языка → два файла (RU и KZ) ----
+    BIL_MIN_PAUSE_MS = 300     # пауза между языками не короче
+    BIL_MIN_PART_MS = 250      # и в каждом языке — не короче речи
+
+    def _tts_bil_pairs(self, sheet):
+        """[(unit, старый файл, [(язык, новый путь), …])] для листа с режимом «два языка»."""
+        bil = self._tts_bilingual(sheet)
+        out = []
+        if not bil:
+            return out
+        seen = set()
+        for u in self._tts_row_units(sheet):
+            by_cat = {}
+            for t in u["tiers"]:
+                if t.get("lang"):
+                    by_cat.setdefault(t["cat"][:-3], []).append(t)
+            for cat, ts in by_cat.items():
+                old = self._tts_value_file(sheet, cat, ts[0]["value"])
+                if old in seen:
+                    continue
+                seen.add(old)
+                out.append((u, old, [(t["lang"], self._tts_tier_path(u, t)) for t in ts]))
+        return out
+
+    def _tts_bil_cut_point(self, path):
+        """Где в готовом файле граница языков: самая длинная пауза внутри речи.
+        {"ok": …, "reason": …, "a": конец первой части, "b": начало второй, "v0", "v1", "pause"} — мс."""
+        rms, length = self._tts_file_rms(path, cache=False)
+        f = self.TIER_FRAME_MS
+        if not len(rms):
+            return {"ok": False, "reason": "пустой файл"}
+        voiced = rms > max(float(rms.max()) * 0.08, 1e-4)
+        idx = np.nonzero(voiced)[0]
+        if len(idx) < 10:
+            return {"ok": False, "reason": "почти тишина"}
+        v0, v1 = int(idx[0]), int(idx[-1])
+        pauses, k = [], v0
+        while k <= v1:
+            if not voiced[k]:
+                j = k
+                while j <= v1 and not voiced[j]:
+                    j += 1
+                pauses.append((k, j))
+                k = j
+            else:
+                k += 1
+        if not pauses:
+            return {"ok": False, "reason": "нет паузы между языками"}
+        pauses.sort(key=lambda p: p[1] - p[0], reverse=True)
+        a, b = pauses[0]
+        pause = (b - a) * f
+        second = (pauses[1][1] - pauses[1][0]) * f if len(pauses) > 1 else 0
+        left, right = (a - v0) * f, (v1 + 1 - b) * f
+        res = {"a": a * f, "b": b * f, "v0": v0 * f, "v1": (v1 + 1) * f, "pause": pause, "length": length}
+        if pause < self.BIL_MIN_PAUSE_MS:
+            return {**res, "ok": False, "reason": f"пауза между языками всего {pause} мс"}
+        if left < self.BIL_MIN_PART_MS or right < self.BIL_MIN_PART_MS:
+            return {**res, "ok": False, "reason": "одна из частей слишком короткая"}
+        if pause < 1.6 * max(second, 1):
+            return {**res, "ok": False, "reason": "несколько похожих пауз — неясно, где граница"}
+        if not 0.35 <= left / right <= 2.9:
+            return {**res, "ok": False, "reason": "части сильно разной длины"}
+        return {**res, "ok": True, "reason": ''}
+
+    def _tts_bil_old_count(self, sheet):
+        """Быстро (без чтения звука): сколько значений лежит одним файлом. Запоминает до следующего скана."""
+        cache = self.__dict__.setdefault('_tts_bil_old', {})
+        if sheet not in cache:
+            cache[sheet] = (sum(1 for _u, src, outs in self._tts_bil_pairs(sheet)
+                                if os.path.exists(src) and not all(os.path.exists(p) for _l, p in outs))
+                            if self._tts().get("work_dir") and self._tts_bilingual(sheet) else 0)
+        return cache[sheet]
+
+    def tts_var_bil_scan(self, sheet=None):
+        """Сколько уже записано одним файлом на два языка и сколько режется уверенно."""
+        st = self._tts()
+        sheet = sheet or st.get("prompt_mode")
+        if not st.get("work_dir") or not self._tts_bilingual(sheet):
+            return {"old": 0, "sure": 0, "review": 0}
+        old = sure = 0
+        for u, src, outs in self._tts_bil_pairs(sheet):
+            if not os.path.exists(src) or all(os.path.exists(p) for _l, p in outs):
+                continue
+            old += 1
+            try:
+                sure += 1 if self._tts_bil_cut_point(src)["ok"] else 0
+            except Exception:
+                pass
+        self.__dict__.setdefault('_tts_bil_old', {})[sheet] = old
+        return {"old": old, "sure": sure, "review": old - sure}
+
+    def tts_var_bil_split(self, sheet=None, review_to_rail=True):
+        """Готовые значения «RU + KZ в одном файле» → два файла (по паузе между языками).
+        Неуверенные — на ленту: границу двигают в «Сборке» и сохраняют (Enter).
+        Исходный файл — в «_Корзина»."""
+        from core.tts_flow import TTS_CHUNKS_DIR
+        st = self._tts()
+        sheet = sheet or st.get("prompt_mode")
+        wd = st.get("work_dir")
+        bil = self._tts_bilingual(sheet)
+        if not wd or not bil:
+            return {"error": "Откройте проект и включите «RU + KZ в одной записи»."}
+        done, review, failed = [], [], []
+        have = {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
+        n_chunk = max([t.get("chunk", 0) for t in st["takes"]] + [0])
+        for u, src, outs in self._tts_bil_pairs(sheet):
+            if not os.path.exists(src) or all(os.path.exists(p) for _l, p in outs):
+                continue
+            name = os.path.splitext(os.path.basename(src))[0]
+            try:
+                cp = self._tts_bil_cut_point(src)
+                if cp["ok"]:
+                    pad = self.TIER_PAD_MS
+                    gap = cp["b"] - cp["a"]
+                    cuts = [(max(0, cp["v0"] - pad), cp["a"] + min(pad, gap // 2)),
+                            (cp["b"] - min(pad, gap // 2), min(cp["length"], cp["v1"] + pad))]
+                    for (lang, dst), (a, b) in zip(outs, cuts if bil["order"][0] == outs[0][0] else cuts[::-1]):
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        if not wav_slice(src, dst, a, b):
+                            AudioSegment.from_file(src)[a:b].export(dst, format="wav")
+                    self._tts_trash(src)
+                    done.append(name)
+                elif review_to_rail and u["id"] not in have:
+                    raw_dir = os.path.join(wd, TTS_RECORDS_DIR, 'Готовые')
+                    os.makedirs(raw_dir, exist_ok=True)
+                    raw = os.path.join(raw_dir, f"{sheet}__{name}.wav")
+                    shutil.copy2(src, raw)
+                    ms = len(AudioSegment.from_file(raw))
+                    n_chunk += 1
+                    f = os.path.join(TTS_CHUNKS_DIR, f"{n_chunk:04d}.wav")
+                    os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
+                    shutil.copy2(raw, os.path.join(wd, f))
+                    st["takes"].append({"file": f, "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": raw, "heard": '',
+                                        "listened": True, "chunk": n_chunk, "unit": u["id"], "score": 1.0,
+                                        "status": "manual", "approved": False, "ready": True})
+                    have.add(u["id"])
+                    self._tts_trash(src)
+                    review.append({"name": name, "reason": cp.get("reason") or ''})
+                else:
+                    review.append({"name": name, "reason": cp.get("reason") or ''})
+            except Exception as e:
+                failed.append(f"{name}: {e}")
+        self.__dict__['_tts_claims_cache'] = {}
+        self.__dict__.setdefault('_tts_bil_old', {})[sheet] = 0
+        if review and review_to_rail:
+            st["index"] = max(0, len(st["takes"]) - len([1 for r in review if r]))
+        self._tts_save()
+        return {"done": len(done), "review": review, "failed": failed, "state": self.tts_state(),
+                "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None}
 
     def _tts_tier_path(self, unit, tier):
         """Эталон яруса — в едином формате «Значения/<лист>/<категория>/<значение>.wav»

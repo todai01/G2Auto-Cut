@@ -7031,12 +7031,43 @@ let isProcessing = false;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
             if (!order) showToast(on ? 'Читайте значение подряд на двух языках, между ними — пауза. В «Сборке» — два яруса, RU и KZ: граница двигается, каждый сохранится в свой язык (Значения/…_ru и …_kz)'
                 : 'Обычный режим: одна запись — один файл', 7000);
+            if (on && !order && r.old && r.old.old > 0) ttsBilOld(r.old);
+        }
+        // Уже записанные значения «RU + KZ в одном файле» → два файла по паузе между языками.
+        async function ttsBilOld(info) {
+            if (!info) info = await pywebview.api.tts_var_bil_scan(null);
+            if (!info || !info.old) return;
+            let how = await showBeautifulChoice(`<b>Готовые значения одним файлом</b><br><br>Найдено ${info.old}: русский и казахский в одной записи. `
+                + `Разрезать по паузе между языками и разложить в «…_ru» и «…_kz»?<br><br>`
+                + (info.sure ? `Уверенно: ${info.sure}.` : '') + (info.review ? ` На проверку: ${info.review} — они попадут на ленту, границу двигаете сами.` : '')
+                + `<br>Исходные файлы уйдут в «_Корзина».`, 'Разрезать', 'Не сейчас', 'N');
+            if (how !== 'ok') return;
+            showToast('Режу готовые значения…', 60000);
+            let r = await pywebview.api.tts_var_bil_split(null);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось', 6000); return; }
+            tts = r.state; ttsEd = null; ttsTR = null; ttsRender(); ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+            let rv = r.review || [];
+            showToast(`Разрезано: ${r.done}` + (rv.length ? ` · на проверку: ${rv.length} — на ленте, двигайте границу и Enter (${rv.slice(0, 3).map(x => x.name + ' — ' + x.reason).join('; ')}${rv.length > 3 ? '…' : ''})` : '')
+                + (r.failed && r.failed.length ? ` · ошибок: ${r.failed.length}` : ''), 12000);
         }
         async function ttsVarCtxMaybeAsk() {
             let pr = await pywebview.api.tts_prompt_info();
             if (pr && pr.mode && pr.mode !== 'phrases') await ttsVarCtxAsk(pr.mode, false);
         }
 
+        // Чипы «RU + KZ в одной записи»: нужны и в «Все прочитано» — иначе уже записанные марки не разрезать.
+        function ttsBilChipsHTML(pr) {
+            if (!pr.bil_allowed) return '';
+            let m = '';
+            m += ` <button type="button" class="tts-reuse-chip ${pr.bil ? 'is-on' : ''}" onclick="ttsBilSet(${!pr.bil})"
+                    title="${pr.bil ? 'Читаете значение подряд на двух языках; в «Сборке» — два яруса, каждый в свой язык. Нажмите — вернуть обычный режим' : 'Значение читается на двух языках в одной записи (марки с цифрами). В «Сборке» отметите, где русский, а где казахский'}">RU + KZ в одной записи${pr.bil ? ' ✓' : ''}</button>`;
+            if (pr.bil && pr.bil_old) m += ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsBilOld()"
+                    title="Эти значения записаны одним файлом на оба языка — разрезать по паузе">готовые → RU / KZ (${pr.bil_old})</button>`;
+            if (pr.bil) m += ` <button type="button" class="tts-reuse-chip" onclick="ttsBilSet(true, '${pr.bil.order.slice().reverse().join('-')}')"
+                    title="Порядок чтения — нажмите, чтобы поменять">${pr.bil.order.map(x => x.toUpperCase()).join(' → ')}</button>`;
+            return m;
+        }
         function ttsChooseSheet(sheets) {
             return new Promise(resolve => {
                 ttsOpenListOverlay('Какой лист фраз?', false);
@@ -9538,7 +9569,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsBilChipsHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -9587,12 +9618,7 @@ let isProcessing = false;
                     title="${vc.custom ? 'Начало «' + escapeHtml(vc.start || '—') + '», конец «' + escapeHtml(vc.end || 'нет') + '» — нажмите, чтобы выбрать другие'
                         : 'Начальная и конечная фразы вокруг значения — аудиофайлы'}">${vc.custom ? 'начало и конец ✎' : 'начало и конец…'}</button>`;
             }
-            if (pr.bil_allowed) {
-                modes += ` <button type="button" class="tts-reuse-chip ${pr.bil ? 'is-on' : ''}" onclick="ttsBilSet(${!pr.bil})"
-                    title="${pr.bil ? 'Читаете значение подряд на двух языках; в «Сборке» — два яруса, каждый в свой язык. Нажмите — вернуть обычный режим' : 'Значение читается на двух языках в одной записи (марки с цифрами). В «Сборке» отметите, где русский, а где казахский'}">RU + KZ в одной записи${pr.bil ? ' ✓' : ''}</button>`;
-                if (pr.bil) modes += ` <button type="button" class="tts-reuse-chip" onclick="ttsBilSet(true, '${pr.bil.order.slice().reverse().join('-')}')"
-                    title="Порядок чтения — нажмите, чтобы поменять">${pr.bil.order.map(x => x.toUpperCase()).join(' → ')}</button>`;
-            }
+            modes += ttsBilChipsHTML(pr);
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);
             modes += ttsFlowHTML();
