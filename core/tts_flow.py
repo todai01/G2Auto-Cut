@@ -108,7 +108,7 @@ def var_label(key):
     base = re.sub(r'_(ru|kz|kk)$', '', k)
     names = {'sum': 'Сумма', 'date': 'Дата', 'million': 'Миллионы', 'hundred_thousand': 'Сотни тысяч',
              'thousand': 'Тысячи', 'hundred': 'Сотни', 'tenge': 'Тенге', 'day': 'День', 'month': 'Месяц',
-             'year': 'Год', 'name': 'Имя', 'time': 'Время'}
+             'year': 'Год', 'name': 'Имя', 'time': 'Время', 'mark': 'Марка', 'model': 'Модель', 'brand': 'Марка'}
     label = names.get(base, base or k)
     lang = re.search(r'_(ru|kz|kk)$', k)
     return f"{label} {lang.group(1).upper()}" if lang and label != k else label
@@ -887,6 +887,8 @@ class TtsFlowMixin:
             "twins_fill": self.tts_twins_info()["fill"] if units else 0,
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
             "prompt_mode": st.get("prompt_mode", "phrases"), "sum_logic": st.get("sum_logic", 1),
+            "vars_only": bool(st.get("vars_only")),
+            "vars_progress": self._tts_vars_progress() if st.get("vars_only") and wd else None,
             "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
                       "values": len(rows_now),
                       "values_saved": sum(saved[u["id"]] for u in rows_now),
@@ -913,8 +915,13 @@ class TtsFlowMixin:
         except Exception as e:
             return {"error": f"Не удалось прочитать таблицу «{os.path.basename(path)}».\n\n{e}"}
         sheets = parsed["phrase_sheets"]
+        if not sheets and parsed["var_sheets"]:
+            lm = next((re.search(r'_(ru|kz|kk)$', k) for k in parsed["var_sheets"] if re.search(r'_(ru|kz|kk)$', k)), None)
+            sheets = [{"title": "(только переменные)", "lang": ('kz' if lm and lm.group(1) in ('kz', 'kk') else 'ru'),
+                       "units": [], "chains": [], "lines": [], "mark_cols": {}, "var_keys": [], "head_row": 0, "vars_only": True}]
         if not sheets:
-            return {"error": "В таблице нет листа фраз: нужна шапка с колонкой <phrase> (или <full_phrase_ru>) — либо лист, где в A фразы, а в B названия аудио."}
+            return {"error": "В таблице нет листа фраз и листов переменных: нужна шапка с колонкой <phrase> (или <full_phrase_ru>), "
+                             "лист, где в A фразы, а в B названия аудио, либо лист с тегами переменных (<mark>, <sum_ru>…)."}
         if sheet is None and len(sheets) > 1:
             self._tts_pending = (path, parsed)
             return {"choose_sheet": [{"title": s["title"], "lang": s["lang"], "units": len(s["units"])}
@@ -927,12 +934,16 @@ class TtsFlowMixin:
             st["takes"] = []      # другая таблица — старая привязка дублей неверна
         elif st["takes"] and st["units"]:
             rebind = True
+        referenced = {k for s_ in parsed["phrase_sheets"] for k in s_["var_keys"]}
         st.update({"excel_path": path, "sheet": chosen["title"], "lang": chosen["lang"],
                    "units": chosen["units"], "chains": chosen["chains"], "v": TTS_STATE_VERSION,
                    "lines": chosen["lines"], "mark_cols": chosen["mark_cols"], "var_cols": chosen["var_keys"],
                    "head_row": chosen["head_row"], "marks_dirty": [],
+                   # листы переменных: те, что названы в шапке этого листа фраз, и те, что не названы ни в одном
+                   # (например, новые «марки» — <mark>, добавленные в таблицу позже)
                    "var_sheets": {k: v for k, v in parsed["var_sheets"].items()
-                                  if k in chosen["var_keys"] or not chosen["var_keys"]}})
+                                  if k in chosen["var_keys"] or not chosen["var_keys"] or k not in referenced}})
+        st["vars_only"] = bool(chosen.get("vars_only"))
         self._tts_ensure_value_units()               # значения переменных — тоже «фразы» для записи
         if rebind:
             # Та же таблица перечитана — номера фраз могли сдвинуться (строки-метки
@@ -950,11 +961,159 @@ class TtsFlowMixin:
                 t["unit"] = by_row.get((ou.get("row"), ou["name"]),
                                        None if ou.get("kind") == "value" else by_name.get(ou["name"]))
         st["index"] = 0
+        if st["vars_only"]:
+            self._tts_vars_focus(None)
         self._tts_save()
         res = self.tts_state()
+        res["analysis"] = self.tts_table_analysis()
         if chosen.get("auto_head"):
             res["auto_head"] = chosen["title"]            # шапки не было — A фразы, B имена
         return res
+
+    # ---------------- «только переменные»: разбор таблицы ----------------
+
+    def tts_table_analysis(self):
+        """Что в таблице: фразы и листы переменных, сколько значений уже записано
+        (если выбрана папка проекта) и сколько новых."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        phrases = [u for u in st["units"] if u["kind"] != "value"]
+        out_vars, new_total = [], 0
+        for key, sh in (st.get("var_sheets") or {}).items():
+            n_vals = sum(len(c["values"]) for c in sh["categories"])
+            done = total = None
+            if wd:
+                try:
+                    done, total = self._tts_tiers_done(key)
+                except Exception:
+                    done = total = None
+            new = (total - done) if total is not None else None
+            if new:
+                new_total += new
+            out_vars.append({"key": key, "label": sh["label"], "values": n_vals, "done": done, "total": total, "new": new,
+                             "cats": [{"label": c["label"], "count": len(c["values"])} for c in sh["categories"]],
+                             "ctx": self.tts_var_ctx_info(key)})
+        return {"phrases": len(phrases), "phrases_saved": (sum(1 for u in phrases if os.path.exists(self._tts_target(u)))
+                                                           if wd and phrases else None),
+                "vars": out_vars, "vars_new": new_total, "known": bool(wd), "vars_only": bool(st.get("vars_only"))}
+
+    def _tts_vars_focus(self, sheet):
+        """Режим «только переменные»: суфлёр — на листе переменных, где больше всего нового."""
+        st = self._tts()
+        sheets = st.get("var_sheets") or {}
+        if not sheets:
+            return None
+        if sheet not in sheets:
+            def need(k):
+                try:
+                    d, t = self._tts_tiers_done(k) if st.get("work_dir") else (0, 1)
+                except Exception:
+                    d, t = 0, 1
+                return t - d
+            sheet = max(sheets, key=lambda k: (need(k), k == 'mark'))
+        self._tts_ensure_value_units()
+        cur = st.get("prompt_mode", "phrases")
+        pos_by = st.setdefault("prompt_pos_by_mode", {})
+        pos_by[cur] = st.get("prompt_pos", 0)
+        st["prompt_mode"], st["prompt_pos"] = sheet, pos_by.get(sheet, 0)
+        if hasattr(self, '_tts_prompt_fix'):
+            self._tts_prompt_fix()
+        return sheet
+
+    def _tts_vars_progress(self):
+        """Шапка в режиме «только переменные»: сколько значений листа уже записано."""
+        st = self._tts()
+        sheet = st.get("prompt_mode")
+        if not sheet or sheet == "phrases" or sheet not in (st.get("var_sheets") or {}):
+            return None
+        try:
+            done, total = self._tts_tiers_done(sheet)
+        except Exception:
+            return None
+        return {"label": f"{st['var_sheets'][sheet]['label']}: записано", "done": done, "total": total}
+
+    def tts_set_scope(self, scope, sheet=None):
+        """'vars' — записывать только переменные (фразы не показывать); 'all' — как раньше."""
+        st = self._tts()
+        if scope == 'vars':
+            if not st.get("var_sheets"):
+                return {"error": "В таблице нет листов переменных."}
+            st["vars_only"] = True
+            self._tts_vars_focus(sheet)
+        else:
+            if not [u for u in st["units"] if u["kind"] != "value"]:
+                return {"error": "В таблице нет фраз — только переменные."}
+            st["vars_only"] = False
+            st["prompt_mode"] = "phrases"
+            st["prompt_pos"] = (st.get("prompt_pos_by_mode") or {}).get("phrases", 0)
+            if hasattr(self, '_tts_prompt_fix'):
+                self._tts_prompt_fix()
+        self._tts_save()
+        return {"state": self.tts_state(), "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None,
+                "vars_only": bool(st.get("vars_only")), "sheet": st.get("prompt_mode")}
+
+    # ---------------- свои начало и конец фразы вокруг переменной ----------------
+    # Нет фразы с этой переменной в таблице (или она ещё не записана) — берём два
+    # аудиофайла: что звучит до значения и после него. Они же — для «Начало»,
+    # «В фразе», стыка и громкости ярусов.
+
+    def _tts_var_ctx(self, sheet):
+        c = (self._tts().get("var_ctx") or {}).get(sheet) or {}
+        ok = lambda p: p if p and os.path.exists(p) else None
+        return ok(c.get("start")), ok(c.get("end"))
+
+    def tts_var_ctx_info(self, sheet):
+        st = self._tts()
+        s, e = self._tts_var_ctx(sheet)
+        chain = any(u.get("var_after") == sheet for u in st["units"] if u["kind"] != "value")
+        return {"sheet": sheet, "start": os.path.basename(s) if s else None, "end": os.path.basename(e) if e else None,
+                "custom": bool(s or e), "chain": chain, "asked": bool((st.get("var_ctx_asked") or {}).get(sheet))}
+
+    def tts_var_ctx_pick(self, which, sheet=None):
+        """Выбрать файл начала ('start') или конца ('end') фразы для листа переменных."""
+        st = self._tts()
+        sheet = sheet or st.get("prompt_mode")
+        if not sheet or sheet == "phrases" or sheet not in (st.get("var_sheets") or {}):
+            return {"error": "Откройте в суфлёре лист переменных."}
+        wd = st.get("work_dir")
+        d = None
+        for cand in ([os.path.join(wd, 'Фразы_Переменные'), os.path.join(wd, 'Проверенные')] if wd else []):
+            if os.path.isdir(cand):
+                d = cand
+                break
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN, directory=d or '',
+            file_types=('Аудио (*.wav;*.mp3;*.ogg;*.flac;*.m4a)', 'Все файлы (*.*)'))
+        if not picked:
+            return {"error": "cancel"}
+        path = picked if isinstance(picked, str) else picked[0]
+        st.setdefault("var_ctx", {}).setdefault(sheet, {})[which] = path
+        st.setdefault("var_ctx_asked", {})[sheet] = True
+        self._tts_save()
+        return self._tts_var_ctx_reply(sheet)
+
+    def tts_var_ctx_asked(self, sheet):
+        """Спросили (или отказались) — больше не спрашивать для этого листа."""
+        self._tts().setdefault("var_ctx_asked", {})[sheet] = True
+        self._tts_save()
+        return self.tts_var_ctx_info(sheet)
+
+    def tts_var_ctx_clear(self, sheet=None, which=None, asked=True):
+        """Убрать свой файл (which) или оба; asked — больше не спрашивать для листа."""
+        st = self._tts()
+        sheet = sheet or st.get("prompt_mode")
+        c = (st.get("var_ctx") or {}).get(sheet)
+        if c:
+            for k in ([which] if which else ['start', 'end']):
+                c.pop(k, None)
+        if asked:
+            st.setdefault("var_ctx_asked", {})[sheet] = True
+        self._tts_save()
+        return self._tts_var_ctx_reply(sheet)
+
+    def _tts_var_ctx_reply(self, sheet):
+        return {"info": self.tts_var_ctx_info(sheet), "state": self.tts_state(),
+                "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None}
 
     def tts_choose_sheet(self, title):
         pend = getattr(self, '_tts_pending', None)
@@ -2818,6 +2977,12 @@ class TtsFlowMixin:
         wd = st.get("work_dir")
         saved = lambda u: bool(u and wd and os.path.exists(self._tts_target(u)))
         out = []
+        cs, ce = self._tts_var_ctx(sheet)
+        if cs or ce:                                     # свои файлы начала и конца — первой «фразой»
+            nm = lambda p: os.path.splitext(os.path.basename(p))[0] if p else None
+            out.append({"chain": None, "name": "своё начало и конец", "start": None, "start_name": nm(cs) or '',
+                        "start_text": nm(cs) or '', "start_path": cs, "end": None, "end_name": nm(ce),
+                        "end_text": nm(ce) or '', "own_end_path": ce, "custom": True})
         for ch in st.get("chains") or []:
             parts = [st["units"][i] for i in ch["parts"]]
             for k, u in enumerate(parts):
@@ -3006,8 +3171,10 @@ class TtsFlowMixin:
         ch, cpos, cn = self._tts_tier_chain(unit)
         phrase = None
         if ch:
-            sk, ek = self._tts_unit_take(ch["start"]), (self._tts_unit_take(ch["end"]) if ch["end"] is not None else None)
-            phrase = {"pos": cpos, "total": cn, "name": ch["name"], "start_name": ch["start_name"], "start_text": ch["start_text"],
+            sk = self._tts_unit_take(ch["start"]) if ch["start"] is not None else None
+            ek = self._tts_unit_take(ch["end"]) if ch["end"] is not None else None
+            phrase = {"pos": cpos, "total": cn, "name": ch["name"], "custom": bool(ch.get("custom")),
+                      "sheet": unit.get("sheet"), "start_name": ch["start_name"], "start_text": ch["start_text"],
                       "end_name": ch["end_name"], "end_text": ch["end_text"], "end_from": ch["end_from"],
                       "start_saved": bool(ch["start_path"]), "end_saved": bool(ch["end_path"]),
                       "start_take": sk, "end_take": ek if not ch["end_from"] else None,
@@ -3361,6 +3528,12 @@ class TtsFlowMixin:
         """Начало и продолжение фразы вокруг переменной этого листа: цепочка,
         где после переменной не стоит то же «тенге» (сумма читается целиком)."""
         st = self._tts()
+        cs, ce = self._tts_var_ctx(sheet)
+        if cs or ce:                                           # свои файлы начала и конца
+            nm = lambda p: os.path.splitext(os.path.basename(p))[0] if p else None
+            return {"custom": True, "before": f"«{nm(cs)}» …" if cs else '', "after": f"… «{nm(ce)}»" if ce else '',
+                    "start": None, "end": None, "start_name": nm(cs) or '', "end_name": nm(ce),
+                    "start_saved": bool(cs), "end_saved": bool(ce), "start_path": cs, "end_path": ce}
         best = None
         for ch in st.get("chains") or []:
             parts = [st["units"][i] for i in ch["parts"]]
@@ -3393,10 +3566,19 @@ class TtsFlowMixin:
         ctx = self._tts_value_context(mode)
         if not ctx:
             return {"error": "Эта переменная не стоит ни в одной фразе таблицы."}
-        a, b = st["units"][ctx["start"]], (st["units"][ctx["end"]] if ctx["end"] is not None else None)
-        if not ctx["start_saved"]:
-            return {"error": f"Начало фразы «{a['name']}» ещё не сохранено — запишите его в «Фразах»."}
-        segs = [AudioSegment.from_file(self._tts_target(a))]
+        if ctx.get("custom"):
+            a_path, b_path, a_name = ctx["start_path"], ctx["end_path"], ctx["start_name"]
+            if not a_path:
+                return {"error": "Файл начала фразы не выбран или пропал — выберите его (чип «Начало и конец»)."}
+        else:
+            a, b = st["units"][ctx["start"]], (st["units"][ctx["end"]] if ctx["end"] is not None else None)
+            a_name = a["name"]
+            if not ctx["start_saved"]:
+                return {"error": f"Начало фразы «{a['name']}» ещё не сохранено — запишите его в «Фразах»."}
+            a_path = self._tts_target(a)
+            b_path = self._tts_target(b) if b is not None and ctx["end_saved"] else None
+        b_set = (ctx["end"] is not None) if not ctx.get("custom") else bool(ctx.get("end_name"))
+        segs = [AudioSegment.from_file(a_path)]
         if which == 'start' and len(segs[0]) > self.TIER_CTX_MS:     # «▶ Начало» — только конец фразы, в интонацию
             segs[0] = segs[0][-self.TIER_CTX_MS:]
         if which == 'whole':
@@ -3405,8 +3587,8 @@ class TtsFlowMixin:
             t = st["takes"][take_i]
             mid = self._tts_normalized(AudioSegment.from_file(os.path.join(st["work_dir"], t["file"])))
             segs.append(mid)
-            if b is not None and ctx["end_saved"]:
-                segs.append(AudioSegment.from_file(self._tts_target(b)))
+            if b_path:
+                segs.append(AudioSegment.from_file(b_path))
         rate = segs[0].frame_rate
         out = None
         for sg in segs:
@@ -3415,7 +3597,7 @@ class TtsFlowMixin:
         tmp = os.path.join(tempfile.gettempdir(), f"gvox_ctx_{os.getpid()}.wav")
         out.export(tmp, format="wav")
         self.player.play(tmp)
-        return {"playing": True, "duration": len(out) / 1000.0, "end_missing": which == 'whole' and b is not None and not ctx["end_saved"]}
+        return {"playing": True, "duration": len(out) / 1000.0, "end_missing": which == 'whole' and b_set and not b_path}
 
     def tts_prompt_mode(self, mode):
         """Что читать на суфлёре: 'phrases' — фразы таблицы, или ключ листа
@@ -3424,6 +3606,8 @@ class TtsFlowMixin:
         st = self._tts()
         if mode != 'phrases' and mode not in (st.get("var_sheets") or {}):
             return {"error": "Нет такого листа переменных."}
+        if mode == 'phrases' and (st.get("vars_only") or not [u for u in st["units"] if u["kind"] != "value"]):
+            return {"error": "В этой таблице записываются только переменные."}
         self._tts_ensure_value_units()
         cur = st.get("prompt_mode", "phrases")
         pos_by = st.setdefault("prompt_pos_by_mode", {})

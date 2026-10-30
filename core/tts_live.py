@@ -1199,8 +1199,10 @@ class TtsLiveMixin:
                 "sum_folder": os.path.join(st["work_dir"], TTS_VALUES_DIR, st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "tiers_done": self._tts_tiers_done(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" and st.get("work_dir") else None,
                 "tier_tpl": self._tts_mode_tpl(),
-                "modes": [{"key": "phrases", "label": "Фразы"}] + [{"key": k, "label": sh["label"]}
-                                                                   for k, sh in (st.get("var_sheets") or {}).items()],
+                "modes": ([] if st.get("vars_only") else [{"key": "phrases", "label": "Фразы"}])
+                         + [{"key": k, "label": sh["label"]} for k, sh in (st.get("var_sheets") or {}).items()],
+                "vars_only": bool(st.get("vars_only")),
+                "var_ctx": self.tts_var_ctx_info(st["prompt_mode"]) if st.get("prompt_mode", "phrases") != "phrases" else None,
                 "value_n": self._tts_item_value_n(items[pos])}
 
     def _tts_mode_tpl(self):

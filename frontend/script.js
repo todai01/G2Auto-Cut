@@ -6948,7 +6948,8 @@ let isProcessing = false;
                 if (!st) return;
             }
             openTtsScreen(st);
-            if (!st.has_takes) {
+            if (st.vars_only || (st.analysis && st.analysis.vars_only)) await ttsVarCtxMaybeAsk();
+            if (!st.has_takes && !(st.vars_only || (st.analysis && st.analysis.vars_only))) {
                 let how = await showBeautifulChoice(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
                     + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>`
                     + `<b>Записать с микрофона</b> — покажу фразы по очереди, готовые сразу появятся на ленте.<br>`
@@ -6969,7 +6970,62 @@ let isProcessing = false;
             if (!st || st.error === 'cancel') return null;
             if (st.error) { showBeautifulAlert('⚠️ ' + escapeHtml(st.error)); return null; }
             if (st.auto_head) showToast(`Лист «${st.auto_head}» без шапки: A — фразы, B — названия аудио`, 4000);
-            return st;
+            return await ttsScopeDialog(st);
+        }
+
+        // Разбор таблицы: что в ней, сколько переменных уже записано, что новое — и что записывать.
+        async function ttsScopeDialog(st) {
+            let a = st.analysis;
+            if (!a || !a.vars.length) return st;
+            let line = v => `<b>${escapeHtml(v.label)}</b> — значений ${v.values}`
+                + (v.total !== null && v.total !== undefined ? ` · записано ${v.done} из ${v.total}${v.new ? `, <b>новых ${v.new}</b>` : ' — всё записано'}` : '');
+            let head = `<b>Таблица разобрана</b><br><br>Фразы: <b>${a.phrases}</b>`
+                + (a.phrases_saved !== null ? ` (записано ${a.phrases_saved})` : '') + '<br>Переменные:<br>' + a.vars.map(line).join('<br>')
+                + (a.known ? '' : '<br><br><span class="tts-dim">Папка проекта ещё не выбрана — что уже записано, станет видно после выбора.</span>');
+            let scope = 'all';
+            if (!a.phrases) {
+                await showBeautifulAlert(head + '<br><br>Фраз в таблице нет — записываем <b>только переменные</b>.');
+                scope = 'vars';
+            } else if (a.known && a.vars_new > 0) {
+                let how = await showBeautifulChoice(head + '<br><br>Что записываем?', `Только переменные (новых ${a.vars_new})`,
+                                                    'Фразы и переменные', 'A', 'Отмена');
+                if (how === 'ok') scope = 'vars';
+                else if (how !== 'alt') return null;
+            } else {
+                showToast(`Таблица: фраз ${a.phrases}, листов переменных ${a.vars.length}${a.known ? ', новых значений нет' : ''}`, 3500);
+            }
+            if (scope === 'all' && !st.analysis.vars_only) return st;
+            let r = await pywebview.api.tts_set_scope(scope);
+            if (!r || r.error) { if (r) showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return st; }
+            r.state.analysis = a; r.state.vars_only = r.vars_only; r.state.prompt0 = r.prompt;
+            return r.state;
+        }
+
+        // Лист переменных читается внутри фразы: начало звучит перед значением, конец — после.
+        // Нет такой фразы в таблице — спрашиваем два аудиофайла.
+        async function ttsVarCtxAsk(sheet, force) {
+            let info = await pywebview.api.tts_var_ctx_info(sheet);
+            if (!force && info && (info.asked || info.custom || info.chain)) return;
+            let label = (tts && tts.var_sheets && tts.var_sheets[sheet] || {}).label || sheet;
+            let ok = await showBeautifulAlert(`<b>Переменные «${escapeHtml(label)}»</b><br><br>Значения читаются внутри фразы. Выберите <b>начальную фразу</b> — `
+                + 'она звучит перед значением: послушаете конец — и читаете в той же интонации. Потом — конечную.');
+            if (!ok) { await pywebview.api.tts_var_ctx_asked(sheet); return; }
+            let r = await pywebview.api.tts_var_ctx_pick('start', sheet);
+            if (r && r.error && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error));
+            let how = await showBeautifulChoice('<b>Конечная фраза</b><br><br>То, что звучит после значения. Если её нет — пропустите.',
+                                                'Выбрать файл', 'Без конца', 'N', 'Отмена');
+            if (how === 'ok') {
+                r = await pywebview.api.tts_var_ctx_pick('end', sheet);
+                if (r && r.error && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error));
+            }
+            let cur = await pywebview.api.tts_var_ctx_asked(sheet);
+            ttsPromptKey = null;
+            ttsLoadPrompt();
+            if (cur && cur.custom) showToast(`Начало${cur.end ? ' и конец' : ''} фразы выбраны — «▶ Начало» и «В фразе» играют с ними`, 4000);
+        }
+        async function ttsVarCtxMaybeAsk() {
+            let pr = await pywebview.api.tts_prompt_info();
+            if (pr && pr.mode && pr.mode !== 'phrases') await ttsVarCtxAsk(pr.mode, false);
         }
 
         function ttsChooseSheet(sheets) {
@@ -7056,7 +7112,11 @@ let isProcessing = false;
 
         async function ttsLoadExcel() {
             let st = await ttsPickExcelFlow();
-            if (st) { tts = st; ttsRender(); ttsLoadPrompt(); }
+            if (st) {
+                tts = st; ttsRender(); ttsPromptKey = null;
+                if (st.prompt0) ttsRenderPrompt(st.prompt0, 'next'); else ttsLoadPrompt();
+                if (st.vars_only) ttsVarCtxMaybeAsk();
+            }
         }
 
         async function ttsLoadRecording() {
@@ -7146,12 +7206,7 @@ let isProcessing = false;
                 ? `${tts.excel_name}${tts.project ? ' · ' + tts.project : ''}` : 'Таблица не загружена';
             document.getElementById('ttsLang').style.display = tts.loaded ? '' : 'none';
             ttsLangShow(ttsLangNow || tts.lang);
-            document.getElementById('ttsStatSaved').innerText = s.saved;
-            document.getElementById('ttsStatUnits').innerText = s.units;
-            document.getElementById('ttsStatDoubt').innerText = s.doubt;
-            document.getElementById('ttsStatMissing').innerText = s.missing;
-            document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;
-            ttsRenderHintBtns();
+            ttsRenderStats();
             let cats = Object.values(tts.var_sheets || {}).map(v => v.label).join(', ');
             document.getElementById('ttsVarDesc').innerText = cats ? `Фразы с переменными · ${cats}` : 'Фразы с переменными';
             ttsRenderRail();
@@ -7553,6 +7608,7 @@ let isProcessing = false;
                 <b>Фраза ${ph.pos + 1} / ${ph.total}</b>
                 <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierNav(1)" title="Следующая фраза с этой переменной">&#9654;</button>
                 <span class="tts-tiers__pname">${escapeHtml(ph.name)}</span> ${lv}
+                ${ph.custom ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsVarCtxAsk('${escapeHtml(ph.sheet)}', true)" title="Выбрать другие файлы начала и конца">начало и конец ✎</button>` : ''}
                 <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierResaveAll()" title="Пересобрать все уже сохранённые ярусы этого листа — с нынешней громкостью и фоном">Пересохранить готовые (${r.resave_n})</button>
               </div>
               <div class="tts-tiers__ctxrow"><span class="tts-tiers__cl">Начало</span>
@@ -9515,6 +9571,12 @@ let isProcessing = false;
             let modes = ttsFocusHTML(pr) + ttsModesHTML(pr);
             if (pr.context) modes += ` <button type="button" class="tts-reuse-chip ${pr.context.start_saved ? 'is-on' : ''}" onclick="ttsCtxPlay('start')"
                     title="${pr.context.start_saved ? 'Послушать конец начала «' + escapeHtml(pr.context.start_name) + '» (последние 2–3 секунды) — и сразу читайте сумму в той же интонации' : 'Начало «' + escapeHtml(pr.context.start_name) + '» ещё не записано (режим «Фразы»)'}">&#9654; Начало</button>`;
+            if (pr.var_ctx && pr.mode !== 'phrases') {
+                let vc = pr.var_ctx;
+                modes += ` <button type="button" class="tts-reuse-chip ${vc.custom ? 'is-on' : ''}" onclick="ttsVarCtxAsk('${escapeHtml(pr.mode)}', true)"
+                    title="${vc.custom ? 'Начало «' + escapeHtml(vc.start || '—') + '», конец «' + escapeHtml(vc.end || 'нет') + '» — нажмите, чтобы выбрать другие'
+                        : 'Начальная и конечная фразы вокруг значения — аудиофайлы'}">${vc.custom ? 'начало и конец ✎' : 'начало и конец…'}</button>`;
+            }
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);
             modes += ttsFlowHTML();
@@ -10077,6 +10139,7 @@ let isProcessing = false;
             ttsRender();
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+            if (mode !== 'phrases') ttsVarCtxMaybeAsk();
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
                 : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Значения/sum_…»'
                 : 'Читаем строки таблицы — Enter в «Сборке» сохранит каждое значение эталоном в «Значения»', 5000);
@@ -10141,9 +10204,11 @@ let isProcessing = false;
         // Счётчики в шапке — всегда по текущему состоянию.
         function ttsRenderStats() {
             if (!tts) return;
-            let s = tts.stats;
-            document.getElementById('ttsStatSaved').innerText = s.saved;
-            document.getElementById('ttsStatUnits').innerText = s.units;
+            let s = tts.stats, vp = tts.vars_progress;            // «только переменные»: считаем значения листа
+            document.getElementById('ttsStatLabel').innerText = vp ? vp.label : 'Сохранено';
+            document.getElementById('ttsMissingBtn').style.display = tts.vars_only ? 'none' : '';
+            document.getElementById('ttsStatSaved').innerText = vp ? vp.done : s.saved;
+            document.getElementById('ttsStatUnits').innerText = vp ? vp.total : s.units;
             document.getElementById('ttsStatDoubt').innerText = s.doubt;
             document.getElementById('ttsStatMissing').innerText = s.missing;
             document.getElementById('ttsVarCount').innerText = `${s.pieces_saved} / ${s.pieces}`;

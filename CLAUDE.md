@@ -31,6 +31,10 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   по имени, при папке с ru / kz — в своём языке; автосрезка по голосу `core/voice_trim.py` (вдох / шум
   по краям), шаблон срезки как в суфлёре — `.gvox_listen_tpl.json` в папке записей; Enter — сохранить и дальше;
   синтез голосом пресета через `_SynthWorker`).
+- Студия — «только переменные»: таблица без листа фраз или с листом переменных (`<mark>` и т. п.), не названным
+  в шапке фраз, читается; `tts_table_analysis` (что записано / новое) → выбор «Только переменные» (`tts_set_scope`,
+  `st["vars_only"]`); свои начало и конец (аудиофайлы) для листа — `st["var_ctx"]`, подставляются в `_tts_var_chains`
+  и `_tts_value_context`.
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,
