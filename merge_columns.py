@@ -1,9 +1,13 @@
-import sys
+import os
 import pandas as pd
 
-# Использование: python merge_columns.py input.xlsx [output.xlsx]
-src = sys.argv[1] if len(sys.argv) > 1 else "input.xlsx"
-dst = sys.argv[2] if len(sys.argv) > 2 else "output.xlsx"
+# Спрашиваем у пользователя файл (кавычки при перетаскивании файла убираем)
+src = input("Введите путь к Excel-файлу: ").strip().strip('"').strip("'")
+if not os.path.isfile(src):
+    raise SystemExit(f"Файл не найден: {src}")
+
+base, ext = os.path.splitext(src)
+dst = f"{base}_merged.xlsx"
 
 df = pd.read_excel(src, header=None, dtype=str)
 
