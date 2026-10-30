@@ -3438,10 +3438,10 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .audit-chips{ display: flex; flex-wrap: wrap; gap: 5px; }
 .audit-chip{ display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid rgba(239,91,80,.35); background: rgba(239,91,80,.06); color: var(--text); user-select: text; }
 .audit-chip b{ font-family: var(--font-mono); font-weight: 650; color: var(--accent-trash); }
-.audit-line{ display: grid; grid-template-columns: minmax(120px, 240px) 1fr auto; gap: 10px; align-items: center; padding: 4px 8px; border-radius: 6px; font-size: 12px; user-select: text; }
+.audit-line{ display: grid; grid-template-columns: minmax(160px, 360px) 1fr auto; gap: 10px; align-items: center; padding: 4px 8px; border-radius: 6px; font-size: 12px; user-select: text; }
 .audit-line:hover{ background: var(--screen); }
 .audit-line--top{ align-items: start; }
-.audit-line__name{ font-family: var(--font-mono); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-line__name{ font-family: var(--font-mono); font-weight: 650; overflow-wrap: anywhere; user-select: text; }   /* имя целиком, длинное — переносится */
 .audit-line__name.is-lost{ color: var(--accent-trash); }
 .audit-line__name.is-dups{ color: var(--accent-var); }
 .audit-line__text{ color: var(--text); min-width: 0; }
@@ -3463,7 +3463,7 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .audit-block__acts{ display: inline-flex; gap: 6px; margin-left: 10px; vertical-align: middle; text-transform: none; letter-spacing: 0; }
 .audit-chip.is-act{ cursor: pointer; font: inherit; font-size: 12px; transition: background .12s, border-color .12s; }
 .audit-chip.is-act:hover{ background: rgba(239,91,80,.16); border-color: var(--accent-trash); }
-.audit-line.has-acts{ grid-template-columns: minmax(120px, 240px) 1fr auto auto; }
+.audit-line.has-acts{ grid-template-columns: minmax(160px, 360px) 1fr auto auto; }
 .audit-line__acts{ display: inline-flex; gap: 6px; }
 .audit-dup{ display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .audit-dup .audit-line__paths{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
