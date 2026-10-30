@@ -3994,3 +3994,8 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .tts-ed__lanes:empty{ display: none; }
 .tts-tlang{ display: inline-block; font-size: .5em; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 5px; margin-right: 4px;
     vertical-align: middle; color: var(--accent-info); background: var(--tint-info); border: 1px solid rgba(43,192,207,.4); }
+
+/* клик — копировать название / текст фразы */
+[data-copy]{ cursor: copy; user-select: text; }
+[data-copy]:hover{ color: var(--accent-primary); }
+.tts-block__name[data-copy], .tts-block__text[data-copy]{ user-select: text; }

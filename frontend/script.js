@@ -5087,6 +5087,23 @@ let isProcessing = false;
             }
         }
 
+        // Клик по названию или тексту фразы (data-copy) — в буфер. Выделение мышью работает как обычно.
+        function copyAttr(v) { return ` data-copy="${escapeHtml(String(v || ''))}"`; }
+        function copyToClipboard(text) {
+            try { navigator.clipboard.writeText(text); return; } catch (e) {}
+            let ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); } catch (e) {} ta.remove();
+        }
+        document.addEventListener('click', e => {
+            let el = e.target.closest && e.target.closest('[data-copy]');
+            if (!el) return;
+            e.stopPropagation(); e.preventDefault();
+            if (String(window.getSelection && window.getSelection()).trim()) return;       // выделяют — не мешаем
+            let t = el.dataset.copy;
+            copyToClipboard(t);
+            showToast('Скопировано: ' + (t.length > 80 ? t.slice(0, 80) + '…' : t), 1800);
+        }, true);
+
         function copyRawText(text) {
             if (!text) return;
             navigator.clipboard.writeText(text);
@@ -5913,10 +5930,10 @@ let isProcessing = false;
                 body += isVar || voice
                     ? `<div class="audit-chips">${b.missing.map(m => act
                         ? `<button type="button" class="audit-chip is-act" data-q="${q(m.filename + ' ' + m.text)}" onclick="auditToPrompter('one', ${m._i})" title="Записать в суфлёре: «${escapeHtml(m.text)}» → ${escapeHtml(m.filename)}">● ${escapeHtml(m.text)}</button>`
-                        : `<span class="audit-chip" data-q="${q(m.filename + ' ' + m.text)}" title="Строка ${m.index}${voice ? '' : ' · файл ' + escapeHtml(m.filename)}">${escapeHtml(m.text)}</span>`).join('')}</div>`
+                        : `<span class="audit-chip" data-q="${q(m.filename + ' ' + m.text)}"${copyAttr(m.text)} title="Строка ${m.index}${voice ? '' : ' · файл ' + escapeHtml(m.filename)} · клик — скопировать текст">${escapeHtml(m.text)}</span>`).join('')}</div>`
                     : b.missing.map(m => `<div class="audit-line${act ? ' has-acts' : ''}" data-q="${q(m.filename + ' ' + (m.phrase || m.text))}">
-                            <span class="audit-line__name is-lost">${escapeHtml(m.filename)}</span>
-                            <span class="audit-line__text">${escapeHtml(m.phrase || m.text)}</span>
+                            <span class="audit-line__name is-lost"${copyAttr(m.filename)}>${escapeHtml(m.filename)}</span>
+                            <span class="audit-line__text"${copyAttr(m.phrase || m.text)}>${escapeHtml(m.phrase || m.text)}</span>
                             <span class="audit-line__meta">стр. ${m.index}</span>
                             ${act ? `<span class="audit-line__acts"><button type="button" class="btn-ghost btn-ghost--compact audit-act is-rec" onclick="auditToPrompter('one', ${m._i})" title="Записать в суфлёре">● Записать</button><button type="button" class="btn-ghost btn-ghost--compact" onclick="auditPutFile(${m._i})" title="Взять готовую запись (wav/mp3…) — сохраню её сюда под этим именем">Файл…</button></span>` : ''}</div>`).join('');
                 body += `</div>`;
@@ -5924,7 +5941,7 @@ let isProcessing = false;
             if (b.dups.length) {
                 body += `<div class="audit-block"><div class="audit-block__title is-dups">Дубли — ${b.dups.length} <span class="audit-block__hint">одно название в нескольких местах этой группы</span></div>`;
                 body += b.dups.map(d => `<div class="audit-line audit-line--top" data-q="${q(d.filename + ' ' + d.paths.join(' '))}">
-                        <span class="audit-line__name is-dups">${escapeHtml(d.filename)}</span>
+                        <span class="audit-line__name is-dups"${copyAttr(d.filename)}>${escapeHtml(d.filename)}</span>
                         <span class="audit-line__text">${d.paths.map((p, pi) => `<div class="audit-dup">
                             <button type="button" class="audit-file__play audit-dup__play" onclick="auditPlayPath(${d._i}, ${pi}, this)" title="Послушать">&#9654;</button>
                             <span class="audit-line__paths" title="${escapeHtml(p)}">${escapeHtml(auditRel(res, p))}</span>
@@ -5935,8 +5952,8 @@ let isProcessing = false;
             if (b.unknown.length) {
                 body += `<div class="audit-block"><div class="audit-block__title is-dups">Не распознано уверенно — ${b.unknown.length} <span class="audit-block__hint">послушайте: возможно, там как раз недостающее</span></div>`;
                 body += b.unknown.map(u => `<div class="audit-line" data-q="${q(u.filename + ' ' + u.heard + ' ' + u.guess)}">
-                        <span class="audit-line__name is-dups">${escapeHtml(u.filename)}</span>
-                        <span class="audit-line__text">«${escapeHtml(u.heard)}» · похоже на ${escapeHtml(u.guess)}</span>
+                        <span class="audit-line__name is-dups"${copyAttr(u.filename)}>${escapeHtml(u.filename)}</span>
+                        <span class="audit-line__text"${copyAttr(u.heard)}>«${escapeHtml(u.heard)}» · похоже на ${escapeHtml(u.guess)}</span>
                         <span class="audit-line__meta">${Math.round(u.score * 100)}%</span></div>`).join('');
                 body += `</div>`;
             }
@@ -7370,8 +7387,8 @@ let isProcessing = false;
             let block = p => `<div class="tts-block ${p.id === u.id ? 'is-current' : ''} ${p.saved ? 'is-saved' : ''}"
                     ${p.saved ? `onclick="ttsPlayUnit(${p.id})" title="Слушать сохранённое"` : ''}>
                     <span class="tts-block__role">${p.kind === 'value' ? escapeHtml(p.cat_label || 'значение') : (p.role || 'фраза')}${p.saved ? ' ✓' : ''}</span>
-                    <span class="tts-block__name">${escapeHtml(p.name)}</span>
-                    <span class="tts-block__text">${escapeHtml(p.text)}</span></div>`;
+                    <span class="tts-block__name"${copyAttr(p.name)} title="Клик — скопировать название">${escapeHtml(p.name)}</span>
+                    <span class="tts-block__text"${copyAttr(p.text)} title="Клик — скопировать текст">${escapeHtml(p.text)}</span></div>`;
             let varBlock = v => `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
                     <span class="tts-block__name">${escapeHtml(ttsVarLabel(v))}</span></div>`;
             let blocks;
