@@ -5,7 +5,12 @@
  <label>Язык <select id="preset-lang"><option>ru</option><option>kz</option></select></label>
  <label>Текст <textarea></textarea></label>
  <button type="button" onclick="go()">Синтезировать</button></form><div id="out"></div></section>
-<section class="panel active" id="p1"><form onsubmit="return false"><label>x<textarea></textarea></label></form></section></main>
+<section class="panel active" id="p1"><form onsubmit="return false">
+ <label>Язык <select><option>ru</option><option>kz</option></select></label>
+ <label>Эталон <input type="file"></label>
+ <label>Текст эталона <input type="text"></label>
+ <label>Текст <textarea></textarea></label>
+ <button type="button" onclick="goClone()">Синтезировать</button></form><div id="out1"></div></section></main>
 <script>
 function tab(i){ document.querySelectorAll('section').forEach((s,k)=>s.classList.toggle('active',k===i)); }
 function wav(sec, f){ const r=16000,n=Math.floor(r*sec),b=new ArrayBuffer(44+n*2),v=new DataView(b);
@@ -23,4 +28,8 @@ function go(){ const vi=document.getElementById('preset-voice').selectedIndex, l
 // список голосов догружается позже и перерисовывается (выбор сбрасывается)
 (function () { const s = document.getElementById('preset-voice'), keep = s.innerHTML; s.innerHTML = '<option>…</option>';
   setTimeout(() => { s.innerHTML = keep; }, 1500); })();
+// клон: длительность — по длине текста (0,07 с на букву), эталон обязателен
+function goClone(){ const f=document.querySelector('#p1 input[type=file]').files.length, t=document.querySelector('#p1 textarea').value;
+  if(!f){ document.getElementById('out1').innerText='нет эталона'; return; }
+  setTimeout(()=>{ document.getElementById('out1').innerHTML='<audio controls src="'+wav(0.3+t.length*0.07, 180)+'"></audio>'; }, 500); }
 </script></body></html>

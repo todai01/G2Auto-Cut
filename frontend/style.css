@@ -3973,3 +3973,22 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .clone-voice b{ color: var(--text); }
 .clone-voice__f{ font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); }
 .clone-voice__f i{ font-style: normal; color: var(--accent-var); margin-left: 3px; }
+
+/* Сборка: дорожки друг под другом */
+.tts-ed__row{ display: flex; gap: 6px; align-items: flex-start; }
+.tts-ed__row .tts-ed__canvas{ flex: 1; min-width: 0; }
+.tts-ed__lanes{ width: 148px; flex: none; display: flex; flex-direction: column; }
+.tts-lane__ruler{ height: 14px; flex: none; }
+.tts-lane{ box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 8px;
+    border: 1px solid var(--border-soft); border-top: none; background: var(--screen); cursor: pointer; font-size: 12px; }
+.tts-lane:first-of-type{ border-top: 1px solid var(--border-soft); }
+.tts-lane.is-cur{ box-shadow: inset 3px 0 0 var(--accent-primary); background: var(--tint-primary); }
+.tts-lane.is-mute{ opacity: .55; }
+.tts-lane__name{ font-weight: 650; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-lane__n{ font-size: 10.5px; color: var(--text-faint); }
+.tts-lane__btns{ display: flex; gap: 3px; }
+.tts-lane__btns button{ width: 24px; height: 20px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel-raised); color: var(--text-dim);
+    font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; padding: 0; }
+.tts-lane__btns button:hover{ color: var(--text); }
+.tts-lane__btns button.is-on{ color: #111; background: var(--accent-var); border-color: var(--accent-var); }
+.tts-ed__lanes:empty{ display: none; }

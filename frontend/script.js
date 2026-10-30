@@ -4767,6 +4767,13 @@ let isProcessing = false;
                 if (e.code === 'KeyS') listenSave(true); else listenEdUndo();
                 return;
             }
+            if ((e.ctrlKey || e.metaKey) && ['KeyD', 'KeyC', 'KeyV'].includes(e.code) && ttsEd
+                && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
+                && document.getElementById('stage4-tts').classList.contains('show-assembly')) {
+                e.preventDefault();
+                if (e.code === 'KeyD') ttsEdDupLane(); else if (e.code === 'KeyC') ttsEdCopy(); else ttsEdPaste();
+                return;
+            }
             // «Сборка» открыта: Ctrl+Z — отменить шаг, Ctrl+Y / Ctrl+Shift+Z — вернуть.
             // По коду клавиши — работает и в русской раскладке (Ctrl+Я).
             if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.code === 'KeyY')
@@ -7305,7 +7312,7 @@ let isProcessing = false;
                     <button type="button" class="btn-ghost btn-ghost--good btn-ghost--compact" onclick="ttsSaveFromAudacity()">Сохранить из Audacity</button></div>` : ''}
                 <div class="tts-asm-heard"><span class="tts-dim">Услышано:</span> ${t.heard ? escapeHtml(t.heard) : '<span class="tts-dim">—</span>'}</div>
                 <div class="tts-ed">
-                    <canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas>
+                    <div class="tts-ed__row"><div class="tts-ed__lanes" id="ttsEdLanes"></div><canvas class="tts-ed__canvas" id="ttsEdCanvas"></canvas></div>
                     <div class="tts-ed__bar">
                         <span class="tts-ed__time" id="ttsEdTime"></span>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdCutBtn" onclick="ttsEditorCut()" disabled title="Вырезать выделенное (выделите мышью на клипе)">Вырезать <kbd>X</kbd></button>
@@ -7313,7 +7320,8 @@ let isProcessing = false;
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdRedo" onclick="ttsEdUndo(true)" disabled>&#8631;</button>
                         <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа (тоже отменяется Ctrl+Z)">Сбросить</button>
                         ${u.kind === 'value' ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsCtxPlay('whole', ${t.i})" title="Послушать в фразе: начало + этот дубль + продолжение">&#9654; В фразе</button>` : ''}
-                        <button class="btn-ghost btn-ghost--compact" id="ttsTsynBtn" onclick="ttsTsynToggle()" title="Добить конец фразы синтезом (если не выговаривается) — ляжет на дорожку отдельным клипом">Синтез…</button>
+                        <button class="btn-ghost btn-ghost--compact" id="ttsTsynBtn" onclick="ttsTsynToggle()" title="Синтез слов «с… по…» — образец: этот дубль, как прослушали; ляжет новой дорожкой под этими словами">Синтез…</button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsEdAddLane()" title="Новая пустая дорожка (Ctrl+D — копия текущей, Ctrl+C / Ctrl+V — кусок с дорожки на дорожку)">+ Дорожка</button>
                         <span class="tts-ed__zoom">
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(0.66)" title="Отдалить (Ctrl + колесо)">&minus;</button>
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(1.5)" title="Приблизить (Ctrl + колесо)">+</button>
@@ -7680,13 +7688,20 @@ let isProcessing = false;
             if (ttsTS && ttsTS.i === t.i) { ttsTS = null; ttsTsynRender(); return; }
             let r = await pywebview.api.tts_take_synth_info(t.i);
             if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-            ttsTS = { i: t.i, words: r.words, start: r.start, overlap: 2, text: null,
+            ttsTS = { i: t.i, words: r.words, start: r.fake ? r.start : 0, end: r.words.length - 1, pick: 0, overlap: 0, text: null,
                       mode: r.refs.length ? r.refs[0].mode : 'auto', refs: r.refs, fake: r.fake,
                       tail_word: r.tail_word, noise: r.noise, lang: r.lang, busy: r.busy };
             ttsTsynRender();
         }
-        const ttsTsynText = () => ttsTS.text !== null ? ttsTS.text
-            : ttsTS.words.slice(Math.max(0, ttsTS.start - ttsTS.overlap)).join(' ');
+        const ttsTsynText = () => ttsTS.text !== null ? ttsTS.text : ttsTS.words.slice(ttsTS.start, ttsTS.end + 1).join(' ');
+        // Слова «с… по…»: первый щелчок — начало, второй — конец (раньше начала — новое начало).
+        function ttsTsynWord(k) {
+            if (!ttsTS || ttsTS.busy) return;
+            if (ttsTS.pick === 0 || k < ttsTS.start) { ttsTS.start = k; ttsTS.end = k; ttsTS.pick = 1; }
+            else { ttsTS.end = k; ttsTS.pick = 0; }
+            ttsTS.text = null;
+            ttsTsynRender();
+        }
         // Слово-запас в конце: сервис синтеза срезает конец — режется запас, а не фраза.
         const ttsSynTailOn = () => { try { return localStorage.getItem('gvox_syn_tail') !== '0'; } catch (e) { return true; } };
         function ttsSynTailToggle() {
@@ -7698,21 +7713,20 @@ let isProcessing = false;
             if (!el) return;
             if (!ttsTS) { el.style.display = 'none'; el.innerHTML = ''; return; }
             el.style.display = '';
-            let s = ttsTS, ov0 = Math.max(0, s.start - s.overlap);
+            let s = ttsTS;
             let words = s.words.map((w, k) => {
-                let cls = k >= s.start ? 'is-syn' : (k >= ov0 ? 'is-ovl' : 'is-rec');
-                return `<button type="button" class="tts-tsyn__w ${cls}" onclick="ttsTsynSet({start: ${k}})" title="Синтез — с этого слова">${escapeHtml(w)}</button>`;
+                let cls = k >= s.start && k <= s.end ? 'is-syn' : 'is-rec';
+                return `<button type="button" class="tts-tsyn__w ${cls}" onclick="ttsTsynWord(${k})" title="${s.pick ? 'По это слово' : 'С этого слова'}">${escapeHtml(w)}</button>`;
             }).join('');
             let chip = (on, label, js, dis) => `<button type="button" class="chip ${on ? 'chip-mode--active' : ''}" onclick="${js}" ${dis ? 'disabled' : ''}>${label}</button>`;
             el.innerHTML = `
-                <div class="tts-tsyn__head"><b>${s.fake ? 'Пересинтез' : 'Добить синтезом'}</b>
-                    <span class="tts-dim">нажмите слово, с которого начинается синтез ·
-                    <span class="tts-tsyn__lg is-rec">записано</span> <span class="tts-tsyn__lg is-ovl">перекрытие</span> <span class="tts-tsyn__lg is-syn">синтез</span></span></div>
+                <div class="tts-tsyn__head"><b>Синтез слов — новой дорожкой</b>
+                    <span class="tts-dim">${s.pick ? 'теперь — по какое слово' : 'щёлкните первое слово, затем последнее'} ·
+                    <span class="tts-tsyn__lg is-syn">синтез</span></span></div>
                 <div class="tts-tsyn__words">${words}</div>
                 <div class="tts-tsyn__row">
-                    <span class="tts-dim">Перекрытие</span>
-                    ${[0, 1, 2, 3].map(n => chip(s.overlap === n, n === 0 ? 'нет' : `${n} сл.`, `ttsTsynSet({overlap: ${n}})`)).join('')}
-                    ${chip(s.start === 0, 'всю фразу', 'ttsTsynSet({start: 0})')}
+                    ${chip(s.start === 0 && s.end === s.words.length - 1, 'всю фразу', `ttsTsynSet({start: 0, end: ${s.words.length - 1}, pick: 0})`)}
+                    <span class="tts-dim">ляжет под этими словами — сдвиньте точно, на дорожке записи вырежьте ошибку или выключите её (M)</span>
                 </div>
                 <div class="tts-tsyn__row">
                     <span class="tts-dim">Образец голоса</span>
@@ -7752,14 +7766,15 @@ let isProcessing = false;
         }
         function ttsTsynSet(o) {
             if (!ttsTS || ttsTS.busy) return;
-            if (o.start !== undefined || o.overlap !== undefined) ttsTS.text = null;     // текст — заново по словам
+            if (o.start !== undefined || o.end !== undefined || o.overlap !== undefined) ttsTS.text = null;     // текст — заново по словам
             Object.assign(ttsTS, o);
             ttsTsynRender();
         }
         async function ttsTsynRun() {
             if (!ttsTS || ttsTS.busy) return;
             let mode = ttsTS.start === 0 && ttsTS.mode === 'take' ? 'auto' : ttsTS.mode;
-            let r = await pywebview.api.tts_take_synth(ttsTS.i, ttsTS.start, ttsTS.overlap, ttsTsynText(), mode, ttsSynTailOn());
+            if (ttsEd && ttsEd.i === ttsTS.i) await ttsEditorApply();           // образец — ровно то, что сейчас на дорожке
+            let r = await pywebview.api.tts_take_synth(ttsTS.i, ttsTS.start, 0, ttsTsynText(), mode, ttsSynTailOn(), ttsTS.end, 'new');
             if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
             ttsTS.busy = true;
             ttsTsynRender();
@@ -7856,7 +7871,10 @@ let isProcessing = false;
             let r = await pywebview.api.tts_clips_load(t.i);
             if (!tts || tts.index !== want) return;
             if (!r || r.error) { ttsEd = null; let c = document.getElementById('ttsEdTime'); if (c) c.innerText = r && r.error || ''; return; }
-            ttsEd = { ...r, sel: null, drag: null, play: null, zoom: null, scroll: 0 };
+            ttsEd = { ...r, sel: null, drag: null, play: null, zoom: null, scroll: 0, cur: { lane: 0, t: null } };
+            ttsEd.clips.forEach(c => { c.lane = c.lane || 0; });
+            ttsEd.lanes = r.lanes || [{ name: 'Запись', mute: false }];
+            ttsEdLanesRender();
             ttsEditorBind();
             if (keepView) Object.assign(ttsEd, keepView); else ttsEdFit();
             ttsEditorDraw();
@@ -7871,11 +7889,17 @@ let isProcessing = false;
         };
         const tlLen = c => tlRanges(c).reduce((acc, [x, y]) => acc + y - x, 0);
         const tlOrder = () => ttsEd.clips.map((c, k) => k).sort((p, q) => ttsEd.clips[p].pos - ttsEd.clips[q].pos);
+        // Несколько дорожек — каждая своей полосой, клип обрывает только клип своей дорожки.
+        const TTS_LANE_H = 78;
+        const tlLanesN = () => (ttsEd.lanes || []).length || 1;
+        const tlMultiLane = () => tlLanesN() > 1;
+        const tlLaneRect = l => ({ top: TTS_ED_RULER + l * TTS_LANE_H, h: TTS_LANE_H });
+        const tlLaneAt = y => Math.max(0, Math.min(tlLanesN() - 1, Math.floor((y - TTS_ED_RULER) / TTS_LANE_H)));
         const tlBase = () => Math.min(...ttsEd.clips.map(c => c.pos));
         const tlTotal = () => Math.max(...ttsEd.clips.map(c => c.pos + tlLen(c)));
         // Где кончается звучание клипа: следующий по дорожке клип его обрывает.
         function tlLimit(k) {
-            let ord = tlOrder(), j = ord.indexOf(k);
+            let lane = ttsEd.clips[k].lane || 0, ord = tlOrder().filter(q => (ttsEd.clips[q].lane || 0) === lane), j = ord.indexOf(k);
             return j + 1 < ord.length ? ttsEd.clips[ord[j + 1]].pos : Infinity;
         }
         // Время на дорожке ↔ место в исходной записи для клипа.
@@ -7891,6 +7915,7 @@ let isProcessing = false;
         }
         // Соседние клипы — на разных дорожках (через одну), чтобы наезд был виден.
         function tlLane(k) {
+            if (tlMultiLane()) return tlLaneRect(ttsEd.clips[k].lane || 0);
             let multi = ttsEd.clips.length > 1, H = document.getElementById('ttsEdCanvas').clientHeight;
             let h = (H - TTS_ED_RULER) / (multi ? 2 : 1), l = multi ? tlOrder().indexOf(k) % 2 : 0;
             return { top: TTS_ED_RULER + l * h, h };
@@ -7916,7 +7941,9 @@ let isProcessing = false;
         function ttsEditorDraw() {
             let canvas = document.getElementById('ttsEdCanvas');
             if (!canvas || !ttsEd) return;
-            canvas.classList.toggle('is-multi', ttsEd.clips.length > 1);
+            canvas.classList.toggle('is-multi', ttsEd.clips.length > 1 && !tlMultiLane());
+            let wantH = tlMultiLane() ? `${TTS_ED_RULER + tlLanesN() * TTS_LANE_H}px` : '';
+            if (canvas.style.height !== wantH) { canvas.style.height = wantH; ttsEdLanesRender(); }
             let dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
             if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
                 canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
@@ -7933,14 +7960,22 @@ let isProcessing = false;
                 ctx.fillStyle = 'rgba(146,154,171,0.7)'; ctx.fillText(((tt - base) / 1000).toFixed(stepMs < 1000 ? 2 : 1), x + 3, 1);
             }
             let colors = ['#4d95ea', '#2bc0cf', '#9270ea', '#eeac3e'];
+            if (tlMultiLane()) ttsEd.lanes.forEach((ln, l) => {                 // полосы дорожек
+                let { top, h } = tlLaneRect(l);
+                ctx.fillStyle = l === ttsEd.cur.lane ? 'rgba(77,149,234,0.06)' : (l % 2 ? 'rgba(255,255,255,0.018)' : 'rgba(0,0,0,0)');
+                ctx.fillRect(0, top, W, h);
+                ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(0, top + h - 1, W, 1);
+            });
             tlOrder().forEach((k, j) => {
                 let c = ttsEd.clips[k], len = tlLen(c), limit = tlLimit(k);
-                let x0 = tlX(c.pos), x1 = tlX(c.pos + len), col = colors[j % colors.length];
-                let multi = ttsEd.clips.length > 1, { top, h: laneH } = tlLane(k), bot = top + laneH;
+                let lanes = tlMultiLane(), x0 = tlX(c.pos), x1 = tlX(c.pos + len), col = colors[(lanes ? (c.lane || 0) : j) % colors.length];
+                let multi = ttsEd.clips.length > 1 || lanes, { top, h: laneH } = tlLane(k), bot = top + laneH;
+                let muted = lanes && (ttsEd.lanes[c.lane || 0] || {}).mute;
+                if (muted) ctx.globalAlpha = 0.35;
                 // тело и полоска для перетаскивания
                 ctx.fillStyle = 'rgba(255,255,255,0.045)'; ctx.fillRect(x0, top, x1 - x0, laneH);
                 if (multi) {
-                    ctx.fillStyle = col; ctx.globalAlpha = 0.55; ctx.fillRect(x0, top, x1 - x0, TTS_ED_HEAD); ctx.globalAlpha = 1;
+                    ctx.fillStyle = col; ctx.globalAlpha = (muted ? 0.35 : 1) * 0.55; ctx.fillRect(x0, top, x1 - x0, TTS_ED_HEAD); ctx.globalAlpha = muted ? 0.35 : 1;
                     ctx.fillStyle = '#fff'; ctx.font = '700 10px system-ui, sans-serif'; ctx.textBaseline = 'middle';
                     ctx.save(); ctx.beginPath(); ctx.rect(x0, top, Math.max(0, x1 - x0), TTS_ED_HEAD); ctx.clip();
                     ctx.fillText(`клип ${j + 1}  ⇔`, x0 + 6, top + TTS_ED_HEAD / 2); ctx.restore();
@@ -7970,7 +8005,12 @@ let isProcessing = false;
                 // ручки краёв
                 ctx.fillStyle = '#eef1f6';
                 [x0, x1].forEach((x, side) => { ctx.fillRect(x - 1, top, 2, laneH); ctx.fillRect(side ? x - 7 : x, bot - 12, 7, 12); });
+                ctx.globalAlpha = 1;
             });
+            if (ttsEd.cur.t != null) {                                          // курсор вставки (Ctrl+V)
+                let r = tlMultiLane() ? tlLaneRect(ttsEd.cur.lane) : { top: TTS_ED_RULER, h: H - TTS_ED_RULER };
+                ctx.fillStyle = 'rgba(90,150,255,0.9)'; ctx.fillRect(tlX(ttsEd.cur.t) - 0.5, r.top, 1, r.h);
+            }
             if (ttsEd.sel) {
                 let c = ttsEd.clips[ttsEd.sel.k];
                 let a = Math.max(c.pos, Math.min(ttsEd.sel.t0, ttsEd.sel.t1)), b = Math.min(c.pos + tlLen(c), Math.max(ttsEd.sel.t0, ttsEd.sel.t1));
@@ -7992,7 +8032,7 @@ let isProcessing = false;
 
         // Что под мышью: ручка края / полоска клипа / метка выреза / тело / пусто.
         function tlHit(x, y) {
-            let multi = ttsEd.clips.length > 1;
+            let multi = ttsEd.clips.length > 1 || tlMultiLane();
             let ord = tlOrder().reverse().filter(k => {   // только клипы своей дорожки
                 let { top, h } = tlLane(k); return !multi || (y >= top && y < top + h);
             });
@@ -8020,7 +8060,7 @@ let isProcessing = false;
 
         window.addEventListener('mousemove', e => {
             if (!ttsEd || !ttsEd.drag || !document.getElementById('ttsEdCanvas')) return;
-            let { x } = ttsEdPos(e), t = tlT(x), d = ttsEd.drag, c = ttsEd.clips[d.k];
+            let { x, y } = ttsEdPos(e), t = tlT(x), d = ttsEd.drag, c = ttsEd.clips[d.k];
             d.moved = d.moved || Math.abs(x - d.x0) > 3;
             if (d.kind === 'trim' && d.side === 'a') {
                 let na = Math.round(Math.max(c.lo, Math.min(c.b - 80, d.a0 + (t - d.t0))));
@@ -8029,6 +8069,7 @@ let isProcessing = false;
                 c.b = Math.round(Math.max(c.a + 80, Math.min(c.hi, d.b0 + (t - d.t0))));
             } else if (d.kind === 'move') {
                 c.pos = Math.max(0, Math.round(d.pos0 + (t - d.t0)));
+                if (tlMultiLane()) { c.lane = tlLaneAt(y); ttsEd.cur.lane = c.lane; }
             } else if (d.kind === 'body' && d.moved) {
                 ttsEd.sel = { k: d.k, t0: d.t0, t1: t };
             }
@@ -8055,6 +8096,7 @@ let isProcessing = false;
                 if (!ttsEd || e.button !== 0) return;
                 e.preventDefault();
                 let { x, y } = ttsEdPos(e), t = tlT(x), h = tlHit(x, y);
+                ttsEd.cur = { lane: tlMultiLane() ? tlLaneAt(y) : 0, t: Math.round(t) };      // сюда — Ctrl+V
                 if (h.kind === 'uncut') {
                     ttsEdRemember('возврат выреза');
                     let c = ttsEd.clips[h.k], len0 = tlLen(c), at = tlTimeOfRaw(c, c.cuts[h.cutIdx][0]);
@@ -8106,7 +8148,8 @@ let isProcessing = false;
             if (!t) return null;
             return ttsEdHist[t.file] || (ttsEdHist[t.file] = { undo: [], redo: [] });
         }
-        const ttsEdSnap = () => ttsEd.clips.map(c => ({ a: c.a, b: c.b, pos: c.pos, cuts: (c.cuts || []).map(x => [...x]) }));
+        const ttsEdSnap = () => ({ clips: ttsEd.clips.map(c => ({ ...c, cuts: (c.cuts || []).map(x => [...x]) })),
+                                   lanes: (ttsEd.lanes || []).map(l => ({ ...l })) });
         function ttsEdRemember(label, snap) {
             let h = ttsEdHistOf();
             if (!h) return;
@@ -8127,10 +8170,14 @@ let isProcessing = false;
             if (!from || !from.length) { showToast(redo ? 'Возвращать нечего' : 'Отменять нечего'); return; }
             let step = from.pop();
             to.push({ label: step.label, clips: ttsEdSnap(), seq: ++ttsActSeq });
-            step.clips.forEach((sn, k) => {
-                let c = ttsEd.clips[k];
-                if (c) { c.a = sn.a; c.b = sn.b; c.pos = sn.pos; c.cuts = sn.cuts.map(x => [...x]); }
-            });
+            if (Array.isArray(step.clips)) {                              // старый формат шага
+                step.clips.forEach((sn, k) => { let c = ttsEd.clips[k]; if (c) { c.a = sn.a; c.b = sn.b; c.pos = sn.pos; c.cuts = sn.cuts.map(x => [...x]); } });
+            } else {
+                ttsEd.clips = step.clips.clips.map(c => ({ ...c, cuts: c.cuts.map(x => [...x]) }));
+                ttsEd.lanes = step.clips.lanes.map(l => ({ ...l }));
+                ttsEd.cur.lane = Math.min(ttsEd.cur.lane, ttsEd.lanes.length - 1);
+            }
+            ttsEdLanesRender();
             ttsEd.sel = null;
             ttsEditorDraw();
             await ttsEditorApply();
@@ -8138,17 +8185,100 @@ let isProcessing = false;
             showToast((redo ? 'Вернул: ' : 'Отменил: ') + step.label);
         }
 
-        // Вырез/возврат куска сдвигает клипы после него — склейка не рвётся.
+        // Вырез/возврат куска сдвигает клипы после него (на той же дорожке) — склейка не рвётся.
         function ttsEdRipple(c, from, delta) {
             if (!delta) return;
-            ttsEd.clips.forEach(o => { if (o !== c && o.pos >= from - 1) o.pos = Math.max(0, o.pos + delta); });
+            ttsEd.clips.forEach(o => { if (o !== c && (o.lane || 0) === (c.lane || 0) && o.pos >= from - 1) o.pos = Math.max(0, o.pos + delta); });
+        }
+
+        // ----- дорожки: как в Audacity — добавить, удалить, без звука, копия, кусок с дорожки на дорожку -----
+        function ttsEdLanesRender() {
+            let box = document.getElementById('ttsEdLanes');
+            if (!box || !ttsEd) return;
+            let multi = tlMultiLane();
+            box.style.display = multi ? '' : 'none';
+            if (!multi) { box.innerHTML = ''; return; }
+            box.innerHTML = `<div class="tts-lane__ruler"></div>` + ttsEd.lanes.map((ln, l) => {
+                let n = ttsEd.clips.filter(c => (c.lane || 0) === l).length;
+                return `<div class="tts-lane ${l === ttsEd.cur.lane ? 'is-cur' : ''} ${ln.mute ? 'is-mute' : ''}" style="height:${TTS_LANE_H}px" onclick="ttsEdCurLane(${l})">
+                    <span class="tts-lane__name" title="${escapeHtml(ln.name)}">${escapeHtml(ln.name)}</span>
+                    <span class="tts-lane__n">${n ? `клипов: ${n}` : 'пусто'}</span>
+                    <span class="tts-lane__btns">
+                        <button type="button" class="${ln.mute ? 'is-on' : ''}" onclick="event.stopPropagation(); ttsEdMuteLane(${l})" title="Без звука — не входит в сохранение">M</button>
+                        <button type="button" onclick="event.stopPropagation(); ttsEdDupLane(${l})" title="Копия дорожки (Ctrl+D)">⧉</button>
+                        <button type="button" onclick="event.stopPropagation(); ttsEdDelLane(${l})" title="Удалить дорожку">&times;</button></span></div>`;
+            }).join('');
+        }
+        function ttsEdCurLane(l) { if (!ttsEd) return; ttsEd.cur.lane = l; ttsEdLanesRender(); ttsEditorDraw(); }
+        function ttsEdLanesChanged(label, snap) {
+            ttsEdRemember(label, snap);
+            ttsEdLanesRender();
+            ttsEditorDraw();
+            ttsEditorApply();
+        }
+        function ttsEdAddLane() {
+            if (!ttsEd) return;
+            let snap = ttsEdSnap();
+            ttsEd.lanes.push({ name: `Дорожка ${ttsEd.lanes.length + 1}`, mute: false });
+            ttsEd.cur.lane = ttsEd.lanes.length - 1;
+            ttsEdFit();
+            ttsEdLanesChanged('новая дорожка', snap);
+        }
+        function ttsEdDupLane(l) {
+            if (!ttsEd) return;
+            l = l === undefined ? (ttsEd.sel ? (ttsEd.clips[ttsEd.sel.k].lane || 0) : ttsEd.cur.lane) : l;
+            let src = ttsEd.clips.filter(c => (c.lane || 0) === l);
+            if (!src.length) { showToast('На этой дорожке нет клипов'); return; }
+            let snap = ttsEdSnap(), k = ttsEd.lanes.length;
+            ttsEd.lanes.push({ name: `${(ttsEd.lanes[l] || {}).name || 'Дорожка'} — копия`, mute: false });
+            src.forEach(c => ttsEd.clips.push({ ...c, cuts: (c.cuts || []).map(x => [...x]), lane: k }));
+            ttsEd.cur.lane = k;
+            ttsEdLanesChanged('копия дорожки', snap);
+            showToast('Копия дорожки — ниже. Совпадает с исходной: одну из них выключите (M) или сдвиньте');
+        }
+        function ttsEdDelLane(l) {
+            if (!ttsEd || ttsEd.lanes.length < 2) { showToast('Это единственная дорожка'); return; }
+            let rest = ttsEd.clips.filter(c => (c.lane || 0) !== l);
+            if (!rest.length) { showToast('На остальных дорожках нет звука — нечего оставить'); return; }
+            let snap = ttsEdSnap();
+            ttsEd.clips = rest.map(c => ({ ...c, lane: (c.lane || 0) > l ? c.lane - 1 : (c.lane || 0) }));
+            ttsEd.lanes.splice(l, 1);
+            ttsEd.cur.lane = Math.min(ttsEd.cur.lane, ttsEd.lanes.length - 1);
+            ttsEd.sel = null;
+            ttsEdLanesChanged('удаление дорожки', snap);
+        }
+        function ttsEdMuteLane(l) {
+            if (!ttsEd) return;
+            let snap = ttsEdSnap();
+            ttsEd.lanes[l].mute = !ttsEd.lanes[l].mute;
+            ttsEdLanesChanged(ttsEd.lanes[l].mute ? 'дорожка без звука' : 'дорожка со звуком', snap);
+        }
+        let ttsEdClip = null;                                     // скопированный кусок (Ctrl+C)
+        function ttsEdCopy() {
+            if (!ttsEd || !ttsEd.sel) { showToast('Выделите кусок на клипе мышью — потом Ctrl+C'); return; }
+            let c = ttsEd.clips[ttsEd.sel.k];
+            let t0 = Math.min(ttsEd.sel.t0, ttsEd.sel.t1), t1 = Math.max(ttsEd.sel.t0, ttsEd.sel.t1);
+            let r0 = Math.round(tlRawAt(c, t0)), r1 = Math.round(tlRawAt(c, t1));
+            if (r1 - r0 < 15) return;
+            ttsEdClip = { raw: c.raw, a: r0, b: r1, lo: c.lo, hi: c.hi, peaks: c.peaks,
+                          cuts: (c.cuts || []).map(([x, y]) => [Math.max(r0, x), Math.min(r1, y)]).filter(([x, y]) => y > x) };
+            showToast(`Скопировано ${((r1 - r0) / 1000).toFixed(2)} с — щёлкните место на дорожке и Ctrl+V`);
+        }
+        function ttsEdPaste() {
+            if (!ttsEd || !ttsEdClip) { showToast('Сначала выделите кусок и Ctrl+C'); return; }
+            let snap = ttsEdSnap(), lane = ttsEd.cur.lane;
+            let at = ttsEd.cur.t != null ? ttsEd.cur.t : tlTotal() + 40;
+            if (lane >= ttsEd.lanes.length) lane = ttsEd.lanes.length - 1;
+            ttsEd.clips.push({ ...ttsEdClip, cuts: ttsEdClip.cuts.map(x => [...x]), pos: Math.max(0, Math.round(at)), lane });
+            ttsEd.sel = null;
+            ttsEdLanesChanged('вставка куска', snap);
         }
 
         async function ttsEditorApply() {
             if (!ttsEd) return;
             await ttsStopPlay();
-            let clips = ttsEd.clips.map(c => ({ raw: c.raw, a: c.a, b: c.b, pos: c.pos, cuts: c.cuts || [] }));
-            let res = await pywebview.api.tts_clips_apply(ttsEd.i, clips);
+            let clips = ttsEd.clips.map(c => ({ raw: c.raw, a: c.a, b: c.b, pos: c.pos, cuts: c.cuts || [], lane: c.lane || 0 }));
+            let res = await pywebview.api.tts_clips_apply(ttsEd.i, clips, ttsEd.lanes);
             if (res && res.error) { showToast(res.error); ttsEditorLoad(true); return; }
             tts = res;
             ttsEd.audacity = false;

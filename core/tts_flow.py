@@ -1757,6 +1757,7 @@ class TtsFlowMixin:
         if t.get("clips_orig"):
             # Фраза из кусочков — вернуть клипы, как их разложила программа.
             t["clips"] = [dict(c) for c in t["clips_orig"]]
+            t.pop("lanes", None)
             self._tts_render_clips(t, t["clips"])
             t["listened"] = False
             t.pop("edit", None)
@@ -1764,6 +1765,7 @@ class TtsFlowMixin:
             self._tts_save()
             return self.tts_state()
         t.pop("clips", None)
+        t.pop("lanes", None)
         orig = self._tts_orig(t)
         wav_slice(self._tts_raw(t), os.path.join(st["work_dir"], t["file"]), orig[0], orig[1])
         t["ms"] = orig[1] - orig[0]
@@ -1774,6 +1776,8 @@ class TtsFlowMixin:
         return self.tts_state()
 
     # ---------------- дорожка: клипы (склейка вручную) ----------------
+    # Дорожек может быть несколько (clip["lane"], имена и «без звука» — t["lanes"]):
+    # внутри дорожки — правила ниже, дорожки между собой — смешиваются.
     # Дубль = клипы на дорожке. Клип — кусок исходной записи [a, b] без
     # вырезов cuts, стоящий на дорожке с позиции pos. Клипы идут по порядку;
     # промежуток — тишина; если клип наезжает на предыдущий, хвост
@@ -1833,8 +1837,63 @@ class TtsFlowMixin:
                     break
         return pieces
 
+    @staticmethod
+    def _tts_lanes(t, clips=None):
+        """Дорожки дубля: [{name, mute}] — не меньше, чем номеров дорожек у клипов."""
+        lanes = [dict(name=str(x.get("name") or ''), mute=bool(x.get("mute"))) for x in (t.get("lanes") or [])]
+        need = max([int(c.get("lane", 0)) for c in (clips or [])] + [0]) + 1
+        while len(lanes) < need:
+            lanes.append({"name": '', "mute": False})
+        for k, ln in enumerate(lanes):
+            ln["name"] = ln["name"] or ('Запись' if k == 0 else f'Дорожка {k + 1}')
+        return lanes
+
+    def _tts_pieces_seg(self, pieces):
+        """Куски дорожки → AudioSegment (для сведения нескольких дорожек)."""
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_lane_{os.getpid()}_{threading.get_ident()}.wav")
+        try:
+            if wav_render(tmp, pieces):
+                return AudioSegment.from_file(tmp)
+        except Exception:
+            pass
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        out = None
+        for p in pieces:
+            seg = AudioSegment.from_file(p[1])[p[2]:p[3]] if p[0] == "audio" else AudioSegment.silent(p[1])
+            out = seg if out is None else out + seg.set_frame_rate(out.frame_rate).set_channels(out.channels)
+        return out
+
     def _tts_render_clips(self, t, clips):
         st = self._tts()
+        lanes = self._tts_lanes(t, clips)
+        live = [k for k, ln in enumerate(lanes) if not ln["mute"]
+                and any(int(c.get("lane", 0)) == k for c in clips)]
+        if len(live) > 1:                                  # несколько дорожек — смешать
+            dst = os.path.join(st["work_dir"], t["file"])
+            parts = []
+            for k in live:
+                lc = [c for c in clips if int(c.get("lane", 0)) == k]
+                seg = self._tts_pieces_seg(self._tts_timeline(lc))
+                if seg is not None:
+                    parts.append((min(c["pos"] for c in lc), seg))
+            if not parts:
+                raise RuntimeError("пустая дорожка")
+            base = min(p for p, _s in parts)
+            first = parts[0][1]
+            total = max(p - base + len(s) for p, s in parts)
+            mix = AudioSegment.silent(total, frame_rate=first.frame_rate).set_channels(first.channels).set_sample_width(first.sample_width)
+            for p, s in parts:
+                mix = mix.overlay(s.set_frame_rate(first.frame_rate).set_channels(first.channels), position=int(p - base))
+            mix.export(dst, format="wav")
+            t["ms"] = len(mix)
+            return
+        if live and len(lanes) > 1:
+            clips = [c for c in clips if int(c.get("lane", 0)) == live[0]]
         pieces = self._tts_timeline(clips)
         dst = os.path.join(st["work_dir"], t["file"])
         if not pieces or not wav_render(dst, pieces):
@@ -1878,10 +1937,10 @@ class TtsFlowMixin:
         k_ = min(40.0, 0.9 / top) if top > 1e-4 else 1.0         # тихая запись — не плоская линия
         for c in out:
             c["peaks"] = [round(min(1.0, x * k_), 3) for x in c["peaks"]]
-        return {"i": i, "clips": out, "bucket": EDIT_BUCKET_MS, "audacity": bool(t.get("audacity")),
-                "orig": self._tts_orig(t)}
+        return {"i": i, "clips": [dict(c, lane=int(c.get("lane", 0))) for c in out], "bucket": EDIT_BUCKET_MS,
+                "audacity": bool(t.get("audacity")), "orig": self._tts_orig(t), "lanes": self._tts_lanes(t, clips)}
 
-    def tts_clips_apply(self, i, clips):
+    def tts_clips_apply(self, i, clips, lanes=None):
         """Записать дорожку в файл дубля (из исходной записи байт в байт).
         Правленый дубль нужно прослушать заново — только потом сохранить."""
         st = self._tts()
@@ -1897,12 +1956,17 @@ class TtsFlowMixin:
             if b - a < 30:
                 continue
             clean.append({"raw": c["raw"], "a": a, "b": b, "pos": max(0, int(c.get("pos", 0))),
-                          "cuts": [[int(x), int(y)] for x, y in c.get("cuts", []) if int(y) > int(x)]})
+                          "cuts": [[int(x), int(y)] for x, y in c.get("cuts", []) if int(y) > int(x)],
+                          "lane": max(0, int(c.get("lane", 0)))})
         if not clean:
             return {"error": "На дорожке не осталось звука."}
         self._tts_orig(t)
         if not t.get("clips_orig"):
             t["clips_orig"] = self._tts_clips(t)
+        if lanes is not None:
+            t["lanes"] = [{"name": str(x.get("name") or ''), "mute": bool(x.get("mute"))} for x in lanes]
+        if not any(not ln["mute"] and any(c["lane"] == k for c in clean) for k, ln in enumerate(self._tts_lanes(t, clean))):
+            return {"error": "Все дорожки без звука — включите хотя бы одну."}
         self._tts_render_clips(t, clean)
         t["clips"] = clean
         t.pop("edit", None)

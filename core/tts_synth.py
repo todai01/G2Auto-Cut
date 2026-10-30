@@ -1230,7 +1230,8 @@ class TtsSynthMixin:
         return None
 
     def _take_synth_ref(self, lang, t=None, start=0, words=None, mode='auto'):
-        """Образец голоса. mode: 'take' — этот дубль (живой, сказанное до start),
+        """Образец голоса. mode: 'edited' — этот дубль, как его прослушали и поправили
+        (файл дубля целиком, текст — вся фраза), 'take' — этот дубль (живой, сказанное до start),
         'prev' — прошлая записанная фраза, 'etalon' — эталон, 'auto' — по порядку."""
         st = self._tts()
         wd = st.get("work_dir")
@@ -1238,6 +1239,10 @@ class TtsSynthMixin:
             r = t["synth_ref"]                             # дубль сам синтезирован — тот же образец
             if os.path.exists(r["path"]):
                 return r["path"], r["text"], r.get("name") or 'тот же образец'
+        if mode == 'edited' and t is not None and wd and words:
+            path = os.path.join(wd, t["file"])                 # то, что слушали в «Сборке», с правками
+            if os.path.exists(path):
+                return path, ' '.join(words), 'этот дубль (как прослушали)'
         if mode == 'take' and t is not None and start > 0 and wd and not self._synth_is_fake(t):
             path = os.path.join(wd, t["file"])
             if os.path.exists(path):
@@ -1280,10 +1285,12 @@ class TtsSynthMixin:
                 start = k + 1
             start = max(1, min(len(words) - 1, start)) if len(words) > 1 else 0
         refs = []
+        if not fake:
+            refs.append({"mode": "edited", "label": 'этот дубль, как прослушали'})
         if t.get("synth_ref") and os.path.exists(t["synth_ref"]["path"]):
             refs.append({"mode": "same", "label": t["synth_ref"].get("name") or 'тот же образец'})
         if not fake:
-            refs.append({"mode": "take", "label": 'этот дубль'})
+            refs.append({"mode": "take", "label": 'этот дубль до места синтеза'})
         prev = self._synth_prev_ref(lang, exclude=t)
         if prev and not (t.get("synth_ref") and prev[2] == t["synth_ref"].get("name")):
             refs.append({"mode": "prev", "label": prev[2]})
@@ -1293,9 +1300,11 @@ class TtsSynthMixin:
                 "tail_word": SYNTH_TAIL.get(lang, SYNTH_TAIL['ru']), "noise": dict(self._synth_noise_cfg()),
                 "busy": bool(getattr(self, '_take_synth_busy', None))}
 
-    def tts_take_synth(self, i, start, overlap=2, text=None, mode='auto', tail=True):
+    def tts_take_synth(self, i, start, overlap=2, text=None, mode='auto', tail=True, end=None, lane=None):
         """Пересинтез с слова start (с перекрытием overlap слов до него) —
-        вторым клипом на дорожку дубля i. start=0 — вся фраза заново."""
+        вторым клипом на дорожку дубля i. start=0 — вся фраза заново.
+        end — по какое слово (включительно); lane='new' — новой дорожкой
+        под место этих слов (иначе — клипом в конец)."""
         st = self._tts()
         if not (0 <= i < len(st["takes"])):
             return {"error": "Нет такого дубля."}
@@ -1307,7 +1316,11 @@ class TtsSynthMixin:
         words = str(st["units"][t["unit"]]["text"]).split()
         start = max(0, min(int(start), len(words)))
         lang = self._tts_unit_lang(t["unit"])
-        text = (text or '').strip() or ' '.join(words[max(0, start - int(overlap or 0)):])
+        stop = len(words) if end is None else max(start + 1, min(int(end) + 1, len(words)))
+        first = max(0, start - int(overlap or 0))
+        text = (text or '').strip() or ' '.join(words[first:stop])
+        # где на дорожке примерно эти слова — по доле текста до них
+        frac = len(' '.join(words[:first])) / max(1, len(' '.join(words))) if first else 0.0
         if not text:
             return {"error": "Нечего синтезировать."}
         try:
@@ -1320,7 +1333,7 @@ class TtsSynthMixin:
 
         def job(worker):
             try:
-                self._take_synth_job(worker, key, ref, ref_text, lang, body)
+                self._take_synth_job(worker, key, ref, ref_text, lang, body, lane=lane, frac=frac)
             except Exception as e:
                 worker._close()
                 self._tts_push({"stage": "take_synth", "file": key, "error": str(e)})
@@ -1329,7 +1342,7 @@ class TtsSynthMixin:
         self._synth_worker_get().add(job, front=True)
         return {"queued": True, "text": body, "ref": ref_name, "lang": lang}
 
-    def _take_synth_job(self, worker, key, ref, ref_text, lang, text):
+    def _take_synth_job(self, worker, key, ref, ref_text, lang, text, lane=None, frac=0.0):
         import numpy as np
         st = self._tts()
         sdir = os.path.join(st["work_dir"], 'Чанки', '_синтез')
@@ -1364,7 +1377,18 @@ class TtsSynthMixin:
             end = max(end, int(c["pos"]) + sum(b - a for a, b in self._clip_ranges(c)))
         if not t.get("clips_orig"):
             t["clips_orig"] = [dict(c) for c in clips]
-        clips.append({"raw": dst, "a": 0, "b": length, "cuts": [], "pos": end + 40})
+        if lane == 'new':                                   # новой дорожкой — под место этих слов
+            lanes = self._tts_lanes(t, clips)
+            k = len(lanes)
+            short = text if len(text) <= 24 else text[:23] + '…'
+            lanes.append({"name": f"Синтез: {short}", "mute": False})
+            t["lanes"] = lanes
+            base = min(int(c["pos"]) for c in clips)
+            span = max(0, end - base - 300)
+            clips.append({"raw": dst, "a": 0, "b": length, "cuts": [], "lane": k,
+                          "pos": int(base + 150 + span * frac)})
+        else:
+            clips.append({"raw": dst, "a": 0, "b": length, "cuts": [], "pos": end + 40})
         self._tts_orig(t)
         self._tts_render_clips(t, clips)
         t["clips"] = clips
@@ -1373,8 +1397,11 @@ class TtsSynthMixin:
         t.setdefault("synth", []).append({"file": dst, "text": text})
         self._tts_save()
         self._tts_push({"stage": "take_synth", "file": key, "state": self.tts_state(),
-                        "message": f"Пересинтез «{text[:40]}{'…' if len(text) > 40 else ''}» — вторым клипом. "
-                                   f"Сдвиньте его на место, срежьте перекрытие и слово-запас в конце."})
+                        "message": (f"Синтез «{text[:40]}{'…' if len(text) > 40 else ''}» — новой дорожкой под этими словами. "
+                                    f"Сдвиньте на место, вырежьте ошибку на дорожке записи; слово-запас в конце — срежьте."
+                                    if lane == 'new' else
+                                    f"Пересинтез «{text[:40]}{'…' if len(text) > 40 else ''}» — вторым клипом. "
+                                    f"Сдвиньте его на место, срежьте перекрытие и слово-запас в конце.")})
 
     def tts_prompt_synth(self, text=None, tail=True, mode='auto'):
         """Фразу на суфлёре целиком — синтезом. Образец — прошлая записанная
