@@ -5266,10 +5266,11 @@ let isProcessing = false;
             let s = bsSt;
             if (!s || !s.path) return;
             let n = s.total_rows, cols = s.cols.length;
-            let ok = await showBeautifulConfirm(`<b>Сколько строк синтезировать?</b><br><br>В таблице строк: ${n}, в строке — ${cols} ${cols === 1 ? 'значение' : 'значения'}.
-                Порядок: строка за строкой, в строке — слева направо. Готовые файлы пропускаются.<br><br>
-                <span class="bsynth-ask">с строки <input type="number" id="bsFrom" class="clone-count" min="1" max="${n}" value="1">
-                сколько строк <input type="number" id="bsCount" class="clone-count" style="width:72px" min="1" max="${n}" value="${n}"></span>`, 'Начать', 'Отмена');
+            document.querySelector('#customAlertOverlay .custom-alert-box').classList.add('custom-alert-box--wide');
+            let ok = await showBeautifulConfirm(`<b>Сколько строк синтезировать?</b><br><br>`
+                + `В таблице ${n} строк, в строке ${cols} ${cols === 1 ? 'значение' : 'значения'}. Порядок — строка за строкой, слева направо; готовые файлы пропускаются.`
+                + `<div class="bsynth-ask"><label>С строки<input type="number" id="bsFrom" min="1" max="${n}" value="1"></label>`
+                + `<label>Сколько строк<input type="number" id="bsCount" min="1" max="${n}" value="${n}"></label></div>`, 'Начать', 'Отмена');
             if (!ok) return;
             let from = Math.max(1, Math.min(n, +document.getElementById('bsFrom').value || 1));
             let cnt = Math.max(1, Math.min(n - from + 1, +document.getElementById('bsCount').value || n));
