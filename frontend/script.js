@@ -7388,6 +7388,8 @@ let isProcessing = false;
                     <div class="tts-ed__bar">
                         <span class="tts-ed__time" id="ttsEdTime"></span>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdCutBtn" onclick="ttsEditorCut()" disabled title="Вырезать выделенное (выделите мышью на клипе)">Вырезать <kbd>X</kbd></button>
+                        <button class="btn-ghost btn-ghost--compact tts-ed-bil" data-lang="ru" onclick="ttsEdBilSet('ru')" disabled style="display:none" title="Выделенное — русский (кусок RU)"><em class="tts-tiers__lang is-ru">RU</em> выделенное</button>
+                        <button class="btn-ghost btn-ghost--compact tts-ed-bil" data-lang="kz" onclick="ttsEdBilSet('kz')" disabled style="display:none" title="Выделенное — казахский (кусок KZ)"><em class="tts-tiers__lang is-kz">KZ</em> выделенное</button>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdUndo" onclick="ttsEdUndo()" disabled>&#8630; <kbd>Ctrl+Z</kbd></button>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdRedo" onclick="ttsEdUndo(true)" disabled>&#8631;</button>
                         <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа (тоже отменяется Ctrl+Z)">Сбросить</button>
@@ -7521,6 +7523,7 @@ let isProcessing = false;
                     <div class="tts-tiers__asm" id="ttsTiersAsm" onpointerdown="ttsTierSeek(event)" title="Клик — слушать с этого места">${clips}<i class="tts-tiers__head" id="ttsTiersHead"></i></div></div>
                 <div class="tts-tiers__chips">${chips}</div>`;
             ttsDrawPeaks(document.getElementById('ttsTiersCanvas'), r.peaks);
+            ttsEdBilBtns();
             el.querySelectorAll('.tts-tiers__clip canvas').forEach(cv => ttsDrawPeaks(cv, lay.clips[+cv.dataset.n].peaks || []));
         }
         const ttsTiersSpan = () => Math.max(ttsTR.length, ttsTiersLayout().total) || 1;
@@ -8110,6 +8113,7 @@ let isProcessing = false;
             }
             let cut = document.getElementById('ttsEdCutBtn');
             if (cut) cut.disabled = !ttsEd.sel;
+            ttsEdBilBtns();
             ttsEdHistButtons();
         }
 
@@ -8484,19 +8488,45 @@ let isProcessing = false;
             clearTimeout(ttsPlayTimer);
             let g = ++ttsPlayGen;
             ttsPlayPending = true;
-            let res = await pywebview.api.tts_play(t.i);
+            let rng = ttsEdSelRange();                   // выделено — слушаем выделенное, нет — с начала
+            let res = await pywebview.api.tts_play(t.i, rng ? rng[0] : null, rng ? rng[1] : null);
             if (g === ttsPlayGen) ttsPlayPending = false;
             if (g !== ttsPlayGen) return;                // пока запускалось — нажали другое
             if (!res || !res.playing) { if (res && res.error) showToast(res.error); return; }
             ttsPlayingIdx = t.i;
             ttsRenderRail(); ttsRenderCurrent();
-            ttsEditorPlayhead(res.duration, 0, g, res.tempo);
+            ttsEditorPlayhead(res.duration, rng ? rng[0] : 0, g, res.tempo);
             ttsPlayTimer = setTimeout(() => {
                 if (g !== ttsPlayGen) return;
                 // Отыграл до конца — считаем прослушанным (бэкенд сверит по времени).
                 ttsPlayingIdx = -1;
                 pywebview.api.tts_select(t.i).then(st => { tts = st; ttsRender(); });
             }, res.duration * 1000 + 120);
+        }
+
+        // Выделение в редакторе «Сборки» → [от, до] в мс файла дубля (null — нет выделения).
+        function ttsEdSelRange() {
+            let t = ttsCurTake();
+            if (!ttsEd || !t || ttsEd.i !== t.i || !ttsEd.sel || Math.abs(ttsEd.sel.t1 - ttsEd.sel.t0) < 15) return null;
+            let c = ttsEd.clips[ttsEd.sel.k], base = tlBase();
+            if (!c) return null;
+            let a = Math.max(c.pos, Math.min(ttsEd.sel.t0, ttsEd.sel.t1)), b = Math.min(c.pos + tlLen(c), Math.max(ttsEd.sel.t0, ttsEd.sel.t1));
+            return b - a >= 15 ? [Math.round(a - base), Math.round(b - base)] : null;
+        }
+        function ttsEdBilBtns() {
+            let bil = !!(ttsTR && ttsTR.bil && ttsEd && ttsTR.i === ttsEd.i);
+            document.querySelectorAll('#ttsAssembly .tts-ed-bil').forEach(b => { b.style.display = bil ? '' : 'none'; b.disabled = !(ttsEd && ttsEd.sel); });
+        }
+        // «Два языка»: выделенное в редакторе — кусок RU или KZ.
+        function ttsEdBilSet(lang) {
+            let rng = ttsEdSelRange();
+            if (!rng) { showToast('Выделите мышью на волне, где звучит ' + (lang === 'ru' ? 'русский' : 'казахский')); return; }
+            if (!ttsTR || !ttsTR.bil) return;
+            let x = ttsTR.tiers.find(q => q.lang === lang);
+            if (!x) return;
+            x.a = rng[0]; x.b = Math.min(ttsTR.length, rng[1]);
+            ttsTiersRender(); ttsTiersSend();
+            showToast(`${lang.toUpperCase()}: ${(x.a / 1000).toFixed(2)}–${(x.b / 1000).toFixed(2)} с`, 1500);
         }
 
         async function ttsPlayUnit(id) {

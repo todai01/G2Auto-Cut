@@ -477,7 +477,10 @@ class TtsFlowMixin:
     def _tts_target(self, unit):
         if unit.get("tiers"):                        # строка переменных — файлы ярусов
             paths = [self._tts_tier_path(unit, t) for t in unit["tiers"]]
-            return next((p for p in paths if not os.path.exists(p)), paths[-1])
+            miss = next((p for p in paths if not (os.path.exists(p) or self._tts_lang_done(p))), None)
+            if miss or os.path.exists(paths[-1]):
+                return miss or paths[-1]
+            return self._tts_lang_path(paths[-1], self.TTS_BIL_LANGS[0])   # «два языка»: записано парой ru + kz
         if unit["kind"] == "value":                  # значение переменной — в «Значения/<лист>/<категория>/»
             return self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
@@ -1546,7 +1549,8 @@ class TtsFlowMixin:
             takes[i]["listened"] = True
         self._tts_playing = None
 
-    def tts_play(self, i):
+    def tts_play(self, i, from_ms=None, to_ms=None):
+        """Слушать дубль; from_ms/to_ms (мс файла дубля) — только выделенное."""
         st = self._tts()
         self._tts_mark_listened()
         if not (0 <= i < len(st["takes"])):
@@ -1562,7 +1566,13 @@ class TtsFlowMixin:
             path = self._tts_preview(path, gain, tempo)
         except Exception:
             pass
-        self.player.play(path)
+        if from_ms is not None and to_ms is not None and to_ms > from_ms:
+            import tempfile
+            seg = AudioSegment.from_file(path)
+            seg = seg[int(from_ms / tempo):int(to_ms / tempo)]
+            path = os.path.join(tempfile.gettempdir(), f"gvox_sel_{os.getpid()}.wav")
+            seg.export(path, format="wav")
+            dur = len(seg) / 1000.0
         self._tts_playing = (i, time.time(), dur)
         return {"playing": True, "duration": dur, "tempo": tempo}
 
