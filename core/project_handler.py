@@ -632,8 +632,7 @@ class ProjectMixin:
                 # временное состояние без папки — пути выходят относительными
                 self.tts = {"v": 0, "excel_path": excel_path, "sheet": sh.get("title"), "lang": sh.get("lang", "ru"),
                             "units": [dict(u) for u in sh.get("units", [])], "chains": sh.get("chains", []),
-                            "var_sheets": parsed["var_sheets"], "work_dir": '', "takes": [], "index": 0,
-                            "var_bilingual": dict((saved or {}).get("var_bilingual") or {})}
+                            "var_sheets": parsed["var_sheets"], "work_dir": '', "takes": [], "index": 0}
                 self._tts_ensure_value_units()
                 st = self.tts
                 for u in st["units"]:
@@ -734,6 +733,14 @@ class ProjectMixin:
             tails = [E] + ([tuple(alt.lower().replace('\\', '/').split('/'))] if alt else [])
             strict = [(p, C) for p, C in cands.get(name, [])
                       if any(T[-len(C):] == C or C[-len(T):] == T for T in tails)]
+            pair = False
+            if not strict and gid.startswith('var_'):     # «два языка в одной записи»: …/<кат>/ru/x.wav и …/kz/x.wav
+                by_lang = [[(p, C) for p, C in cands.get(name, [])
+                            if (L := E[:-1] + (lg, name))[-len(C):] == C or C[-len(L):] == L] for lg in ('ru', 'kz')]
+                if all(by_lang):
+                    strict, pair = [by_lang[0][0], by_lang[1][0]], True
+                    for p, _C in strict[1:]:
+                        files.append({"filename": os.path.basename(p), "path": p, "text": text, "group": gid, "rel": rel})
             hits = strict or ([(p, C) for p, C in cands.get(name, [])] if gid.startswith('ph_') else [])
             primary = [(p, C) for p, C in strict if E[-len(C):] == C or C[-len(E):] == E]
             if primary and root is None:                   # где корень проекта относительно выбранной папки
@@ -755,7 +762,7 @@ class ProjectMixin:
                 g["found"] += 1
                 g["_dirs"].append(os.path.dirname(hits[0][0]))
                 files.append({"filename": os.path.basename(hits[0][0]), "path": hits[0][0], "text": text, "group": gid, "rel": rel})
-                if len(strict) > 1:
+                if len(strict) > 1 and not pair:
                     g["duplicates"] += 1
                     duplicates_list.append({"filename": name, "count": len(strict), "paths": [p for p, _ in strict], "group": gid})
             else:

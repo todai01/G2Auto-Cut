@@ -7040,51 +7040,11 @@ let isProcessing = false;
             ttsLoadPrompt();
             if (cur && cur.custom) showToast(`Начало${cur.end ? ' и конец' : ''} фразы выбраны — «▶ Начало» и «В фразе» играют с ними`, 4000);
         }
-        // Один лист — два языка в одной записи: строка = два яруса (RU и KZ), каждый — в свой файл.
-        async function ttsBilSet(on, order) {
-            let r = await pywebview.api.tts_var_bilingual(null, on, order || null);
-            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-            tts = r.state; ttsEd = null; ttsTR = null; ttsRender(); ttsPromptKey = null;
-            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
-            if (!order) showToast(on ? 'Читайте значение подряд на двух языках, между ними — пауза. В «Сборке» — два яруса, RU и KZ: граница двигается, каждый сохранится в свой язык (Значения/…_ru и …_kz)'
-                : 'Обычный режим: одна запись — один файл', 7000);
-            if (on && !order && r.old && r.old.old > 0) ttsBilOld(r.old);
-        }
-        // Уже записанные значения «RU + KZ в одном файле» → два файла по паузе между языками.
-        async function ttsBilOld(info) {
-            if (!info) info = await pywebview.api.tts_var_bil_scan(null);
-            if (!info || !info.old) return;
-            let how = await showBeautifulChoice(`<b>Готовые значения одним файлом</b><br><br>Найдено ${info.old}: русский и казахский в одной записи. `
-                + `Разрезать по паузе между языками и разложить в «…_ru» и «…_kz»?<br><br>`
-                + (info.sure ? `Уверенно: ${info.sure}.` : '') + (info.review ? ` На проверку: ${info.review} — они попадут на ленту, границу двигаете сами.` : '')
-                + `<br>Исходные файлы уйдут в «_Корзина».`, 'Разрезать', 'Не сейчас', 'N');
-            if (how !== 'ok') return;
-            showToast('Режу готовые значения…', 60000);
-            let r = await pywebview.api.tts_var_bil_split(null);
-            if (!r || r.error) { showToast(r && r.error || 'Не получилось', 6000); return; }
-            tts = r.state; ttsEd = null; ttsTR = null; ttsRender(); ttsPromptKey = null;
-            if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
-            let rv = r.review || [];
-            showToast(`Разрезано: ${r.done}` + (rv.length ? ` · на проверку: ${rv.length} — на ленте, двигайте границу и Enter (${rv.slice(0, 3).map(x => x.name + ' — ' + x.reason).join('; ')}${rv.length > 3 ? '…' : ''})` : '')
-                + (r.failed && r.failed.length ? ` · ошибок: ${r.failed.length}` : ''), 12000);
-        }
         async function ttsVarCtxMaybeAsk() {
             let pr = await pywebview.api.tts_prompt_info();
             if (pr && pr.mode && pr.mode !== 'phrases') await ttsVarCtxAsk(pr.mode, false);
         }
 
-        // Чипы «RU + KZ в одной записи»: нужны и в «Все прочитано» — иначе уже записанные марки не разрезать.
-        function ttsBilChipsHTML(pr) {
-            if (!pr.bil_allowed) return '';
-            let m = '';
-            m += ` <button type="button" class="tts-reuse-chip ${pr.bil ? 'is-on' : ''}" onclick="ttsBilSet(${!pr.bil})"
-                    title="${pr.bil ? 'Читаете значение подряд на двух языках; в «Сборке» — два яруса, каждый в свой язык. Нажмите — вернуть обычный режим' : 'Значение читается на двух языках в одной записи (марки с цифрами). В «Сборке» отметите, где русский, а где казахский'}">RU + KZ в одной записи${pr.bil ? ' ✓' : ''}</button>`;
-            if (pr.bil && pr.bil_old) m += ` <button type="button" class="tts-reuse-chip is-on" onclick="ttsBilOld()"
-                    title="Эти значения записаны одним файлом на оба языка — разрезать по паузе">готовые → RU / KZ (${pr.bil_old})</button>`;
-            if (pr.bil) m += ` <button type="button" class="tts-reuse-chip" onclick="ttsBilSet(true, '${pr.bil.order.slice().reverse().join('-')}')"
-                    title="Порядок чтения — нажмите, чтобы поменять">${pr.bil.order.map(x => x.toUpperCase()).join(' → ')}</button>`;
-            return m;
-        }
         function ttsChooseSheet(sheets) {
             return new Promise(resolve => {
                 ttsOpenListOverlay('Какой лист фраз?', false);
@@ -7511,9 +7471,10 @@ let isProcessing = false;
             let r = ttsTR, lay = ttsTiersLayout();
             let span = Math.max(r.length, lay.total) || 1;
             let pct = ms => (100 * ms / span).toFixed(3) + '%';
-            let regions = r.tiers.map(t => `<div class="tts-tiers__reg ${(t.exists || t.shared) && !t.write ? 'is-skip' : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
+            let lg = t => t.lang ? `<em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em> ` : '';
+            let regions = r.tiers.map(t => `<div class="tts-tiers__reg ${(t.exists || t.shared) && !t.write ? 'is-skip' : ''} ${t.lang ? 'is-' + t.lang : ''}" style="left:${pct(t.a)};width:${pct(t.b - t.a)}"
                     title="${escapeHtml(t.label)} ${escapeHtml(t.value)}: ${escapeHtml(t.text)} — края тяните мышью">
-                    <span>${escapeHtml(t.text || t.label)}</span>
+                    <span>${lg(t)}${escapeHtml(t.text || t.label)}</span>
                     <i class="tts-tiers__edge is-l" onpointerdown="ttsTierEdge(event, ${t.k}, 'a')"></i>
                     <i class="tts-tiers__edge is-r" onpointerdown="ttsTierEdge(event, ${t.k}, 'b')"></i></div>`).join('');
             let clips = lay.clips.map((c, n) => c.ctx
@@ -7523,11 +7484,11 @@ let isProcessing = false;
                    <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
                      ${c.fixed ? `onpointerdown="event.stopPropagation(); ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
                        : `onpointerdown="ttsTierMove(event, ${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — тяните: пауза перед ярусом; клик — послушать"`}>
-                     <canvas data-n="${n}"></canvas><span><b>${escapeHtml(c.t.text || c.t.value)}</b></span></div>
+                     <canvas data-n="${n}"></canvas><span>${lg(c.t)}<b>${escapeHtml(c.t.text || c.t.value)}</b></span></div>
                    ${c.post ? `<div class="tts-tiers__gap" style="left:${pct(c.x + c.w)};width:${pct(c.post)}">${c.post}</div>` : ''}`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${(x.exists || x.shared) && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
-                    <span class="tts-tiers__lbl"><b>${escapeHtml(x.text || x.value)}</b></span>
+                    <span class="tts-tiers__lbl">${lg(x)}<b>${escapeHtml(x.text || x.value)}</b></span>
                     <span class="tts-tiers__txt">${escapeHtml(x.label)} · ${escapeHtml(x.value)}</span>
                     ${x.exists && !x.write ? '' : `<span class="tts-tiers__knob" title="Темп яруса (без смены высоты голоса)">темп
                         <button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', -0.03)">&minus;</button><b>${Math.round(x.tempo * 100)}%</b><button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', 0.03)">+</button></span>
@@ -7544,6 +7505,8 @@ let isProcessing = false;
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierStop()" title="Остановить">&#9632;</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierJoinPlay()" title="Стык: конец начала фразы + строка + начало продолжения (по ${TTS_JOIN_MS / 1000} с)">&#9654; Стык</button>
                     ${ttsJoinHTML(r.tiers, 'ttsTierJoin')}
+                    ${r.bil_ok ? `<button type="button" class="tts-reuse-chip ${r.bil ? 'is-on' : ''}" onclick="ttsTakeBil(${!r.bil})"
+                        title="${r.bil ? 'Две границы: RU и KZ — каждый сохранится в свою папку (…/ru/ и …/kz/). Нажмите — одна запись, один файл' : 'В записи два языка подряд: появятся две границы — RU и KZ, выставите их сами'}">два языка${r.bil ? ' ✓' : ''}</button>` : ''}
                     ${hasCtx ? `<button type="button" class="tts-reuse-chip ${o.noise ? 'is-on' : ''}" onclick="ttsTierOpt('noise', ${!o.noise})" title="Пауза перед ярусом и фон под голосом — шумом комнаты из начала фразы">фон как во фразе${o.noise ? ' ✓' : ''}</button>
                     <button type="button" class="tts-reuse-chip ${o.level ? 'is-on' : ''}" onclick="ttsTierOpt('level', ${!o.level})" title="Громкость речи ярусов — как у начала и продолжения фразы${r.ctx_level !== null ? ' (' + r.ctx_level + ' дБ)' : ''}">громкость как у фразы${o.level ? ' ✓' : ''}</button>` : '<span class="tts-dim">начало фразы не записано — фон и громкость не с чем сравнить</span>'}
                     ${ttsBgHTML(r.bg)}
@@ -7723,6 +7686,13 @@ let isProcessing = false;
             ttsTiersRender();
             await ttsTiersSend();
             ttsTierPlay(k);
+        }
+        // «Два языка» в одной записи: дубль строки — два куска, RU и KZ, границы вручную.
+        async function ttsTakeBil(on) {
+            let res = await pywebview.api.tts_take_bil(ttsCurTake().i, on);
+            if (res && res.error) { showToast(res.error); return; }
+            if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+            if (on) showToast('Выставьте границы RU и KZ на дорожке «Дубль» и сохраните (Enter) — файлы лягут в …/ru/ и …/kz/', 5000);
         }
         async function ttsTierOpt(key, on) {
             let res = await pywebview.api.tts_tier_set(ttsCurTake().i, null, null, { [key]: on });
@@ -9586,7 +9556,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsBilChipsHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -9599,8 +9569,7 @@ let isProcessing = false;
             let line = (parts, tail) => parts.map(p => pill(p.var_before)
                 + (p.kind === 'value' ? `<span class="tts-vcat">${escapeHtml(p.cat_label || '')}</span> ` : '')
                 + (p.role === 'var' ? `<span class="tts-ivar" title="Значение переменной — сохранится отдельно">${escapeHtml(p.text)}</span>`
-                   : p.tiers ? p.tiers.map((t, n) => (p.tier_langs && p.tier_langs[n] ? `<span class="tts-tlang">${p.tier_langs[n].toUpperCase()}</span> ` : '') + escapeHtml(t))
-                        .join('<span class="tts-tiersep" title="Здесь программа разрежет на ярусы — небольшая пауза поможет"></span>')
+                   : p.tiers ? p.tiers.map(escapeHtml).join('<span class="tts-tiersep" title="Здесь программа разрежет на ярусы — небольшая пауза поможет"></span>')
                    : escapeHtml(p.text))
                 + pill(p.var_after)).join(' ')
                 + (tail ? ` <span class="tts-tail" title="Только начало продолжения — целиком прочитаете с последним значением">${escapeHtml(tail)}</span>` : '');
@@ -9635,7 +9604,6 @@ let isProcessing = false;
                     title="${vc.custom ? 'Начало «' + escapeHtml(vc.start || '—') + '», конец «' + escapeHtml(vc.end || 'нет') + '» — нажмите, чтобы выбрать другие'
                         : 'Начальная и конечная фразы вокруг значения — аудиофайлы'}">${vc.custom ? 'начало и конец ✎' : 'начало и конец…'}</button>`;
             }
-            modes += ttsBilChipsHTML(pr);
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);
             modes += ttsFlowHTML();

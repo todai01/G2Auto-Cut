@@ -3992,10 +3992,13 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .tts-lane__btns button:hover{ color: var(--text); }
 .tts-lane__btns button.is-on{ color: #111; background: var(--accent-var); border-color: var(--accent-var); }
 .tts-ed__lanes:empty{ display: none; }
-.tts-tlang{ display: inline-block; font-size: .5em; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 5px; margin-right: 4px;
-    vertical-align: middle; color: var(--accent-info); background: var(--tint-info); border: 1px solid rgba(43,192,207,.4); }
-
 /* клик — копировать название / текст фразы */
 [data-copy]{ cursor: copy; user-select: text; }
 [data-copy]:hover{ color: var(--accent-primary); }
 .tts-block__name[data-copy], .tts-block__text[data-copy]{ user-select: text; }
+
+/* «два языка в одной записи»: куски RU и KZ */
+.tts-tiers__lang{ font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: .05em; padding: 0 4px; border-radius: 4px;
+    color: #111; background: var(--accent-var); margin-right: 3px; }
+.tts-tiers__reg.is-kz{ border-color: var(--accent-info); background: rgba(43,192,207,.12); }
+.tts-tiers__lang.is-kz{ background: var(--accent-info); }
