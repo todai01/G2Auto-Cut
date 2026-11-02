@@ -5251,11 +5251,11 @@ let isProcessing = false;
                 : (s.left ? 'остановлено' : 'готово');
             let c = s.current;
             document.getElementById('bsynthNow').innerHTML = c && s.run
-                ? `<span class="bsynth-spin"></span> Сейчас: строка ${c.row} · ${escapeHtml(c.col)} · <b>${escapeHtml(c.value)}</b>${s.voice_name ? ` <span class="tts-dim">— голос ${escapeHtml(s.voice_name)}</span>` : ''}`
+                ? `<span class="bsynth-spin"></span> Сейчас: строка ${c.row} · ${escapeHtml(c.col)} · <b>${escapeHtml(c.text || c.value)}</b>${s.voice_name ? ` <span class="tts-dim">— голос ${escapeHtml(s.voice_name)}</span>` : ''}`
                 : s.run && !s.pause ? '<span class="tts-dim">Пауза перед следующим запросом — бережём сервис…</span>' : '';
             document.getElementById('bsynthMsg').innerText = s.msg || '';
             document.getElementById('bsynthRecent').innerHTML = s.recent.slice().reverse().map(it =>
-                `<div class="${it.status === 'error' ? 'clone-bad' : ''}">${it.status === 'error' ? '✕' : '✓'} ${it.row} · ${escapeHtml(it.col)} · ${escapeHtml(it.value)}${it.status === 'error' ? ' — ' + escapeHtml(it.error) : ''}</div>`).join('');
+                `<div class="${it.status === 'error' ? 'clone-bad' : ''}">${it.status === 'error' ? '✕' : '✓'} ${it.row} · ${escapeHtml(it.col)} · ${escapeHtml(it.text || it.value)}${it.status === 'error' ? ' — ' + escapeHtml(it.error) : ''}</div>`).join('');
             let pb = document.getElementById('btnBsynthPause');
             pb.style.display = s.run ? '' : 'none'; pb.innerText = s.pause ? 'Продолжить' : 'Пауза';
             document.getElementById('btnBsynthStop').style.display = s.run ? '' : 'none';

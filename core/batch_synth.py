@@ -29,6 +29,21 @@ BSYNTH_RETRY_S = (10, 30)               # ошибка — повтор чере
 BSYNTH_FAIL_STOP = 3                    # подряд не вышло — пауза очереди
 
 
+def tr_title(text, turkish=True):
+    """«GÜNAYDIN AVCİ» → «Günaydın Avci»: в каждом слове заглавная только первая буква.
+    Турецкие пары: I ↔ ı, İ ↔ i (обычные upper/lower их путают: «İ».lower() — «i̇»)."""
+    def low(w):
+        return (w.replace('I', 'ı').replace('İ', 'i') if turkish else w).lower()
+
+    def up(c):
+        return {'i': 'İ', 'ı': 'I'}.get(c, c.upper()) if turkish else c.upper()
+
+    def word(m):
+        w = low(m.group(0))
+        return up(w[0]) + w[1:]
+    return re.sub(r"[^\W\d_]+", word, str(text))
+
+
 class BatchSynthMixin:
 
     def _bs(self):
@@ -107,7 +122,7 @@ class BatchSynthMixin:
                 if key in seen:                            # то же значение в столбце — один файл
                     continue
                 seen.add(key)
-                items.append({"row": r + 1, "col": col, "value": v, "file": f,
+                items.append({"row": r + 1, "col": col, "value": v, "file": f, "text": tr_title(v, int(lang) == BSYNTH_LANG),
                               "status": "done" if os.path.exists(f) else "wait", "error": ''})
         if not items:
             return {"error": "В выбранных строках нет значений."}
@@ -248,7 +263,7 @@ class BatchSynthMixin:
         voice = lambda: preset_pick(page, sel["voice"], bs["voice"])
         # Сервис сбрасывает голос после «Синтезировать» и при догрузке списка —
         # язык и голос перед каждым значением, голос — ещё раз сразу после нажатия.
-        page.fill(sel["text"], it["value"])
+        page.fill(sel["text"], it.get("text") or it["value"])      # «BERİTAN» → «Beritan» (tr_title)
         preset_pick(page, sel["lang"], bs["lang"])
         bs["voice_name"] = voice() or bs["voice_name"]
         os.makedirs(os.path.dirname(it["file"]), exist_ok=True)
