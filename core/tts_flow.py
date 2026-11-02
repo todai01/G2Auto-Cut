@@ -3289,7 +3289,7 @@ class TtsFlowMixin:
         self._tts_save()
         return self.tts_tier_marks(i)              # там же — предрасчёт изменённого
 
-    def _tts_tier_assembly(self, t, unit, k=None, ctx_ms=None):
+    def _tts_tier_assembly(self, t, unit, k=None, ctx_ms=None, lang=None):
         """Сборка как прозвучит: начало фразы + ярусы (готовые — из файлов) +
         продолжение. k — только один ярус; ctx_ms — сколько конца начала и
         начала продолжения взять (стык). Возвращает (файл, длина мс)."""
@@ -3302,7 +3302,7 @@ class TtsFlowMixin:
         write = t.get("tier_write") or {}
         mine = set(t.get("tier_files") or [])
         for j, x in enumerate(unit["tiers"]):
-            if k is not None and j != k:
+            if k is not None and j != k or lang and x.get("lang") and x["lang"] != lang:    # два языка — своя сборка
                 continue
             path = self._tts_tier_path(unit, x)
             if os.path.exists(path) and path not in mine and not write.get(str(j)):
@@ -3329,7 +3329,7 @@ class TtsFlowMixin:
         pcm = np.round(np.asarray(x, dtype=np.float32) * 32767).astype('<i2')
         return AudioSegment(pcm.tobytes(), frame_rate=rate, sample_width=2, channels=1)
 
-    def tts_tier_play(self, i, k=None, from_ms=None, ctx_ms=None):
+    def tts_tier_play(self, i, k=None, from_ms=None, ctx_ms=None, lang=None):
         """Послушать ярус (k) или всю сборку (k=None) с места from_ms (мс по
         дорожке «Сборка») — ровно как сохранится и склеится. ctx_ms — стык:
         только столько конца начала фразы и начала продолжения."""
@@ -3341,7 +3341,7 @@ class TtsFlowMixin:
         try:
             import tempfile
             out = self._tts_timed('сборка для прослушки', lambda: self._tts_tier_assembly(
-                t, unit, None if k is None or int(k) < 0 else int(k), ctx_ms))
+                t, unit, None if k is None or int(k) < 0 else int(k), ctx_ms, lang))
             ln = len(out)
             off = max(0, min(ln - 50, int(from_ms or 0)))
             dst = os.path.join(tempfile.gettempdir(), f"gvox_tier_play_{os.getpid()}.wav")
