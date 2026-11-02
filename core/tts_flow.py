@@ -1567,12 +1567,23 @@ class TtsFlowMixin:
         except Exception:
             pass
         if from_ms is not None and to_ms is not None and to_ms > from_ms:
+            # Только выделенное. Каждый раз новый файл: Windows держит открытым тот,
+            # что играл, — перезапись поверх него давала тишину.
             import tempfile
-            seg = AudioSegment.from_file(path)
-            seg = seg[int(from_ms / tempo):int(to_ms / tempo)]
-            path = os.path.join(tempfile.gettempdir(), f"gvox_sel_{os.getpid()}.wav")
-            seg.export(path, format="wav")
-            dur = len(seg) / 1000.0
+            a, b = int(from_ms / tempo), int(to_ms / tempo)
+            old = self.__dict__.get('_tts_sel_file')
+            self._tts_sel_n = getattr(self, '_tts_sel_n', 0) + 1
+            dst = os.path.join(tempfile.gettempdir(), f"gvox_sel_{os.getpid()}_{self._tts_sel_n}.wav")
+            if not wav_slice(path, dst, a, b):
+                AudioSegment.from_file(path)[a:b].export(dst, format="wav")
+            path, dur = dst, (b - a) / 1000.0
+            self._tts_sel_file = dst
+            if old and old != dst:
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+        self.player.play(path)
         self._tts_playing = (i, time.time(), dur)
         return {"playing": True, "duration": dur, "tempo": tempo}
 
