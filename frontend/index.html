@@ -432,6 +432,42 @@
         </div>
     </div>
 
+    <!-- Синтез по таблице: Excel → каждое значение готовым голосом, по одному, с паузами -->
+    <div id="bsynthOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Синтез по таблице</h3>
+                <button class="modal-close" onclick="closeBsynth()" title="Закрыть (синтез продолжится)">&times;</button>
+            </div>
+            <div class="clone-step">
+                <div class="field-row">
+                    <button class="custom-alert-btn" id="btnBsynthPick" onclick="bsynthPick()">Таблица Excel…</button>
+                    <span id="bsynthFile" class="modal-hint" style="margin:0;">Первая строка — заголовки столбцов: &lt;firstname&gt;, &lt;surname&gt;…</span>
+                </div>
+                <div id="bsynthPreview" class="bsynth-preview"></div>
+                <div class="field-row bsynth-opts">
+                    <label>Голос <select id="bsynthVoice" class="bsynth-sel"></select></label>
+                    <label>Язык <select id="bsynthLang" class="bsynth-sel"></select></label>
+                    <label>Пауза между запросами <input type="number" id="bsynthDelay" class="clone-count" min="1" max="60" value="4"> с</label>
+                </div>
+                <button class="splash-btn" style="width:100%;" id="btnBsynthStart" onclick="bsynthStart()" disabled>Синтезировать…</button>
+            </div>
+            <div id="bsynthRun" class="bsynth-run" style="display:none">
+                <div class="bsynth-run__head"><b id="bsynthCount"></b><span id="bsynthEta" class="tts-dim"></span></div>
+                <div class="bsynth-bar"><i id="bsynthBar"></i></div>
+                <div id="bsynthNow" class="bsynth-now"></div>
+                <div id="bsynthMsg" class="clone-bad"></div>
+                <div id="bsynthRecent" class="bsynth-recent"></div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" id="btnBsynthPause" onclick="bsynthPause()">Пауза</button>
+                    <button class="custom-alert-btn" id="btnBsynthStop" onclick="bsynthStop()">Остановить</button>
+                    <button class="custom-alert-btn" id="btnBsynthRetry" onclick="bsynthRetry()" style="display:none">Повторить ошибки</button>
+                    <button class="custom-alert-btn" onclick="pywebview.api.bsynth_open_folder()">Открыть папку</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Сопоставить укороченные имена файлов с полными из Excel и разложить по языкам -->
     <div id="renameMatchOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -1092,6 +1128,10 @@
                         <span class="menu-tool__icon"><svg class="icon"><use href="#icon-user"></use></svg></span>
                         <span class="menu-row__text"><span class="menu-tool__title">Подготовка к клону</span><span class="menu-row__desc">Один WAV → нарезка клонов</span></span>
                     </button>
+                    <button class="menu-tool rise" style="--d: 7" onclick="openBsynth()" title="Excel → каждое значение синтезом готового голоса: по одному, с паузами, с прогрессом">
+                        <span class="menu-tool__icon"><svg class="icon"><use href="#icon-volume-2"></use></svg></span>
+                        <span class="menu-row__text"><span class="menu-tool__title">Синтез по таблице</span><span class="menu-row__desc">Excel → голос</span></span>
+                    </button>
                     <button class="menu-tool rise" style="--d: 7" onclick="stripFilenames()" title="Убрать из имён файлов слова «миллион», «тысяч» — оставить цифры">
                         <span class="menu-tool__icon"><svg class="icon"><use href="#icon-type"></use></svg></span>
                         <span class="menu-row__text"><span class="menu-tool__title">Очистить названия</span><span class="menu-row__desc">Оставить цифры</span></span>
@@ -1680,7 +1720,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=18"></script>
+    <script src="script.js?v=19"></script>
     <script src="tutorial.js?v=16"></script>
     <script src="listen.js?v=22"></script>
 </body>

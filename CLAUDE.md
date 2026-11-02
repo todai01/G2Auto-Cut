@@ -42,6 +42,9 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,
   `filename_match_handler.py`, `table_to_pptx_handler.py`.
+- Синтез по таблице (утилита): `core/batch_synth.py` + окно `#bsynthOverlay` — Excel (шапка `<firstname>`…) →
+  каждое значение готовым голосом по одному с паузой (строка за строкой, слева направо), спрашивает с какой строки
+  и сколько; файлы `Синтез_<таблица>/<столбец>/<значение>.wav`; голоса и языки — `SYNTH_PRESET_VOICES`, `SYNTH_LANGS`.
 - `core/num_words.py` — числа словами RU/KZ, казахские месяцы, `month_abbr`.
 
 ## Предметная область

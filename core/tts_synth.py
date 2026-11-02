@@ -58,6 +58,9 @@ SYNTH_PRESET_SEL = {
     "submit": "body > main > section.panel.active > form > button",
 }
 SYNTH_LANG_INDEX = {'ru': 0, 'kz': 1}     # option:nth-child(1) — русский, (2) — казахский
+# Готовые голоса и языки сервиса (номер в списке с 0: option:nth-child(номер + 1)).
+SYNTH_PRESET_VOICES = [(3, 'Голос 4 — основной'), (7, 'Голос 8 — турецкий')]
+SYNTH_LANGS = [(0, 'Русский'), (1, 'Казахский'), (2, 'Турецкий')]
 SYNTH_TIMEOUT_S = 180                      # ждать результат синтеза не дольше
 SYNTH_DIR = 'Синтез_суммы'          # + _RU / _KZ: у каждого языка своя папка (режим «Суммы» — по одному языку)
 SYNTH_VARIANTS = '_варианты'
