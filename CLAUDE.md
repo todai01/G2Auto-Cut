@@ -38,6 +38,9 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 - «Два языка в одной записи» — кнопка в «Сборке» на дубль строки переменных (`tts_take_bil`, `t["bil"]`): ярусы
   удваиваются (RU, KZ, `_tts_tier_unit`), границы ставят вручную; файлы — `Значения/<лист>/<кат>/ru/<значение>.wav`
   и `…/kz/…` (`_tts_tier_path`), общий файл — в корзину. Готовность и аудит принимают пару ru + kz (`_tts_lang_done`).
+- Отдельная программа «Прослушка» (`listen_app.py` → `frontend/listen_app.html` → `index.html?app=listen`,
+  `window.GVOX_APP === 'listen'`: только прослушка, заставка — её старт): один файл `GVox-Listen.exe` —
+  `build_listen.bat` / `listen.spec`, в Actions — `build-exe-listen.yml` (Releases `gvox-listen-<номер>`).
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,

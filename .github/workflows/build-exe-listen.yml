@@ -1,0 +1,52 @@
+# Отдельная программа «Прослушка переменных» — один файл GVox-Listen.exe
+# (без распознавания речи). Выкладывается в Releases как gvox-listen-<номер>.
+name: Сборка GVox-Listen.exe (только прослушка)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/g2auto-cut-project-y8qvzc]
+    paths: [build_listen.py, listen.spec, listen_app.py, main.py, requirements.txt, .github/workflows/build-exe-listen.yml, 'core/**', 'frontend/**', 'utils/**']
+
+permissions:
+  contents: write
+
+jobs:
+  build-listen:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Сборка и самопроверка
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+        run: python build_listen.py
+
+      - name: Проверка «как после скачивания» (метка из интернета)
+        shell: pwsh
+        run: |
+          Set-Content -Path dist\GVox-Listen.exe -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          $psi = New-Object System.Diagnostics.ProcessStartInfo (Resolve-Path dist\GVox-Listen.exe).Path, '--selftest'
+          $psi.UseShellExecute = $false
+          $psi.WorkingDirectory = (Resolve-Path dist).Path
+          $p = [System.Diagnostics.Process]::Start($psi); $p.WaitForExit()
+          Get-Content dist\GVox_проверка.txt -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Самопроверка после «скачивания» не прошла" }
+          Remove-Item dist\GVox_проверка.txt
+          Get-Item dist\GVox-Listen.exe | Format-Table Name, Length
+
+      - name: Выложить в Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $n = "${{ github.run_number }}"
+          Copy-Item dist\GVox-Listen.exe "GVox-Listen-$n.exe"
+          $notes = "Отдельная программа «Прослушка переменных», сборка $n (коммит ${{ github.sha }}).`n`nОдин файл: скачайте GVox-Listen-$n.exe и запустите. Синтез — через установленный Edge / Chrome."
+          gh release create "gvox-listen-$n" "GVox-Listen-$n.exe" --target "${{ github.sha }}" --title "GVox Прослушка — сборка $n" --notes "$notes" --prerelease

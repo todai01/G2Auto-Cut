@@ -202,6 +202,7 @@ let isProcessing = false;
 
         document.addEventListener('DOMContentLoaded', () => {
             updateSettingsText();
+            if (window.GVOX_APP === 'listen') { listenAppInit(); return; }
             loadRecentProjects();
             // Заставки нет: меню показываем сразу, не дожидаясь Python, — одним
             // проявлением. «Продолжить проект?» спросим, когда мост будет готов.
@@ -220,6 +221,7 @@ let isProcessing = false;
         function warmUpApp() {
             if (appWarmed || !window.pywebview || !pywebview.api) return;
             appWarmed = true;
+            if (window.GVOX_APP === 'listen') return;          // отдельная «Прослушка»: ни меню, ни проектов
             loadRecentProjects();
             loadMenuRecent();
             if (!resumePromptAnswered) enterApp();           // недавний проект — спросить «продолжить?»
@@ -736,7 +738,19 @@ let isProcessing = false;
         // Заставка -> экран подготовки проекта. Если есть недавний проект —
         // сперва спрашиваем, продолжать ли его, а не сразу открываем
         // подготовку нового.
+        // Отдельная программа «Прослушка»: стартовый экран — заставка с одной кнопкой.
+        function listenAppInit() {
+            document.title = 'GVox | Прослушка переменных';
+            let q = s => document.querySelector(s);
+            q('#stage0-splash .entry__tagline').innerText = 'Прослушка переменных';
+            q('#stage0-splash .entry__start-text').innerText = 'Начать прослушку';
+            ['#recentProjectsPanel', '#stage0-splash .entry__footer'].forEach(s => { let e = q(s); if (e) e.remove(); });
+            let back = q('#stage5-listen .btn-ghost[onclick="listenExit()"]');
+            if (back) back.innerHTML = '&#8592;&nbsp; В начало';
+            showStage('stage0-splash');
+        }
         async function enterApp() {
+            if (window.GVOX_APP === 'listen') return listenStart();
             if (resumePromptAnswered) {
                 showMenu();
                 return;
@@ -770,6 +784,7 @@ let isProcessing = false;
         }
 
         function showMenu() {
+            if (window.GVOX_APP === 'listen') { showStage('stage0-splash'); return; }   // «В начало»
             if (stageAnimating) return;
             if (isShown('stage0-splash') && motionOK()) { fadeSplashToMenu(); return; }
             showMenuNow();

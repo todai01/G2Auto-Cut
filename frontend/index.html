@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GVox | Студийный монтаж</title>
 <link rel="stylesheet" href="style.css">
+<script>
+    // Отдельная программа «Прослушка» (listen_app.py → listen_app.html → index.html?app=listen): только этот режим.
+    window.GVOX_APP = /[?&]app=listen\b/.test(location.search) ? 'listen' : '';
+    if (window.GVOX_APP) document.documentElement.classList.add('app-listen');
+</script>
 
 </head>
 <body>
@@ -1721,7 +1726,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=20"></script>
+    <script src="script.js?v=21"></script>
     <script src="tutorial.js?v=16"></script>
     <script src="listen.js?v=22"></script>
 </body>
