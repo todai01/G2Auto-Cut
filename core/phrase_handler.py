@@ -4,7 +4,6 @@ import shutil
 import openpyxl
 import webview
 from openpyxl.utils import get_column_letter
-from utils.file_utils import FileUtils
 
 # Символы, запрещённые в именах файлов Windows
 BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\r\n\t]+')
@@ -234,45 +233,6 @@ class PhrasesMixin:
 
     # ==================================================================
 
-    def load_excel(self):
-        file_types = ('Excel files (*.xlsx)', 'All files (*.*)')
-        filename = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
-        if not filename:
-            return {"error": "cancel"}
-
-        path = filename[0]
-
-        # Раньше любая ошибка чтения таблицы просто обрывала работу без единого
-        # сообщения: кнопка не подсвечивалась, а список фраз оставался пустым,
-        # из-за чего следующие шаги жаловались на незагруженный Excel.
-        try:
-            wb = openpyxl.load_workbook(path, data_only=True)
-        except Exception as e:
-            return {"error": f"Не удалось открыть таблицу.\n\n{os.path.basename(path)}\n\n"
-                             f"Поддерживается только формат .xlsx. "
-                             f"Если файл в старом формате .xls, пересохраните его как .xlsx.\n\n"
-                             f"Подробности: {e}"}
-
-        sheet = wb.active
-        parsed = []
-        for row in sheet.iter_rows(values_only=True):
-            if not row:
-                continue
-            text = row[0]
-            if text is None or str(text).strip() == "":
-                continue
-            name = row[1] if len(row) > 1 and row[1] is not None else ""
-            parsed.append({"text": str(text).strip(), "filename": str(name).strip()})
-
-        if not parsed:
-            return {"error": f"В таблице {os.path.basename(path)} не нашлось ни одной фразы.\n\n"
-                             f"Текст фраз должен быть в первом столбце (A), "
-                             f"а имя файла — во втором (B)."}
-
-        self.excel_name = os.path.basename(path)
-        self.phrases_data = parsed
-        self.phrase_index = 0
-        return self.get_ui_state()
 
     def get_missing_phrases(self):
         """Фразы, для которых ещё нет готового файла.

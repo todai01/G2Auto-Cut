@@ -3,7 +3,6 @@ import re
 import math
 import time
 import webview
-import pyautogui
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 

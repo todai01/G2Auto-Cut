@@ -18,7 +18,7 @@ import time
 import webview
 
 from core.tts_flow import clean_name
-from core.tts_synth import (_SynthWorker, SYNTH_LANGS, SYNTH_PRESET_SEL, SYNTH_PRESET_VOICES, clean_wav,
+from core.synth_browser import (_SynthWorker, SYNTH_LANGS, SYNTH_PRESET_SEL, SYNTH_PRESET_VOICES, clean_wav,
                             preset_pick, synth_collect)
 
 BSYNTH_DIR = 'Синтез_'                 # + имя таблицы

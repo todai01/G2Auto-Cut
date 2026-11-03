@@ -2413,7 +2413,6 @@ div.menu-row:focus-visible{ outline: 2px solid var(--accent-var); outline-offset
     -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 
-
 /* ============================================================
    ЗАСТАВКА — строгая и минималистичная, в одном стиле с меню
    ============================================================ */
@@ -3381,7 +3380,6 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .clone-bad{ color: var(--accent-trash); }
 #cloneOverlay .opt-chip input[type=radio]{ position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
 
-
 /* Пока держат Space (или зажали фразу мышью) — всё вокруг чуть гаснет,
    яркий — только текст суфлёра. Отпустили — всё как было. */
 .stage-tts > .tts-header, .stage-tts > .tts-rail-wrap, .stage-tts > .tts-body,
@@ -4059,10 +4057,6 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .lg-gap--off{ display: flex; align-items: center; padding: 0 9px; font-size: 12.5px; color: var(--text-faint); opacity: .35; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .lp-unfile{ display: inline-flex; }
 .lp-unfile:empty{ display: none; }
-
-/* «Сырая запись»: номер чанка и поправки порядка названий */
-.tts-rawbar{ display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-dim); margin: 2px 0 6px; }
-.tts-rawbar b{ color: var(--text); }
 
 /* правка текста значения в «Сборке» */
 .tts-tiers__edit{ border: none; background: transparent; color: var(--text-faint); cursor: pointer; padding: 0 4px; font-size: 12px; }

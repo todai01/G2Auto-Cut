@@ -533,14 +533,6 @@ class ListenMixin:
                 pass
         return {"ok": True, "tpl": {"from": tpl["from"]}}
 
-    def listen_tpl_clear(self):
-        ls = self._ls()
-        ls["tpl"] = None
-        try:
-            os.remove(os.path.join(ls["folder"] or '', LISTEN_TPL_FILE))
-        except OSError:
-            pass
-        return self.listen_state()
 
     def _listen_render(self, path, ranges=None, gain=0.0, tempo=1.0, src=None):
         """Звук файла с правкой → AudioSegment (исходник — «до правок», если правился)."""

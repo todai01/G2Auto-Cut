@@ -3,11 +3,10 @@ import shutil
 import json
 import time
 import re
-import ctypes
 import webview
 from utils.file_utils import FileUtils
 from utils.wav_io import export_like
-from pydub import AudioSegment, silence
+from pydub import AudioSegment
 from core import project_state
 
 # Папки-«служебные» имена: если пользователь выбрал одну из них саму,
@@ -1208,62 +1207,6 @@ class VariablesMixin:
             "stats": {"total": len(self.cascade_files[active_cat]), "good": cat_checked_count, "var": 0, "checked": 0}
         }
 
-    def _replace_clip_in_place(self, slot_idx, new_file_path):
-        """Интеллектуальная точечная замена клипа с сохранением пауз"""
-        self.audacity.send_command('SelectNone:')
-        m_idx = self._get_montage_track_idx()
-
-        response = self.audacity.send_command('GetInfo: Type=Clips Format=JSON')
-        try:
-            tracks_data = json.loads(response[response.find('['):response.rfind(']') + 1])
-        except:
-            return False
-
-        montage_clips = []
-        for t in tracks_data:
-            if t.get('track') == m_idx:
-                if 'clips' in t:
-                    montage_clips.extend(t['clips'])
-                else:
-                    montage_clips.append(t)
-        montage_clips.sort(key=lambda x: x['start'])
-
-        if slot_idx >= len(montage_clips):
-            return False
-
-        target_clip = montage_clips[slot_idx]
-        start_sec, end_sec = target_clip['start'], target_clip['end']
-
-        self.audacity.send_command(f'Import2: Filename="{os.path.abspath(new_file_path).replace(chr(92), "/")}"')
-        time.sleep(0.4)
-
-        resp_tracks = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
-        t_data = json.loads(resp_tracks[resp_tracks.find('['):resp_tracks.rfind(']') + 1])
-        imported_track_idx = len(t_data) - 1
-
-        self.audacity.send_command(f'SelectTracks: Track={m_idx} Mode=Set')
-        self.audacity.send_command(f'SelectTime: Start={start_sec} End={end_sec} RelativeTo=ProjectStart')
-        self.audacity.send_command('Delete:')
-
-        self.audacity.send_command(f'SelectTracks: Track={imported_track_idx} Mode=Set')
-        self.audacity.send_command('SelectTime: Start=0 End=99999 RelativeTo=ProjectStart')
-        self.audacity.send_command('Copy:')
-
-        self.audacity.send_command(f'SelectTracks: Track={m_idx} Mode=Set')
-        self.audacity.send_command(f'SelectTime: Start={start_sec} End={start_sec} RelativeTo=ProjectStart')
-        self.audacity.send_command('Paste:')
-
-        clip_base_name = os.path.basename(new_file_path).replace('.wav', '')
-        self.audacity.send_command(f'SetClip: Name="{clip_base_name}"')
-
-        self.audacity.send_command(f'SelectTracks: Track={imported_track_idx} Mode=Set')
-        self.audacity.send_command('RemoveTracks:')
-
-        dur = FileUtils.get_exact_audio_duration(new_file_path)
-        self.audacity.send_command(f'SelectTracks: Track={m_idx} Mode=Set')
-        self.audacity.send_command(f'SelectTime: Start={start_sec} End={start_sec + dur} RelativeTo=ProjectStart')
-        self.audacity.send_command('ZoomSel:')
-        return True
 
     def init_variables_batch_mode(self, target_hwnd, out_dir, is_ready_export=False, sort_by_name=False):
         """Парсит Audacity, читает метки, соблюдает очередность папок и чинит баг с числами"""
@@ -2145,16 +2088,6 @@ class VariablesMixin:
             pass
         return moved
 
-    def _sum_tier_capped(self, tier, counts=None):
-        """Ярус дошёл до потолка (см. SUM_TIER_CAP) и больше не растёт —
-        например «Сотни (100-900)» и «Тысячи (1-99 тыс.)» после перехода
-        сумм за миллион. Такой ярус не должен попадать в новую сборку
-        (ни справочным клипом в Audacity, ни как «сосед» для автоправки),
-        иначе туда лез бы устаревший файл из старой, уже закрытой суммы."""
-        if counts is None:
-            counts = getattr(self, 'sum_manual_counts', None) or {}
-        cap = SUM_TIER_CAP.get(tier)
-        return cap is not None and counts.get(tier, 0) >= cap
 
     def _sum_last_saved_file(self, tier):
         """Последний сохранённый файл яруса — берёт из кэша в памяти
@@ -2512,36 +2445,6 @@ class VariablesMixin:
             return f"{stem} {word}".strip() if word else stem
         return stem
 
-    def _sum_full_preview_segments(self):
-        """Для проигрывания в режиме «Суммы»: не только то, что открыто на
-        экране, а вся цепочка целиком — start + уже сохранённые ярусы (в
-        порядке Миллионы→Сотни→Тысячи→Тенге) + текущий, ещё не сохранённый,
-        ярус + end. Каждый сегмент несёт подпись для экрана: у уже
-        сохранённых ярусов это их имя файла (= исходный текст Excel), у
-        текущего — текст строки Excel прямо сейчас. start/end подписи не
-        получают — экран во время них не переключается."""
-        segments = []
-        if getattr(self, 'var_start_phrase', None) and os.path.exists(self.var_start_phrase):
-            segments.append({'label': None, 'path': self.var_start_phrase})
-
-        phrase = self._current_sum_phrase()
-        tier = self._detect_sum_tier(phrase.get('text')) if phrase else None
-        active_file, _, err = self._sum_current_source()
-
-        for t in SUM_TIER_ORDER:
-            if t == tier and not err and active_file:
-                label = (phrase.get('text') if phrase else '').strip() or SUM_TIER_LABELS[t]
-                segments.append({'label': label, 'path': active_file})
-            elif not self._sum_tier_excluded(t):
-                ref = self._sum_last_saved_file(t)
-                if ref and os.path.exists(ref):
-                    label = self._sum_display_label(t, ref)
-                    segments.append({'label': label, 'path': ref})
-
-        if getattr(self, 'var_end_phrase', None) and os.path.exists(self.var_end_phrase):
-            segments.append({'label': None, 'path': self.var_end_phrase})
-
-        return segments
 
     def get_sum_manual_state(self):
         files, ptr = self._sum_source_files()
@@ -3745,33 +3648,6 @@ class VariablesMixin:
 
         return self.get_ui_state()
 
-    def save_sum_leftover(self):
-        """Если автонарезка слепила несколько цифр в один дубль («2 тысячи
-        сто одна тенге») — выделите в Audacity оставшуюся часть (ту, что не
-        сохранили как активный кусок) и нажмите эту кнопку. Она экспортирует
-        текущее выделение и ставит его следующим дублем в очередь, чтобы
-        не потерять при последующей очистке стола."""
-        if not getattr(self, 'is_in_audacity', False):
-            return {"error": "Сначала отправьте дубль в Audacity кнопкой C."}
-
-        leftover_dir = os.path.join(self.work_dir, '_Остатки')
-        os.makedirs(leftover_dir, exist_ok=True)
-        name = f'остаток_{int(time.time() * 1000)}.wav'
-        target_path = os.path.abspath(os.path.join(leftover_dir, name)).replace('\\', '/')
-
-        resp = self.audacity.send_command(f'Export2: Filename="{target_path}" NumChannels=1')
-        if not resp or not os.path.exists(target_path):
-            return {"error": "Не удалось сохранить остаток — убедитесь, что в Audacity выделен нужный участок, и повторите."}
-
-        # Ставим остаток следующим в ту очередь, которая сейчас открыта
-        if self._sum_in_cascade():
-            cat = self.cascade_ordered_cats[self.cascade_active_cat_idx]
-            self.cascade_files.setdefault(cat, []).insert(self.cascade_ptrs.get(cat, 0) + 1, target_path)
-        else:
-            self.chunks_data.insert(self.chunk_index + 1, {'filepath': target_path, 'filename': name})
-
-        webview.windows[0].evaluate_js("showToast('💾 Остаток сохранён и добавлен в очередь следующим дублем');")
-        return self.get_ui_state()
 
     def _sum_queue_paths(self):
         """(список путей очереди, текущий индекс) — общая абстракция что для

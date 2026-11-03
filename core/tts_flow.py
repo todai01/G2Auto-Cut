@@ -34,12 +34,12 @@ from pydub.silence import detect_nonsilent
 
 from core import recent_projects
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
-                             SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
+                             PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
                              fix_feature_size, mels_from_error, similarity)
 from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
 from core.edit_basics import EditBasicsMixin
-from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_render, wav_slice
+from utils.wav_io import export_like, fix_wav_header, wav_layout, wav_render, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
 TTS_RECORDS_DIR = 'Записи'
@@ -483,10 +483,7 @@ class TtsFlowMixin(EditBasicsMixin):
                 return miss or paths[-1]
             return self._tts_lang_path(paths[-1], self.TTS_BIL_LANGS[0])   # «два языка»: записано парой ru + kz
         if unit["kind"] == "value":                  # значение переменной — в «Значения/<лист>/<категория>/»
-            p = self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
-            if not os.path.exists(p) and self._tts_lang_done(p):      # записано двумя языками: …/ru/ и …/kz/
-                return self._tts_lang_path(p, self.TTS_BIL_LANGS[0])
-            return p
+            return self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         if unit.get("subdir"):                       # значение переменной из ячейки — в папку своей фразы
             return os.path.join(self._tts()["work_dir"], folder, unit["subdir"], f"{unit['name']}.wav")
@@ -751,7 +748,6 @@ class TtsFlowMixin(EditBasicsMixin):
     def _tts_reuse_clips(self, rem_clips, plan):
         """Дорожка по раскладке: куски записанных фраз (оценка по доле текста,
         с запасом — край подровняете) и новые куски из этой записи."""
-        st = self._tts()
         M = self.REUSE_MARGIN_MS
         like = rem_clips[0]["raw"]
         out, pos = [], 0
@@ -894,7 +890,7 @@ class TtsFlowMixin(EditBasicsMixin):
             "twins_fill": self.tts_twins_info()["fill"] if units else 0,
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
             "prompt_mode": st.get("prompt_mode", "phrases"), "sum_logic": st.get("sum_logic", 1),
-            "vars_only": bool(st.get("vars_only")), "raw_total": len(st.get("raw_seq") or []),
+            "vars_only": bool(st.get("vars_only")),
             "vars_progress": self._tts_vars_progress() if st.get("vars_only") and wd else None,
             "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
                       "values": len(rows_now),
@@ -1073,22 +1069,18 @@ class TtsFlowMixin(EditBasicsMixin):
         st = self._tts()
         s, e = self._tts_var_ctx(sheet)
         chain = any(u.get("var_after") == sheet for u in st["units"] if u["kind"] != "value")
-        by_lang = {lg: {k: os.path.basename(v) for k, v in ((st.get("var_ctx") or {}).get(sheet) or {}).get(lg, {}).items() if v and os.path.exists(v)}
-                   for lg in self.TTS_BIL_LANGS}
-        return {"sheet": sheet, "by_lang": by_lang, "start": os.path.basename(s) if s else None, "end": os.path.basename(e) if e else None,
+        return {"sheet": sheet, "start": os.path.basename(s) if s else None, "end": os.path.basename(e) if e else None,
                 "custom": bool(s or e), "chain": chain, "asked": bool((st.get("var_ctx_asked") or {}).get(sheet))}
 
-    def tts_var_ctx_pick(self, which, sheet=None, lang=None):
-        """Выбрать файл начала ('start') или конца ('end') фразы для листа переменных
-        (lang — «два языка»: своя пара на язык, диалог открывается в Фразы_Переменные/<язык>)."""
+    def tts_var_ctx_pick(self, which, sheet=None):
+        """Выбрать файл начала ('start') или конца ('end') фразы для листа переменных."""
         st = self._tts()
         sheet = sheet or st.get("prompt_mode")
         if not sheet or sheet == "phrases" or sheet not in (st.get("var_sheets") or {}):
             return {"error": "Откройте в суфлёре лист переменных."}
         wd = st.get("work_dir")
         d = None
-        for cand in ([os.path.join(wd, 'Фразы_Переменные', lang or '-'), os.path.join(wd, 'Фразы_Переменные'),
-                      os.path.join(wd, 'Проверенные')] if wd else []):
+        for cand in ([os.path.join(wd, 'Фразы_Переменные'), os.path.join(wd, 'Проверенные')] if wd else []):
             if os.path.isdir(cand):
                 d = cand
                 break
@@ -1098,8 +1090,7 @@ class TtsFlowMixin(EditBasicsMixin):
         if not picked:
             return {"error": "cancel"}
         path = picked if isinstance(picked, str) else picked[0]
-        slot = st.setdefault("var_ctx", {}).setdefault(sheet, {})
-        (slot.setdefault(lang, {}) if lang else slot)[which] = path
+        st.setdefault("var_ctx", {}).setdefault(sheet, {})[which] = path
         st.setdefault("var_ctx_asked", {})[sheet] = True
         self._tts_save()
         return self._tts_var_ctx_reply(sheet)
@@ -1110,18 +1101,6 @@ class TtsFlowMixin(EditBasicsMixin):
         self._tts_save()
         return self.tts_var_ctx_info(sheet)
 
-    def tts_var_ctx_clear(self, sheet=None, which=None, asked=True):
-        """Убрать свой файл (which) или оба; asked — больше не спрашивать для листа."""
-        st = self._tts()
-        sheet = sheet or st.get("prompt_mode")
-        c = (st.get("var_ctx") or {}).get(sheet)
-        if c:
-            for k in ([which] if which else ['start', 'end']):
-                c.pop(k, None)
-        if asked:
-            st.setdefault("var_ctx_asked", {})[sheet] = True
-        self._tts_save()
-        return self._tts_var_ctx_reply(sheet)
 
     def _tts_var_ctx_reply(self, sheet):
         return {"info": self.tts_var_ctx_info(sheet), "state": self.tts_state(),
@@ -1643,7 +1622,7 @@ class TtsFlowMixin(EditBasicsMixin):
         # Сохранять можно и без прослушивания — вы сами решаете, что дубль верный.
         unit = st["units"][t["unit"]]
         tiers_out = None
-        if self._tts_tier_unit(t, unit).get("tiers"):  # строка переменных / «два языка» — каждый ярус своим эталоном
+        if unit.get("tiers"):                          # строка переменных — каждый ярус своим эталоном
             written, skipped = self._tts_tier_save(t, unit)
             tiers_out = {"written": [os.path.relpath(p, st["work_dir"]) for p in written], "skipped": skipped}
         else:
@@ -1663,9 +1642,6 @@ class TtsFlowMixin(EditBasicsMixin):
         return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"], "twins": twins,
                 "tiers_saved": tiers_out}
 
-    def tts_reject(self, i):
-        """Прежняя «Плохой дубль» — теперь удаление (Ctrl+Z возвращает)."""
-        return self.tts_take_delete(i)
 
     def tts_take_delete(self, i):
         """Удалить дубль с дорожки. Если фраза была сохранена именно из него —
@@ -1710,8 +1686,6 @@ class TtsFlowMixin(EditBasicsMixin):
         stack = self.__dict__.setdefault('_tts_del_stack', [])
         stack.append(rec)
         del stack[:-100]
-        if t.get("raw_chunk"):
-            self._tts_raw_reflow()                         # лишний чанк убрали — названия следующих сдвигаются
         self._tts_save()
         u = st["units"][t["unit"]]["name"] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
         return {**self.tts_state(), "deleted": u or 'дубль', "can_undo": True}
@@ -1805,14 +1779,6 @@ class TtsFlowMixin(EditBasicsMixin):
             elif unit_id < len(st["units"]):
                 score = similarity(t.get("heard") or '', st["units"][unit_id]["text"]) if t.get("heard") else 0.0
                 t.update({"unit": unit_id, "score": round(score, 3), "status": "manual"})
-                if t.get("raw_chunk"):                     # чанк сырой записи: язык — по выбранному значению
-                    lg = self._tts_cat_lang(st["units"][unit_id].get("cat"))
-                    if lg:
-                        t["lang"] = lg
-                    t["pinned"] = t["bound"] = True       # выбрали вручную — опора: следующие идут от него
-                    for k in ("tier_clips", "tier_len", "tier_write"):
-                        t.pop(k, None)
-                    self._tts_raw_reflow()
             t["approved"] = False
             self._tts_save()
         return self.tts_state()
@@ -1840,17 +1806,6 @@ class TtsFlowMixin(EditBasicsMixin):
             n += 1
         shutil.move(path, dest)
 
-    def tts_open_folder(self, which):
-        st = self._tts()
-        if not st.get("work_dir"):
-            return {"error": "Проект ещё не создан."}
-        folder = os.path.join(st["work_dir"], TTS_VAR_DIR if which == 'var' else TTS_DONE_DIR)
-        os.makedirs(folder, exist_ok=True)
-        try:
-            os.startfile(folder)
-        except Exception as e:
-            return {"error": str(e)}
-        return {"status": "ok"}
 
     # ---------------- «Сборка»: монтаж дубля прямо в программе ----------------
     # Дубль показывается вместе с запасом записи вокруг (EDIT_CONTEXT_MS):
@@ -1868,80 +1823,6 @@ class TtsFlowMixin(EditBasicsMixin):
             t["orig"] = [t["start_ms"], t["start_ms"] + t["ms"]]
         return t["orig"]
 
-    def _tts_take_ranges(self, t, a=None, b=None, cuts=None):
-        """Абсолютные куски исходника (мс), из которых состоит дубль."""
-        ed = t.get("edit") or {}
-        orig = self._tts_orig(t)
-        a = ed.get("a", orig[0]) if a is None else a
-        b = ed.get("b", orig[1]) if b is None else b
-        cuts = ed.get("cuts", []) if cuts is None else cuts
-        ranges, cur = [], a
-        for c0, c1 in sorted((max(a, c0), min(b, c1)) for c0, c1 in cuts):
-            if c1 <= c0:
-                continue
-            if c0 > cur:
-                ranges.append((cur, c0))
-            cur = max(cur, c1)
-        if b > cur:
-            ranges.append((cur, b))
-        return ranges
-
-    def tts_editor_load(self, i):
-        st = self._tts()
-        t = st["takes"][i] if 0 <= i < len(st["takes"]) else None
-        raw = self._tts_raw(t) if t else None
-        if not raw or not os.path.exists(raw):
-            return {"error": "Нет исходной записи для этого дубля."}
-        ed = t.get("edit") or {}
-        orig = self._tts_orig(t)
-        a, b = ed.get("a", orig[0]), ed.get("b", orig[1])
-        total = getattr(self, '_tts_raw_len', None)
-        if not total or total[0] != raw or getattr(self, '_tts_rec', None):
-            lay = wav_layout(raw)
-            length = int(lay[2] / lay[3] * 1000 / lay[4]) if lay else len(AudioSegment.from_file(raw))
-            total = self._tts_raw_len = (raw, length)
-        lo, hi = max(0, a - EDIT_CONTEXT_MS), min(total[1], b + EDIT_CONTEXT_MS)
-        import tempfile
-        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_ctx_{os.getpid()}.wav")
-        if wav_slice(raw, tmp, lo, hi):
-            seg = AudioSegment.from_file(tmp)
-        else:
-            seg = AudioSegment.from_file(raw)[lo:hi]
-        seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-        samples = seg.get_array_of_samples()
-        per = 16000 * EDIT_BUCKET_MS // 1000
-        peaks = [max(abs(min(samples[k:k + per])), max(samples[k:k + per])) / 32768
-                 for k in range(0, len(samples), per)]
-        # Волна в масштабе (тихая запись не должна выглядеть плоской линией).
-        top = max(peaks) if peaks else 0
-        k_ = min(40.0, 0.9 / top) if top > 1e-4 else 1.0
-        peaks = [round(min(1.0, x * k_), 3) for x in peaks]
-        return {"i": i, "lo": lo, "hi": hi, "a": a, "b": b, "cuts": ed.get("cuts", []),
-                "orig": orig, "audacity": bool(t.get("audacity")), "peaks": peaks, "bucket": EDIT_BUCKET_MS}
-
-    def tts_editor_apply(self, i, a, b, cuts):
-        """Записать правку в файл дубля (из исходника, байт в байт)."""
-        st = self._tts()
-        if not (0 <= i < len(st["takes"])):
-            return {"error": "Нет такого дубля."}
-        t = st["takes"][i]
-        self._tts_orig(t)
-        a, b = int(a), int(b)
-        cuts = [[int(c0), int(c1)] for c0, c1 in (cuts or []) if int(c1) > int(c0)]
-        if b - a < 100:
-            return {"error": "Слишком короткий кусок."}
-        ranges = self._tts_take_ranges(t, a, b, cuts)
-        dst = os.path.join(st["work_dir"], t["file"])
-        if not wav_concat(self._tts_raw(t), dst, ranges):
-            src = AudioSegment.from_file(self._tts_raw(t))
-            out = sum((src[s:e] for s, e in ranges[1:]), src[ranges[0][0]:ranges[0][1]])
-            out.export(dst, format="wav")
-        t["edit"] = {"a": a, "b": b, "cuts": cuts}
-        t["ms"] = sum(e - s for s, e in ranges)
-        t["listened"] = False
-        t.pop("audacity", None)
-        self._tts_save()
-        return self.tts_state()
 
     def tts_editor_reset(self, i):
         """Вернуть дубль как его нарезала программа."""
@@ -2364,13 +2245,6 @@ class TtsFlowMixin(EditBasicsMixin):
         g = lambda t: parts[t][2] if t in parts else 0
         return g('million') * 1_000_000 + (g('hundred') + g('hundred_thousand') + g('thousand')) * 1000 + g('tenge')
 
-    def _tts_sum_rows(self, sh, logic):
-        return [self._tts_sum_number(p) for p in self._tts_sum_row_parts(sh, logic)]
-
-    def _tts_sum_dir(self, key):
-        lm = re.search(r'_(ru|kz|kk)$', key)
-        lg = ('KZ' if lm.group(1) in ('kz', 'kk') else 'RU') if lm else 'RU'
-        return os.path.join(self._tts()["work_dir"] or '', f"Запись_суммы_{lg}")
 
     def tts_sum_logic(self, logic):
         st = self._tts()
@@ -2411,30 +2285,13 @@ class TtsFlowMixin(EditBasicsMixin):
 
     def _tts_tier_unit(self, t, unit):
         """Строка так, как её режет этот дубль: «два языка» — каждый ярус дважды (RU, KZ)."""
-        if not t.get("bil") or any(x.get("lang") for x in unit.get("tiers") or []):
+        if not t.get("bil") or not unit.get("tiers") or any(x.get("lang") for x in unit["tiers"]):
             return unit
-        base = unit.get("tiers") or ([{"tier": unit.get("cat"), "cat": unit.get("cat"), "value": unit.get("value"),
-                                       "label": unit.get("cat_label") or unit.get("cat"), "text": unit.get("text")}]
-                                     if unit.get("kind") == "value" else None)
-        if not base:
-            return unit
-        own = self._tts_cat_lang(unit.get("cat")) if unit.get("kind") == "value" and not unit.get("tiers") else None
-        if own:                                            # столбец уже своего языка (<ru_late>) — файл как обычно
-            return {**unit, "tiers": [{**x, "lang": own, "plain": True, "tier": f'{x["tier"]}_{own}', "label": f'{x["label"]} · {own.upper()}'}
-                                      for x in base]}
-        langs = [t["lang"]] if t.get("lang") in self.TTS_BIL_LANGS else self.TTS_BIL_LANGS     # чанк одного языка — один ярус
         return {**unit, "tiers": [{**x, "lang": lg, "tier": f'{x["tier"]}_{lg}', "label": f'{x["label"]} · {lg.upper()}'}
-                                  for x in base for lg in langs]}
+                                  for x in unit["tiers"] for lg in self.TTS_BIL_LANGS]}
 
     def _tts_bil_ok(self, unit):
-        """Два языка — строка переменных (не суммы) или одиночное значение из листа переменных."""
-        return (bool(unit.get("tiers")) or unit.get("kind") == "value") and not str(unit.get("cat", '')).startswith('sum_l')
-
-    @staticmethod
-    def _tts_cat_lang(cat):
-        """Язык столбца по названию: <ru_late> → ru, <kz_late> → kz; иначе None."""
-        m = re.search(r'(?:^|_)(ru|kz|kk)(?:_|$)', str(cat or '').lower())
-        return None if not m else ('kz' if m.group(1) in ('kz', 'kk') else 'ru')
+        return bool(unit.get("tiers")) and not str(unit.get("cat", '')).startswith('sum_l')
 
     @staticmethod
     def _tts_lang_path(path, lang):
@@ -2460,348 +2317,10 @@ class TtsFlowMixin(EditBasicsMixin):
             self._tts_save()
         return self.tts_tier_marks(i)
 
-    # ---- «Сырая запись переменных»: длинный кусок → чанки по паузам → названия по порядку таблицы ----
-    # Запись идёт в порядке таблицы, у каждого значения RU и KZ подряд (один чанк). Режем только по
-    # громкости (без распознавания): чанков ровно столько, сколько значений — по самым длинным паузам.
-    RAW_MIN_GAP_MS = 220          # короче — пауза внутри слова / между RU и KZ, не граница
-
-    def _tts_bil_allowed(self, sheet):
-        """Лист переменных, который пишется по языкам: не суммы и без языка в названии листа (…_ru / …_kz)."""
-        sh = (self._tts().get("var_sheets") or {}).get(sheet)
-        return bool(sh) and not self._tts_is_sum_sheet(sh) and not re.search(r'_(ru|kz|kk)$', str(sheet))
-
-    def _tts_raw_seq(self, sheet=None, mode='ru_first'):
-        """Порядок чанков записи: [{"unit": значение, "lang": язык}]. mode: 'ru_first' / 'kz_first' — сначала все
-        значения одного языка, потом другого; 'pair' — RU и KZ каждого значения подряд, в одном чанке.
-        Столбцы с языком в названии (<ru_late>, <kz_late>) — сначала весь столбец одного языка сверху вниз, потом другого."""
-        st = self._tts()
-        sheets = [sheet] if sheet else [k for k in (st.get("var_sheets") or {}) if self._tts_bil_allowed(k)]
-        first, second = ('kz', 'ru') if mode == 'kz_first' else ('ru', 'kz')
-        out = []
-        for k in sheets:
-            units = [u for u in st["units"] if u["kind"] == "value" and u.get("sheet") == k and not u.get("tiers")]
-            by_lang = {lg: [u["id"] for u in units if self._tts_cat_lang(u.get("cat")) == lg] for lg in ('ru', 'kz')}
-            if by_lang["ru"] or by_lang["kz"]:
-                out += [{"unit": u, "lang": first} for u in by_lang[first]] + [{"unit": u, "lang": second} for u in by_lang[second]]
-            elif mode == 'pair':
-                out += [{"unit": u["id"], "lang": None} for u in units]
-            else:
-                out += [{"unit": u["id"], "lang": first} for u in units] + [{"unit": u["id"], "lang": second} for u in units]
-        return out
-
-    def tts_raw_vars(self, sheet=None, mode='ru_first'):
-        """Выбрать сырую запись и нарезать на чанки по паузам; чанки получают названия и язык по порядку таблицы
-        (mode — как идут языки: ru_first / kz_first / pair)."""
-        st = self._tts()
-        if not st["units"]:
-            return {"error": "Сначала загрузите таблицу."}
-        sheet = sheet or (st.get("prompt_mode") if st.get("prompt_mode") in (st.get("var_sheets") or {}) else None)
-        seq = self._tts_raw_seq(sheet, mode)
-        if not seq:
-            return {"error": "В таблице нет листа переменных, который можно записать RU + KZ."}
-        picked = webview.windows[0].create_file_dialog(
-            webview.FileDialog.OPEN, file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
-        if not picked:
-            return {"error": "cancel"}
-        path = picked if isinstance(picked, str) else picked[0]
-        if getattr(self, '_tts_rec', None):
-            return {"error": "Сейчас идёт запись с микрофона — сначала остановите её."}
-        self._tts_attach_folder(os.path.dirname(path))
-        if self._tts()["takes"] and not ui_confirm("Запись уже нарезана. Нарезать заново?<br><br>Сохранённые значения останутся на месте.",
-                                                   "Нарезать заново", "Отмена"):
-            return {"error": "cancel"}
-        threading.Thread(target=self._tts_raw_job, args=(path, seq), daemon=True).start()
-        return {"status": "started", "expected": len(seq)}
-
-    def _tts_raw_job(self, path, seq):
-        try:
-            res = self._tts_raw_cut(path, seq)
-        except Exception as e:
-            res = {"error": f"Не удалось нарезать запись: {e}"}
-        if res.get("error"):
-            self._tts_push({"stage": "error", **res})
-        else:
-            self._tts_push({"stage": "raw_done", "state": self.tts_state(), **{k: v for k, v in res.items() if k != "state"}})
-
-    def _tts_raw_cut(self, path, seq):
-        st = self._tts()
-        self._tts_push({"stage": "cut", "done": 0, "total": 0})
-        audio = AudioSegment.from_file(path)
-        levels = self._frame_levels(audio)
-        if not levels:
-            return {"error": "Запись пустая или слишком короткая."}
-        thresh = self._suggest_cut_settings(levels, len(seq))[3]
-        ranges = [list(r) for r in detect_nonsilent(audio, min_silence_len=self.RAW_MIN_GAP_MS, silence_thresh=int(thresh))]
-        if not ranges:
-            return {"error": "В записи не нашлось речи."}
-        n = len(seq)
-        if len(ranges) > n:                          # границы — самые длинные паузы; остальные куски склеиваем (RU + KZ)
-            gaps = sorted(range(len(ranges) - 1), key=lambda k: ranges[k + 1][0] - ranges[k][1], reverse=True)[:n - 1]
-            cut_after = set(gaps)
-            merged = [ranges[0][:]]
-            for k in range(1, len(ranges)):
-                if (k - 1) in cut_after:
-                    merged.append(ranges[k][:])
-                else:
-                    merged[-1][1] = ranges[k][1]
-            ranges = merged
-        work_dir = st.get("work_dir") or self.tts_project_root(os.path.dirname(path))
-        chunks_dir = os.path.join(work_dir, TTS_CHUNKS_DIR)
-        os.makedirs(chunks_dir, exist_ok=True)
-        for f in os.listdir(chunks_dir):
-            if re.fullmatch(r'\d{4}(_\d+)?\.wav', f):
-                try:
-                    os.remove(os.path.join(chunks_dir, f))
-                except OSError:
-                    pass
-        takes = []
-        for i, (a, b) in enumerate(ranges):
-            lo, hi = max(0, a - TTS_CUT_PAD_MS), min(len(audio), b + TTS_CUT_PAD_MS)
-            name = f"{i + 1:04d}.wav"
-            if not wav_slice(path, os.path.join(chunks_dir, name), lo, hi):
-                audio[lo:hi].export(os.path.join(chunks_dir, name), format="wav")
-            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo, "orig": [lo, hi], "raw": path,
-                          "heard": '', "listened": False, "chunk": i + 1, "bil": True, "seq": i, "raw_chunk": True,
-                          "unit": None, "lang": None, "score": 0.0, "status": "none", "approved": False})
-            if i % 50 == 0:
-                self._tts_push({"stage": "cut", "done": i + 1, "total": len(ranges)})
-        st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": takes, "raw_seq": list(seq)})
-        self.__dict__['_tts_claims_cache'] = {}
-        self._tts_save()
-        return {"chunks": len(takes), "expected": n}
-
-    def _tts_raw_reflow(self):
-        """Названия чанков — динамически. Опора — чанк сохранённый или с названием, выбранным вручную;
-        каждый следующий открытый, но не сохранённый чанк получает следующее значение после опоры
-        (нашли «8» в 10-м чанке — 11-й получает «9», а не своё «11»). Удалённые чанки не считаются."""
-        st = self._tts()
-        seq = st.get("raw_seq") or []
-        if not seq:
-            return
-        pos = -1
-        for t in sorted((x for x in st["takes"] if x.get("raw_chunk") and not x.get("rejected")), key=lambda x: x.get("chunk", 0)):
-            if (t.get("approved") or t.get("pinned")) and t.get("unit") is not None:
-                hit = [k for k, e in enumerate(seq) if e["unit"] == t["unit"] and e["lang"] in (None, t.get("lang"))]
-                if hit:
-                    pos = min([k for k in hit if k > pos] or hit)
-                    t["seq"] = pos
-                    continue
-            pos += 1
-            if not t.get("bound"):
-                continue                                   # ещё не открывали — на ленте просто чанк
-            e = seq[pos] if 0 <= pos < len(seq) else None
-            new = (e["unit"], e["lang"]) if e else (None, None)
-            if (t.get("unit"), t.get("lang")) != new:
-                t["unit"], t["lang"] = new
-                t["status"], t["score"] = ("manual", 1.0) if e else ("none", 0.0)
-                for k in ("tier_clips", "tier_len", "tier_write"):
-                    t.pop(k, None)
-            t["seq"] = pos
-
-    def tts_raw_bind(self, i):
-        """Чанк открыли в «Сборке» — даём название: следующее по порядку таблицы после опоры слева
-        (сохранённого чанка или чанка с названием, выбранным вручную)."""
-        st = self._tts()
-        if not (0 <= i < len(st["takes"])):
-            return self.tts_state()
-        t = st["takes"][i]
-        if t.get("raw_chunk") and not t.get("approved") and not t.get("pinned"):
-            t["bound"] = True
-            self._tts_raw_reflow()
-            self._tts_save()
-        return self.tts_state()
-
-    def _tts_raw_split_point(self, t):
-        """Где в чанке граница двух значений: середина самой длинной паузы внутри речи (не у самых краёв)."""
-        rms, length = self._tts_take_frames(t)
-        f = self.TIER_FRAME_MS
-        if not len(rms):
-            return length // 2
-        voiced = rms > max(float(rms.max()) * 0.05, 1e-4)
-        idx = np.nonzero(voiced)[0]
-        if len(idx) < 4:
-            return length // 2
-        v0, v1 = int(idx[0]), int(idx[-1])
-        best, j = (0, (v0 + v1) // 2), v0
-        while j <= v1:
-            if not voiced[j]:
-                e = j
-                while e <= v1 and not voiced[e]:
-                    e += 1
-                if e - j > best[0]:
-                    best = (e - j, (j + e) // 2)
-                j = e
-            else:
-                j += 1
-        return int(best[1] * f)
-
-    def tts_raw_split(self, i, at_ms=None):
-        """В чанке две переменные — разрезать на два чанка (at_ms — место, мс файла чанка; нет — по самой
-        длинной паузе). Второй встаёт следом и получает следующее название по порядку."""
-        st = self._tts()
-        if not (0 <= i < len(st["takes"])) or not st["takes"][i].get("raw_chunk"):
-            return {"error": "Разрезать можно чанк сырой записи."}
-        t = st["takes"][i]
-        if t.get("approved"):
-            return {"error": "Чанк уже сохранён — сначала удалите сохранение (Del) или откройте другой."}
-        wd = st["work_dir"]
-        src = os.path.join(wd, t["file"])
-        length = len(self._tts_seg(src))
-        at = int(at_ms) if at_ms is not None else self._tts_raw_split_point(t)
-        if not 200 <= at <= length - 200:
-            return {"error": "Слишком близко к краю чанка — поставьте курсор между двумя словами."}
-        base = os.path.splitext(t["file"])[0]
-        n = 2
-        while os.path.exists(os.path.join(wd, f"{base}_{n}.wav")):
-            n += 1
-        f1, f2 = f"{base}_a{n}.wav", f"{base}_{n}.wav"
-        for rel, a, b in ((f1, 0, at), (f2, at, length)):
-            if not wav_slice(src, os.path.join(wd, rel), a, b):
-                self._tts_seg(src)[a:b].export(os.path.join(wd, rel), format="wav")
-        for x in st["takes"]:                              # номера следующих чанков — на один дальше
-            if x.get("raw_chunk") and x.get("chunk", 0) > t.get("chunk", 0):
-                x["chunk"] += 1
-        keep = {k: t[k] for k in ("raw_chunk", "bil", "src_name", "bound", "pinned", "unit", "lang", "seq", "status", "score") if k in t}
-        for k in list(t):
-            if k.startswith("tier_") or k in ("clips", "clips_orig", "edit", "lanes", "listened"):
-                t.pop(k, None)
-        t.update({"file": f1, "raw": os.path.join(wd, f1), "start_ms": 0, "ms": at, "orig": [0, at]})
-        second = {"file": f2, "raw": os.path.join(wd, f2), "start_ms": 0, "ms": length - at, "orig": [0, length - at],
-                  "heard": '', "listened": False, "chunk": t.get("chunk", 0) + 1, "bil": True, "raw_chunk": True,
-                  "src_name": keep.get("src_name"), "bound": True, "unit": None, "lang": None, "score": 0.0,
-                  "status": "none", "approved": False}
-        st["takes"].insert(i + 1, second)
-        t["bound"] = True
-        self._tts_raw_reflow()
-        self._tts_save()
-        return {**self.tts_state(), "at": at}
-
-    def tts_raw_merge(self, i):
-        """Нарезка разделила одно значение на два чанка — склеить этот чанк со следующим. Из сырой записи —
-        одним куском вместе с паузой между ними; чанки из папки — подряд. Следующие названия сдвигаются назад."""
-        st = self._tts()
-        if not (0 <= i < len(st["takes"]) - 1):
-            return {"error": "Справа нет чанка, с которым склеить."}
-        t, nx = st["takes"][i], st["takes"][i + 1]
-        if not (t.get("raw_chunk") and nx.get("raw_chunk")):
-            return {"error": "Склеить можно чанки сырой записи."}
-        if t.get("approved") or nx.get("approved"):
-            return {"error": "Один из чанков уже сохранён — сначала удалите сохранение (Del)."}
-        wd = st["work_dir"]
-        base = os.path.splitext(t["file"])[0]
-        n = 2
-        while os.path.exists(os.path.join(wd, f"{base}_m{n}.wav")):
-            n += 1
-        rel = f"{base}_m{n}.wav"
-        dst = os.path.join(wd, rel)
-        o1, o2 = t.get("orig") or [0, 0], nx.get("orig") or [0, 0]
-        same_raw = t.get("raw") and t.get("raw") == nx.get("raw") and os.path.exists(t["raw"]) and o1[1] <= o2[0]
-        if same_raw and (o1[0] != 0 or o2[0] != 0):            # соседние куски одной записи — вместе с паузой
-            if not wav_slice(t["raw"], dst, o1[0], o2[1]):
-                AudioSegment.from_file(t["raw"])[o1[0]:o2[1]].export(dst, format="wav")
-            raw, orig, start = t["raw"], [o1[0], o2[1]], o1[0]
-        else:                                                  # отдельные файлы — подряд, с короткой паузой
-            a_ = AudioSegment.from_file(os.path.join(wd, t["file"]))
-            b_ = AudioSegment.from_file(os.path.join(wd, nx["file"]))
-            (a_ + AudioSegment.silent(150, frame_rate=a_.frame_rate) + b_.set_frame_rate(a_.frame_rate).set_channels(a_.channels)) \
-                .export(dst, format="wav")
-            raw, orig, start = dst, None, 0
-        ms = len(AudioSegment.from_file(dst))
-        for k in list(t):
-            if k.startswith("tier_") or k in ("clips", "clips_orig", "edit", "lanes", "listened"):
-                t.pop(k, None)
-        t.update({"file": rel, "raw": raw, "start_ms": start, "ms": ms, "orig": orig or [0, ms], "bound": True})
-        del st["takes"][i + 1]
-        for x in st["takes"]:                                  # номера следующих чанков — на один ближе
-            if x.get("raw_chunk") and x.get("chunk", 0) > nx.get("chunk", 0):
-                x["chunk"] -= 1
-        st["index"] = i
-        self._tts_raw_reflow()
-        self._tts_save()
-        return self.tts_state()
-
-    def tts_raw_folder(self, mode='ru_first', sheet=None):
-        """Чанки уже нарезаны (папка с WAV): на ленту по порядку имён файлов, названия — в «Сборке», как у «Сырой записи»."""
-        st = self._tts()
-        if not st["units"]:
-            return {"error": "Сначала загрузите таблицу."}
-        sheet = sheet or (st.get("prompt_mode") if st.get("prompt_mode") in (st.get("var_sheets") or {}) else None)
-        seq = self._tts_raw_seq(sheet, mode)
-        if not seq:
-            return {"error": "В таблице нет листа переменных."}
-        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not picked:
-            return {"error": "cancel"}
-        src = picked if isinstance(picked, str) else picked[0]
-        nat = lambda n: [int(x) if x.isdigit() else x.lower() for x in re.split(r'(\d+)', n)]
-        files = sorted((f for f in os.listdir(src) if f.lower().endswith(('.wav', '.mp3', '.flac', '.ogg'))), key=nat)
-        if not files:
-            return {"error": "В папке нет аудиофайлов."}
-        if not st.get("work_dir"):
-            self._tts_attach_folder(src)
-        st = self._tts()
-        if st["takes"] and not ui_confirm("На ленте уже есть дубли. Заменить их чанками из папки?<br><br>Сохранённые значения останутся на месте.",
-                                          "Заменить", "Отмена"):
-            return {"error": "cancel"}
-        wd = st["work_dir"]
-        chunks_dir = os.path.join(wd, TTS_CHUNKS_DIR)
-        os.makedirs(chunks_dir, exist_ok=True)
-        takes = []
-        for n, f in enumerate(files, 1):
-            path = os.path.join(src, f)
-            dst = os.path.join(chunks_dir, f"{n:04d}.wav")
-            if os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(dst)):
-                if f.lower().endswith('.wav'):
-                    shutil.copy2(path, dst)
-                else:
-                    AudioSegment.from_file(path).export(dst, format="wav")
-            ms = len(AudioSegment.from_file(dst))
-            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav"), "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": path,
-                          "heard": '', "listened": False, "chunk": n, "bil": True, "seq": n - 1, "raw_chunk": True, "src_name": f,
-                          "unit": None, "lang": None, "score": 0.0, "status": "none", "approved": False})
-        st.update({"index": 0, "takes": takes, "raw_seq": list(seq)})
-        self.__dict__['_tts_claims_cache'] = {}
-        self._tts_save()
-        return {"state": self.tts_state(), "chunks": len(takes), "expected": len(seq)}
-
-    def _tts_raw_renumber(self, fn):
-        """fn(seq_index) → новый номер или None (удалить привязку); названия — по списку st["raw_seq"]."""
-        st = self._tts()
-        seq = st.get("raw_seq") or []
-        for t in st["takes"]:
-            if t.get("seq") is None or t.get("approved"):
-                continue
-            k = fn(t["seq"])
-            t["seq"] = k
-            e = seq[k] if k is not None and 0 <= k < len(seq) else None
-            t["unit"], t["lang"] = (e["unit"], e["lang"]) if e else (None, None)
-            t["status"] = "manual" if t["unit"] is not None else "none"
-
-    def tts_raw_skip(self, i):
-        """«В записи нет значения перед этим чанком» — этот и все следующие получают следующие названия."""
-        st = self._tts()
-        if not (0 <= i < len(st["takes"])) or st["takes"][i].get("seq") is None:
-            return {"error": "Этот дубль не из сырой записи."}
-        at = st["takes"][i]["seq"]
-        self._tts_raw_renumber(lambda k: k + 1 if k >= at else k)
-        self._tts_save()
-        return self.tts_state()
-
-    def tts_raw_drop(self, i):
-        """«Этот чанк лишний» (кашель, повтор) — убрать и сдвинуть названия следующих назад (Ctrl+Z вернёт чанк)."""
-        st = self._tts()
-        if not (0 <= i < len(st["takes"])) or st["takes"][i].get("seq") is None:
-            return {"error": "Этот дубль не из сырой записи."}
-        at = st["takes"][i]["seq"]
-        self.tts_take_delete(i)
-        self._tts_raw_renumber(lambda k: k - 1 if k > at else k)
-        self._tts_save()
-        return self.tts_state()
-
     def _tts_tier_path(self, unit, tier):
         """Эталон яруса — в едином формате «Значения/<лист>/<категория>/<значение>.wav»
         (суммы тоже: «Значения/sum_ru/million_ru/5.wav»)."""
-        if tier.get("lang") and not tier.get("plain"):
+        if tier.get("lang"):
             return self._tts_lang_path(self._tts_value_file(unit["sheet"], tier["cat"], tier["value"]), tier["lang"])
         if str(unit.get("cat", '')).startswith('sum_l'):
             return self._tts_value_file(unit["sheet"], tier["cat"], self._tts_sum_raw_value(unit["sheet"], tier["cat"], tier["value"]))
@@ -3101,23 +2620,7 @@ class TtsFlowMixin(EditBasicsMixin):
         if any(x.get("lang") for x in unit["tiers"]):   # два языка: границы ставят сами — для начала поровну
             thr0 = max(float(rms.max()) * 0.05, 1e-4) if len(rms) else 1
             v0, v1 = self._tts_voice_span(rms, 0, length, thr0)
-            f = self.TIER_FRAME_MS
             cuts = [int(v0 + (v1 - v0) * (k + 1) / n) for k in range(n - 1)]
-            if n == 2 and len(rms):                       # граница по умолчанию — середина самой длинной паузы внутри речи
-                voiced = rms[v0 // f:max(v0 // f + 1, v1 // f)] > thr0
-                best, j = (0, None), 0
-                while j < len(voiced):
-                    if not voiced[j]:
-                        e = j
-                        while e < len(voiced) and not voiced[e]:
-                            e += 1
-                        if e - j > best[0] and j > 0 and e < len(voiced):
-                            best = (e - j, v0 + (j + e) // 2 * f)
-                        j = e
-                    else:
-                        j += 1
-                if best[0] * f >= 120:
-                    cuts = [int(best[1])]
         else:
             cuts = self._tts_tier_auto(unit, rms, length)
         bounds = [0] + list(cuts) + [length]
@@ -3324,16 +2827,8 @@ class TtsFlowMixin(EditBasicsMixin):
                 except OSError:
                     pass
 
-    def _tts_tier_ctx(self, unit, lang=None):
-        """Выбранная фраза вокруг суммы: (файл начала, True, имя), (файл конца, False, имя).
-        lang — «два языка»: своя пара начала и конца на язык (если выбрана для листа)."""
-        if lang:
-            c = ((self._tts().get("var_ctx") or {}).get(unit.get("sheet")) or {}).get(lang) or {}
-            ok = lambda p: p if p and os.path.exists(p) else None
-            cs, ce = ok(c.get("start")), ok(c.get("end"))
-            if cs or ce:
-                nm = lambda p: os.path.splitext(os.path.basename(p))[0]
-                return (cs, True, nm(cs)) if cs else None, (ce, False, nm(ce)) if ce else None
+    def _tts_tier_ctx(self, unit):
+        """Выбранная фраза вокруг суммы: (файл начала, True, имя), (файл конца, False, имя)."""
         ch, _p, _n = self._tts_tier_chain(unit)
         if not ch:
             return None, None
@@ -3371,18 +2866,10 @@ class TtsFlowMixin(EditBasicsMixin):
             seg = seg[max(v0, v1 - self.TIER_JOIN_MS):v1] if tail else seg[v0:min(v1, v0 + self.TIER_JOIN_MS)]
         return self._loudness(seg)
 
-    def _tts_ctx_level(self, unit, lang=None):
+    def _tts_ctx_level(self, unit):
         """Целевая громкость ярусов листа: медиана громкости у стыков всех
-        записанных фраз с этой переменной (при «двух языках» — по началу и концу этого языка)."""
+        записанных фраз с этой переменной."""
         lv = []
-        if lang:
-            own = [(c, tail) for c, tail in zip(self._tts_tier_ctx(unit, lang), (True, False)) if c]
-            if own and ((self._tts().get("var_ctx") or {}).get(unit.get("sheet")) or {}).get(lang):
-                for c, tail in own:
-                    v = self._tts_join_loud(c[0], tail)
-                    if v is not None:
-                        lv.append(v)
-                return round(float(np.median(lv)), 1) if lv else None
         for ch in self._tts_var_chains(unit.get("sheet")):
             for path, tail in ((ch["start_path"], True), (ch["own_end_path"], False)):
                 if path:
@@ -3566,10 +3053,9 @@ class TtsFlowMixin(EditBasicsMixin):
                 self._tts_seg(path)
             else:
                 self._tts_tier_audio(t, unit, j)
-        for lg in ({x.get("lang") for x in unit["tiers"]} or {None}):
-            for c in self._tts_tier_ctx(unit, lg):
-                if c:
-                    self._tts_seg(c[0])
+        for c in self._tts_tier_ctx(unit):
+            if c:
+                self._tts_seg(c[0])
 
     def _tts_tier_marks(self, i):
         """Для «Сборки»: дубль строки (волна) и ярусы клипами — где взят каждый
@@ -3606,16 +3092,11 @@ class TtsFlowMixin(EditBasicsMixin):
                     pass
             item["peaks"] = self._tts_peaks(rms[c["a"] // f:max(c["a"] // f + 1, c["b"] // f)])
             out.append(item)
-        def ctx_of(lang):
-            res = {}
-            for key, c in zip(("start", "end"), self._tts_tier_ctx(unit, lang)):
-                if c:
-                    r, ln = self._tts_file_rms(c[0], self.TIER_CTX_MS, tail=c[1])
-                    res[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r), "path": c[0]}
-            return res
-        langs = [lg for lg in self.TTS_BIL_LANGS if any(x.get("lang") == lg for x in unit["tiers"])]
-        ctx_by_lang = {lg: ctx_of(lg) for lg in langs}                # «два языка»: у каждого своя пара начала и конца
-        ctx = ctx_by_lang[langs[0]] if langs else ctx_of(None)
+        ctx = {}
+        for key, c in zip(("start", "end"), self._tts_tier_ctx(unit)):
+            if c:
+                r, ln = self._tts_file_rms(c[0], self.TIER_CTX_MS, tail=c[1])
+                ctx[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r), "path": c[0]}
         ch, cpos, cn = self._tts_tier_chain(unit)
         phrase = None
         if ch:
@@ -3628,11 +3109,11 @@ class TtsFlowMixin(EditBasicsMixin):
                       "start_take": sk, "end_take": ek if not ch["end_from"] else None,
                       "start_sound": self._tts_sound(st["takes"][sk]) if sk is not None else None,
                       "end_sound": self._tts_sound(st["takes"][ek]) if ek is not None and not ch["end_from"] else None}
-        level = self._tts_ctx_level(unit, langs[0] if langs else None) if ctx else None
+        level = self._tts_ctx_level(unit) if ctx else None
         row_l = self._tts_row_loud(t, unit) if level is not None else None
         tpl = self._tts_tier_tpl(unit)
         return {"i": i, "tiers": out, "length": length, "peaks": self._tts_peaks(rms), "frame": f,
-                "row": unit["text"], "ctx": ctx, "ctx_by_lang": ctx_by_lang, "take_tempo": self._tts_sound(t)[1],
+                "row": unit["text"], "ctx": ctx, "take_tempo": self._tts_sound(t)[1],
                 "opts": self._tts_tier_opts(), "ctx_level": level, "row_level": row_l, "phrase": phrase,
                 "bg": self.tts_tier_bg_state(), "bil": bool(t.get("bil")), "bil_ok": self._tts_bil_ok(base),
                 "resave_n": sum(len(x.get("tier_files") or []) for x in st["takes"] if x.get("unit") is not None
@@ -3673,7 +3154,7 @@ class TtsFlowMixin(EditBasicsMixin):
         segs = []
         start = end = None
         if k is None:
-            start, end = self._tts_tier_ctx(unit, lang)
+            start, end = self._tts_tier_ctx(unit)
         write = t.get("tier_write") or {}
         mine = set(t.get("tier_files") or [])
         for j, x in enumerate(unit["tiers"]):
@@ -3767,9 +3248,9 @@ class TtsFlowMixin(EditBasicsMixin):
         clips, _length, _rms = self._tts_tier_clips(t, unit)
         c = clips[k]
         opts = self._tts_tier_opts()
-        level = self._tts_ctx_level(unit, unit["tiers"][k].get("lang")) if opts["level"] else None
+        level = self._tts_ctx_level(unit) if opts["level"] else None
         row = self._tts_row_loud(t, unit) if level is not None else None
-        start, end = self._tts_tier_ctx(unit, unit["tiers"][k].get("lang"))
+        start, end = self._tts_tier_ctx(unit)
         ref = (start or end or (None,))[0]
         take = os.path.join(self._tts()["work_dir"], t["file"])
         return ('tier',) + self._file_sig(take) + (
@@ -3782,9 +3263,9 @@ class TtsFlowMixin(EditBasicsMixin):
         clips, _length, _rms = self._tts_tier_clips(t, unit)
         c = clips[k]
         opts = self._tts_tier_opts()
-        level = self._tts_ctx_level(unit, unit["tiers"][k].get("lang")) if opts["level"] else None
+        level = self._tts_ctx_level(unit) if opts["level"] else None
         row = self._tts_row_loud(t, unit) if level is not None else None
-        start, end = self._tts_tier_ctx(unit, unit["tiers"][k].get("lang"))
+        start, end = self._tts_tier_ctx(unit)
         ref = (start or end or (None,))[0]
         key = self._tts_tier_dry_key(t, unit, k)
         lock = self.__dict__.setdefault('_tts_render_lock', threading.Lock())
@@ -3973,7 +3454,7 @@ class TtsFlowMixin(EditBasicsMixin):
             if redo is not None and self._tts_tier_rel(path) not in redo:
                 redo.append(self._tts_tier_rel(path))
         for x in unit["tiers"]:                         # два языка сохранены — общий файл больше не нужен
-            if x.get("lang"):
+            if x.get("lang") == self.TTS_BIL_LANGS[0]:
                 plain = self._tts_value_file(unit["sheet"], x["cat"], x["value"])
                 if os.path.exists(plain) and self._tts_lang_done(plain):
                     self._tts_trash(plain)
@@ -4026,12 +3507,11 @@ class TtsFlowMixin(EditBasicsMixin):
         if not ctx:
             return {"error": "Эта переменная не стоит ни в одной фразе таблицы."}
         if ctx.get("custom"):
-            a_path, b_path, a_name = ctx["start_path"], ctx["end_path"], ctx["start_name"]
+            a_path, b_path = ctx["start_path"], ctx["end_path"]
             if not a_path:
                 return {"error": "Файл начала фразы не выбран или пропал — выберите его (чип «Начало и конец»)."}
         else:
             a, b = st["units"][ctx["start"]], (st["units"][ctx["end"]] if ctx["end"] is not None else None)
-            a_name = a["name"]
             if not ctx["start_saved"]:
                 return {"error": f"Начало фразы «{a['name']}» ещё не сохранено — запишите его в «Фразах»."}
             a_path = self._tts_target(a)

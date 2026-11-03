@@ -256,360 +256,16 @@ let isProcessing = false;
         const isShown = id => { let el = document.getElementById(id); return !!el && el.style.display !== 'none'; };
         let stageAnimating = false;
 
-        // Прямоугольник самого текста (без отступов кнопки) — для «перелёта» логотипа.
-        function textRect(el) {
-            let r = document.createRange();
-            r.selectNodeContents(el);
-            return r.getBoundingClientRect();
-        }
 
         const wait = ms => new Promise(r => setTimeout(r, ms));
 
-        // Подпись по буквам и кнопка «втягиваются» в логотип заставки;
-        // логотип при этом коротко «заряжается» светом. Промис — когда всё вошло.
-        function absorbIntoLogo(splash, tagline, btn, logo, layer, line) {
-            let jobs = [];
-            let cx = logo.left + logo.width / 2, cy = logo.top + logo.height * .62;
-            if (line) {
-                // Линия стягивается к центру, светлеет и уходит вверх в буквы.
-                let r = line.getBoundingClientRect();
-                let dx = cx - (r.left + r.width / 2), dy = cy - r.top;
-                line.style.transformOrigin = '50% 50%';
-                jobs.push(line.animate([
-                    { transform: 'translate(0,0) scaleX(1)', opacity: 1, background: 'rgba(38,43,52,1)' },
-                    { transform: 'translate(0,0) scaleX(.35)', opacity: 1, background: 'rgba(110,170,255,1)', offset: .45 },
-                    { transform: `translate(${dx}px, ${dy}px) scaleX(.02)`, opacity: 0, background: 'rgba(150,195,255,1)' }
-                ], { duration: 460, delay: 120, easing: 'cubic-bezier(.55,0,.6,.3)', fill: 'forwards' }).finished
-                    .then(() => line.remove()));
-            }
-            if (tagline && tagline.firstChild) {
-                let text = tagline.textContent, node = tagline.firstChild;
-                let chars = [];
-                for (let i = 0; i < text.length; i++) {
-                    if (!text[i].trim()) continue;
-                    let r = document.createRange();
-                    r.setStart(node, i); r.setEnd(node, i + 1);
-                    chars.push({ ch: text[i], rect: r.getBoundingClientRect() });
-                }
-                let cs = getComputedStyle(tagline);
-                tagline.style.visibility = 'hidden';
-                let n = chars.length;
-                chars.forEach((c, i) => {
-                    let el = document.createElement('span');
-                    el.className = 'fx-char';
-                    el.textContent = c.ch;
-                    Object.assign(el.style, { left: c.rect.left + 'px', top: c.rect.top + 'px', fontSize: cs.fontSize, color: cs.color, lineHeight: c.rect.height + 'px' });
-                    layer.appendChild(el);
-                    // Каждая буква — в свою точку внутри логотипа; уходят от краёв к центру.
-                    let tx = cx + (i / Math.max(1, n - 1) - .5) * logo.width * .55 - (c.rect.left + c.rect.width / 2);
-                    let ty = cy - (c.rect.top + c.rect.height / 2);
-                    let order = Math.abs(i - (n - 1) / 2) / ((n - 1) / 2 || 1);
-                    jobs.push(el.animate([
-                        { transform: 'translate(0,0) scale(1)', opacity: 1 },
-                        { transform: `translate(${tx * .35}px, ${ty * .2 + 6}px) scale(.9)`, opacity: 1, offset: .35 },
-                        { transform: `translate(${tx}px, ${ty}px) scale(.15)`, opacity: 0 }
-                    ], { duration: 420, delay: (1 - order) * 140, easing: 'cubic-bezier(.55,0,.75,.2)', fill: 'forwards' })
-                        .finished.then(() => el.remove()));
-                });
-            }
-            if (btn) {
-                let r = btn.getBoundingClientRect();
-                let dy = cy - (r.top + r.height / 2), dx = cx - (r.left + r.width / 2);
-                btn.style.transformOrigin = '50% 50%';
-                jobs.push(btn.animate([
-                    { transform: 'translate(0,0) scale(1,1)', opacity: 1, filter: 'brightness(1)' },
-                    { transform: 'translate(0,0) scale(.92,.12)', opacity: 1, filter: 'brightness(1.8)', offset: .4 },
-                    { transform: `translate(${dx}px, ${dy}px) scale(.06,.04)`, opacity: 0, filter: 'brightness(2)' }
-                ], { duration: 460, delay: 90, easing: 'cubic-bezier(.55,0,.6,.3)', fill: 'forwards' }).finished);
-            }
-            // Логотип «заряжается», впитывая подпись и кнопку.
-            let mark = splash.querySelector('.splash-mark');
-            mark.animate([
-                { textShadow: '0 0 0 rgba(120,175,255,0)' },
-                { textShadow: '0 0 26px rgba(120,175,255,.55)', offset: .8 },
-                { textShadow: '0 0 18px rgba(120,175,255,.35)' }
-            ], { duration: 560, easing: 'ease-in', fill: 'forwards' });
-            return Promise.all(jobs).catch(() => {});
-        }
 
-        // Прямоугольник элемента в КОНЕЧНОМ положении: анимации предков
-        // (меню ещё «въезжает») на миг проматываем в конец и возвращаем.
-        function finalRect(el, measure) {
-            let anims = [];
-            for (let n = el; n && n.getAnimations; n = n.parentElement) {
-                n.getAnimations().forEach(an => anims.push([an, an.currentTime]));
-            }
-            anims.forEach(([an]) => { let t = an.effect && an.effect.getComputedTiming(); if (t) an.currentTime = t.endTime; });
-            let r = measure(el);
-            anims.forEach(([an, t]) => { an.currentTime = t; });
-            return r;
-        }
 
-        // Буквы логотипа с их прямоугольниками: каждая полетит отдельно.
-        function logoLetters(markEl) {
-            let out = [];
-            markEl.childNodes.forEach(node => {
-                let accent = node.nodeType === 1;
-                let text = node.textContent;
-                let textNode = accent ? node.firstChild : node;
-                for (let i = 0; i < text.length; i++) {
-                    let r = document.createRange();
-                    r.setStart(textNode, i); r.setEnd(textNode, i + 1);
-                    out.push({ ch: text[i], accent, rect: r.getBoundingClientRect() });
-                }
-            });
-            return out;
-        }
 
-        // Заставка → меню. Хореография:
-        //  1) подпись, кнопка и список уходят;
-        //  2) линия под подписью растягивается в нижнюю границу шапки;
-        //  3) буквы GVox по одной перелетают по дуге в шапку (с размытием в движении);
-        //  4) логотип вспыхивает при посадке, проявляется шапка, карточки встают лесенкой.
-        async function animateSplashToMenu() {
-            stageAnimating = true;
-            let splash = document.getElementById('stage0-splash');
-            let mark = splash.querySelector('.splash-mark');
-            let tagline = splash.querySelector('.entry__tagline');
-            let startBtn = splash.querySelector('.entry__start');
 
-            // Исходные позиции — пока заставка ещё нетронута.
-            let from = logoLetters(mark);
-            let wordA = textRect(mark);
-            let fontSize = parseFloat(getComputedStyle(mark).fontSize);
-            let lineA = tagline ? tagline.getBoundingClientRect() : null;
 
-            let layer = document.createElement('div');
-            layer.className = 'fx-layer';
-            document.body.appendChild(layer);
-            let jobs = [];
 
-            // Линия-разделитель отделяется от подписи и ждёт своего полёта.
-            let line = null;
-            if (lineA) {
-                line = document.createElement('div');
-                line.className = 'fx-line is-resting';
-                Object.assign(line.style, { left: lineA.left + 'px', top: (lineA.bottom - 1) + 'px', width: lineA.width + 'px' });
-                layer.appendChild(line);
-            }
 
-            // Подпись и кнопка «втягиваются» в логотип.
-            let absorb = absorbIntoLogo(splash, tagline, startBtn, wordA, layer, line);
-            splash.classList.add('is-leaving');
-            await absorb;
-
-            let menu = document.getElementById('stage1-loading');
-            menu.classList.add('menu-entering');
-            showMenuNow();
-            menu.classList.add('menu-line-pending');
-            splash.classList.remove('is-leaving');
-            splash.getAnimations({ subtree: true }).forEach(an => an.cancel());
-            if (tagline) tagline.style.visibility = '';
-
-            let target = menu.querySelector('.setup-brand__mark');
-            let header = menu.querySelector('.setup-header');
-            let wordB = finalRect(target, textRect);
-            let headB = finalRect(header, el => el.getBoundingClientRect());
-            let k = wordB.height / wordA.height;
-            target.style.visibility = 'hidden';
-
-            // Сначала «Vox» по дуге собирается в шапке; «G» ждёт на месте.
-            let gJob = null, gOrigin = null;
-            const place = L => ({
-                tx: wordB.left + (L.rect.left - wordA.left) * k - L.rect.left,
-                ty: wordB.top + (L.rect.top - wordA.top) * k - L.rect.top
-            });
-            const spawn = L => {
-                let el = document.createElement('span');
-                el.className = 'fx-letter' + (L.accent ? ' is-accent' : '');
-                el.textContent = L.ch;
-                Object.assign(el.style, { left: L.rect.left + 'px', top: L.rect.top + 'px', fontSize: fontSize + 'px', lineHeight: L.rect.height + 'px' });
-                layer.appendChild(el);
-                return el;
-            };
-            let vox = from.filter(L => L.accent), g = from.filter(L => !L.accent);
-            vox.forEach((L, i) => {
-                let el = spawn(L), { tx, ty } = place(L);
-                let lift = 34 + i * 3;
-                jobs.push(el.animate([
-                    { transform: 'translate(0,0) scale(1)', filter: 'blur(0)', offset: 0 },
-                    { transform: `translate(${tx * .18}px, ${ty * .1 - lift}px) scale(${1 - (1 - k) * .25})`, filter: 'blur(.6px)', offset: .28 },
-                    { transform: `translate(${tx * .78}px, ${ty * .82}px) scale(${k + (1 - k) * .12})`, filter: 'blur(1.4px)', offset: .72 },
-                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
-                ], { duration: 820, delay: 40 + i * 50, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
-            });
-            // «G» — рогатка: пока «Vox» летит, она натягивается назад (от цели),
-            // копит свечение и дрожит от напряжения — и выстреливает в шапку.
-            // Её посадка запускает волну.
-            g.forEach(L => {
-                let el = spawn(L), { tx, ty } = place(L);
-                el.classList.add('is-g');
-                gOrigin = { x: L.rect.left + tx + L.rect.width * k / 2, y: L.rect.top + ty + L.rect.height * k / 2 };
-                let n = Math.hypot(tx, ty) || 1, ux = tx / n, uy = ty / n;
-                const back = d => `translate(${-ux * d}px, ${-uy * d}px)`;
-                const glow = a => `0 0 ${8 + a * 26}px rgba(120,175,255,${(.15 + a * .6).toFixed(2)})`;
-                gJob = el.animate([
-                    { transform: 'translate(0,0) scale(1)', textShadow: glow(0), filter: 'blur(0)', easing: 'cubic-bezier(.4,0,.6,1)' },
-                    { transform: `${back(34)} scale(1.07, .95)`, textShadow: glow(.8), offset: .6, easing: 'linear' },
-                    { transform: `translate(${-ux * 35 + 1.6}px, ${-uy * 35 - 1.2}px) scale(1.08, .94)`, textShadow: glow(.9), offset: .64, easing: 'linear' },
-                    { transform: `translate(${-ux * 36 - 1.6}px, ${-uy * 36 + 1.2}px) scale(1.08, .94)`, textShadow: glow(.95), offset: .68, easing: 'linear' },
-                    { transform: `${back(38)} scale(1.09, .93)`, textShadow: glow(1), filter: 'blur(0)', offset: .72, easing: 'cubic-bezier(.9,0,.35,1)' },
-                    { transform: `translate(${tx + ux * 6}px, ${ty + uy * 6}px) scale(${k * 1.06}, ${k * .96})`, textShadow: glow(.6), filter: 'blur(2.5px)', offset: .93, easing: 'cubic-bezier(.2,.8,.3,1)' },
-                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, textShadow: glow(0), filter: 'blur(0)' }
-                ], { duration: 1320, delay: 0, fill: 'forwards' }).finished;
-                jobs.push(gJob);
-                // Волна стартует ровно в момент касания (93% полёта «G»), не дожидаясь усадки.
-                setTimeout(() => {
-                    revealMenuFromLogo(menu, gOrigin);
-                    drawHeaderLine(menu, headB, gOrigin.x);
-                }, Math.round(1320 * .93));
-            });
-
-            await Promise.all(jobs).catch(() => {});
-            target.style.visibility = '';
-            target.classList.add('is-landing');
-            layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished
-                .catch(() => {}).then(() => layer.remove());
-            if (!gOrigin) {
-                let lr = target.getBoundingClientRect();
-                revealMenuFromLogo(menu, { x: lr.left + lr.width / 2, y: lr.top + lr.height / 2 });
-            }
-            setTimeout(() => target.classList.remove('is-landing'), 1400);
-            stageAnimating = false;
-        }
-
-        // Посадка логотипа «включает» меню: от логотипа расходится световая
-        // волна, и каждый элемент проявляется, когда она до него доходит —
-        // ближние раньше, дальние позже, чуть «вытягиваясь» со стороны логотипа.
-        function revealMenuFromLogo(menu, origin) {
-            let ox = origin.x, oy = origin.y;
-            let items = Array.from(menu.querySelectorAll(
-                '.setup-brand__sub, .setup-header__right, .section-label, .rise'))
-                .filter(el => el.offsetParent !== null);
-            let R = Math.hypot(Math.max(ox, innerWidth - ox), Math.max(oy, innerHeight - oy));
-            const WAVE_MS = 1100;  // волна быстро стартует и замедляется к краям (easeOutCubic)
-            // Момент, когда кольцо (easeOutCubic) доходит до расстояния d.
-            const reach = d => WAVE_MS * (1 - Math.cbrt(1 - Math.min(1, d / R)));
-
-            // Вспышка и два кольца (яркое ведущее + мягкое следом) рисуются на
-            // одном холсте покадрово: никаких огромных слоёв с размытыми тенями,
-            // которые подвешивали первый кадр волны.
-            drawWaveCanvas(ox, oy, R, WAVE_MS);
-
-            // Каждый элемент включается, когда его касается кольцо: с пружинкой
-            // и короткой вспышкой рамки. fill: backwards держит их скрытыми до очереди.
-            items.forEach(el => {
-                let r = el.getBoundingClientRect();
-                let cx = Math.max(r.left, Math.min(ox, r.right));
-                let cy = Math.max(r.top, Math.min(oy, r.bottom));
-                let dx = cx - ox, dy = cy - oy;
-                let n = Math.hypot(dx, dy) || 1;
-                let delay = reach(n);
-                el.animate([
-                    { opacity: 0, transform: `translate(${-dx / n * 22}px, ${-dy / n * 22}px) scale(.94)` },
-                    { opacity: 1, transform: `translate(${dx / n * 2}px, ${dy / n * 2}px) scale(1.012)`, offset: .62 },
-                    { opacity: 1, transform: 'none' }
-                ], { duration: 520, delay, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
-                if (el.matches('.option-card, .menu-row, .menu-tool, .menu-cut')) traceBorder(el, ox, oy, delay);
-            });
-            menu.classList.add('menu-fx');
-            menu.classList.remove('menu-entering');
-        }
-
-        // Граница шапки прорисовывается, когда «G» встала на место: линия
-        // растёт от «G» вправо, по ней бежит яркая «головка».
-        function drawHeaderLine(menu, headB, fromX) {
-            let y = headB.bottom - 1;
-            let x0 = Math.max(headB.left, Math.min(fromX, headB.right));
-            let left = document.createElement('div'), right = document.createElement('div');
-            let head = document.createElement('div');
-            left.className = right.className = 'fx-line fx-line--draw';
-            head.className = 'fx-head';
-            // Левый короткий кусок (до края шапки) и правый — от «G» до правого края.
-            Object.assign(left.style, { left: headB.left + 'px', top: y + 'px', width: (x0 - headB.left) + 'px', transformOrigin: '100% 50%' });
-            Object.assign(right.style, { left: x0 + 'px', top: y + 'px', width: (headB.right - x0) + 'px' });
-            Object.assign(head.style, { left: x0 + 'px', top: y + 'px' });
-            document.body.append(left, right, head);
-            const D = 820, E = 'cubic-bezier(.5,0,.2,1)';
-            left.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 260, easing: 'ease-out', fill: 'both' });
-            right.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: D, easing: E, fill: 'both' });
-            head.animate([
-                { transform: 'translate(-50%,-50%) translateX(0)', opacity: 1 },
-                { opacity: 1, offset: .85 },
-                { transform: `translate(-50%,-50%) translateX(${headB.right - x0}px)`, opacity: 0 }
-            ], { duration: D, easing: E, fill: 'both' });
-            // Нарисованная линия гаснет — под ней проявляется настоящая граница шапки.
-            setTimeout(() => menu.classList.remove('menu-line-pending'), D);
-            [left, right, head].forEach(el => el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, delay: D, fill: 'forwards' })
-                .finished.catch(() => {}).then(() => el.remove()));
-        }
-
-        // Волна на холсте: вспышка в точке «G» и два кольца с мягким свечением
-        // (свечение — несколько широких полупрозрачных обводок, без shadowBlur).
-        function drawWaveCanvas(ox, oy, R, waveMs) {
-            let dpr = Math.min(2, window.devicePixelRatio || 1);
-            let cv = document.createElement('canvas');
-            cv.className = 'fx-canvas';
-            cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
-            document.body.appendChild(cv);
-            let ctx = cv.getContext('2d');
-            ctx.scale(dpr, dpr);
-            const easeOut = t => 1 - Math.pow(1 - t, 3);
-            const rings = [
-                { delay: 0, dur: waveMs, alpha: 1, width: 2 },
-                { delay: 110, dur: waveMs * 1.25, alpha: .45, width: 1.2 }
-            ];
-            const total = Math.max(...rings.map(r => r.delay + r.dur));
-            let t0 = performance.now();
-            const frame = now => {
-                let t = now - t0;
-                ctx.clearRect(0, 0, innerWidth, innerHeight);
-                // Вспышка
-                if (t < 420) {
-                    let p = t / 420, rr = 14 + 100 * easeOut(p);
-                    let g = ctx.createRadialGradient(ox, oy, 0, ox, oy, rr);
-                    g.addColorStop(0, `rgba(170,205,255,${.75 * (1 - p)})`);
-                    g.addColorStop(.4, `rgba(77,149,234,${.28 * (1 - p)})`);
-                    g.addColorStop(1, 'rgba(77,149,234,0)');
-                    ctx.fillStyle = g;
-                    ctx.beginPath(); ctx.arc(ox, oy, rr, 0, Math.PI * 2); ctx.fill();
-                }
-                rings.forEach(w => {
-                    let p = (t - w.delay) / w.dur;
-                    if (p <= 0 || p >= 1) return;
-                    let rad = R * 1.05 * easeOut(p);
-                    let a = w.alpha * (p < .7 ? 1 : 1 - (p - .7) / .3);
-                    ctx.beginPath(); ctx.arc(ox, oy, rad, 0, Math.PI * 2);
-                    [[16, .05], [9, .09], [4, .18]].forEach(([lw, k]) => {
-                        ctx.strokeStyle = `rgba(77,149,234,${a * k})`; ctx.lineWidth = lw; ctx.stroke();
-                    });
-                    ctx.strokeStyle = `rgba(140,190,255,${a * .9})`; ctx.lineWidth = w.width; ctx.stroke();
-                });
-                if (t < total) requestAnimationFrame(frame); else cv.remove();
-            };
-            requestAnimationFrame(frame);
-        }
-
-        // «Активация» карточки: от точки, где её коснулась волна, по рамке в обе
-        // стороны бегут две полоски света, встречаются напротив — и вся рамка
-        // коротко вспыхивает.
-        function traceBorder(card, ox, oy, delay) {
-            let r = card.getBoundingClientRect();
-            let deg = Math.atan2(ox - (r.left + r.width / 2), -(oy - (r.top + r.height / 2))) * 180 / Math.PI;
-            // Элемент подсветки создаём ровно в момент касания — не все сразу.
-            setTimeout(() => {
-                let tr = document.createElement('span');
-                tr.className = 'fx-trace';
-                tr.style.setProperty('--fx-start', deg + 'deg');
-                card.appendChild(tr);
-                tr.animate([
-                    { '--fx-p': '0deg', opacity: 1 },
-                    { '--fx-p': '180deg', opacity: 1, offset: .72 },
-                    { '--fx-p': '180deg', opacity: 0 }
-                ], { duration: 820, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'both' })
-                    .finished.catch(() => {}).then(() => tr.remove());
-            }, delay);
-        }
 
         // Запоминаем, что рабочий экран уже открывался: тогда из меню
         // можно вернуться к работе одной кнопкой, ничего не загружая заново.
@@ -2271,38 +1927,7 @@ let isProcessing = false;
         // === Режим «Суммы»: ручная разметка ярусов на обычной нарезке ===
         let sumModeActive = false;
 
-        async function toggleSumMode(checked) {
-            sumModeActive = checked;
-            // Снимаем фокус с галочки, иначе горячие клавиши (C, Z, A/D)
-            // считаются набором текста в поле и просто игнорируются.
-            let box = document.getElementById('sumModeCheck');
-            if (box) box.blur();
-            let sumState = await pywebview.api.toggle_sum_mode(checked);
-            renderSumPanel(sumState);
-            // Раньше экран переключался только при следующей навигации по
-            // дублям — галочка визуально «не срабатывала» сразу.
-            applySumModeLayout();
-            if (sumModeActive) {
-                await attachEmbeddedAudacity(true);
-            } else {
-                await detachEmbeddedAudacity();
-            }
-        }
 
-        async function setSumLogic(stage2) {
-            let sumState = await pywebview.api.toggle_sum_stage2(stage2);
-            renderSumPanel(sumState);
-            applySumModeLayout();
-
-            if (sumModeActive) {
-                // Пробуем сразу занять освободившееся место окном Audacity.
-                // Если он ещё не запущен — просто оставляем пустую рамку,
-                // окно встанет туда само после первой отправки (C).
-                await attachEmbeddedAudacity(true);
-            } else {
-                await detachEmbeddedAudacity();
-            }
-        }
 
         // В режиме «Суммы» на экране остаётся только то, что нужно для работы:
         // счётчики, подсказка про папку и три кнопки. Всё лишнее (монтажный
@@ -3790,15 +3415,6 @@ let isProcessing = false;
                 sumStage2IsPlaying = false;
             }
         }
-        async function sumStage2Stop() {
-            clearTimeout(sumStage2PlayTimeout);
-            sumStage2IsPlaying = false;
-            await pywebview.api.stop_audio();
-        }
-        async function sumStage2TogglePlay() {
-            if (sumStage2IsPlaying) await sumStage2Stop();
-            else await sumStage2Play();
-        }
 
         async function sumStage2SendToAudacity() {
             let btn = document.querySelector('#sumActionsPanel .btn-tile--primary');
@@ -3851,57 +3467,8 @@ let isProcessing = false;
             updateUI(state);
         }
 
-        // Клик по счётчикам «Суммы»: подробная карточка — сколько сохранено
-        // и осталось по каждому ярусу, и на каком числе юзер остановился
-        // в последний раз (чтобы не гадать, что уже сделано).
-        function showSumStatsModal() {
-            if (!lastSumState || !lastSumState.stats) return;
-            let rows = lastSumState.stats.map(s => {
-                let capText = s.cap ? `${s.done} из ${s.cap}` : `${s.done}`;
-                let remainingText = (s.remaining !== null && s.remaining !== undefined)
-                    ? `осталось ${s.remaining}` : '';
-                let lastText = s.last ? `последний: <b>${escapeHtml(s.last)}</b>` : 'ещё нет сохранённых';
-                return `<div class="sum-stats-row">
-                    <div class="sum-stats-tier">${escapeHtml(s.tier)} <span class="sum-stats-dir">(${escapeHtml(s.dir)})</span></div>
-                    <div class="sum-stats-nums">${capText}${remainingText ? ' · ' + remainingText : ''}</div>
-                    <div class="sum-stats-last">${lastText}</div>
-                </div>`;
-            }).join('');
-            showBeautifulAlert(`<div class="sum-stats-modal"><h4>Статистика по ярусам</h4>${rows}</div>`);
-        }
 
-        async function sumSendToAudacity() {
-            // Если Audacity закрыт, программа сама его запускает и ждёт
-            // ответа — это может занять до 20-30 секунд на холодном старте,
-            // а без индикатора кажется, что кнопка просто не работает.
-            let btn = document.querySelector('#sumManualActions .btn-tile--primary');
-            let origHtml = btn ? btn.innerHTML : null;
-            if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
 
-            let state;
-            try {
-                state = await pywebview.api.sum_send_to_audacity();
-            } finally {
-                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
-            }
-
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            // Теперь Audacity точно запущен — сажаем его окно в отведённую рамку
-            if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
-        }
-
-        async function sumManualSave() {
-            let state = await pywebview.api.sum_manual_save(document.getElementById('addSilence').checked);
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-        }
 
         // Одна кнопка вместо «Остаток»/«Склеить» — бэкенд сам решает, какую
         // из двух логик применить, по тому, открыт ли сейчас дубль в
@@ -4302,27 +3869,9 @@ let isProcessing = false;
 
         // НОВОВВЕДЕНИЕ: Логика двойного нажатия для W (Good)
         let lastWTime = 0;
-        function triggerGoodDoubleTap() {
-            let now = new Date().getTime();
-            if (now - lastWTime < 400) { // 400 миллисекунд на двойной клик
-                processAction('good');
-                lastWTime = 0;
-            } else {
-                lastWTime = now;
-            }
-        }
 
         // НОВОВВЕДЕНИЕ: Логика двойного нажатия для R (Переменные)
         let lastRTime = 0;
-        function triggerVarDoubleTap() {
-            let now = new Date().getTime();
-            if (now - lastRTime < 400) {
-                processAction('variable');
-                lastRTime = 0;
-            } else {
-                lastRTime = now;
-            }
-        }
 
         function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
@@ -6534,18 +6083,6 @@ let isProcessing = false;
             document.getElementById('constructorEndOverlay').style.display = 'flex';
         }
 
-        async function openConstructorFromSumMode() {
-            // Режим «Суммы» уже знает папку, старт и энд — конструктору не
-            // нужно спрашивать их заново диалогами, как при заходе из
-            // главного меню.
-            let state = await pywebview.api.constructor_open_from_sum_mode();
-            if (state && state.error) {
-                showBeautifulAlert(`<b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            constructorState = state;
-            openConstructorScreen();
-        }
 
         async function constructorPickEnd() {
             document.getElementById('constructorEndOverlay').style.display = 'none';
@@ -6939,6 +6476,7 @@ let isProcessing = false;
                 if (!st) return;
             }
             openTtsScreen(st);
+            if (st.vars_only || (st.analysis && st.analysis.vars_only)) await ttsVarCtxMaybeAsk();
             if (!st.has_takes && !(st.vars_only || (st.analysis && st.analysis.vars_only))) {
                 let how = await showBeautifulChoice(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
                     + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>`
@@ -7085,13 +6623,6 @@ let isProcessing = false;
 
         async function ttsImportExisting() {
             if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
-            if (tts && Object.keys(tts.var_sheets || {}).length) {          // таблица переменных: в папке — чанки или готовые файлы?
-                let how = await showBeautifulChoice('<b>Готовые записи</b><br><br>Что лежит в папке?<br><br>'
-                    + '<b>Чанки</b> — нарезанные куски без названий, по порядку таблицы: встанут на ленту, название — в «Сборке».<br>'
-                    + '<b>Файлы с названиями</b> — уже названы как значения таблицы: разложу по местам.', 'Чанки', 'Файлы с названиями', 'N', 'Отмена');
-                if (!how) return;
-                if (how === 'ok') return ttsRawFolder();
-            }
             let r = await pywebview.api.tts_import_existing();
             if (!r || r.error) { if (r && r.error !== 'cancel') showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
             if (r.state) { tts = r.state; ttsRender(); }
@@ -7112,102 +6643,9 @@ let isProcessing = false;
             if (st) {
                 tts = st; ttsRender(); ttsPromptKey = null;
                 if (st.prompt0) ttsRenderPrompt(st.prompt0, 'next'); else ttsLoadPrompt();
+                if (st.vars_only) ttsVarCtxMaybeAsk();
             }
         }
-
-        // ----- «Сырая запись переменных»: длинный кусок → чанки по паузам → названия по порядку таблицы -----
-        async function ttsRawVars() {
-            if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
-            if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
-            let how = await showBeautifulChoice('<b>Сырая запись переменных</b><br><br>Запись идёт <b>в порядке таблицы</b>: сначала все значения одного языка, потом всех другого. '
-                + 'Режу по паузам; названия и язык ставятся по порядку. Потом — «Фразы_Переменные», и в «Сборке» каждый чанк играет с началом и концом своего языка: подрезали — Enter.'
-                + '<br><br><b>С какого языка начинается запись?</b>', 'Сначала RU, потом KZ', 'Сначала KZ, потом RU', 'K', 'Отмена');
-            if (!how) return;
-            let r = await pywebview.api.tts_raw_vars(null, how === 'ok' ? 'ru_first' : 'kz_first');
-            if (!r || r.error === 'cancel') return;
-            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
-            ttsShowBusy('Режу запись на чанки…', 0);
-        }
-        async function ttsRawDone(p) {
-            tts = p.state; ttsRender(); ttsLoadPrompt();
-            let diff = p.chunks - p.expected;
-            await showBeautifulAlert((diff === 0 ? `✅ <b>Чанков ${p.chunks} — столько же, сколько значений</b>`
-                : `⚠️ <b>Чанков ${p.chunks}, значений ${p.expected}</b>`)
-                + '<br><br>На ленте — просто чанки. Название даю в «Сборке»: следующее по порядку таблицы. Не то — «Другая фраза» (F), '
-                + 'следующие чанки пойдут уже от него. Лишний чанк (кашель, повтор) — «Удалить дубль» (Del).');
-            await ttsRawCtxAsk(true);
-            ttsCutStart();                                  // «Срезка»: первый чанк в «Сборке», Enter — сохранить и дальше
-        }
-        // Готовые чанки из папки: на ленту по порядку имён файлов
-        async function ttsRawFolder() {
-            let how = await showBeautifulChoice('<b>Готовые чанки</b><br><br>С какого языка начинается порядок чанков?', 'Сначала RU, потом KZ', 'Сначала KZ, потом RU', 'K', 'Отмена');
-            if (!how) return;
-            let r = await pywebview.api.tts_raw_folder(how === 'ok' ? 'ru_first' : 'kz_first', null);
-            if (!r || r.error === 'cancel') return;
-            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
-            ttsRawDone({ state: r.state, chunks: r.chunks, expected: r.expected });
-        }
-        // чанк без названия открыли в «Сборке» — сначала даём название по порядку
-        let ttsRawBinding = false;
-        async function ttsRawBindCur() {
-            let t = ttsCurTake();
-            if (!t || ttsRawBinding) return;
-            ttsRawBinding = true;
-            try { tts = await pywebview.api.tts_raw_bind(t.i); } finally { ttsRawBinding = false; }
-            ttsRenderRail(); ttsRenderCurrent(); ttsRenderAssembly(true);
-        }
-        // «Фразы_Переменные»: начало и конец для RU и для KZ (файлы из папки ru / kz)
-        async function ttsRawCtxAsk(first) {
-            let t = ttsCurTake(), u = t && ttsUnit(t.unit), sheet = u && u.sheet;
-            if (!sheet) { let k = tts.takes.find(x => x.seq != null && x.unit != null); sheet = k ? ttsUnit(k.unit).sheet : Object.keys(tts.var_sheets || {})[0]; }
-            if (!sheet) return;
-            let names = { ru: 'русский', kz: 'казахский' };
-            for (let lang of ['ru', 'kz']) {
-                for (let which of ['start', 'end']) {
-                    let w = which === 'start' ? 'начало' : 'конец';
-                    let go = await showBeautifulChoice(`<b>${w[0].toUpperCase() + w.slice(1)} фразы · ${lang.toUpperCase()}</b><br><br>Файл из «Фразы_Переменные/${lang}» (${names[lang]}) — `
-                        + (which === 'start' ? 'то, что звучит перед значением.' : 'то, что звучит после значения. Если конца нет — пропустите.'), 'Выбрать файл', 'Пропустить', 'N', 'Отмена');
-                    if (!go) return;
-                    if (go === 'ok') {
-                        let r = await pywebview.api.tts_var_ctx_pick(which, sheet, lang);
-                        if (r && r.error && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error));
-                    }
-                }
-            }
-            await pywebview.api.tts_var_ctx_asked(sheet);
-            if (!first) { ttsTR = null; let c = ttsCurTake(); if (c) ttsTiersLoad(c.i); }
-        }
-        const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${String(t.chunk).padStart(4, '0')}</b>${t.src_name ? ` · ${escapeHtml(t.src_name)}` : ''} → <b>${escapeHtml(ttsUnit(t.unit).name)}</b>${t.lang ? ` <em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em>` : ''} · значение ${t.seq + 1} из ${tts.raw_total}</span>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsOpenUnits('assign')" title="Название не то — выбрать другое значение; следующие чанки пойдут от него">другое название <kbd>F</kbd></button>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSplit()" title="В чанке две переменные — разрезать на два: по самой длинной паузе, или там, где курсор / начало выделения на волне ниже">две переменные — разрезать &#9986;</button>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawMerge()" title="Одна переменная разрезалась на два чанка — склеить этот чанк со следующим (вместе с паузой между ними)">склеить со следующим &#43;</button></div>`;
-        async function ttsRawMerge() {
-            let t = ttsCurTake();
-            if (!t) return;
-            await ttsStopPlay();
-            let r = await pywebview.api.tts_raw_merge(t.i);
-            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-            tts = r; ttsEd = null; ttsTR = null;
-            ttsRender(); ttsRenderRail(); ttsShowAssembly(true);
-            let u = ttsUnit(tts.takes[t.i].unit);
-            showToast(`Склеено со следующим чанком — «${u ? escapeHtml(u.name) : '—'}»; названия дальше сдвинулись назад`, 3500);
-        }
-        async function ttsRawSplit() {
-            let t = ttsCurTake();
-            if (!t) return;
-            let at = null, rng = ttsEdSelRange();                  // выделение — режем в его начале; курсор — по нему
-            if (rng) at = rng[0];
-            else if (ttsEd && ttsEd.i === t.i && ttsEd.cur && ttsEd.cur.t != null) at = Math.round(ttsEd.cur.t - tlBase());
-            await ttsStopPlay();
-            let r = await pywebview.api.tts_raw_split(t.i, at);
-            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-            tts = r; ttsEd = null; ttsTR = null;
-            ttsRender(); ttsRenderRail(); ttsShowAssembly(true);
-            let nx = tts.takes[t.i + 1], nu = nx && ttsUnit(nx.unit);
-            showToast(`Разрезано на ${(r.at / 1000).toFixed(2)} с: первый — «${escapeHtml(ttsUnit(tts.takes[t.i].unit).name)}», второй — «${nu ? escapeHtml(nu.name) : '—'}» (следующий чанк)`, 4000);
-        }
-        async function ttsRawSkip() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_skip(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); showToast('Названия сдвинуты вперёд — с этого чанка'); }
-        async function ttsRawDrop() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_drop(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsCutNext(Math.max(-1, t.i - 1)); showToast('Чанк убран, названия сдвинуты назад · Ctrl+Z — вернуть', 3000); }
 
         async function ttsLoadRecording() {
             let res = await pywebview.api.tts_pick_recording();
@@ -7278,8 +6716,6 @@ let isProcessing = false;
                 ttsRecStopped(p.state, p.error);
             } else if (p.stage === 'live_error') {
                 showToast(p.error);
-            } else if (p.stage === 'raw_done') {
-                ttsRawDone(p);
             } else if (p.stage === 'done') {
                 tts = p.state;
                 ttsRender();
@@ -7299,13 +6735,11 @@ let isProcessing = false;
             document.getElementById('ttsLang').style.display = tts.loaded ? '' : 'none';
             ttsLangShow(ttsLangNow || tts.lang);
             ttsRenderStats();
-            { let rb = document.getElementById('ttsRawBtn'); if (rb) rb.style.display = Object.keys(tts.var_sheets || {}).length ? '' : 'none'; }
             let cats = Object.values(tts.var_sheets || {}).map(v => v.label).join(', ');
             document.getElementById('ttsVarDesc').innerText = cats ? `Фразы с переменными · ${cats}` : 'Фразы с переменными';
             ttsRenderRail();
             ttsRenderCurrent();
             ttsRenderAssembly();
-            ttsCutChipUpdate();
             ttsShowMarksPending(tts.marks_pending);
             // Audacity встроен — текущий дубль сам уезжает туда.
             let cur = ttsCurTake();
@@ -7342,7 +6776,7 @@ let isProcessing = false;
                         data-i="${t.i}" onclick="ttsRailClick(${t.i})" draggable="true"
                         ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
-                    <span class="tts-take__name">${t.raw_chunk && !t.approved ? (t.src_name ? escapeHtml(t.src_name.replace(/\.[^.]+$/, '')) : 'чанк') : t.name ? escapeHtml(t.name) : '—'}</span>
+                    <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
                     <span class="tts-take__meta">${t.ready ? 'готовый' : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
             // Готовые фразы с переменными, которых нет на ленте, — добавить для правки.
@@ -7418,11 +6852,6 @@ let isProcessing = false;
             let el = document.getElementById('ttsAssembly');
             let t = ttsCurTake();
             let u = t ? ttsUnit(t.unit) : null;
-            if (!u && t && t.raw_chunk) {                  // чанк без названия — название даём сейчас, по порядку таблицы
-                el.innerHTML = '<div class="tts-assembly__title">Сборка</div><div class="tts-dim">Подбираю название…</div>';
-                if (document.getElementById('stage4-tts').classList.contains('show-assembly')) ttsRawBindCur();
-                return;
-            }
             if (!u) { el.innerHTML = '<div class="tts-assembly__title">Сборка</div><div class="tts-dim">Выберите дубль на ленте</div>'; return; }
             let chain = u.chain !== null && u.chain !== undefined ? (tts.chains || [])[u.chain] : null;
             let block = p => `<div class="tts-block ${p.id === u.id ? 'is-current' : ''} ${p.saved ? 'is-saved' : ''}"
@@ -7452,14 +6881,13 @@ let isProcessing = false;
             if (el.dataset.key === key && el.firstElementChild) return;
             el.dataset.key = key;
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
-                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : t.bil ? 'значение · RU + KZ' : 'обычная фраза'}</span>
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : 'обычная фраза'}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     ${ttsTierBackHere(t) ? `<button class="tts-asm-close tts-asm-back" onclick="ttsTierReturn()" title="Вернуться к строке переменных, из которой открыли эту фразу (Esc). Сохранили фразу (Enter) — вернётся само">&larr; К строке ${escapeHtml(ttsTierBack.name)} <kbd>Esc</kbd></button>`
                       : `<button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button>`}</div>
                 <div class="tts-blocks">${blocks}</div>
-                ${t.seq != null ? ttsRawBarHTML(t) : ''}
-                ${u.tiers || t.bil ? '<div class="tts-tiers" id="ttsTiers"></div>' : ''}
+                ${u.tiers ? '<div class="tts-tiers" id="ttsTiers"></div>' : ''}
                 <div class="tts-tsyn" id="ttsTsyn" style="display:none"></div>
                 ${t.reuse ? `<div class="tts-asm-heard tts-asm-reuse">Собрано из записанного: ${(t.reuse.srcs || [t.reuse.src]).map(n => '«' + escapeHtml(n) + '»').join(', ')}${t.reuse.rec ? ` + ${t.reuse.rec === 1 ? 'новый кусок' : 'новые куски'} из этой записи` : ''}. Куски — в Audacity отдельными клипами: склейте там и нажмите «Сохранить из Audacity».
                     <button type="button" class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsSendToAudacity()">Фрагменты → Audacity</button>
@@ -7497,7 +6925,7 @@ let isProcessing = false;
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>`;
             ttsEditorLoad();
-            if (u.tiers || t.bil) ttsTiersLoad(t.i);
+            if (u.tiers) ttsTiersLoad(t.i);
             if (ttsTS && ttsTS.i === t.i) ttsTsynRender(); else ttsTS = null;
         }
 
@@ -7526,8 +6954,8 @@ let isProcessing = false;
         // «Два языка» — своя сборка на язык: начало + RU (или KZ) + продолжение.
         const ttsTierLangs = () => ttsTR && ttsTR.bil ? [...new Set(ttsTR.tiers.map(t => t.lang).filter(Boolean))] : [null];
         function ttsTiersLayout(lang) {
-            let r = ttsTR, x = 0, out = [], cx = (lang && r.ctx_by_lang && r.ctx_by_lang[lang]) || r.ctx;     // «два языка» — своя пара начала и конца
-            if (cx.start) { out.push({ ctx: 'start', x, w: cx.start.len, peaks: cx.start.peaks, name: cx.start.name, path: cx.start.path }); x += cx.start.len; }
+            let r = ttsTR, x = 0, out = [];
+            if (r.ctx.start) { out.push({ ctx: 'start', x, w: r.ctx.start.len, peaks: r.ctx.start.peaks, name: r.ctx.start.name, path: r.ctx.start.path }); x += r.ctx.start.len; }
             r.tiers.filter(t => !lang || t.lang === lang).forEach(t => {
                 let fixed = t.exists && !t.write && t.file_len;
                 let pre = fixed ? 0 : t.pre;
@@ -7536,7 +6964,7 @@ let isProcessing = false;
                 out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, post, t });
                 x += pre + w + post;
             });
-            if (cx.end) { out.push({ ctx: 'end', x, w: cx.end.len, peaks: cx.end.peaks, name: cx.end.name, path: cx.end.path }); x += cx.end.len; }
+            if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name, path: r.ctx.end.path }); x += r.ctx.end.len; }
             return { clips: out, total: x };
         }
         function ttsDrawPeaks(cv, peaks) {
@@ -7586,14 +7014,13 @@ let isProcessing = false;
                       : x.shared && !x.mine ? `<label class="tts-tiers__exists" title="Логика 2 сохраняет только сотни тысяч. Этот ярус записывается в логике 1">
                         <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> из логики 1 · сохранить и здесь</label>`
                       : x.mine ? '<span class="tts-tiers__ok">сохранён ✓</span>' : ''}</div>`).join('');
-            let tp = r.tpl, o = r.opts || {}, hasCtx = !!(r.ctx.start || r.ctx.end || Object.values(r.ctx_by_lang || {}).some(c => c.start || c.end));
+            let tp = r.tpl, o = r.opts || {}, hasCtx = !!(r.ctx.start || r.ctx.end);
             el.innerHTML = `<div class="tts-tiers__title">Ярусы
                     ${r.bil ? langs.map(lg_ => `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1, '${lg_}')" title="Начало + ${lg_.toUpperCase()} + продолжение. Клик по дорожке — играть с этого места">&#9654; ${lg_.toUpperCase()}</button>`).join('')
                       : `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1)" title="С секунды до первого яруса и до конца. Клик по дорожке «Сборка» — играть с этого места">&#9654; Вся сумма</button>`}
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierStop()" title="Остановить">&#9632;</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierJoinPlay()" title="Стык: конец начала фразы + строка + начало продолжения (по ${TTS_JOIN_MS / 1000} с)">&#9654; Стык</button>
                     ${ttsJoinHTML(r.tiers, 'ttsTierJoin')}
-                    ${r.bil ? `<button type="button" class="tts-reuse-chip ${hasCtx ? 'is-on' : ''}" onclick="ttsRawCtxAsk()" title="Начало и конец фразы для RU и KZ — из папки «Фразы_Переменные»">начало и конец RU / KZ ✎</button>` : ''}
                     ${r.bil_ok ? `<button type="button" class="tts-reuse-chip ${r.bil ? 'is-on' : ''}" onclick="ttsTakeBil(${!r.bil})"
                         title="${r.bil ? 'Две границы: RU и KZ — каждый сохранится в свою папку (…/ru/ и …/kz/). Нажмите — одна запись, один файл' : 'В записи два языка подряд: появятся две границы — RU и KZ, выставите их сами'}">два языка${r.bil ? ' ✓' : ''}</button>` : ''}
                     ${hasCtx ? `<button type="button" class="tts-reuse-chip ${o.noise ? 'is-on' : ''}" onclick="ttsTierOpt('noise', ${!o.noise})" title="Пауза перед ярусом и фон под голосом — шумом комнаты из начала фразы">фон как во фразе${o.noise ? ' ✓' : ''}</button>
@@ -7707,7 +7134,7 @@ let isProcessing = false;
 
         function ttsTierPhraseHTML(r) {
             let ph = r.phrase;
-            if (!ph) return r.bil ? '' : '<div class="tts-tiers__phrase tts-dim">Эта переменная не стоит ни в одной фразе таблицы</div>';
+            if (!ph) return '<div class="tts-tiers__phrase tts-dim">Эта переменная не стоит ни в одной фразе таблицы</div>';
             let knobs = (which, snd, take) => snd ? `<span class="tts-tiers__knob" title="Громкость фразы (её дубль пересохранится)">дБ
                     <button type="button" onclick="ttsTierCtxSound('${which}', 'gain', -1)">&minus;</button><b>${snd[0] > 0 ? '+' : ''}${snd[0]}</b><button type="button" onclick="ttsTierCtxSound('${which}', 'gain', 1)">+</button></span>
                   <span class="tts-tiers__knob" title="Темп фразы">темп
@@ -8625,8 +8052,7 @@ let isProcessing = false;
         }
         function ttsEdBilBtns() {
             let bil = !!(ttsTR && ttsTR.bil && ttsEd && ttsTR.i === ttsEd.i);
-            let have = bil ? new Set(ttsTR.tiers.map(x => x.lang)) : new Set();          // у чанка одного языка — только своя кнопка
-            document.querySelectorAll('#ttsAssembly .tts-ed-bil').forEach(b => { b.style.display = bil && have.has(b.dataset.lang) ? '' : 'none'; b.disabled = !(ttsEd && ttsEd.sel); });
+            document.querySelectorAll('#ttsAssembly .tts-ed-bil').forEach(b => { b.style.display = bil ? '' : 'none'; b.disabled = !(ttsEd && ttsEd.sel); });
         }
         // «Два языка»: выделенное в редакторе — кусок RU или KZ.
         function ttsEdBilSet(lang) {
@@ -8680,9 +8106,7 @@ let isProcessing = false;
                     } else ttsShowAssembly(false);
                 }
                 else if (ttsTierBackHere(t) && !ttsRec.on) await ttsTierReturn(`Фраза сохранена — обратно к строке ${ttsTierBack.name}`);
-                else if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i);
                 else if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
-                ttsCutChipUpdate();
             } finally { ttsApproving = false; }
         }
 
@@ -8764,7 +8188,6 @@ let isProcessing = false;
             ttsRender();
             ttsLoadPrompt();
             showToast(`Удалён: ${res.deleted} — Ctrl+Z вернёт`);
-            if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i - 1);
         }
         async function ttsUndoDelete() {
             await ttsStopPlay();
@@ -9406,7 +8829,7 @@ let isProcessing = false;
                 tts = res.state; ttsRender();
                 showToast(res.restored);
             }
-            await pywebview.api.tts_live_fast(ttsFastOn() || ttsFlowActive());
+            await pywebview.api.tts_live_fast(ttsFastOn());
             ttsFastRender();
             ttsLiveSt.micOff = document.getElementById('stage4-tts').classList.contains('show-assembly');
             if (ttsLiveSt.micOff) pywebview.api.tts_live_mic(false);
@@ -9697,7 +9120,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -9747,7 +9170,6 @@ let isProcessing = false;
             }
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);
-            modes += ttsFlowHTML();
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
                 : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
@@ -9804,15 +9226,6 @@ let isProcessing = false;
             ttsLoadPrompt();
             if (error) { showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error)); return; }
             showToast('Запись сохранена в папку «Записи»');
-            let cut = ttsCutList().length;
-            if (ttsFlowActive() && cut) {
-                // Поток: прочитали — теперь спокойно срезаем, строка за строкой.
-                showBeautifulAlert(`✂️ <b>Записано строк: ${cut}</b><br><br>Теперь срезка: каждая строка откроется в «Сборке»,
-                    поправьте границы ярусов и нажмите <b>Enter</b> — сохранится и откроется следующая. Esc — прервать,
-                    продолжить потом — «✂ Срезка» в суфлёре.<br><br>
-                    <button type="button" class="custom-alert-btn" onclick="closeCustomAlert(); ttsCutStart()">Начать срезку</button>`);
-                return;
-            }
             ttsShowRedo(true);
         }
 
@@ -10089,68 +9502,8 @@ let isProcessing = false;
             ttsAutoAsmRender();
             showToast(on ? 'Записали фразу — сразу открою «Сборку» для проверки' : 'Сборка — только по кнопке');
         }
-        // ----- «Поток»: суммы/даты читаются подряд, без «Сборки» и ожидания распознавания;
-        // срезка потом — «✂ Срезка N»: строка за строкой в обычной «Сборке», Enter — сохранить и дальше. -----
-        function ttsFlowOn() {
-            try { return localStorage.getItem('gvox_tts_flow') !== '0'; } catch (e) { return true; }
-        }
-        const ttsValueMode = () => !!tts && (tts.prompt_mode || 'phrases') !== 'phrases';
-        const ttsFlowActive = () => ttsFlowOn() && ttsValueMode();
-        async function ttsFlowToggle() {
-            let on = !ttsFlowOn();
-            try { localStorage.setItem('gvox_tts_flow', on ? '1' : '0'); } catch (e) {}
-            if (ttsRec.on) await pywebview.api.tts_live_fast(ttsFastOn() || ttsFlowActive());
-            ttsPromptKey = null; ttsLoadPrompt();
-            showToast(on ? 'Поток: читайте строки подряд — «Сборка» не откроется. Срезка потом: «✂ Срезка»'
-                         : 'Поток выключен: после каждой строки — «Сборка»', 4500);
-        }
-        // Дубли строк сумм/дат, ещё не сохранённые эталонами, — по порядку записи.
-        function ttsCutList() {
-            if (!tts) return [];
-            return tts.takes.filter(t => !t.approved && !t.rejected && (t.raw_chunk
-                || t.unit !== null && tts.units[t.unit] && (tts.units[t.unit].tiers || t.bil))).map(t => t.i);
-        }
-        function ttsFlowHTML() {
-            if (!ttsValueMode()) return '';
-            let n = ttsCutList().length;
-            return ` <button type="button" class="tts-reuse-chip ${ttsFlowOn() ? 'is-on' : ''}" onclick="ttsFlowToggle()"
-                    title="${ttsFlowOn() ? 'Включено: читаете строки подряд, суфлёр сразу дальше, «Сборка» не открывается. Клик — выключить' : 'Включить: читать строки подряд без «Сборки», срезать потом'}">&#9654;&#9654; поток${ttsFlowOn() ? ' ✓' : ''}</button>`
-                + `<button type="button" class="tts-reuse-chip ${n ? 'is-on tts-cut-chip' : ''}" id="ttsCutChip" onclick="ttsCutStart()" ${n ? '' : 'disabled'}
-                    title="Срезать записанные строки по очереди: «Сборка» → границы ярусов → Enter сохраняет и открывает следующую. Esc — прервать">&#9986; Срезка ${n}</button>`;
-        }
-        function ttsCutChipUpdate() {
-            let b = document.getElementById('ttsCutChip');
-            if (!b) return;
-            let n = ttsCutList().length;
-            b.innerHTML = `&#9986; Срезка ${n}`;
-            b.disabled = !n;
-            b.classList.toggle('is-on', !!n); b.classList.toggle('tts-cut-chip', !!n);
-        }
-        let ttsCutMode = false;
-        async function ttsCutStart() {
-            if (ttsRec.on) { showToast('Сначала остановите запись (R) — срезка после чтения'); return; }
-            ttsCutMode = true;
-            ttsCutNext(-1);
-        }
-        function ttsCutNext(after) {
-            let list = ttsCutList();
-            if (!ttsCutMode) return;
-            if (!list.length) {
-                ttsCutMode = false;
-                ttsShowAssembly(false);
-                showToast('Срезка закончена — все записанные строки сохранены', 4000);
-                ttsLoadPrompt();
-                return;
-            }
-            let k = list.find(i => i > after);
-            tts.index = k === undefined ? list[0] : k;
-            ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); ttsTogglePlay();
-            showToast(`Срезка: осталось строк ${list.length} · Enter — сохранить и дальше, Del — удалить`, 2500);
-        }
-
         function ttsAutoAsm(added) {
             if (!(added > 0) || !ttsRec.on || !ttsAutoAsmOn() || !tts || !tts.takes.length) return;
-            if (ttsFlowActive()) { ttsCutChipUpdate(); return; }      // поток: срезка потом
             if (ttsPttDown) { ttsAutoAsmPending = added; return; }     // сейчас пишут — откроем, когда отпустят
             let fresh = tts.takes.slice(-added).map(t => t.file);
             if (document.getElementById('stage4-tts').classList.contains('show-assembly') && ttsAsmAuto) {
@@ -10292,12 +9645,6 @@ let isProcessing = false;
             tts = r.state; ttsRender(); ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
         }
-        async function ttsSumsOpen() {
-            let pr = await pywebview.api.tts_prompt_info();
-            if (!pr || !pr.sum_folder) return;
-            if (ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
-            startPremadeSumMode(pr.sum_folder);
-        }
 
         // Что читать: фразы таблицы или значения листа переменных по порядку строк.
         async function ttsPromptModeSet(mode) {
@@ -10307,6 +9654,7 @@ let isProcessing = false;
             ttsRender();
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+            if (mode !== 'phrases') ttsVarCtxMaybeAsk();
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
                 : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Значения/sum_…»'
                 : 'Читаем строки таблицы — Enter в «Сборке» сохранит каждое значение эталоном в «Значения»', 5000);
@@ -10438,7 +9786,7 @@ let isProcessing = false;
                 let t = ttsCurTake();                   // «из записанного» — куски сразу в Audacity
                 if (t && t.reuse && ttsAudacitySent !== t.i) ttsSendToAudacity(true);
             }
-            else { ttsAsmAuto = false; ttsAsmQueue = []; ttsCutMode = false; }
+            else { ttsAsmAuto = false; ttsAsmQueue = []; }
             // Сборка открыта — микрофон выключен: не шумит при прослушивании.
             if (ttsRec.on && ttsLiveSt.micOff !== open) {
                 ttsLiveSt.micOff = open;

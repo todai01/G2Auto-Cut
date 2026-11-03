@@ -21,15 +21,11 @@
 Браузер и страница живут в одном отдельном потоке (так требует Playwright),
 запросы к сервису идут строго по очереди."""
 
-import collections
 import os
 import struct
 import shutil
-import subprocess
 import tempfile
 import threading
-import wave
-import time
 
 import webview
 from pydub import AudioSegment
@@ -38,9 +34,7 @@ from pydub.silence import detect_leading_silence
 from core.num_words import kz_words, ru_words
 from utils.audio_player import _read_audio, resample
 from utils.wav_io import _write_wav, wav_kind, wav_layout, wav_slice
-from core.synth_browser import (SYNTH_URL, SYNTH_SEL, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX,   # noqa: F401 — и для старых импортов
-                                 SYNTH_PRESET_VOICES, SYNTH_LANGS, SYNTH_TIMEOUT_S, _JS_ARM, _JS_FETCH_B64, _JS_RESULT,
-                                 _SynthWorker, _write_pcm16, clean_wav, preset_pick, synth_collect)
+from core.synth_browser import SYNTH_SEL, SYNTH_LANG_INDEX, _SynthWorker, _write_pcm16, clean_wav, synth_collect
 
 SYNTH_DIR = 'Синтез_суммы'          # + _RU / _KZ: у каждого языка своя папка (режим «Суммы» — по одному языку)
 SYNTH_VARIANTS = '_варианты'

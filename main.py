@@ -1,12 +1,10 @@
 import os
-import subprocess
 import sys
 
 # Первым: на Windows служебные консольные программы — без мигающих окон.
-from utils.app_boot import APP_DIR, resource_path, _startup, _unblock_downloaded, _ffmpeg_on_path, _selftest  # noqa: E402,F401
+from utils.app_boot import resource_path, _startup, _unblock_downloaded, _selftest
 
 
-import time
 import webview
 from pydub import AudioSegment
 
@@ -35,7 +33,6 @@ from core import project_state
 from utils.audacity_client import AudacityClient
 from utils.audio_player import AudioPlayer
 from utils.file_utils import FileUtils
-from utils.ffmpeg_setup import ensure_ffmpeg
 
 # Папка, где реально лежит main.py — а не «текущая рабочая папка» (cwd),
 # которая зависит от того, откуда программу запустили.
