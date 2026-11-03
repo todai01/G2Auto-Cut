@@ -5256,10 +5256,10 @@ let isProcessing = false;
             // по столбцам: строк → файлов; повторы и пустые — почему файлов меньше строк
             let lack = (s.report || []).reduce((n, r) => n + Math.max(0, r.files - r.have), 0);
             document.getElementById('bsynthReport').innerHTML = (s.report || []).map(r => {
-                let why = [r.repeat_n ? `повторов ${r.repeat_n}` : '', r.empty ? `пустых ячеек ${r.empty}` : ''].filter(Boolean).join(', ');
+                let why = [r.repeat_n ? `повторов ${r.repeat_n} — копии в папке повторов` : '', r.empty ? `пустых ячеек ${r.empty}` : ''].filter(Boolean).join(', ');
                 return `<details class="bsynth-col"><summary><b>${escapeHtml(r.col)}</b> — строк ${r.rows} → файлов ${r.files}`
                     + `${why ? ` <span class="tts-dim">(${why})</span>` : ''} · в папке ${r.have}${r.have < r.files ? ` <span class="clone-bad">· не хватает ${r.files - r.have}</span>` : ''}</summary>`
-                    + (r.repeats.length ? `<div class="bsynth-reps">Одно значение — один файл: ${r.repeats.map(x => `<span>${escapeHtml(x.value)} <i>строки ${x.rows.join(', ')}</i></span>`).join('')}</div>` : '<div class="bsynth-reps tts-dim">Повторов нет</div>')
+                    + (r.repeats.length ? `<div class="bsynth-reps">Повторы — копией в ${r.dup_dirs.map(d => '«' + escapeHtml(d) + '»').join(', ')}: ${r.repeats.map(x => `<span>${escapeHtml(x.value)} <i>строки ${x.rows.join(', ')}</i></span>`).join('')}</div>` : '<div class="bsynth-reps tts-dim">Повторов нет</div>')
                     + `</details>`;
             }).join('');
             if (!s.run && !s.left && lack) document.getElementById('bsynthEta').innerText = `не хватает файлов: ${lack}`;

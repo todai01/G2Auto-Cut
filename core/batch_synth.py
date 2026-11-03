@@ -27,6 +27,7 @@ BSYNTH_LANG = 2                         # #preset-lang > option:nth-child(3) —
 BSYNTH_DELAY_S = 4                      # пауза между запросами
 BSYNTH_RETRY_S = (10, 30)               # ошибка — повтор через столько секунд
 BSYNTH_FAIL_STOP = 3                    # подряд не вышло — пауза очереди
+BSYNTH_DUP_DIR = '_повторы'             # «surname_повторы/YILMAZ.wav» — второй раз; третий — «surname_повторы_2/…»
 
 
 def tr_title(text, turkish=True):
@@ -97,6 +98,26 @@ class BatchSynthMixin:
     def _bs_col_dir(col):
         return clean_name(re.sub(r'[<>]', '', col)) or 'столбец'
 
+    def _bs_dup_file(self, col, value, k):
+        """Повтор значения (k = 2, 3, …) — копия того же файла в свою папку, имя без цифр."""
+        bs = self._bs()
+        d = self._bs_col_dir(col) + BSYNTH_DUP_DIR + (f"_{k - 1}" if k > 2 else '')
+        return os.path.join(bs["out_dir"], d, f"{clean_name(value) or 'пусто'}.wav")
+
+    def _bs_copy_dups(self):
+        """Повторы — копии готовых файлов (без нового синтеза). Работает и для уже синтезированных папок."""
+        import shutil
+        n = 0
+        for d in self._bs().get("dups") or []:
+            if os.path.exists(d["src"]) and not os.path.exists(d["dst"]):
+                try:
+                    os.makedirs(os.path.dirname(d["dst"]), exist_ok=True)
+                    shutil.copy2(d["src"], d["dst"])
+                    n += 1
+                except OSError:
+                    pass
+        return n
+
     def _bs_file(self, col, value):
         bs = self._bs()
         return os.path.join(bs["out_dir"], self._bs_col_dir(col), f"{clean_name(value) or 'пусто'}.wav")
@@ -111,7 +132,7 @@ class BatchSynthMixin:
             return {"error": "Сначала выберите таблицу."}
         a = max(1, int(start_row or 1)) - 1
         n = len(bs["rows"]) - a if not count else max(1, int(count))
-        items, seen = [], {}
+        items, seen, dups, times = [], {}, [], {}
         rep = {col: {"col": col, "rows": 0, "empty": 0, "repeats": {}} for col in bs["cols"]}
         for r in range(a, min(len(bs["rows"]), a + n)):
             for c, col in enumerate(bs["cols"]):
@@ -125,13 +146,16 @@ class BatchSynthMixin:
                 if key in seen:                            # то же значение в столбце — один файл
                     first = seen[key]
                     rep[col]["repeats"].setdefault(first["value"], [first["row"]]).append(r + 1)
+                    times[key] = times.get(key, 1) + 1
+                    dups.append({"col": col, "src": first["file"], "dst": self._bs_dup_file(col, first["value"], times[key])})
                     continue
                 items.append({"row": r + 1, "col": col, "value": v, "file": f, "text": tr_title(v, int(lang) == BSYNTH_LANG),
                               "status": "done" if os.path.exists(f) else "wait", "error": ''})
                 seen[key] = items[-1]
         if not items:
             return {"error": "В выбранных строках нет значений."}
-        bs["report"] = list(rep.values())
+        bs["report"], bs["dups"] = list(rep.values()), dups
+        self._bs_copy_dups()                               # уже синтезированные — повторы сразу
         bs.update(items=items, pos=0, run=True, pause=False, stop=False, msg='', started=time.time(), spent=0.0,
                   n_synth=0, delay=max(1.0, float(delay_s or BSYNTH_DELAY_S)), voice=int(voice), lang=int(lang))
         threading.Thread(target=self._bs_loop, daemon=True).start()
@@ -198,7 +222,10 @@ class BatchSynthMixin:
             mine = [it for it in bs["items"] if it["col"] == r["col"]]
             have = sum(1 for it in mine if os.path.exists(it["file"]))
             reps = sorted(r["repeats"].items(), key=lambda kv: -len(kv[1]))
-            out.append({"col": r["col"], "rows": r["rows"], "empty": r["empty"], "files": len(mine), "have": have,
+            dd = [d for d in bs.get("dups") or [] if d["col"] == r["col"]]
+            dhave = sum(1 for d in dd if os.path.exists(d["dst"]))
+            out.append({"col": r["col"], "rows": r["rows"], "empty": r["empty"], "files": len(mine) + len(dd), "have": have + dhave,
+                        "dup_dirs": sorted({os.path.basename(os.path.dirname(d["dst"])) for d in dd}),
                         "repeat_n": sum(len(v) - 1 for _k, v in reps),
                         "repeats": [{"value": k, "rows": v} for k, v in reps[:40]]})
         return out
@@ -258,6 +285,8 @@ class BatchSynthMixin:
                     it["status"] = "wait"
                     break
                 it["status"] = "ok" if ok else "error"
+                if ok:
+                    self._bs_copy_dups()
                 bs["msg"] = ''
                 fails = 0 if ok else fails + 1
                 if fails >= BSYNTH_FAIL_STOP:
@@ -268,6 +297,7 @@ class BatchSynthMixin:
                 self._bs_push()
         finally:
             worker._close()
+            self._bs_copy_dups()                           # повторы — копии готовых
             for it in bs["items"]:
                 if it["status"] == "busy":
                     it["status"] = "wait"
