@@ -5236,10 +5236,27 @@ let isProcessing = false;
             });
         }
 
+        // Любая необработанная ошибка (в том числе из Python) — на экран, а не молча.
+        window.addEventListener('unhandledrejection', e => {
+            let m = String(e.reason && (e.reason.message || e.reason) || 'неизвестная ошибка');
+            if (typeof showToast === 'function') showToast('Ошибка: ' + m.slice(0, 220));
+        });
+
+        // Нет метода в Python — значит, рядом лежит старая версия файлов (main.py, core/tts_values.py).
+        function ttsApiMissing(name) {
+            if (typeof pywebview !== 'undefined' && pywebview.api && typeof pywebview.api[name] === 'function') return false;
+            showBeautifulAlert('⚠️ <b>Не хватает файлов программы</b><br><br>В Python нет функции <code>' + name + '</code>. '
+                + 'Положите рядом обновлённые <b>main.py</b> и <b>core/tts_values.py</b> (папка core) и перезапустите программу.');
+            return true;
+        }
+
         // --- ветка 1: сырой WAV → нарезка по паузам ---
         let ttsvc = null, ttsvcTimer = null;
         async function ttsValsRawFlow() {
-            let r = await pywebview.api.tts_vals_pick_raw();
+            if (ttsApiMissing('tts_vals_pick_raw')) return;
+            let r;
+            try { r = await pywebview.api.tts_vals_pick_raw(); }
+            catch (e) { showBeautifulAlert('⚠️ Не удалось открыть файл: ' + escapeHtml(String(e && e.message || e))); return; }
             if (!r || r.error === 'cancel') return;
             if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             if (r.message) showToast(r.message);
@@ -5290,6 +5307,7 @@ let isProcessing = false;
         // --- ветка 3: синтез по референсу ---
         let ttsvs = null;
         async function ttsValsSynthOpen() {
+            if (ttsApiMissing('tts_vals_synth_state')) return;
             if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
             ttsvs = await pywebview.api.tts_vals_synth_state();
             document.getElementById('ttsValsSynthOverlay').style.display = 'flex';
@@ -7366,6 +7384,7 @@ let isProcessing = false;
             let box = document.getElementById('ttsMarks');
             if (!box) return;
             if (!pr || pr.done || !pr.current) { box.innerHTML = ''; return; }
+            if (pr.current.every(p => p.kind === 'value')) { box.innerHTML = ''; return; }   // у значений переменных ролей нет
             let vars = pr.var_cols || [];
             let last = pr.current.length - 1;
             box.innerHTML = pr.current.map((p, k) => `

@@ -932,6 +932,7 @@ class TtsLiveMixin:
 
         def show(ids):
             return [{"id": i, "name": units[i]["name"], "text": units[i]["text"], "role": units[i]["role"],
+                     "kind": units[i]["kind"],
                      "vars": units[i].get("vars", []),
                      "var_before": units[i].get("var_before") if k == 0 else None,
                      "var_after": units[i].get("var_after")} for k, i in enumerate(ids)]
