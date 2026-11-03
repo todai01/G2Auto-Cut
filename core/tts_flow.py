@@ -1710,6 +1710,8 @@ class TtsFlowMixin(EditBasicsMixin):
         stack = self.__dict__.setdefault('_tts_del_stack', [])
         stack.append(rec)
         del stack[:-100]
+        if t.get("raw_chunk"):
+            self._tts_raw_reflow()                         # лишний чанк убрали — названия следующих сдвигаются
         self._tts_save()
         u = st["units"][t["unit"]]["name"] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
         return {**self.tts_state(), "deleted": u or 'дубль', "can_undo": True}
@@ -1807,8 +1809,10 @@ class TtsFlowMixin(EditBasicsMixin):
                     lg = self._tts_cat_lang(st["units"][unit_id].get("cat"))
                     if lg:
                         t["lang"] = lg
+                    t["pinned"] = t["bound"] = True       # выбрали вручную — опора: следующие идут от него
                     for k in ("tier_clips", "tier_len", "tier_write"):
                         t.pop(k, None)
+                    self._tts_raw_reflow()
             t["approved"] = False
             self._tts_save()
         return self.tts_state()
@@ -2566,30 +2570,45 @@ class TtsFlowMixin(EditBasicsMixin):
         self._tts_save()
         return {"chunks": len(takes), "expected": n}
 
+    def _tts_raw_reflow(self):
+        """Названия чанков — динамически. Опора — чанк сохранённый или с названием, выбранным вручную;
+        каждый следующий открытый, но не сохранённый чанк получает следующее значение после опоры
+        (нашли «8» в 10-м чанке — 11-й получает «9», а не своё «11»). Удалённые чанки не считаются."""
+        st = self._tts()
+        seq = st.get("raw_seq") or []
+        if not seq:
+            return
+        pos = -1
+        for t in sorted((x for x in st["takes"] if x.get("raw_chunk") and not x.get("rejected")), key=lambda x: x.get("chunk", 0)):
+            if (t.get("approved") or t.get("pinned")) and t.get("unit") is not None:
+                hit = [k for k, e in enumerate(seq) if e["unit"] == t["unit"] and e["lang"] in (None, t.get("lang"))]
+                if hit:
+                    pos = min([k for k in hit if k > pos] or hit)
+                    t["seq"] = pos
+                    continue
+            pos += 1
+            if not t.get("bound"):
+                continue                                   # ещё не открывали — на ленте просто чанк
+            e = seq[pos] if 0 <= pos < len(seq) else None
+            new = (e["unit"], e["lang"]) if e else (None, None)
+            if (t.get("unit"), t.get("lang")) != new:
+                t["unit"], t["lang"] = new
+                t["status"], t["score"] = ("manual", 1.0) if e else ("none", 0.0)
+                for k in ("tier_clips", "tier_len", "tier_write"):
+                    t.pop(k, None)
+            t["seq"] = pos
+
     def tts_raw_bind(self, i):
-        """Чанк открыли в «Сборке» — даём название: следующее по порядку таблицы после ближайшего названного
-        чанка слева (поправили название — следующие идут уже от него)."""
+        """Чанк открыли в «Сборке» — даём название: следующее по порядку таблицы после опоры слева
+        (сохранённого чанка или чанка с названием, выбранным вручную)."""
         st = self._tts()
         if not (0 <= i < len(st["takes"])):
             return self.tts_state()
         t = st["takes"][i]
-        seq = st.get("raw_seq") or []
-        if t.get("unit") is None and t.get("raw_chunk") and seq:
-            pos = None
-            prev = [x for x in st["takes"] if x.get("raw_chunk") and x.get("unit") is not None and x.get("chunk", 0) < t.get("chunk", 0)]
-            if prev:
-                p = max(prev, key=lambda x: x["chunk"])
-                hit = [k for k, e in enumerate(seq) if e["unit"] == p["unit"] and (e["lang"] in (None, p.get("lang")))]
-                if hit:
-                    between = sum(1 for x in st["takes"] if x.get("raw_chunk") and p["chunk"] < x.get("chunk", 0) < t["chunk"])
-                    pos = hit[0] + 1 + between                 # удалённые чанки (кашель) не считаются
-            if pos is None:
-                pos = sum(1 for x in st["takes"] if x.get("raw_chunk") and x.get("chunk", 0) < t.get("chunk", 0))
-            if 0 <= pos < len(seq):
-                t.update({"unit": seq[pos]["unit"], "lang": seq[pos]["lang"], "seq": pos, "status": "manual", "score": 1.0})
-                for k in ("tier_clips", "tier_len", "tier_write"):
-                    t.pop(k, None)
-                self._tts_save()
+        if t.get("raw_chunk") and not t.get("approved") and not t.get("pinned"):
+            t["bound"] = True
+            self._tts_raw_reflow()
+            self._tts_save()
         return self.tts_state()
 
     def tts_raw_folder(self, mode='ru_first', sheet=None):
