@@ -3371,7 +3371,7 @@ class TtsFlowMixin(EditBasicsMixin):
                     "pre": c.get("pre", 0), "post": c.get("post", 0), "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0),
                     "exists": not self._tts_tier_missing(unit.get("sheet"), path) and path not in mine,
                     "mine": path in mine, "write": bool(write.get(str(k))), "shared": not self._tts_tier_own(unit, x),
-                    "lang": x.get("lang")}
+                    "lang": x.get("lang"), "sheet": unit.get("sheet"), "cat": x.get("cat")}
             if item["exists"] and not item["write"]:      # в сборке — готовый файл, как он есть
                 try:
                     r, ln = self._tts_file_rms(path)
@@ -3888,7 +3888,10 @@ class TtsFlowMixin(EditBasicsMixin):
         else:
             texts.pop(key, None)
         self._tts_save()
-        return {"text": self._tts_value_text(sheet, cat, value)[0]}
+        self.__dict__['_tts_claims_cache'] = {}
+        self._tts_ensure_value_units()                 # тексты строк и значений в Студии обновляются сразу
+        return {"text": self._tts_value_text(sheet, cat, value)[0], "state": self.tts_state(),
+                "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None}
 
     def tts_var_play(self, sheet, cat, value):
         path = self._tts_value_file(sheet, cat, value)

@@ -7502,7 +7502,7 @@ let isProcessing = false;
                    ${c.post ? `<div class="tts-tiers__gap" style="left:${pct(c.x + c.w)};width:${pct(c.post)}">${c.post}</div>` : ''}`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${(x.exists || x.shared) && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
-                    <span class="tts-tiers__lbl">${lg(x)}<b>${escapeHtml(x.text || x.value)}</b></span>
+                    <span class="tts-tiers__lbl" title="Текст значения (как оно читается) — нажмите, чтобы изменить">${lg(x)}<b onclick="ttsTierEditText(${x.k}, this)">${escapeHtml(x.text || x.value)}</b><button type="button" class="tts-tiers__edit" onclick="ttsTierEditText(${x.k}, this.previousElementSibling)" title="Изменить текст значения">&#9998;</button></span>
                     <span class="tts-tiers__txt">${escapeHtml(x.label)} · ${escapeHtml(x.value)}</span>
                     ${x.exists && !x.write ? '' : `<span class="tts-tiers__knob" title="Темп яруса (без смены высоты голоса)">темп
                         <button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', -0.03)">&minus;</button><b>${Math.round(x.tempo * 100)}%</b><button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', 0.03)">+</button></span>
@@ -7705,6 +7705,26 @@ let isProcessing = false;
             ttsTiersRender();
             await ttsTiersSend();
             ttsTierPlay(k);
+        }
+        // Изменить саму фразу значения (текст, как оно читается): «Audi Q4» → «Ауди кью четыре». Enter — сохранить, Esc — отмена.
+        function ttsTierEditText(k, el) {
+            let x = ttsTR && ttsTR.tiers[k];
+            if (!x || el.querySelector && el.querySelector('input')) return;
+            let old = x.text || x.value;
+            el.innerHTML = `<input class="tts-tiers__input" value="${escapeHtml(old)}" onclick="event.stopPropagation()">`;
+            let inp = el.firstElementChild, done = false;
+            inp.focus(); inp.select();
+            let finish = async save => {
+                if (done) return; done = true;
+                let v = inp.value.trim();
+                if (!save || !v || v === old) { el.innerText = old; return; }
+                let r = await pywebview.api.tts_var_set_text(x.sheet, x.cat, x.value, v);
+                if (r && r.state) { tts = r.state; ttsRender(); if (r.prompt) ttsRenderPrompt(r.prompt); }
+                let t = ttsCurTake(); if (t) await ttsTiersLoad(t.i);
+                showToast(`Текст значения «${x.value}»: ${r && r.text || v}`, 2500);
+            };
+            inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); finish(false); } };
+            inp.onblur = () => finish(true);
         }
         // «Два языка» в одной записи: дубль строки — два куска, RU и KZ, границы вручную.
         async function ttsTakeBil(on) {
