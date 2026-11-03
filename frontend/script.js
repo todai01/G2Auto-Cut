@@ -5158,7 +5158,8 @@ let isProcessing = false;
             if (!st || !st.loaded) {
                 let how = await showBeautifulChoice('<b>Запись озвучки</b><br><br>Загрузите таблицу: лист фраз с колонками '
                     + '<code>&lt;phrase&gt;</code>, <code>&lt;name_phrase&gt;</code>, флаги <code>&lt;start&gt;</code> / '
-                    + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных (суммы, даты).<br><br>'
+                    + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных — шапка <code>&lt;ru_var_название&gt;</code> / <code>&lt;kz_var_название&gt;</code> '
+                    + '(язык, потом <code>var</code>, потом название сегмента). Таблица только с переменными тоже подойдёт.<br><br>'
                     + '<b>Продолжить работу</b> — выберите папку прежнего проекта (или папку «Записи» в ней): '
                     + 'подтяну дубли, сохранённое и место, где остановились.',
                     'Выбрать таблицу', 'Продолжить работу', 'P', 'Отмена');
@@ -5175,6 +5176,7 @@ let isProcessing = false;
                 if (!st) return;
             }
             openTtsScreen(st);
+            if (st.vars_only) { await ttsStartVarsOnly(st); return; }
             if (!st.has_takes) {
                 let how = await showBeautifulChoice(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
                     + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>`
@@ -5184,6 +5186,30 @@ let isProcessing = false;
                 if (how === 'ok') ttsToggleRec();
                 else if (how === 'alt') ttsLoadRecording();
             }
+        }
+
+        // В таблице только переменные (<ru_var_…> / <kz_var_…>) — берём их в работу:
+        // сразу открываем список значений; папку проекта просим выбрать один раз.
+        async function ttsStartVarsOnly(st) {
+            let cats = Object.values(st.var_sheets || {}).reduce((a, v) => a + v.categories.length, 0);
+            let vals = Object.values(st.var_sheets || {}).reduce((a, v) => a + v.categories.reduce((b, c) => b + c.count, 0), 0);
+            if (!st.project) {
+                let how = await showBeautifulChoice(`<b>Таблица с переменными</b><br><br>Нашёл переменных: <b>${cats}</b> (значений: <b>${vals}</b>).<br><br>`
+                    + `Выберите папку проекта — туда лягут записанные значения. Если в папке уже была работа, продолжу её.`,
+                    'Выбрать папку', 'Позже', 'P', 'Отмена');
+                if (how === 'ok') {
+                    let res = await pywebview.api.tts_pick_workdir();
+                    if (res && res.error && res.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(res.error));
+                    else if (res && !res.error) {
+                        tts = res; ttsRender();
+                        if (res.message) showToast(res.message);
+                        st = res;
+                    }
+                } else if (how !== 'alt') return;
+            }
+            let first = Object.keys(st.var_sheets || {})[0];
+            if (first) ttsVarsTab = first;
+            await ttsOpenVars();
         }
 
         async function ttsPickExcelFlow() {
@@ -5256,7 +5282,7 @@ let isProcessing = false;
 
         async function ttsLoadExcel() {
             let st = await ttsPickExcelFlow();
-            if (st) { tts = st; ttsRender(); ttsLoadPrompt(); }
+            if (st) { tts = st; ttsRender(); ttsLoadPrompt(); if (st.vars_only) await ttsStartVarsOnly(st); }
         }
 
         async function ttsLoadRecording() {

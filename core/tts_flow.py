@@ -86,8 +86,24 @@ def _lang_of(name):
     return 'ru'
 
 
+# Переменная в таблице: <язык>_var_<сегмент> — например <ru_var_late>, <kz_var_late>.
+VAR_TAG = re.compile(r'(ru|kz|kk)_var_(.+)')
+
+
+def _var_tag(t):
+    """'ru_var_late' → ('ru', 'late'); не переменная — None."""
+    m = VAR_TAG.fullmatch(str(t or '').strip().lower())
+    if not m:
+        return None
+    return ('kz' if m.group(1) in ('kz', 'kk') else 'ru'), m.group(2).strip('_ ')
+
+
 def var_label(key):
     k = (key or '').lower()
+    vt = _var_tag(k)
+    if vt:
+        seg = vt[1].replace('_', ' ')
+        return f"{seg[:1].upper()}{seg[1:]} {vt[0].upper()}"
     base = re.sub(r'_(ru|kz|kk)$', '', k)
     names = {'sum': 'Сумма', 'date': 'Дата', 'million': 'Миллионы', 'hundred_thousand': 'Сотни тысяч',
              'thousand': 'Тысячи', 'hundred': 'Сотни', 'tenge': 'Тенге', 'day': 'День', 'month': 'Месяц',
@@ -157,7 +173,9 @@ def parse_tts_workbook(path):
                 if s not in seen:          # повторы-«заглушки» (100 после 900) не нужны
                     seen.add(s)
                     values.append(s)
-            cats.append({"key": key, "label": var_label(key), "values": values})
+            vt = _var_tag(key)
+            cats.append({"key": key, "label": var_label(key), "values": values,
+                         "lang": vt[0] if vt else None, "segment": vt[1] if vt else None})
         var_sheets[_tag(ws.title) or ws.title.strip().lower()] = {
             "title": ws.title, "label": var_label(_tag(ws.title) or ws.title), "categories": cats}
     wb.close()
@@ -495,7 +513,8 @@ class TtsFlowMixin:
                           "take_no": same.index(i) + 1 if i in same else 0, "take_total": len(same)})
         pieces = [u for u in units if u["kind"] == "piece"]
         return {
-            "loaded": bool(units), "has_takes": bool(st["takes"]),
+            "loaded": bool(units) or bool(st["var_sheets"]), "has_takes": bool(st["takes"]),
+            "vars_only": not units and bool(st["var_sheets"]),
             "excel_name": os.path.basename(st["excel_path"] or ''), "sheet": st.get("sheet"),
             "lang": st.get("lang", "ru"), "lang_auto": bool(units) and len(self._tts_langs()) > 1,
             "project": os.path.basename(wd) if wd else '',
@@ -533,8 +552,11 @@ class TtsFlowMixin:
         except Exception as e:
             return {"error": f"Не удалось прочитать таблицу «{os.path.basename(path)}».\n\n{e}"}
         sheets = parsed["phrase_sheets"]
+        if not sheets and parsed["var_sheets"]:
+            return self._tts_load_vars_only(path, parsed)
         if not sheets:
-            return {"error": "В таблице нет листа фраз: нужна шапка с колонкой <phrase> (или <full_phrase_ru>)."}
+            return {"error": "В таблице нет ни листа фраз (шапка с колонкой <phrase>), "
+                             "ни листа переменных (шапка вида <ru_var_название> или <kz_var_название>)."}
         if sheet is None and len(sheets) > 1:
             self._tts_pending = (path, parsed)
             return {"choose_sheet": [{"title": s["title"], "lang": s["lang"], "units": len(s["units"])}
@@ -562,10 +584,37 @@ class TtsFlowMixin:
                    "lines": chosen["lines"], "mark_cols": chosen["mark_cols"], "var_cols": chosen["var_keys"],
                    "head_row": chosen["head_row"], "marks_dirty": [],
                    "var_sheets": {k: v for k, v in parsed["var_sheets"].items()
-                                  if k in chosen["var_keys"] or not chosen["var_keys"]}})
+                                  if not chosen["var_keys"] or k in chosen["var_keys"]
+                                  or any(c["key"] in chosen["var_keys"] for c in v["categories"])}})
         st["index"] = 0
         self._tts_save()
         return self.tts_state()
+
+    def _tts_load_vars_only(self, path, parsed):
+        """В таблице только переменные (<ru_var_…> / <kz_var_…>) — без листа фраз.
+        Берём их в работу: значения каждого сегмента записываются/синтезируются
+        на экране «Переменные»."""
+        st = self._tts()
+        if st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
+            st["takes"] = []
+        langs = sorted({c["lang"] for v in parsed["var_sheets"].values() for c in v["categories"] if c.get("lang")})
+        st.update({"excel_path": path, "sheet": None, "lang": langs[0] if langs else "ru",
+                   "units": [], "chains": [], "v": TTS_STATE_VERSION, "lines": [], "mark_cols": {},
+                   "var_cols": [], "head_row": 1, "marks_dirty": [],
+                   "var_sheets": parsed["var_sheets"], "index": 0})
+        self._tts_save()
+        return self.tts_state()
+
+    def tts_pick_workdir(self):
+        """Папка для проекта, где нет записи (таблица только с переменными):
+        сюда лягут «Значения/…». Если в папке уже была работа — продолжаем её."""
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked if isinstance(picked, str) else picked[0]
+        msg = self._tts_attach_folder(folder)
+        self._tts_save()
+        return {**self.tts_state(), "message": msg}
 
     def tts_choose_sheet(self, title):
         pend = getattr(self, '_tts_pending', None)
