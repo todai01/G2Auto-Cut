@@ -6089,8 +6089,25 @@ let isProcessing = false;
             document.getElementById('auditEdCanvas').onmousedown = auditEdDown;
             auditEdRender();
         }
+        // Правка любой записи по пути (например, начало / конец из «Фразы_Переменные» прямо из «Сборки»)
+        async function auditEdOpenPath(path, after) {
+            await pywebview.api.audit_play_stop();
+            let r = await pywebview.api.audit_edit_load(path);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            aEd = { ...r, k: -1, sel: null, cur: 0, head: null, hist: [], saved: JSON.stringify(r.ranges) };
+            aEdAfter = after || null;
+            document.getElementById('auditEdTitle').textContent = 'Правка записи — ' + r.name;
+            document.getElementById('auditEdOverlay').style.display = 'flex';
+            document.getElementById('auditEdCanvas').onmousedown = auditEdDown;
+            auditEdRender();
+        }
+        async function ttsCtxEdit(path) {
+            await ttsStopPlay();
+            await auditEdOpenPath(path, () => { let t = ttsCurTake(); if (t) ttsTiersLoad(t.i); });
+        }
         const aEdLen = () => aEd.ranges.reduce((s, [a, b]) => s + b - a, 0);
         const aEdDirty = () => aEd && JSON.stringify(aEd.ranges) !== aEd.saved;
+        let aEdAfter = null;                        // что сделать после закрытия правки (например, перечитать «Сборку»)
         async function auditEdClose(force) {
             if (!aEd) return;
             if (!force && aEdDirty() && !(await showBeautifulConfirm('Правка не сохранена. Закрыть без сохранения?', 'Закрыть', 'Остаться'))) return;
@@ -6098,6 +6115,7 @@ let isProcessing = false;
             pywebview.api.audit_play_stop();
             document.getElementById('auditEdOverlay').style.display = 'none';
             aEd = null;
+            if (aEdAfter) { let f = aEdAfter; aEdAfter = null; f(); }
         }
         function auditEdDraw() {
             let cv = document.getElementById('auditEdCanvas'), dpr = window.devicePixelRatio || 1;
@@ -7455,7 +7473,7 @@ let isProcessing = false;
         const ttsTierLangs = () => ttsTR && ttsTR.bil ? [...new Set(ttsTR.tiers.map(t => t.lang).filter(Boolean))] : [null];
         function ttsTiersLayout(lang) {
             let r = ttsTR, x = 0, out = [], cx = (lang && r.ctx_by_lang && r.ctx_by_lang[lang]) || r.ctx;     // «два языка» — своя пара начала и конца
-            if (cx.start) { out.push({ ctx: 'start', x, w: cx.start.len, peaks: cx.start.peaks, name: cx.start.name }); x += cx.start.len; }
+            if (cx.start) { out.push({ ctx: 'start', x, w: cx.start.len, peaks: cx.start.peaks, name: cx.start.name, path: cx.start.path }); x += cx.start.len; }
             r.tiers.filter(t => !lang || t.lang === lang).forEach(t => {
                 let fixed = t.exists && !t.write && t.file_len;
                 let pre = fixed ? 0 : t.pre;
@@ -7464,7 +7482,7 @@ let isProcessing = false;
                 out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, post, t });
                 x += pre + w + post;
             });
-            if (cx.end) { out.push({ ctx: 'end', x, w: cx.end.len, peaks: cx.end.peaks, name: cx.end.name }); x += cx.end.len; }
+            if (cx.end) { out.push({ ctx: 'end', x, w: cx.end.len, peaks: cx.end.peaks, name: cx.end.name, path: cx.end.path }); x += cx.end.len; }
             return { clips: out, total: x };
         }
         function ttsDrawPeaks(cv, peaks) {
@@ -7493,7 +7511,8 @@ let isProcessing = false;
                     <i class="tts-tiers__edge is-r" onpointerdown="ttsTierEdge(event, ${t.k}, 'b')"></i></div>`).join('');
             let clipsHTML = (lay, row) => lay.clips.map((c, n) => c.ctx
                 ? `<div class="tts-tiers__clip is-ctx" style="left:${pct(c.x)};width:${pct(c.w)}" title="${c.ctx === 'start' ? 'Конец начала фразы' : 'Начало продолжения'} «${escapeHtml(c.name)}»">
-                     <canvas data-row="${row}" data-n="${n}"></canvas><span>${c.ctx === 'start' ? '… ' + escapeHtml(c.name) : escapeHtml(c.name) + ' …'}</span></div>`
+                     <canvas data-row="${row}" data-n="${n}"></canvas><span>${c.ctx === 'start' ? '… ' + escapeHtml(c.name) : escapeHtml(c.name) + ' …'}</span>
+                     ${c.path ? `<button type="button" class="tts-tiers__ctxedit" data-path="${escapeHtml(c.path)}" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation(); ttsCtxEdit(this.dataset.path)" title="Править эту запись из «Фразы_Переменные» — подрезать начало и конец (исходник — в «_до_правок»)">&#9998;</button>` : ''}</div>`
                 : `${c.pre ? `<div class="tts-tiers__gap" style="left:${pct(c.x - c.pre)};width:${pct(c.pre)}">${c.pre}</div>` : ''}
                    <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
                      ${c.fixed ? `onpointerdown="event.stopPropagation(); ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`

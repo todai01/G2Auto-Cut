@@ -4069,3 +4069,5 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .tts-tiers__edit:hover{ color: var(--text); }
 .tts-tiers__lbl b{ cursor: text; }
 .tts-tiers__input{ font: inherit; font-weight: 600; width: 180px; padding: 2px 6px; border-radius: 5px; border: 1px solid var(--accent-primary); background: var(--screen); color: var(--text); }
+.tts-tiers__ctxedit{ position: absolute; right: 4px; top: 3px; z-index: 2; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 0 5px; line-height: 18px; }
+.tts-tiers__ctxedit:hover{ color: var(--text); border-color: var(--accent-primary); }

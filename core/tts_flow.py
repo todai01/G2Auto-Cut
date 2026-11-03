@@ -3385,7 +3385,7 @@ class TtsFlowMixin(EditBasicsMixin):
             for key, c in zip(("start", "end"), self._tts_tier_ctx(unit, lang)):
                 if c:
                     r, ln = self._tts_file_rms(c[0], self.TIER_CTX_MS, tail=c[1])
-                    res[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r)}
+                    res[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r), "path": c[0]}
             return res
         langs = [lg for lg in self.TTS_BIL_LANGS if any(x.get("lang") == lg for x in unit["tiers"])]
         ctx_by_lang = {lg: ctx_of(lg) for lg in langs}                # «два языка»: у каждого своя пара начала и конца
