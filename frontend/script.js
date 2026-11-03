@@ -7092,6 +7092,56 @@ let isProcessing = false;
             }
         }
 
+        // ----- «Сырая запись переменных»: длинный кусок → чанки по паузам → названия по порядку таблицы -----
+        async function ttsRawVars() {
+            if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
+            let ok = await showBeautifulConfirm('<b>Сырая запись переменных</b><br><br>Запись идёт <b>в порядке таблицы</b>, у каждого значения <b>RU и KZ подряд</b>. '
+                + 'Режу по паузам: чанков столько, сколько значений в таблице; названия ставятся по порядку. '
+                + 'Потом — «Фразы_Переменные», и в «Сборке» каждый чанк играет с началом и концом: отметите, где RU, а где KZ, и Enter.', 'Выбрать запись', 'Отмена');
+            if (!ok) return;
+            let r = await pywebview.api.tts_raw_vars(null);
+            if (!r || r.error === 'cancel') return;
+            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            ttsShowBusy('Режу запись на чанки…', 0);
+        }
+        async function ttsRawDone(p) {
+            tts = p.state; ttsRender(); ttsLoadPrompt();
+            let diff = p.chunks - p.expected;
+            await showBeautifulAlert(diff === 0
+                ? `✅ <b>Нарезано ${p.chunks} чанков — столько же, сколько значений</b><br><br>Названия поставлены по порядку таблицы.`
+                : `⚠️ <b>Чанков ${p.chunks}, значений в таблице ${p.expected}</b><br><br>${diff > 0 ? 'Лишних чанков — кашель, повторы: уберите кнопкой «лишний чанк» в «Сборке».' : 'Не хватает чанков — значения слиплись или пропущены: «пропуск значения» сдвинет названия.'}<br>`
+                + 'Названия идут по порядку, так что сбой заметен сразу — исправляйте по ходу, остальные сдвинутся.');
+            await ttsRawCtxAsk(true);
+            ttsCutStart();                                  // «Срезка»: первый чанк в «Сборке», Enter — сохранить и дальше
+        }
+        // «Фразы_Переменные»: начало и конец для RU и для KZ (файлы из папки ru / kz)
+        async function ttsRawCtxAsk(first) {
+            let t = ttsCurTake(), u = t && ttsUnit(t.unit), sheet = u && u.sheet;
+            if (!sheet) { let k = tts.takes.find(x => x.seq != null && x.unit != null); sheet = k && ttsUnit(k.unit).sheet; }
+            if (!sheet) return;
+            let names = { ru: 'русский', kz: 'казахский' };
+            for (let lang of ['ru', 'kz']) {
+                for (let which of ['start', 'end']) {
+                    let w = which === 'start' ? 'начало' : 'конец';
+                    let go = await showBeautifulChoice(`<b>${w[0].toUpperCase() + w.slice(1)} фразы · ${lang.toUpperCase()}</b><br><br>Файл из «Фразы_Переменные/${lang}» (${names[lang]}) — `
+                        + (which === 'start' ? 'то, что звучит перед значением.' : 'то, что звучит после значения. Если конца нет — пропустите.'), 'Выбрать файл', 'Пропустить', 'N', 'Отмена');
+                    if (!go) return;
+                    if (go === 'ok') {
+                        let r = await pywebview.api.tts_var_ctx_pick(which, sheet, lang);
+                        if (r && r.error && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error));
+                    }
+                }
+            }
+            await pywebview.api.tts_var_ctx_asked(sheet);
+            if (!first) { ttsTR = null; let c = ttsCurTake(); if (c) ttsTiersLoad(c.i); }
+        }
+        const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${t.seq + 1}</b> из ${tts.raw_total}</span>
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSkip()" title="В записи нет значения перед этим чанком — этот и следующие получат следующие названия">пропуск значения</button>
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawDrop()" title="Чанк лишний (кашель, повтор) — убрать, названия следующих сдвинутся назад (Ctrl+Z вернёт)">лишний чанк</button></div>`;
+        async function ttsRawSkip() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_skip(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); showToast('Названия сдвинуты вперёд — с этого чанка'); }
+        async function ttsRawDrop() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_drop(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsCutNext(Math.max(-1, t.i - 1)); showToast('Чанк убран, названия сдвинуты назад · Ctrl+Z — вернуть', 3000); }
+
         async function ttsLoadRecording() {
             let res = await pywebview.api.tts_pick_recording();
             if (res && res.state) { tts = res.state; ttsRender(); ttsLoadPrompt(); }
@@ -7161,6 +7211,8 @@ let isProcessing = false;
                 ttsRecStopped(p.state, p.error);
             } else if (p.stage === 'live_error') {
                 showToast(p.error);
+            } else if (p.stage === 'raw_done') {
+                ttsRawDone(p);
             } else if (p.stage === 'done') {
                 tts = p.state;
                 ttsRender();
@@ -7180,6 +7232,7 @@ let isProcessing = false;
             document.getElementById('ttsLang').style.display = tts.loaded ? '' : 'none';
             ttsLangShow(ttsLangNow || tts.lang);
             ttsRenderStats();
+            { let rb = document.getElementById('ttsRawBtn'); if (rb) rb.style.display = Object.keys(tts.var_sheets || {}).length ? '' : 'none'; }
             let cats = Object.values(tts.var_sheets || {}).map(v => v.label).join(', ');
             document.getElementById('ttsVarDesc').innerText = cats ? `Фразы с переменными · ${cats}` : 'Фразы с переменными';
             ttsRenderRail();
@@ -7327,13 +7380,14 @@ let isProcessing = false;
             if (el.dataset.key === key && el.firstElementChild) return;
             el.dataset.key = key;
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
-                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : 'обычная фраза'}</span>
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : u.tiers ? 'строка переменных' : t.bil ? 'значение · RU + KZ' : 'обычная фраза'}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     ${ttsTierBackHere(t) ? `<button class="tts-asm-close tts-asm-back" onclick="ttsTierReturn()" title="Вернуться к строке переменных, из которой открыли эту фразу (Esc). Сохранили фразу (Enter) — вернётся само">&larr; К строке ${escapeHtml(ttsTierBack.name)} <kbd>Esc</kbd></button>`
                       : `<button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button>`}</div>
                 <div class="tts-blocks">${blocks}</div>
-                ${u.tiers ? '<div class="tts-tiers" id="ttsTiers"></div>' : ''}
+                ${t.seq != null ? ttsRawBarHTML(t) : ''}
+                ${u.tiers || t.bil ? '<div class="tts-tiers" id="ttsTiers"></div>' : ''}
                 <div class="tts-tsyn" id="ttsTsyn" style="display:none"></div>
                 ${t.reuse ? `<div class="tts-asm-heard tts-asm-reuse">Собрано из записанного: ${(t.reuse.srcs || [t.reuse.src]).map(n => '«' + escapeHtml(n) + '»').join(', ')}${t.reuse.rec ? ` + ${t.reuse.rec === 1 ? 'новый кусок' : 'новые куски'} из этой записи` : ''}. Куски — в Audacity отдельными клипами: склейте там и нажмите «Сохранить из Audacity».
                     <button type="button" class="btn-ghost btn-ghost--info btn-ghost--compact" onclick="ttsSendToAudacity()">Фрагменты → Audacity</button>
@@ -7371,7 +7425,7 @@ let isProcessing = false;
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
                 </div>`;
             ttsEditorLoad();
-            if (u.tiers) ttsTiersLoad(t.i);
+            if (u.tiers || t.bil) ttsTiersLoad(t.i);
             if (ttsTS && ttsTS.i === t.i) ttsTsynRender(); else ttsTS = null;
         }
 
@@ -7400,8 +7454,8 @@ let isProcessing = false;
         // «Два языка» — своя сборка на язык: начало + RU (или KZ) + продолжение.
         const ttsTierLangs = () => ttsTR && ttsTR.bil ? [...new Set(ttsTR.tiers.map(t => t.lang).filter(Boolean))] : [null];
         function ttsTiersLayout(lang) {
-            let r = ttsTR, x = 0, out = [];
-            if (r.ctx.start) { out.push({ ctx: 'start', x, w: r.ctx.start.len, peaks: r.ctx.start.peaks, name: r.ctx.start.name }); x += r.ctx.start.len; }
+            let r = ttsTR, x = 0, out = [], cx = (lang && r.ctx_by_lang && r.ctx_by_lang[lang]) || r.ctx;     // «два языка» — своя пара начала и конца
+            if (cx.start) { out.push({ ctx: 'start', x, w: cx.start.len, peaks: cx.start.peaks, name: cx.start.name }); x += cx.start.len; }
             r.tiers.filter(t => !lang || t.lang === lang).forEach(t => {
                 let fixed = t.exists && !t.write && t.file_len;
                 let pre = fixed ? 0 : t.pre;
@@ -7410,7 +7464,7 @@ let isProcessing = false;
                 out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, post, t });
                 x += pre + w + post;
             });
-            if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name }); x += r.ctx.end.len; }
+            if (cx.end) { out.push({ ctx: 'end', x, w: cx.end.len, peaks: cx.end.peaks, name: cx.end.name }); x += cx.end.len; }
             return { clips: out, total: x };
         }
         function ttsDrawPeaks(cv, peaks) {
@@ -7459,13 +7513,14 @@ let isProcessing = false;
                       : x.shared && !x.mine ? `<label class="tts-tiers__exists" title="Логика 2 сохраняет только сотни тысяч. Этот ярус записывается в логике 1">
                         <input type="checkbox" ${x.write ? 'checked' : ''} onchange="ttsTierWrite(${x.k}, this.checked)"> из логики 1 · сохранить и здесь</label>`
                       : x.mine ? '<span class="tts-tiers__ok">сохранён ✓</span>' : ''}</div>`).join('');
-            let tp = r.tpl, o = r.opts || {}, hasCtx = !!(r.ctx.start || r.ctx.end);
+            let tp = r.tpl, o = r.opts || {}, hasCtx = !!(r.ctx.start || r.ctx.end || Object.values(r.ctx_by_lang || {}).some(c => c.start || c.end));
             el.innerHTML = `<div class="tts-tiers__title">Ярусы
                     ${r.bil ? langs.map(lg_ => `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1, '${lg_}')" title="Начало + ${lg_.toUpperCase()} + продолжение. Клик по дорожке — играть с этого места">&#9654; ${lg_.toUpperCase()}</button>`).join('')
                       : `<button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierPlay(-1)" title="С секунды до первого яруса и до конца. Клик по дорожке «Сборка» — играть с этого места">&#9654; Вся сумма</button>`}
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierStop()" title="Остановить">&#9632;</button>
                     <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsTierJoinPlay()" title="Стык: конец начала фразы + строка + начало продолжения (по ${TTS_JOIN_MS / 1000} с)">&#9654; Стык</button>
                     ${ttsJoinHTML(r.tiers, 'ttsTierJoin')}
+                    ${r.bil ? `<button type="button" class="tts-reuse-chip ${hasCtx ? 'is-on' : ''}" onclick="ttsRawCtxAsk()" title="Начало и конец фразы для RU и KZ — из папки «Фразы_Переменные»">начало и конец RU / KZ ✎</button>` : ''}
                     ${r.bil_ok ? `<button type="button" class="tts-reuse-chip ${r.bil ? 'is-on' : ''}" onclick="ttsTakeBil(${!r.bil})"
                         title="${r.bil ? 'Две границы: RU и KZ — каждый сохранится в свою папку (…/ru/ и …/kz/). Нажмите — одна запись, один файл' : 'В записи два языка подряд: появятся две границы — RU и KZ, выставите их сами'}">два языка${r.bil ? ' ✓' : ''}</button>` : ''}
                     ${hasCtx ? `<button type="button" class="tts-reuse-chip ${o.noise ? 'is-on' : ''}" onclick="ttsTierOpt('noise', ${!o.noise})" title="Пауза перед ярусом и фон под голосом — шумом комнаты из начала фразы">фон как во фразе${o.noise ? ' ✓' : ''}</button>
@@ -7579,7 +7634,7 @@ let isProcessing = false;
 
         function ttsTierPhraseHTML(r) {
             let ph = r.phrase;
-            if (!ph) return '<div class="tts-tiers__phrase tts-dim">Эта переменная не стоит ни в одной фразе таблицы</div>';
+            if (!ph) return r.bil ? '' : '<div class="tts-tiers__phrase tts-dim">Эта переменная не стоит ни в одной фразе таблицы</div>';
             let knobs = (which, snd, take) => snd ? `<span class="tts-tiers__knob" title="Громкость фразы (её дубль пересохранится)">дБ
                     <button type="button" onclick="ttsTierCtxSound('${which}', 'gain', -1)">&minus;</button><b>${snd[0] > 0 ? '+' : ''}${snd[0]}</b><button type="button" onclick="ttsTierCtxSound('${which}', 'gain', 1)">+</button></span>
                   <span class="tts-tiers__knob" title="Темп фразы">темп
@@ -9959,7 +10014,7 @@ let isProcessing = false;
         function ttsCutList() {
             if (!tts) return [];
             return tts.takes.filter(t => t.unit !== null && !t.approved && !t.rejected
-                && tts.units[t.unit] && tts.units[t.unit].tiers).map(t => t.i);
+                && tts.units[t.unit] && (tts.units[t.unit].tiers || t.bil)).map(t => t.i);
         }
         function ttsFlowHTML() {
             if (!ttsValueMode()) return '';
