@@ -5,15 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GVox | Студийный монтаж</title>
 <link rel="stylesheet" href="style.css">
-<script>
-    // Отдельная программа «Прослушка» (listen_app.py → listen_app.html → index.html?app=listen): только этот режим.
-    window.GVOX_APP = /[?&]app=listen\b/.test(location.search) ? 'listen' : '';
-    if (window.GVOX_APP) document.documentElement.classList.add('app-listen');
-</script>
 
 </head>
 <body>
 
+    <!-- @listen-app:base -->
     <!-- Единый набор линейных иконок вместо смайликов — используется через
          <svg class="icon"><use href="#icon-ИМЯ"></use></svg> по всему софту. -->
     <svg style="display:none">
@@ -58,6 +54,7 @@
             </div>
         </div>
     </div>
+    <!-- /@listen-app:base -->
 
     <!-- НОВОВВЕДЕНИЕ: Модальное окно поиска -->
     <div id="searchOverlay" class="custom-alert-overlay">
@@ -1462,6 +1459,7 @@
         </div>
     </div>
 
+    <!-- @listen-app:screen -->
     <div id="stage5-listen" class="stage stage-listen" style="display: none;">
         <header class="workspace-header">
             <div class="header-actions">
@@ -1525,6 +1523,7 @@
             </section>
         </div>
     </div>
+    <!-- /@listen-app:screen -->
 
     <div id="stage3-constructor" class="stage stage-constructor" style="display: none;">
         <header class="workspace-header">
@@ -1697,6 +1696,7 @@
         </div>
     </div>
 
+    <!-- @listen-app:phr -->
     <div id="listenPhrOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box tts-list-box listen-phr">
             <div class="modal-head">
@@ -1713,6 +1713,7 @@
             <button class="custom-alert-btn" onclick="listenPhrClose()">Готово <kbd>Enter</kbd></button>
         </div>
     </div>
+    <!-- /@listen-app:phr -->
 
     <div id="ttsListOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsCloseList()">
         <div class="custom-alert-box tts-list-box">
@@ -1726,7 +1727,8 @@
         </div>
     </div>
 
-    <script src="script.js?v=21"></script>
+    <script src="ui_base.js?v=1"></script>
+    <script src="script.js?v=22"></script>
     <script src="tutorial.js?v=16"></script>
     <script src="listen.js?v=22"></script>
 </body>

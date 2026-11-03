@@ -416,13 +416,3 @@ class AuditFixMixin:
                 f["path"] = keep
         return {"moved": len(moved), "trash": os.path.join(res["scan_dir"], AUDIT_TRASH_DIR), "res": res}
 
-    def audit_open_folder(self, path):
-        path = path if os.path.isdir(path) else os.path.dirname(path)
-        if not os.path.isdir(path):
-            return {"error": "Папки нет."}
-        try:
-            os.startfile(path)                      # Windows
-        except AttributeError:
-            import subprocess
-            subprocess.Popen(['xdg-open', path])
-        return {"ok": True}

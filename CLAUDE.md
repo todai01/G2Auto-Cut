@@ -38,9 +38,12 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 - «Два языка в одной записи» — кнопка в «Сборке» на дубль строки переменных (`tts_take_bil`, `t["bil"]`): ярусы
   удваиваются (RU, KZ, `_tts_tier_unit`), границы ставят вручную; файлы — `Значения/<лист>/<кат>/ru/<значение>.wav`
   и `…/kz/…` (`_tts_tier_path`), общий файл — в корзину. Готовность и аудит принимают пару ru + kz (`_tts_lang_done`).
-- Отдельная программа «Прослушка» (`listen_app.py` → `frontend/listen_app.html` → `index.html?app=listen`,
-  `window.GVOX_APP === 'listen'`: только прослушка, заставка — её старт): один файл `GVox-Listen.exe` —
-  `build_listen.bat` / `listen.spec`, в Actions — `build-exe-listen.yml` (Releases `gvox-listen-<номер>`).
+- Отдельная программа «Прослушка» собирается из GVox скриптом `python tools/make_listen_project.py` (папка
+  `dist/GVox-Listen`: только нужные файлы — `listen_mode`, `voice_trim`, `edit_basics`, `synth_browser`, `utils/*`, окно из
+  кусков `index.html` между метками `<!-- @listen-app:… -->`; вход, сборка exe и README — `tools/listen_project/`).
+  Общее вынесено, чтобы GVox и она делили код: `core/synth_browser.py` (синтез в браузере), `core/edit_basics.py`
+  (правка «до правок», громкость), `utils/app_boot.py` (запуск окна, selftest), `frontend/ui_base.js` (окна, тосты).
+  Прослушка перед первым синтезом спрашивает голос (`listen_voices` — имена с сервиса, `listen_set_voice`).
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,

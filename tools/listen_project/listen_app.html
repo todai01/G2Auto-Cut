@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GVox | Прослушка переменных</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-mode="vars">
+
+<!--@base-->
+
+    <!-- Стартовый экран -->
+    <div id="listenHome" class="stage stage-splash">
+        <div class="entry" style="display:flex">
+            <div class="splash-mark entry__mark">G<span>Vox</span></div>
+            <div class="entry__tagline">Прослушка переменных</div>
+            <button class="entry__start" onclick="listenStart()">
+                <span class="entry__start-text">Начать прослушку</span>
+                <kbd>Enter</kbd>
+            </button>
+        </div>
+    </div>
+
+<!--@screen-->
+
+<!--@phr-->
+
+    <script src="ui_base.js"></script>
+    <script src="listen_boot.js"></script>
+    <script src="listen.js"></script>
+</body>
+</html>

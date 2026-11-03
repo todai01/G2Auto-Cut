@@ -715,7 +715,8 @@ function listenRenderSynth() {
         ${st === 'ready' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthPlay()">&#9654; в фразе</button>
             <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
             <button class="btn-ghost btn-ghost--compact" onclick="listenSynthDrop()">Отклонить</button>` : ''}
-        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}`;
+        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}
+        <button class="btn-ghost btn-ghost--compact listen-voice__chip" onclick="listenVoiceAsk()" title="С каким голосом синтезировать — нажмите, чтобы выбрать другой">${LS.voice ? 'голос: ' + escapeHtml(LS.voice.label) : 'голос не выбран'} ✎</button>`;
     listenStatusRender(); listenEdRender();
 }
 const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
@@ -795,7 +796,32 @@ document.addEventListener('keydown', e => {
     if (e.code === 'Escape' || (e.code === 'Enter' && e.target.tagName !== 'BUTTON')) { e.preventDefault(); listenPhrClose(); }
     if (e.target.tagName !== 'INPUT') e.stopImmediatePropagation();
 }, true);
+// С каким голосом синтез — спрашиваем при первом синтезе; поменять — «голос: … ✎».
+let lVoiceAsking = false;
+async function listenVoiceAsk() {
+    if (lVoiceAsking) return false;
+    lVoiceAsking = true;
+    try {
+        showToast('Загружаю список голосов с сервиса синтеза…', 8000);
+        let r = await pywebview.api.listen_voices(false);
+        document.querySelectorAll('.toast').forEach(t => t.remove());
+        if (!r || !r.voices || !r.voices.length) { showToast('Список голосов не получен'); return false; }
+        let cur = LS.voice ? LS.voice.index : r.voices[0].index;
+        let ok = await showBeautifulConfirm(`<b>С каким голосом синтезировать?</b>`
+            + (r.error ? `<div class="listen-voice__warn">Сервис не отдал список (${escapeHtml(r.error)}) — показываю голоса из программы.</div>` : '')
+            + `<div class="listen-voice">${r.voices.map(v => `<label><input type="radio" name="listenVoice" value="${v.index}" data-label="${escapeHtml(v.label)}" ${v.index === cur ? 'checked' : ''}>`
+                + `<span>${escapeHtml(v.label)}</span><i>№ ${v.index + 1}</i></label>`).join('')}</div>`, 'Выбрать', 'Отмена');
+        if (!ok) return false;
+        let el = document.querySelector('input[name="listenVoice"]:checked');
+        if (!el) return false;
+        LS = await pywebview.api.listen_set_voice(+el.value, el.dataset.label);
+        listenRenderSynth();
+        showToast(`Синтез — голосом «${el.dataset.label}»`);
+        return true;
+    } finally { lVoiceAsking = false; }
+}
 async function listenSynth() {
+    if (!LS.voice && !(await listenVoiceAsk())) return;
     let r = await pywebview.api.listen_synth(LS.pos, lEl('listenSynthText').value, LS.lang);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     LS = r.state; listenRenderList(); listenRenderSynth();
@@ -806,6 +832,7 @@ async function listenSynthQuick() {
     let row = lRow();
     if (!row) return;
     if (row.synth === 'busy') { showToast('Синтез уже идёт'); return; }
+    if (!LS.voice && !(await listenVoiceAsk())) return;
     let inp = lEl('listenSynthText'), text = inp && inp.value.trim() ? inp.value.trim() : row.name;
     let r = await pywebview.api.listen_synth(LS.pos, text, LS.lang, true);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }

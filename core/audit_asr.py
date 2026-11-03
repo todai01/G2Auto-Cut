@@ -21,6 +21,7 @@ from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
 from utils.wav_io import slice_or_export, wav_concat
+from core.edit_basics import EditBasicsMixin
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              SPEECH_MIN_SCORE, score_candidates)
 
@@ -37,7 +38,7 @@ def _natural_key(name):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name)]
 
 
-class AuditAsrMixin:
+class AuditAsrMixin(EditBasicsMixin):
 
     def _audit_asr_push(self, payload):
         try:
@@ -311,44 +312,6 @@ class AuditAsrMixin:
     # Сохраняется байт в байт (без перекодирования); исходник — в
     # «_до_правок/» рядом, его можно вернуть.
 
-    AUDIT_EDIT_BUCKET = 10
-
-    @staticmethod
-    def _audit_backup(path):
-        return os.path.join(os.path.dirname(path), '_до_правок', os.path.basename(path))
-
-    def _audit_src(self, path):
-        """Исходник для правки: копия «до правок», если запись уже правилась."""
-        b = self._audit_backup(path)
-        return b if os.path.exists(b) else path
-
-    def audit_edit_load(self, path):
-        """Волна записи для правки: пики по 10 мс, длительность."""
-        import numpy as np
-        from utils.audio_player import _read_audio
-        if not path or not os.path.exists(path):
-            return {"error": "Файл не найден."}
-        src = self._audit_src(path)
-        x, rate = _read_audio(src)
-        mono = np.abs(x).max(axis=1) if x.ndim > 1 else np.abs(x)
-        n = max(1, int(rate * self.AUDIT_EDIT_BUCKET / 1000))
-        k = len(mono) // n
-        peaks = mono[:k * n].reshape(k, n).max(axis=1) if k else np.zeros(0)
-        top = float(peaks.max()) if len(peaks) else 0.0
-        norm = min(40.0, 0.95 / top) if top > 1e-4 else 1.0
-        dur = int(len(mono) * 1000 / rate)
-        ranges = [[0, dur]]
-        try:                                                   # прошлая правка — куски, что оставили
-            with open(self._audit_backup(path) + '.json', 'r', encoding='utf-8') as f:
-                saved = json.load(f)
-            if saved and all(0 <= a < b <= dur for a, b in saved):
-                ranges = saved
-        except (OSError, ValueError, TypeError):
-            pass
-        return {"path": path, "name": os.path.basename(path), "dur": dur, "ranges": ranges,
-                "bucket": self.AUDIT_EDIT_BUCKET, "peaks": [round(min(1.0, float(v) * norm), 3) for v in peaks],
-                "has_backup": src != path}
-
     def _audit_render(self, path, ranges, dst):
         ranges = [(int(a), int(b)) for a, b in ranges if int(b) - int(a) > 0]
         if not ranges:
@@ -408,18 +371,4 @@ class AuditAsrMixin:
             return {"error": f"Не удалось сохранить: {e}"}
         return {"ok": True, "ms": ms, "has_backup": True}
 
-    def audit_edit_restore(self, path):
-        """Вернуть исходную запись (до правок)."""
-        import shutil
-        backup = self._audit_backup(path)
-        if not os.path.exists(backup):
-            return {"error": "Исходника нет — запись не правилась."}
-        self.player.stop()
-        shutil.copy2(backup, path)
-        for f in (backup + '.json', backup):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-        return self.audit_edit_load(path)
 

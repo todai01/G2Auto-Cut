@@ -38,6 +38,7 @@ from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
                              fix_feature_size, mels_from_error, similarity)
 from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
+from core.edit_basics import EditBasicsMixin
 from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_render, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
@@ -424,7 +425,7 @@ def align_stream(words, units, expected=0):
     return found
 
 
-class TtsFlowMixin:
+class TtsFlowMixin(EditBasicsMixin):
 
     # ---------------- состояние ----------------
 
@@ -2952,43 +2953,6 @@ class TtsFlowMixin:
     # медиана по всем фразам с этой переменной. Вся строка получает одну
     # поправку — ярусы между собой звучат как записаны.
     TIER_JOIN_MS = 1500
-
-    @staticmethod
-    def _k_weight(x, rate):
-        """K-фильтр (как в LUFS): полка +4 дБ выше 1,5 кГц и срез ниже 38 Гц.
-        Для замера громкости хватает АЧХ — применяем её в спектре (быстро)."""
-        import math
-        n = len(x)
-        f = np.fft.rfftfreq(n, 1 / rate)
-        z = np.exp(-1j * 2 * np.pi * f / rate)
-
-        def resp(b, a):
-            return np.abs((b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z))
-        w0 = 2 * math.pi * 1500 / rate
-        A, c = 10 ** (4 / 40), math.cos(w0)
-        sa = 2 * math.sqrt(A) * math.sin(w0) / (2 / math.sqrt(2))
-        h = resp((A * ((A + 1) + (A - 1) * c + sa), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - sa)),
-                 ((A + 1) - (A - 1) * c + sa, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - sa))
-        w0 = 2 * math.pi * 38 / rate
-        al, c = math.sin(w0) / (2 * 0.5), math.cos(w0)
-        h = h * resp(((1 + c) / 2, -(1 + c), (1 + c) / 2), (1 + al, -2 * c, 1 - al))
-        return np.fft.irfft(np.fft.rfft(x) * h, n)
-
-    @classmethod
-    def _loudness(cls, seg):
-        """Громкость голоса на слух, дБ (LUFS-подобно); None — тишина."""
-        seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-        x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float64) / 32768
-        if len(x) < 1600:
-            return None
-        y = cls._k_weight(x, 16000)
-        blk, hop = 1600, 400                                        # окна 100 мс, шаг 25 мс
-        ms = np.array([np.mean(y[k:k + blk] ** 2) for k in range(0, len(y) - blk + 1, hop)])
-        ms = ms[ms > 10 ** ((-70 + 0.691) / 10)]
-        if not len(ms):
-            return None
-        ms = ms[ms > np.mean(ms) * 10 ** (-10 / 10)]                # без пауз и хвостов
-        return round(-0.691 + 10 * np.log10(np.mean(ms)), 1) if len(ms) else None
 
     def _tts_join_loud(self, path, tail):
         """Громкость голоса у стыка: последние (tail) / первые полторы секунды речи."""

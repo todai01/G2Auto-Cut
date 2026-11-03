@@ -1,40 +1,3 @@
-// Единая замена смайликов иконками (спрайт <symbol> лежит в index.html):
-// возвращает <svg class="icon"><use .../></svg> по имени иконки.
-function iconHTML(name) {
-    return `<svg class="icon"><use href="#icon-${name}"></use></svg>`;
-}
-
-// Многие тексты алертов/тостов приходят из бэкенда с эмодзи-префиксом
-// (например "✅ Готово"). Вместо правки полусотни строк в Python — одно
-// место, где эмодзи в начале строки распознаётся, убирается из текста,
-// а на его месте показывается иконка + цветовой тон (ошибка/успех/т.д.).
-const EMOJI_ICON_MAP = {
-    '❌': { icon: 'x-circle', tone: 'error' },
-    '⚠️': { icon: 'alert-triangle', tone: 'warning' },
-    '⚠': { icon: 'alert-triangle', tone: 'warning' },
-    '✅': { icon: 'check-circle', tone: 'success' },
-    '🎉': { icon: 'check-circle', tone: 'success' },
-    '🔄': { icon: 'refresh-cw', tone: 'info' },
-    '🔁': { icon: 'refresh-cw', tone: 'info' },
-    '✂️': { icon: 'scissors', tone: 'info' },
-    '✂': { icon: 'scissors', tone: 'info' },
-    '🔗': { icon: 'link-2', tone: 'info' },
-    '💾': { icon: 'save', tone: 'info' },
-    '⚡': { icon: 'zap', tone: 'info' },
-    '📁': { icon: 'folder', tone: 'info' },
-    '📂': { icon: 'folder', tone: 'info' },
-    '🎙️': { icon: 'mic', tone: 'info' },
-    '🎙': { icon: 'mic', tone: 'info' },
-    '🎚️': { icon: 'sliders', tone: 'info' },
-    '🎚': { icon: 'sliders', tone: 'info' },
-    '🎧': { icon: 'headphones', tone: 'info' },
-};
-function extractLeadingIcon(text) {
-    let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2139}])️?\s*/u.exec(text || '');
-    if (!m) return { icon: 'alert-circle', tone: 'info', text: text || '' };
-    let mapped = EMOJI_ICON_MAP[m[0].trim()] || EMOJI_ICON_MAP[m[1]] || { icon: 'alert-circle', tone: 'info' };
-    return { icon: mapped.icon, tone: mapped.tone, text: (text || '').slice(m[0].length) };
-}
 
 let isProcessing = false;
         let currentState = null;
@@ -202,7 +165,6 @@ let isProcessing = false;
 
         document.addEventListener('DOMContentLoaded', () => {
             updateSettingsText();
-            if (window.GVOX_APP === 'listen') { listenAppInit(); return; }
             loadRecentProjects();
             // Заставки нет: меню показываем сразу, не дожидаясь Python, — одним
             // проявлением. «Продолжить проект?» спросим, когда мост будет готов.
@@ -221,7 +183,6 @@ let isProcessing = false;
         function warmUpApp() {
             if (appWarmed || !window.pywebview || !pywebview.api) return;
             appWarmed = true;
-            if (window.GVOX_APP === 'listen') return;          // отдельная «Прослушка»: ни меню, ни проектов
             loadRecentProjects();
             loadMenuRecent();
             if (!resumePromptAnswered) enterApp();           // недавний проект — спросить «продолжить?»
@@ -676,11 +637,6 @@ let isProcessing = false;
         // ===== НЕДАВНИЕ ПРОЕКТЫ =====
         let recentProjectsCache = [];
 
-        function escapeHtml(s) {
-            let d = document.createElement('div');
-            d.innerText = s == null ? '' : String(s);
-            return d.innerHTML;
-        }
 
         function formatRecentTime(ts) {
             if (!ts) return '';
@@ -738,19 +694,7 @@ let isProcessing = false;
         // Заставка -> экран подготовки проекта. Если есть недавний проект —
         // сперва спрашиваем, продолжать ли его, а не сразу открываем
         // подготовку нового.
-        // Отдельная программа «Прослушка»: стартовый экран — заставка с одной кнопкой.
-        function listenAppInit() {
-            document.title = 'GVox | Прослушка переменных';
-            let q = s => document.querySelector(s);
-            q('#stage0-splash .entry__tagline').innerText = 'Прослушка переменных';
-            q('#stage0-splash .entry__start-text').innerText = 'Начать прослушку';
-            ['#recentProjectsPanel', '#stage0-splash .entry__footer'].forEach(s => { let e = q(s); if (e) e.remove(); });
-            let back = q('#stage5-listen .btn-ghost[onclick="listenExit()"]');
-            if (back) back.innerHTML = '&#8592;&nbsp; В начало';
-            showStage('stage0-splash');
-        }
         async function enterApp() {
-            if (window.GVOX_APP === 'listen') return listenStart();
             if (resumePromptAnswered) {
                 showMenu();
                 return;
@@ -784,7 +728,6 @@ let isProcessing = false;
         }
 
         function showMenu() {
-            if (window.GVOX_APP === 'listen') { showStage('stage0-splash'); return; }   // «В начало»
             if (stageAnimating) return;
             if (isShown('stage0-splash') && motionOK()) { fadeSplashToMenu(); return; }
             showMenuNow();
@@ -4837,20 +4780,7 @@ let isProcessing = false;
                 return;
             }
 
-            let alertOverlay = document.getElementById('customAlertOverlay');
-            if (alertOverlay && alertOverlay.style.display === 'flex') {
-                if (e.code === 'Enter' || e.code === 'Space') {
-                    e.preventDefault();
-                    closeCustomAlert(true);
-                } else if (e.code === 'Escape') {
-                    e.preventDefault();
-                    closeCustomAlert(false);
-                } else {
-                    let alt = document.getElementById('customAlertAlt');
-                    if (alt && alt.style.display !== 'none' && e.code === alt.dataset.key) { e.preventDefault(); closeCustomAlert('alt'); }
-                }
-                return;
-            }
+            if (uiAlertKey(e)) return;                          // открыт вопрос / сообщение
 
             let helpOverlay = document.getElementById('menuHelpOverlay');
             if (helpOverlay && helpOverlay.style.display === 'flex') {
@@ -5036,71 +4966,6 @@ let isProcessing = false;
             }
         };
 
-        // НОВОВВЕДЕНИЕ: Поддержка ожидания клика "ОК" в красивом алерте
-        window.customAlertCallback = null;
-
-        function showBeautifulAlert(message) {
-            return new Promise((resolve) => {
-                let el = document.getElementById('customAlertText');
-                if (el) {
-                    let { icon, tone, text } = extractLeadingIcon(message);
-                    let iconEl = document.getElementById('customAlertIcon');
-                    if (iconEl) {
-                        iconEl.innerHTML = iconHTML(icon);
-                        iconEl.className = 'custom-alert-icon icon-tone--' + tone;
-                    }
-                    // Используем HTML для форматирования текста (жирный шрифт, переносы)
-                    el.innerHTML = `<div class="alert-body">${text}</div>`;
-                    document.getElementById('customAlertOverlay').style.display = 'flex';
-                    window.customAlertCallback = resolve;
-                } else {
-                    resolve(true);
-                }
-            });
-        }
-
-        // Вопрос с двумя кнопками в том же окне: resolve(true) — «ok»,
-        // resolve(false) — «cancel», крестик или Escape.
-        // Три варианта: → 'ok' (Enter), 'alt' (клавиша altKey), false (Esc / крестик).
-        async function showBeautifulChoice(message, okText, altText, altKey, cancelText = 'Отмена') {
-            let alt = document.getElementById('customAlertAlt');
-            alt.innerHTML = `${escapeHtml(altText)} <kbd>${altKey}</kbd>`;
-            alt.dataset.key = 'Key' + altKey.toUpperCase();
-            alt.style.display = '';
-            document.querySelector('#customAlertOverlay .custom-alert-box').classList.add('custom-alert-box--wide');
-            let r = await showBeautifulConfirm(message, okText, cancelText);
-            return r === 'alt' ? 'alt' : (r ? 'ok' : false);
-        }
-
-        function showBeautifulConfirm(message, okText = 'ОК', cancelText = 'Отмена') {
-            let ok = document.getElementById('customAlertOk');
-            let cancel = document.getElementById('customAlertCancel');
-            ok.innerHTML = `${escapeHtml(okText)} <kbd>Enter</kbd>`;
-            cancel.innerHTML = `${escapeHtml(cancelText)} <kbd>Esc</kbd>`;
-            cancel.style.display = '';
-            return showBeautifulAlert(message);
-        }
-
-        // confirmed=true — закрыли по «ОК»/Enter/Space (действие после алерта
-        // продолжается); confirmed=false — закрыли крестиком/Escape (это
-        // отмена, вызвавший код должен остановиться, а не продолжать как
-        // будто нажали «ОК»).
-        function closeCustomAlert(confirmed = true) {
-            document.getElementById('customAlertOverlay').style.display = 'none';
-            // Окно снова обычное «сообщение с ОК» для следующего раза.
-            let cancel = document.getElementById('customAlertCancel');
-            if (cancel) cancel.style.display = 'none';
-            let alt = document.getElementById('customAlertAlt');
-            if (alt) alt.style.display = 'none';
-            document.querySelector('#customAlertOverlay .custom-alert-box').classList.remove('custom-alert-box--wide');
-            let ok = document.getElementById('customAlertOk');
-            if (ok) ok.innerHTML = 'ОК <kbd>Enter</kbd>';
-            // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
-            if (window.customAlertCallback) {
-                window.customAlertCallback(confirmed);
-                window.customAlertCallback = null;
-            }
-        }
 
         // Клик по названию или тексту фразы (data-copy) — в буфер. Выделение мышью работает как обычно.
         function copyAttr(v) { return ` data-copy="${escapeHtml(String(v || ''))}"`; }
@@ -5125,14 +4990,6 @@ let isProcessing = false;
             showToast("Скопировано: " + text);
         }
 
-        function showToast(msg, duration) {
-            let { icon, text } = extractLeadingIcon(msg);
-            let toast = document.createElement('div');
-            toast.className = 'toast';
-            toast.innerHTML = `${iconHTML(icon)}<span>${escapeHtml(text)}</span>`;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), duration || 2200);
-        }
 
         // === Конвертер MP4 -> MP3/WAV ===
         // ----- Подготовка к клону -----

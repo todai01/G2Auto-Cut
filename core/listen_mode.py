@@ -18,7 +18,7 @@ import webview
 from pydub import AudioSegment
 
 from core.voice_trim import voice_span
-from core.tts_synth import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX
+from core.synth_browser import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX, SYNTH_PRESET_VOICES
 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
@@ -331,6 +331,7 @@ class ListenMixin:
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
+            "voice": ls.get("voice"),
         }
 
     def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None):
@@ -669,7 +670,8 @@ class ListenMixin:
             try:
                 page = worker.page_ready()
                 sel = SYNTH_PRESET_SEL
-                voice = lambda: preset_pick(page, sel["voice"], sel["voice_index"])
+                vi = (ls.get("voice") or {}).get("index", sel["voice_index"])     # голос, выбранный для прослушки
+                voice = lambda: preset_pick(page, sel["voice"], vi)
                 # Сервис сбрасывает голос (после «Синтезировать», при догрузке списка) —
                 # голос и язык выставляем перед каждым синтезом с проверкой, голос — ещё раз
                 # сразу после нажатия, и только потом скачиваем.
@@ -698,6 +700,40 @@ class ListenMixin:
                 self._listen_push({"stage": "synth", "k": k, "ok": False, "error": str(e), "state": self.listen_state()})
         self._listen_worker().add(job)
         return {"queued": True, "state": self.listen_state()}
+
+    # ---- с каким голосом синтез: спрашиваем у вас (список — с самого сервиса) ----
+    def listen_voices(self, refresh=False):
+        """Голоса сервиса: имена из списка #preset-voice на странице (открывается браузер,
+        несколько секунд). Не вышло — список из программы (SYNTH_PRESET_VOICES)."""
+        ls = self._ls()
+        voices, err = None if refresh else self.__dict__.get('_listen_voices'), None
+        if voices is None:
+            done, box = threading.Event(), {}
+
+            def job(worker):
+                try:
+                    page = worker.page_ready()
+                    page.wait_for_selector(SYNTH_PRESET_SEL["voice"] + ' > option:nth-child(2)', state='attached', timeout=20000)
+                    box["v"] = page.eval_on_selector_all(SYNTH_PRESET_SEL["voice"] + ' > option',
+                                                         'os => os.map(o => (o.textContent || o.value || "").trim())')
+                except Exception as e:
+                    box["e"] = str(e)
+                finally:
+                    done.set()
+            self._listen_worker().add(job, front=True)
+            done.wait(60)
+            names = [n for n in box.get("v") or [] if n and n != '…']
+            if names:
+                voices = self._listen_voices = [{"index": i, "label": n} for i, n in enumerate(names)]
+            else:
+                err = box.get("e") or "сервис не ответил"
+                voices = [{"index": i, "label": n} for i, n in SYNTH_PRESET_VOICES]
+        return {"voices": voices, "voice": ls.get("voice"), "error": err}
+
+    def listen_set_voice(self, index, label=None):
+        ls = self._ls()
+        ls["voice"] = {"index": int(index), "label": str(label or f"голос {int(index) + 1}")}
+        return self.listen_state()
 
     def _listen_level(self, dst, ref):
         """Синтез — к громкости и формату соседа (прежняя запись переменной или начало фразы)."""

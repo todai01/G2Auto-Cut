@@ -1,9 +1,9 @@
-"""Сборка отдельной программы «Прослушка переменных» одним файлом (см. build_listen.bat).
+"""Сборка «Прослушки» одним файлом (см. build_listen.bat).
 
-1. Ставит модули (requirements.txt без распознавания речи + pyinstaller).
-2. Скачивает ffmpeg.exe / ffprobe.exe, если их нет рядом с main.py.
-3. Собирает dist\\GVox-Listen.exe (pyinstaller listen.spec).
-4. Самопроверка (GVox-Listen.exe --selftest) — отчёт в dist\\GVox_проверка.txt.
+1. Модули (requirements.txt + pyinstaller).
+2. ffmpeg.exe / ffprobe.exe — скачать, если их нет рядом с listen_app.py.
+3. pyinstaller listen.spec → dist\\GVox-Listen.exe.
+4. Самопроверка (GVox-Listen.exe --selftest).
 """
 import os
 import subprocess
@@ -23,17 +23,15 @@ def run(cmd):
 
 def main():
     os.chdir(HERE)
-    step('1/4  Модули Python (без распознавания речи)')
+    step('1/4  Модули Python')
     run([sys.executable, '-m', 'pip', 'install', '--upgrade', 'pip'])
-    reqs = [l.strip() for l in open(os.path.join(HERE, 'requirements.txt'), encoding='utf-8')
-            if l.strip() and not l.lstrip().startswith('#') and not l.strip().lower().startswith('faster-whisper')]
-    run([sys.executable, '-m', 'pip', 'install', *reqs, 'pyinstaller'])
+    run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', 'pyinstaller'])
 
     step('2/4  ffmpeg')
     sys.path.insert(0, HERE)
     from utils.ffmpeg_setup import ensure_ffmpeg
     if not ensure_ffmpeg(HERE, on_progress=lambda p, t: print(f'\r  {t}', end='', flush=True)):
-        sys.exit('\nНе удалось скачать ffmpeg. Положите ffmpeg.exe и ffprobe.exe рядом с main.py и запустите снова.')
+        sys.exit('\nНе удалось скачать ffmpeg. Положите ffmpeg.exe и ffprobe.exe рядом с listen_app.py и запустите снова.')
 
     step('3/4  Сборка одним файлом (pyinstaller listen.spec)')
     run([sys.executable, '-m', 'PyInstaller', 'listen.spec', '--noconfirm', '--clean'])
