@@ -7096,11 +7096,11 @@ let isProcessing = false;
         async function ttsRawVars() {
             if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
             if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
-            let ok = await showBeautifulConfirm('<b>Сырая запись переменных</b><br><br>Запись идёт <b>в порядке таблицы</b>, у каждого значения <b>RU и KZ подряд</b>. '
-                + 'Режу по паузам: чанков столько, сколько значений в таблице; названия ставятся по порядку. '
-                + 'Потом — «Фразы_Переменные», и в «Сборке» каждый чанк играет с началом и концом: отметите, где RU, а где KZ, и Enter.', 'Выбрать запись', 'Отмена');
-            if (!ok) return;
-            let r = await pywebview.api.tts_raw_vars(null);
+            let how = await showBeautifulChoice('<b>Сырая запись переменных</b><br><br>Запись идёт <b>в порядке таблицы</b>: сначала все значения одного языка, потом всех другого. '
+                + 'Режу по паузам; названия и язык ставятся по порядку. Потом — «Фразы_Переменные», и в «Сборке» каждый чанк играет с началом и концом своего языка: подрезали — Enter.'
+                + '<br><br><b>С какого языка начинается запись?</b>', 'Сначала RU, потом KZ', 'Сначала KZ, потом RU', 'K', 'Отмена');
+            if (!how) return;
+            let r = await pywebview.api.tts_raw_vars(null, how === 'ok' ? 'ru_first' : 'kz_first');
             if (!r || r.error === 'cancel') return;
             if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             ttsShowBusy('Режу запись на чанки…', 0);
@@ -7109,8 +7109,8 @@ let isProcessing = false;
             tts = p.state; ttsRender(); ttsLoadPrompt();
             let diff = p.chunks - p.expected;
             await showBeautifulAlert(diff === 0
-                ? `✅ <b>Нарезано ${p.chunks} чанков — столько же, сколько значений</b><br><br>Названия поставлены по порядку таблицы.`
-                : `⚠️ <b>Чанков ${p.chunks}, значений в таблице ${p.expected}</b><br><br>${diff > 0 ? 'Лишних чанков — кашель, повторы: уберите кнопкой «лишний чанк» в «Сборке».' : 'Не хватает чанков — значения слиплись или пропущены: «пропуск значения» сдвинет названия.'}<br>`
+                ? `✅ <b>Нарезано ${p.chunks} чанков — столько же, сколько значений × 2 языка</b><br><br>Названия и язык поставлены по порядку таблицы.`
+                : `⚠️ <b>Чанков ${p.chunks}, ожидалось ${p.expected}</b><br><br>${diff > 0 ? 'Лишних чанков — кашель, повторы: уберите кнопкой «лишний чанк» в «Сборке».' : 'Не хватает чанков — значения слиплись или пропущены: «пропуск значения» сдвинет названия.'}<br>`
                 + 'Названия идут по порядку, так что сбой заметен сразу — исправляйте по ходу, остальные сдвинутся.');
             await ttsRawCtxAsk(true);
             ttsCutStart();                                  // «Срезка»: первый чанк в «Сборке», Enter — сохранить и дальше
@@ -7136,7 +7136,7 @@ let isProcessing = false;
             await pywebview.api.tts_var_ctx_asked(sheet);
             if (!first) { ttsTR = null; let c = ttsCurTake(); if (c) ttsTiersLoad(c.i); }
         }
-        const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${t.seq + 1}</b> из ${tts.raw_total}</span>
+        const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${t.seq + 1}</b> из ${tts.raw_total}${t.lang ? ` · <em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em>` : ''}</span>
             <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSkip()" title="В записи нет значения перед этим чанком — этот и следующие получат следующие названия">пропуск значения</button>
             <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawDrop()" title="Чанк лишний (кашель, повтор) — убрать, названия следующих сдвинутся назад (Ctrl+Z вернёт)">лишний чанк</button></div>`;
         async function ttsRawSkip() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_skip(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); showToast('Названия сдвинуты вперёд — с этого чанка'); }
@@ -8532,7 +8532,8 @@ let isProcessing = false;
         }
         function ttsEdBilBtns() {
             let bil = !!(ttsTR && ttsTR.bil && ttsEd && ttsTR.i === ttsEd.i);
-            document.querySelectorAll('#ttsAssembly .tts-ed-bil').forEach(b => { b.style.display = bil ? '' : 'none'; b.disabled = !(ttsEd && ttsEd.sel); });
+            let have = bil ? new Set(ttsTR.tiers.map(x => x.lang)) : new Set();          // у чанка одного языка — только своя кнопка
+            document.querySelectorAll('#ttsAssembly .tts-ed-bil').forEach(b => { b.style.display = bil && have.has(b.dataset.lang) ? '' : 'none'; b.disabled = !(ttsEd && ttsEd.sel); });
         }
         // «Два языка»: выделенное в редакторе — кусок RU или KZ.
         function ttsEdBilSet(lang) {

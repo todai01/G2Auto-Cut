@@ -2408,8 +2408,9 @@ class TtsFlowMixin(EditBasicsMixin):
                                      if unit.get("kind") == "value" else None)
         if not base:
             return unit
+        langs = [t["lang"]] if t.get("lang") in self.TTS_BIL_LANGS else self.TTS_BIL_LANGS     # чанк одного языка — один ярус
         return {**unit, "tiers": [{**x, "lang": lg, "tier": f'{x["tier"]}_{lg}', "label": f'{x["label"]} · {lg.upper()}'}
-                                  for x in base for lg in self.TTS_BIL_LANGS]}
+                                  for x in base for lg in langs]}
 
     def _tts_bil_ok(self, unit):
         """Два языка — строка переменных (не суммы) или одиночное значение из листа переменных."""
@@ -2444,18 +2445,25 @@ class TtsFlowMixin(EditBasicsMixin):
     # громкости (без распознавания): чанков ровно столько, сколько значений — по самым длинным паузам.
     RAW_MIN_GAP_MS = 220          # короче — пауза внутри слова / между RU и KZ, не граница
 
-    def _tts_raw_seq(self, sheet=None):
+    def _tts_raw_seq(self, sheet=None, mode='ru_first'):
+        """Порядок чанков записи: [{"unit": значение, "lang": язык}]. mode: 'ru_first' / 'kz_first' — сначала все
+        значения одного языка, потом другого; 'pair' — RU и KZ каждого значения подряд, в одном чанке."""
         st = self._tts()
         sheets = [sheet] if sheet else [k for k in (st.get("var_sheets") or {}) if self._tts_bil_allowed(k)]
-        return [u["id"] for k in sheets for u in st["units"] if u["kind"] == "value" and u.get("sheet") == k and not u.get("tiers")]
+        units = [u["id"] for k in sheets for u in st["units"] if u["kind"] == "value" and u.get("sheet") == k and not u.get("tiers")]
+        if mode == 'pair':
+            return [{"unit": u, "lang": None} for u in units]
+        first, second = ('kz', 'ru') if mode == 'kz_first' else ('ru', 'kz')
+        return [{"unit": u, "lang": first} for u in units] + [{"unit": u, "lang": second} for u in units]
 
-    def tts_raw_vars(self, sheet=None):
-        """Выбрать сырую запись и нарезать на чанки по паузам; чанки получают названия по порядку таблицы."""
+    def tts_raw_vars(self, sheet=None, mode='ru_first'):
+        """Выбрать сырую запись и нарезать на чанки по паузам; чанки получают названия и язык по порядку таблицы
+        (mode — как идут языки: ru_first / kz_first / pair)."""
         st = self._tts()
         if not st["units"]:
             return {"error": "Сначала загрузите таблицу."}
         sheet = sheet or (st.get("prompt_mode") if st.get("prompt_mode") in (st.get("var_sheets") or {}) else None)
-        seq = self._tts_raw_seq(sheet)
+        seq = self._tts_raw_seq(sheet, mode)
         if not seq:
             return {"error": "В таблице нет листа переменных, который можно записать RU + KZ."}
         picked = webview.windows[0].create_file_dialog(
@@ -2521,7 +2529,8 @@ class TtsFlowMixin(EditBasicsMixin):
                 audio[lo:hi].export(os.path.join(chunks_dir, name), format="wav")
             takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo, "orig": [lo, hi], "raw": path,
                           "heard": '', "listened": False, "chunk": i + 1, "bil": True, "seq": i,
-                          "unit": seq[i] if i < len(seq) else None, "score": 1.0, "status": "manual", "approved": False})
+                          "unit": seq[i]["unit"] if i < len(seq) else None, "lang": seq[i]["lang"] if i < len(seq) else None,
+                          "score": 1.0, "status": "manual", "approved": False})
             if i % 50 == 0:
                 self._tts_push({"stage": "cut", "done": i + 1, "total": len(ranges)})
         st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": takes, "raw_seq": list(seq)})
@@ -2538,7 +2547,8 @@ class TtsFlowMixin(EditBasicsMixin):
                 continue
             k = fn(t["seq"])
             t["seq"] = k
-            t["unit"] = seq[k] if k is not None and 0 <= k < len(seq) else None
+            e = seq[k] if k is not None and 0 <= k < len(seq) else None
+            t["unit"], t["lang"] = (e["unit"], e["lang"]) if e else (None, None)
             t["status"] = "manual" if t["unit"] is not None else "none"
 
     def tts_raw_skip(self, i):
@@ -3737,7 +3747,7 @@ class TtsFlowMixin(EditBasicsMixin):
             if redo is not None and self._tts_tier_rel(path) not in redo:
                 redo.append(self._tts_tier_rel(path))
         for x in unit["tiers"]:                         # два языка сохранены — общий файл больше не нужен
-            if x.get("lang") == self.TTS_BIL_LANGS[0]:
+            if x.get("lang"):
                 plain = self._tts_value_file(unit["sheet"], x["cat"], x["value"])
                 if os.path.exists(plain) and self._tts_lang_done(plain):
                     self._tts_trash(plain)
