@@ -920,6 +920,16 @@ function listenEvent(p) {
 }
 
 // ----- клавиши -----
+// Ctrl+S — сохранить, Ctrl+Z — отменить (правку или последнее решение). true — клавишу забрали.
+function listenCtrlKey(e) {
+    if (!(e.ctrlKey || e.metaKey) || (e.code !== 'KeyS' && e.code !== 'KeyZ')) return false;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return false;
+    let al = document.getElementById('customAlertOverlay');
+    if (al && al.style.display === 'flex') return false;
+    e.preventDefault();
+    if (e.code === 'KeyS') listenSave(true); else listenEdUndo();
+    return true;
+}
 function listenKey(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
     if (e.code === 'KeyG') { e.preventDefault(); listenAutoRun(); return; }

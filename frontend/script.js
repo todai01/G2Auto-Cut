@@ -4718,13 +4718,7 @@ let isProcessing = false;
                 if (e.code === 'KeyZ') { e.preventDefault(); auditEdUndo(); return; }
                 if (e.code === 'KeyS') { e.preventDefault(); auditEdSave(); return; }
             }
-            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyS' || e.code === 'KeyZ') && isShown('stage5-listen')
-                && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
-                && document.getElementById('customAlertOverlay').style.display !== 'flex') {
-                e.preventDefault();
-                if (e.code === 'KeyS') listenSave(true); else listenEdUndo();
-                return;
-            }
+            if (isShown('stage5-listen') && listenCtrlKey(e)) return;          // Ctrl+S / Ctrl+Z в прослушке
             if ((e.ctrlKey || e.metaKey) && ['KeyD', 'KeyC', 'KeyV'].includes(e.code) && ttsEd
                 && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
                 && document.getElementById('stage4-tts').classList.contains('show-assembly')) {

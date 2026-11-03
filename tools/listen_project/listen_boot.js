@@ -14,6 +14,6 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); listenStart(); }
         return;
     }
-    if (isShown('stage5-listen')) listenKey(e);
+    if (isShown('stage5-listen') && !listenCtrlKey(e)) listenKey(e);
 });
 document.addEventListener('DOMContentLoaded', () => showStage('listenHome'));
