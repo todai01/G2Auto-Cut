@@ -5243,17 +5243,26 @@ let isProcessing = false;
         });
 
         // Нет метода в Python — значит, рядом лежит старая версия файлов (main.py, core/tts_values.py).
-        function ttsApiMissing(name) {
+        async function ttsApiMissing(name) {
             if (typeof pywebview !== 'undefined' && pywebview.api && typeof pywebview.api[name] === 'function') return false;
+            let info = '';
+            try {
+                if (typeof pywebview.api.tts_diag === 'function') {
+                    let d = await pywebview.api.tts_diag();
+                    info = `<br><br><span class="tts-dim">Запущено из: ${escapeHtml(d.core)}<br>main.py: ${escapeHtml(String(d.main))}<br>`
+                        + `tts_values.py в папке core: ${d.values_file ? 'есть' : 'НЕТ'} · функции нарезки: ${d.has_values ? 'есть' : 'нет'}<br>`
+                        + `Python ${escapeHtml(d.python)}${d.frozen ? ' · собранный .exe (файлы внутри него — пересоберите)' : ''}</span>`;
+                }
+            } catch (e) {}
             showBeautifulAlert('⚠️ <b>Не хватает файлов программы</b><br><br>В Python нет функции <code>' + name + '</code>. '
-                + 'Положите рядом обновлённые <b>main.py</b> и <b>core/tts_values.py</b> (папка core) и перезапустите программу.');
+                + 'Положите рядом обновлённые <b>main.py</b> и <b>core/tts_values.py</b> (папка core) и перезапустите программу.' + info);
             return true;
         }
 
         // --- ветка 1: сырой WAV → нарезка по паузам ---
         let ttsvc = null, ttsvcTimer = null;
         async function ttsValsRawFlow() {
-            if (ttsApiMissing('tts_vals_pick_raw')) return;
+            if (await ttsApiMissing('tts_vals_pick_raw')) return;
             let r;
             try { r = await pywebview.api.tts_vals_pick_raw(); }
             catch (e) { showBeautifulAlert('⚠️ Не удалось открыть файл: ' + escapeHtml(String(e && e.message || e))); return; }
@@ -5307,7 +5316,7 @@ let isProcessing = false;
         // --- ветка 3: синтез по референсу ---
         let ttsvs = null;
         async function ttsValsSynthOpen() {
-            if (ttsApiMissing('tts_vals_synth_state')) return;
+            if (await ttsApiMissing('tts_vals_synth_state')) return;
             if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
             ttsvs = await pywebview.api.tts_vals_synth_state();
             document.getElementById('ttsValsSynthOverlay').style.display = 'flex';

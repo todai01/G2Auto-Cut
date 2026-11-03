@@ -2078,3 +2078,32 @@ class TtsFlowMixin:
         st["marks_dirty"] = [r for r in st.get("marks_dirty", []) if r not in dirty]
         self._tts_save()
         return {"saved": True, "pending": len(st["marks_dirty"]), "backup": os.path.basename(backup)}
+
+
+# Функции «Студии озвучки» для значений переменных (core/tts_values.py) цепляем
+# сюда же: тогда они есть у программы, даже если main.py остался старым и не
+# знает про TtsValuesMixin. Нет файла tts_values.py — просто пропускаем.
+def _attach_values_mixin():
+    try:
+        from core import tts_values
+        mixin = tts_values.TtsValuesMixin
+    except Exception:          # нет файла, или он сам сейчас импортируется (тогда main.py его и так подключит)
+        return
+    for name, fn in vars(mixin).items():
+        if not name.startswith('__') and not hasattr(TtsFlowMixin, name):
+            setattr(TtsFlowMixin, name, fn)
+
+
+def _tts_diag(self):
+    """Что именно запущено: откуда загружены файлы и есть ли функции нарезки."""
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    return {"main": getattr(sys.modules.get('__main__'), '__file__', None), "core": here,
+            "frozen": bool(getattr(sys, 'frozen', False)), "python": sys.version.split()[0],
+            "values_file": os.path.exists(os.path.join(here, 'tts_values.py')),
+            "has_values": hasattr(self, 'tts_vals_pick_raw'),
+            "mixins": [c.__name__ for c in type(self).__mro__ if c.__name__.endswith('Mixin')]}
+
+
+TtsFlowMixin.tts_diag = _tts_diag
+_attach_values_mixin()
