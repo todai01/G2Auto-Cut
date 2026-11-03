@@ -5253,6 +5253,16 @@ let isProcessing = false;
             document.getElementById('bsynthNow').innerHTML = c && s.run
                 ? `<span class="bsynth-spin"></span> Сейчас: строка ${c.row} · ${escapeHtml(c.col)} · <b>${escapeHtml(c.text || c.value)}</b>${s.voice_name ? ` <span class="tts-dim">— голос ${escapeHtml(s.voice_name)}</span>` : ''}`
                 : s.run && !s.pause ? '<span class="tts-dim">Пауза перед следующим запросом — бережём сервис…</span>' : '';
+            // по столбцам: строк → файлов; повторы и пустые — почему файлов меньше строк
+            let lack = (s.report || []).reduce((n, r) => n + Math.max(0, r.files - r.have), 0);
+            document.getElementById('bsynthReport').innerHTML = (s.report || []).map(r => {
+                let why = [r.repeat_n ? `повторов ${r.repeat_n}` : '', r.empty ? `пустых ячеек ${r.empty}` : ''].filter(Boolean).join(', ');
+                return `<details class="bsynth-col"><summary><b>${escapeHtml(r.col)}</b> — строк ${r.rows} → файлов ${r.files}`
+                    + `${why ? ` <span class="tts-dim">(${why})</span>` : ''} · в папке ${r.have}${r.have < r.files ? ` <span class="clone-bad">· не хватает ${r.files - r.have}</span>` : ''}</summary>`
+                    + (r.repeats.length ? `<div class="bsynth-reps">Одно значение — один файл: ${r.repeats.map(x => `<span>${escapeHtml(x.value)} <i>строки ${x.rows.join(', ')}</i></span>`).join('')}</div>` : '<div class="bsynth-reps tts-dim">Повторов нет</div>')
+                    + `</details>`;
+            }).join('');
+            if (!s.run && !s.left && lack) document.getElementById('bsynthEta').innerText = `не хватает файлов: ${lack}`;
             document.getElementById('bsynthMsg').innerText = s.msg || '';
             document.getElementById('bsynthRecent').innerHTML = s.recent.slice().reverse().map(it =>
                 `<div class="${it.status === 'error' ? 'clone-bad' : ''}">${it.status === 'error' ? '✕' : '✓'} ${it.row} · ${escapeHtml(it.col)} · ${escapeHtml(it.text || it.value)}${it.status === 'error' ? ' — ' + escapeHtml(it.error) : ''}</div>`).join('');

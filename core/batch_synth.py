@@ -111,21 +111,27 @@ class BatchSynthMixin:
             return {"error": "Сначала выберите таблицу."}
         a = max(1, int(start_row or 1)) - 1
         n = len(bs["rows"]) - a if not count else max(1, int(count))
-        items, seen = [], set()
+        items, seen = [], {}
+        rep = {col: {"col": col, "rows": 0, "empty": 0, "repeats": {}} for col in bs["cols"]}
         for r in range(a, min(len(bs["rows"]), a + n)):
             for c, col in enumerate(bs["cols"]):
                 v = bs["rows"][r][c]
+                rep[col]["rows"] += 1
                 if not v:
+                    rep[col]["empty"] += 1
                     continue
                 f = self._bs_file(col, v)
-                key = os.path.normcase(f)
+                key = os.path.normcase(f).upper()          # Windows не различает регистр имён (и ı = I)
                 if key in seen:                            # то же значение в столбце — один файл
+                    first = seen[key]
+                    rep[col]["repeats"].setdefault(first["value"], [first["row"]]).append(r + 1)
                     continue
-                seen.add(key)
                 items.append({"row": r + 1, "col": col, "value": v, "file": f, "text": tr_title(v, int(lang) == BSYNTH_LANG),
                               "status": "done" if os.path.exists(f) else "wait", "error": ''})
+                seen[key] = items[-1]
         if not items:
             return {"error": "В выбранных строках нет значений."}
+        bs["report"] = list(rep.values())
         bs.update(items=items, pos=0, run=True, pause=False, stop=False, msg='', started=time.time(), spent=0.0,
                   n_synth=0, delay=max(1.0, float(delay_s or BSYNTH_DELAY_S)), voice=int(voice), lang=int(lang))
         threading.Thread(target=self._bs_loop, daemon=True).start()
@@ -178,10 +184,24 @@ class BatchSynthMixin:
                 "errors": cnt["error"], "left": left, "current": cur,
                 "eta_s": round(left * (avg + bs.get("delay", BSYNTH_DELAY_S))) if avg is not None and left else None,
                 "recent": [it for it in items if it["status"] in ("ok", "error")][-6:],
+                "report": self._bs_report() if items else None,
                 "failed": [it for it in items if it["status"] == "error"][:30],
                 "voices": [{"index": i, "label": l} for i, l in SYNTH_PRESET_VOICES],
                 "langs": [{"index": i, "label": l} for i, l in SYNTH_LANGS],
                 "defaults": {"voice": BSYNTH_VOICE, "lang": BSYNTH_LANG, "delay": BSYNTH_DELAY_S}}
+
+    def _bs_report(self):
+        """По столбцам: строк → файлов; повторы и пустые ячейки — почему файлов меньше, чем строк."""
+        bs = self._bs()
+        out = []
+        for r in bs.get("report") or []:
+            mine = [it for it in bs["items"] if it["col"] == r["col"]]
+            have = sum(1 for it in mine if os.path.exists(it["file"]))
+            reps = sorted(r["repeats"].items(), key=lambda kv: -len(kv[1]))
+            out.append({"col": r["col"], "rows": r["rows"], "empty": r["empty"], "files": len(mine), "have": have,
+                        "repeat_n": sum(len(v) - 1 for _k, v in reps),
+                        "repeats": [{"value": k, "rows": v} for k, v in reps[:40]]})
+        return out
 
     def _bs_push(self):
         try:

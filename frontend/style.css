@@ -4023,3 +4023,8 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
 .bsynth-ask input{ width: 100%; height: 40px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
     background: var(--screen); color: var(--text); font: inherit; font-size: 16px; font-variant-numeric: tabular-nums; box-sizing: border-box; }
 #bsynthMsg:empty{ display: none; }
+.bsynth-report{ display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.bsynth-report:empty{ display: none; }
+.bsynth-col > summary{ cursor: pointer; }
+.bsynth-reps{ display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 0 4px 14px; font-size: 12px; max-height: 120px; overflow-y: auto; }
+.bsynth-reps i{ font-style: normal; color: var(--text-faint); }
