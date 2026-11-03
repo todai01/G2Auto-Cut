@@ -532,10 +532,10 @@
             <div class="help-section">
                 <div class="help-section__title">Порядок работы</div>
                 <ol class="help-flow">
-                    <li><b>Нарезка</b> — программа режет длинный WAV по паузам на отдельные дубли.</li>
-                    <li><b>Отбор</b> — клавиши Z, C и X раскладывают дубли по папкам.</li>
-                    <li><b>Монтаж</b> — до пяти частей склеиваются в один файл через Audacity.</li>
-                    <li><b>Сдача</b> — готовое уходит в «Проверенные» под именем из Excel.</li>
+                    <li><b>TTS-проект</b> — таблица, запись диктора, автопроверка и апрув в одном экране.</li>
+                    <li><b>Пакетная сборка</b> — суммы по эталону собираются через Audacity.</li>
+                    <li><b>Готовая папка с переменными</b> — дубли раскладываются по категориям, собирается эталон.</li>
+                    <li><b>Конструктор</b> — любая комбинация из сохранённых сумм.</li>
                 </ol>
             </div>
 
@@ -555,12 +555,7 @@
                     <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза назад / вперёд</span>
                     <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль назад / вперёд</span>
                     <span class="hotkey"><kbd>W</kbd> Отметить проверенным</span>
-                    <span class="hotkey"><kbd>Z</kbd> В проверенные</span>
-                    <span class="hotkey"><kbd>C</kbd> В переменные</span>
-                    <span class="hotkey"><kbd>S</kbd> Авто-тишина</span>
-                    <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
                     <span class="hotkey"><kbd>F</kbd> Поиск</span>
-                    <span class="hotkey"><kbd>Esc</kbd> Основной режим</span>
                 </div>
             </div>
 
@@ -847,58 +842,8 @@
 
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
-                    <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
+                    <div><span class="option-title">Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
                 <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'excel')">&times;</span>
-                </button>
-
-                <button class="option-card rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
-                    <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
-                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'project')">&times;</span>
-                </button>
-
-                <!-- Настройки нарезки подбираются сами — ползунки свёрнуты -->
-                <details class="menu-cut rise" style="--d: 3">
-                    <summary class="menu-cut__summary" onclick="toggleMenuCut(event)">
-                        <span class="menu-cut__title">Настройки нарезки</span>
-                        <span class="menu-cut__values" id="cutSummary">500 мс · −35 дБ · 250 мс</span>
-                    </summary>
-                    <div class="settings-panel menu-cut__body" id="menuCutBody">
-                        <div class="settings-head">
-                            <span class="menu-cut__note">Обычно подбираются автоматически под запись</span>
-                            <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
-                        </div>
-
-                        <label class="slider-field">
-                            <div class="slider-head">
-                                <span class="slider-name">Длина паузы для разреза<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
-                                <span id="valPause" class="slider-value">Нормальная</span>
-                            </div>
-                            <input type="range" id="inpPause" min="50" max="3000" step="10" value="500" oninput="updateSettingsText()">
-                        </label>
-
-                        <label class="slider-field">
-                            <div class="slider-head">
-                                <span class="slider-name">Чувствительность к тихим звукам<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
-                                <span id="valSens" class="slider-value">Оптимальная</span>
-                            </div>
-                            <input type="range" id="inpSens" min="-80" max="-10" step="1" value="-35" oninput="updateSettingsText()">
-                        </label>
-
-                        <label class="slider-field">
-                            <div class="slider-head">
-                                <span class="slider-name">Запас звука по краям<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
-                                <span id="valPad" class="slider-value">Безопасный</span>
-                            </div>
-                            <input type="range" id="inpPad" min="0" max="1000" step="10" value="250" oninput="updateSettingsText()">
-                        </label>
-                    </div>
-                </details>
-
-                <button class="option-card rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
-                    <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
-                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'project')">&times;</span>
                 </button>
 
                 <div id="progressContainer" class="progress-panel">
@@ -1009,12 +954,7 @@
                 <button class="btn-ghost btn-alert btn-ghost--compact" onclick="toggleMissingPanel()">Осталось: <span id="statMissing">0</span></button>
             </div>
 
-            <div class="mode-switch">
-                <button class="chip" data-mode="проверенные" onclick="loadChecked()">Проверенные</button>
-                <button class="chip" data-mode="переменные" onclick="loadVariables()">Переменные</button>
-                <button class="chip chip-mode--active" data-mode="chunks" onclick="loadMainMode()">Основной <kbd>Esc</kbd></button>
-            </div>
-        </header>
+                    </header>
 
         <!-- Общий прогресс проекта -->
         <div class="project-progress" id="projectProgress">
@@ -1175,84 +1115,7 @@
             </div>
 
             <div class="panel-column">
-                <section class="merge-panel">
-                    <h4 class="panel-title">Монтажный стол — до 5 частей</h4>
-                    <div class="merge-parts-row">
-                        <div class="merge-part-box" id="boxPart1">
-                            <div class="btn-remove-part" onclick="clearPart(1)">&times;</div>
-                            <button class="btn-mark" id="btnPart1" onclick="markPart(1)"><kbd>1</kbd></button>
-                            <div id="labelPart1" class="part-value">-</div>
-                        </div>
-                        <div class="merge-part-box" id="boxPart2">
-                            <div class="btn-remove-part" onclick="clearPart(2)">&times;</div>
-                            <button class="btn-mark" id="btnPart2" onclick="markPart(2)"><kbd>2</kbd></button>
-                            <div id="labelPart2" class="part-value">-</div>
-                        </div>
-                        <div class="merge-part-box" id="boxPart3">
-                            <div class="btn-remove-part" onclick="clearPart(3)">&times;</div>
-                            <button class="btn-mark" id="btnPart3" onclick="markPart(3)"><kbd>3</kbd></button>
-                            <div id="labelPart3" class="part-value">-</div>
-                        </div>
-                        <div class="merge-part-box" id="boxPart4">
-                            <div class="btn-remove-part" onclick="clearPart(4)">&times;</div>
-                            <button class="btn-mark" id="btnPart4" onclick="markPart(4)"><kbd>4</kbd></button>
-                            <div id="labelPart4" class="part-value">-</div>
-                        </div>
-                        <div class="merge-part-box" id="boxPart5">
-                            <div class="btn-remove-part" onclick="clearPart(5)">&times;</div>
-                            <button class="btn-mark" id="btnPart5" onclick="markPart(5)"><kbd>5</kbd></button>
-                            <div id="labelPart5" class="part-value">-</div>
-                        </div>
-                    </div>
-                    <div class="merge-actions">
-                        <button class="btn-step" id="btnPrepMerge"
-                                onmousedown="startHold(1, 'btnPrepMerge', prepMerge)"
-                                onmouseup="releaseHold(1, 'btnPrepMerge', () => markPart(1))"
-                                onmouseleave="releaseHold(1, 'btnPrepMerge', () => {})">1. Выгрузить</button>
-
-                        <button class="btn-step btn-step--confirm" id="btnSaveMerge" onclick="handleDoubleTap('btnSaveMerge', saveMerge, '2. В проверенные')">2. В проверенные</button>
-
-                        <button class="btn-step btn-step--var" id="btnSaveMergeVar" onclick="handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные')">3. В переменные</button>
-                    </div>
-                </section>
-
-                <section class="var-mix-panel" id="varMixPanel" style="display:none;">
-                    <h4 class="panel-title panel-title--var">Редактор переменных</h4>
-
-                    <label class="silence-toggle silence-toggle--left">
-                        <input type="checkbox" id="varAtStart"> <span>Вставить переменную перед первой фразой</span>
-                    </label>
-
-                    <div class="var-slots">
-                        <!-- Слот 1: Дата -->
-                        <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('date')" id="btnVarDateLoad"><svg class="icon"><use href="#icon-calendar"></use></svg> Дата: кликните для загрузки</button>
-                            <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('date')" id="btnVarDateMix" disabled>Собрать</button>
-                        </div>
-                        <!-- Слот 2: Имя -->
-                        <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('name')" id="btnVarNameLoad"><svg class="icon"><use href="#icon-user"></use></svg> Имя: кликните для загрузки</button>
-                            <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('name')" id="btnVarNameMix" disabled>Собрать</button>
-                        </div>
-                        <!-- Слот 3: Сумма -->
-                        <div class="var-slot">
-                            <button class="btn-ghost var-slot__pick" onclick="loadVarFile('amount')" id="btnVarAmountLoad"><svg class="icon"><use href="#icon-dollar-sign"></use></svg> Сумма: кликните для загрузки</button>
-                            <button class="btn-step btn-step--var var-slot__mix" onclick="mixWithVar('amount')" id="btnVarAmountMix" disabled>Собрать</button>
-                        </div>
-                    </div>
-
-                    <button class="btn-step btn-step--confirm var-export" onclick="saveSeparateParts()">Экспортировать фразы в «Проверенные» (без переменных)</button>
-                </section>
-
                 <section class="action-panel">
-                    <label class="silence-toggle"><input type="checkbox" id="addSilence"> Авто-добавление тишины <kbd>S</kbd></label>
-
-                    <div id="standardActions" class="action-col">
-                        <button class="btn-action btn-action--good" onclick="processAction('good')"><span>Проверено</span><kbd>Z</kbd></button>
-                        <button class="btn-action btn-action--var" onclick="processAction('variable')"><span>В переменные</span><kbd>C</kbd></button>
-                        <div class="action-note">Ненужный дубль просто пролистайте — <kbd>D</kbd></div>
-                    </div>
-
                     <div id="sumManualActions" class="action-col" style="display: none;"></div>
 
                     <div id="varBatchActions" class="action-col" style="display: none;">
@@ -1296,8 +1159,6 @@
                     <span class="hotkey"><kbd>Q</kbd><kbd>E</kbd> Фраза</span>
                     <span class="hotkey"><kbd>A</kbd><kbd>D</kbd> Дубль</span>
                     <span class="hotkey"><kbd>W</kbd> Проверено</span>
-                    <span class="hotkey"><kbd>1</kbd>…<kbd>5</kbd> Части монтажа</span>
-                    <span class="hotkey"><kbd>S</kbd> Тишина</span>
                     <span class="hotkey"><kbd>F</kbd> Поиск</span>
                 </div>
             </div>

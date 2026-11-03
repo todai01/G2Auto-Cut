@@ -55,6 +55,8 @@ let isProcessing = false;
         function padWord(v)    { return v < 150 ? "Маленький" : (v > 300 ? "Большой" : "Безопасный"); }
 
         function updateSettingsText() {
+            // Ползунки нарезки жили в меню основного режима (удалён) — без них выходим.
+            if (!document.getElementById('inpPause')) return;
             let p = parseInt(document.getElementById('inpPause').value);
             document.getElementById('valPause').innerText = `${pauseWord(p)} · ${p} мс`;
 
@@ -281,7 +283,9 @@ let isProcessing = false;
             });
         }
 
-        const motionOK = () => !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+        // Строгий интерфейс: переходы между экранами мгновенные, без «хореографии».
+        // Все анимации ниже включаются только при motionOK() — поэтому выключены.
+        const motionOK = () => false;
         const isShown = id => { let el = document.getElementById(id); return !!el && el.style.display !== 'none'; };
         let stageAnimating = false;
 
@@ -721,8 +725,9 @@ let isProcessing = false;
             }
 
             if (state && state.tts) { openTtsScreen(state); return; }
-            updateUI(state);
-            showWorkspace();
+            // Не-TTS проекты раньше открывались в режиме проверки дублей — его больше нет.
+            showBeautifulAlert('ℹ️ <b>Проект не открыть одним кликом</b><br><br>Это проект режима проверки дублей, который убран из программы. '
+                + 'Для переменных откройте <b>Пакетную сборку</b> или <b>Готовую папку с переменными</b> в меню.');
         }
 
         // Заставка -> экран подготовки проекта. Если есть недавний проект —
@@ -834,7 +839,7 @@ let isProcessing = false;
             btn.textContent = 'Очистить';
             try { await pywebview.api.clear_recent_projects(); } catch (e) {}
             let box = document.getElementById('menuRecent');
-            if (box && box.animate) {
+            if (box && box.animate && motionOK()) {
                 await box.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(6px)' }],
                                   { duration: 220, easing: 'ease-in' }).finished.catch(() => {});
             }
@@ -883,7 +888,7 @@ let isProcessing = false;
         function toggleMenuCut(e) {
             let det = e.currentTarget.parentElement;
             let body = document.getElementById('menuCutBody');
-            if (!body || !body.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            if (!body || !body.animate || !motionOK()) return;
             e.preventDefault();
             if (det.dataset.anim) return;
             det.dataset.anim = '1';
@@ -921,7 +926,10 @@ let isProcessing = false;
             el.classList.toggle('setup-status--ready', !!ready);
         }
 
-        function resetSilence() { document.getElementById('addSilence').checked = false; }
+        // Галочка «Авто-добавление тишины» была только в основном режиме (удалён).
+        // Обращения к ней остались в общих функциях — читаем безопасно.
+        function addSilenceOn() { let el = document.getElementById('addSilence'); return !!(el && el.checked); }
+        function resetSilence() { let el = document.getElementById('addSilence'); if (el) el.checked = false; }
 
         // Полоса общего прогресса: проверенные, готовые и переменные в одной шкале
         function updateProjectProgress(stats) {
@@ -1087,7 +1095,7 @@ let isProcessing = false;
             let descExcel = document.getElementById('descExcel');
             if (descExcel) descExcel.innerHTML = `<b>${fileName}</b>`;
 
-            setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
+            setSetupStatus('Таблица подключена — выберите режим', true);
         }
 
         // «×» на загруженной карточке: сбросить и загрузить заново.
@@ -1105,14 +1113,11 @@ let isProcessing = false;
                 document.getElementById('btnLoadExcel').classList.remove('loaded');
                 document.getElementById('descExcel').innerText = 'Таблица не выбрана';
             } else {
-                ['btnLoadAudio', 'btnLoadFolder'].forEach(id => document.getElementById(id).classList.remove('loaded'));
-                document.getElementById('descAudio').innerText = 'Новый проект';
-                document.getElementById('descFolder').innerText = 'Продолжить работу';
                 workspaceReady = false;
                 let br = document.getElementById('btnResume');
                 if (br) br.style.display = 'none';
             }
-            setSetupStatus(excelIsLoaded ? 'Шаг 2 · Таблица подключена — выберите аудио или режим'
+            setSetupStatus(excelIsLoaded ? 'Таблица подключена — выберите режим'
                                          : 'Шаг 1 · Подключите таблицу с текстом', excelIsLoaded);
             showToast(what === 'excel' ? 'Таблица сброшена' : 'Проект сброшен');
         }
@@ -2032,7 +2037,6 @@ let isProcessing = false;
                 let el = document.getElementById(id);
                 if (el) el.style.display = on ? 'flex' : 'none';
             };
-            show('standardActions', !sumModeActive);
             show('sumManualActions', sumModeActive);
             if (sumModeActive) show('varBatchActions', false);
 
@@ -3614,7 +3618,7 @@ let isProcessing = false;
         }
 
         async function sumManualSave() {
-            let state = await pywebview.api.sum_manual_save(document.getElementById('addSilence').checked);
+            let state = await pywebview.api.sum_manual_save(addSilenceOn());
             if (state && state.error) {
                 showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
                 return;
@@ -3979,7 +3983,7 @@ let isProcessing = false;
         async function processAction(action) {
             if (isProcessing) return; isProcessing = true;
             try {
-                let addSil = document.getElementById('addSilence').checked;
+                let addSil = addSilenceOn();
                 let state = await pywebview.api.dispatch('save', {kind: action, add_silence: addSil});
                 if (state) updateUI(state);
                 playAudio();
@@ -4098,7 +4102,7 @@ let isProcessing = false;
             }
             if (isProcessing) return; isProcessing = true;
 
-            let addSil = document.getElementById('addSilence').checked;
+            let addSil = addSilenceOn();
 
             // Получаем ответ от Python с обновленными галочками
             let newState = await pywebview.api.save_separate_parts(mergeParts, addSil);
@@ -4237,25 +4241,11 @@ let isProcessing = false;
                 if(state.stats.excel_name) {
                     markExcelLoaded(state.stats.excel_name);
                 }
-                if(state.stats.project_name) {
-                    document.getElementById('btnLoadFolder').classList.add('loaded');
-                    document.getElementById('descFolder').innerText = state.stats.project_name;
-                    document.getElementById('btnLoadAudio').classList.add('loaded');
-                    document.getElementById('descAudio').innerText = state.stats.project_name;
-                }
             }
-            // === АКТИВНАЯ ВКЛАДКА ===
-            // Сравниваем с меткой data-mode: раньше сверяли по надписи на кнопке,
-            // и любое переименование вкладки ломало подсветку.
-            let md = (state.mode || '').toLowerCase();
-            document.querySelectorAll('.mode-switch .chip').forEach(btn => {
-                btn.classList.toggle('chip-mode--active', (btn.dataset.mode || '') === md);
-            });
 
 
             if (state.mode === 'VarBatch') {
                 document.getElementById('workspaceGrid').classList.add('workspace-grid--varbatch');
-                document.getElementById('standardActions').style.display = 'none';
                 document.getElementById('varBatchActions').style.display = sumModeActive ? 'none' : 'flex';
                 document.getElementById('sumManualActions').style.display = sumModeActive ? 'flex' : 'none';
                 // Счётчики по ярусам застывали на значениях первого включения — сюда
@@ -4363,7 +4353,7 @@ let isProcessing = false;
         async function saveMerge() {
             if (!saveFilenameForMerge) { showBeautifulAlert("ℹ️ <b>Нет данных</b><br><br>Сначала выберите части для склейки."); return; }
             if (isProcessing) return; isProcessing = true;
-            await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, false);
+            await pywebview.api.save_merge(saveFilenameForMerge, addSilenceOn(), false);
             showToast("Склейка сохранена в «Проверенные»");
 
             mergeParts = [null, null, null, null, null];
@@ -4381,7 +4371,7 @@ let isProcessing = false;
             if (!saveFilenameForMerge) { showBeautifulAlert("ℹ️ <b>Нет данных</b><br><br>Сначала выберите части для склейки."); return; }
             if (isProcessing) return; isProcessing = true;
             // Передаем true в Python, чтобы файл ушел в папку Переменные
-            await pywebview.api.save_merge(saveFilenameForMerge, document.getElementById('addSilence').checked, true);
+            await pywebview.api.save_merge(saveFilenameForMerge, addSilenceOn(), true);
             showToast("Склейка сохранена в «Переменные»");
 
             mergeParts = [null, null, null, null, null];
@@ -4623,12 +4613,12 @@ let isProcessing = false;
             else if (e.code === 'KeyE') { e.preventDefault(); navPhrase(1); }
             else if (e.code === 'KeyA') { e.preventDefault(); navChunk(-1); }
             else if (e.code === 'KeyD') { e.preventDefault(); navChunk(1); }
-            else if (e.code === 'KeyZ') { e.preventDefault(); if (sumModeActive) sumStage1SendSelected(); else processAction('good'); }
+            else if (e.code === 'KeyZ' && sumModeActive) { e.preventDefault(); sumStage1SendSelected(); }
             else if (e.code === 'KeyX' && sumModeActive) { e.preventDefault(); sumStage1Undo(); }
             else if (e.code === 'Delete' && sumModeActive) { e.preventDefault(); if (sumEd.sel) sumEditorCut(); else sumRemoveBrowsed(); }
             else if (e.code === 'KeyP' && sumModeActive) { e.preventDefault(); sumEditorTogglePlay(); }
             else if ((e.code === 'Enter' || e.code === 'NumpadEnter') && sumModeActive) { e.preventDefault(); sumEditorSave(); }
-            else if (e.code === 'KeyC') { e.preventDefault(); if (sumModeActive) sumStage2SendToAudacity(); else processAction('variable'); }
+            else if (e.code === 'KeyC' && sumModeActive) { e.preventDefault(); sumStage2SendToAudacity(); }
             else if (e.code === 'KeyN' && sumModeActive) { e.preventDefault(); sumFixSplit(); }
             else if (e.code === 'KeyV' && sumModeActive) { e.preventDefault(); sumSendDubToAudacity(); }
             else if (e.code === 'KeyB' && sumModeActive) { e.preventDefault(); sumCollectDubLabels(); }
@@ -4636,19 +4626,7 @@ let isProcessing = false;
             else if (e.code === 'ArrowDown' && sumModeActive) { e.preventDefault(); sumStage1MoveSelection(1); }
             else if (e.code === 'ArrowLeft' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(-1); }
             else if (e.code === 'ArrowRight' && sumModeActive) { e.preventDefault(); sumStage1BrowseMove(1); }
-            else if (e.code === 'Escape') { e.preventDefault(); loadMainMode(); }
             else if (e.code === 'KeyF') { e.preventDefault(); openSearch(); }
-            else if (e.code === 'KeyW') { e.preventDefault(); toggleChecked(); }
-            else if (e.code === 'KeyS') {
-                e.preventDefault();
-                let chk = document.getElementById('addSilence');
-                chk.checked = !chk.checked;
-            }
-            else if (e.code === 'Digit1') { e.preventDefault(); startHold(1, 'btnPrepMerge', prepMerge); }
-            else if (e.code === 'Digit2') { e.preventDefault(); handleDoubleTap('btnSaveMerge', saveMerge, '2. В проверенные'); }
-            else if (e.code === 'Digit3') { e.preventDefault(); handleDoubleTap('btnSaveMergeVar', saveMergeVar, '3. В переменные'); }
-            else if (e.code === 'Digit4') { e.preventDefault(); markPart(4); }
-            else if (e.code === 'Digit5') { e.preventDefault(); markPart(5); }
         });
 
         document.addEventListener('keyup', function(e) {
@@ -4657,10 +4635,6 @@ let isProcessing = false;
             // НОВОВВЕДЕНИЕ: Отключаем отпускание кнопок при открытом Аудите
             let auditOverlay = document.getElementById('auditOverlay');
             if (auditOverlay && auditOverlay.style.display === 'flex') return;
-
-            if (e.code === 'Digit1') { releaseHold(1, 'btnPrepMerge', () => markPart(1)); }
-            else if (e.code === 'Digit2') { releaseHold(2, 'btnSaveMerge', () => markPart(2)); }
-            if (e.code === 'Digit3') { releaseHold(3, 'btnSaveMergeVar', () => markPart(3)); }
 
             if (e.code === 'KeyW' || e.code === 'KeyS') { constructorStopHold(e.code); }
         });
@@ -5236,6 +5210,8 @@ let isProcessing = false;
 
         // Функция плавной анимации цифр
         function animateValue(obj, start, end, duration) {
+            // Цифры показываются сразу, без «накручивания».
+            if (!motionOK()) { obj.innerHTML = end; return; }
             let startTimestamp = null;
             const step = (timestamp) => {
                 if (!startTimestamp) startTimestamp = timestamp;
