@@ -21,7 +21,9 @@ from core.voice_trim import voice_span
 from core.synth_browser import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX, SYNTH_PRESET_VOICES
 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
-LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
+LISTEN_DONE_DIR = 'Готовые'                     # сохранённые (Enter) — копия сюда: <папка записей>/Готовые/<столбец>/…
+LISTEN_FIX_DIR = 'Исправить'                    # помеченные (Backspace) — копия сюда
+LISTEN_SKIP_DIRS = {'_до_правок', '_синтез', LISTEN_DONE_DIR, LISTEN_FIX_DIR}
 LISTEN_SYNTH_DIR = '_синтез'
 LISTEN_TPL_FILE = '.gvox_listen_tpl.json'       # шаблон срезки — в папке записей
 LISTEN_FLAG_FILE = '.gvox_listen_flags.json'    # «исправить потом» — названия строк
@@ -168,40 +170,64 @@ class ListenMixin:
             return {"error": "cancel"}
         path = picked if isinstance(picked, str) else picked[0]
         try:
-            names, col = self._listen_read_table(path)
+            cells, cols, info = self._listen_read_table(path)
         except Exception as e:
             return {"error": f"Не удалось прочитать таблицу: {e}"}
-        if not names:
+        if not cells:
             return {"error": "В таблице не нашлось названий."}
         ls = self._ls()
         ls["table"] = path
-        ls["rows"] = [{"name": n, "path": None, "dups": 0} for n in names]
+        ls["cols"] = cols
+        first, name_cols = {}, {}
+        ls["rows"] = []
+        for k, (tr, ci, name) in enumerate(cells):            # по строкам слева направо — как в таблице
+            key = listen_norm(name)
+            rep = first.setdefault(key, k)                     # то же имя уже было выше — слушаем один раз
+            if ci not in [c for c in name_cols.setdefault(key, [])]:
+                name_cols[key].append(ci)
+            ls["rows"].append({"name": name, "path": None, "dups": 0, "ci": ci, "col": cols[ci], "tr": tr,
+                               "rep": None if rep == k else rep})
+        ls["name_cols"] = {k: [cols[c] for c in v] for k, v in name_cols.items()}
         ls["pos"] = 0
         ls["synth"] = {}
         self._listen_match()
-        return {**self.listen_state(), "column": col}
+        threading.Thread(target=self._listen_sync_folders, daemon=True).start()
+        return {**self.listen_state(), "column": info}
+
+    @staticmethod
+    def _listen_col_letter(c):
+        return chr(65 + c) if c < 26 else str(c + 1)
 
     def _listen_read_table(self, path):
-        """Названия из таблицы: колонка, где больше всего совпадений с папкой
-        (если папки ещё нет — первая заполненная). Шапку («Имя», «<name>») пропускаем."""
+        """Все столбцы таблицы с названиями (шапка «<firstname>» и т. п. — подпись столбца).
+        Возвращает ([(строка, столбец, имя)…] по строкам слева направо, [подписи столбцов], описание).
+        Лист — где больше совпадений с папкой записей (папки ещё нет — самый большой)."""
         import openpyxl
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         index = self._ls()["index"]
         best = None
         for ws in wb.worksheets:
-            cols = {}
-            for row in ws.iter_rows(values_only=True):
+            cells, first = [], {}
+            for r, row in enumerate(ws.iter_rows(values_only=True), 1):
                 for c, v in enumerate(row):
-                    if v is not None and str(v).strip():
-                        cols.setdefault(c, []).append(str(v).strip())
-            for c, vals in cols.items():
-                if vals and (vals[0].lower().strip('<> ') in LISTEN_HEADER_WORDS or re.fullmatch(r'<.*>', vals[0])):
-                    vals = vals[1:]
-                score = (sum(1 for v in vals if listen_norm(v) in index), len(vals))
-                if vals and (best is None or score > best[0]):
-                    best = (score, vals, f"{ws.title} · колонка {chr(65 + c) if c < 26 else c + 1}")
+                    if v is None or not str(v).strip():
+                        continue
+                    v = str(v).strip()
+                    first.setdefault(c, (r, v))
+                    cells.append((r, c, v))
+            head = {c: v.strip('<> ') for c, (r, v) in first.items()
+                    if v.lower().strip('<> ') in LISTEN_HEADER_WORDS or re.fullmatch(r'<.*>', v)}
+            body = [(r, c, v) for r, c, v in cells if not (c in head and r == first[c][0])]
+            if not body:
+                continue
+            used = sorted({c for _r, c, _v in body})
+            cols = [head.get(c) or self._listen_col_letter(c) for c in used]
+            body = [(r, used.index(c), v) for r, c, v in body]            # номер столбца — по порядку среди заполненных
+            score = (sum(1 for _r, _c, v in body if listen_norm(v) in index), len(body))
+            if best is None or score > best[0]:
+                best = (score, body, cols, f"{ws.title} · столбцов {len(cols)}: {', '.join(cols)}")
         wb.close()
-        return (best[1], best[2]) if best else ([], None)
+        return (best[1], best[2], best[3]) if best else ([], [], None)
 
     # ---------------- кэш: декодированный звук и волны (ключ — путь + время + размер) ----------------
     def _listen_cache_get(self, kind, key, make):
@@ -250,6 +276,77 @@ class ListenMixin:
                 pass
         threading.Thread(target=run, daemon=True).start()
 
+    # ---------------- папки «Готовые» и «Исправить» ----------------
+    # Сохранили (Enter) — копия записи ложится в «Готовые/<столбец>/…», пометили (Backspace) —
+    # в «Исправить/<столбец>/…» (имя файла — как у записи). Одно имя в нескольких столбцах —
+    # копия в каждом. Отменили — копия исчезает.
+    @staticmethod
+    def _listen_safe(name):
+        return re.sub(r'[\\/:*?"<>|]+', '_', str(name or '')).strip(' .') or 'столбец'
+
+    def _listen_out_paths(self, path, which):
+        ls = self._ls()
+        if not ls["folder"] or not path:
+            return []
+        key = listen_norm(os.path.basename(path))
+        cols = (ls.get("name_cols") or {}).get(key)
+        if not cols:
+            return []
+        lang = listen_lang_of(path, ls["folder"]) if ls["lang_dirs"] else None
+        base = os.path.join(ls["folder"], LISTEN_DONE_DIR if which == 'done' else LISTEN_FIX_DIR)
+        return [os.path.join(base, self._listen_safe(c), *([lang] if lang else []), os.path.basename(path)) for c in cols]
+
+    def _listen_file_out(self, path, which):
+        for p in self._listen_out_paths(path, which):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    def _listen_file_to(self, path, which):
+        """Копия записи — в «Готовые» (which='done') или «Исправить» ('fix'); из другой папки — убрать."""
+        self._listen_file_out(path, 'fix' if which == 'done' else 'done')
+        for p in self._listen_out_paths(path, which):
+            try:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                shutil.copy2(path, p)
+            except OSError:
+                pass
+
+    def _listen_sync_folders(self):
+        """Таблицу открыли: что уже сохранено / помечено раньше — копии в папках на месте."""
+        ls = self._ls()
+        try:
+            flags = ls.get("flags") or set()
+            for r in list(ls["rows"]):
+                if not r["path"] or r.get("rep") is not None:
+                    continue
+                which = 'fix' if listen_norm(r["name"]) in flags else 'done' if os.path.exists(self._listen_meta(r["path"])) else None
+                if which and not all(os.path.exists(p) for p in self._listen_out_paths(r["path"], which)):
+                    self._listen_file_to(r["path"], which)
+        except Exception:
+            pass
+
+    def listen_unfile(self, k, which):
+        """Отменить «в папку»: which='done' — убрать из «Готовые» (запись снова не проверена),
+        'fix' — убрать из «Исправить» (пометка снята). Правки звука остаются."""
+        ls = self._ls()
+        k = int(k)
+        if not (0 <= k < len(ls["rows"])):
+            return {"error": "Нет такой строки."}
+        r = ls["rows"][k]
+        if r["path"]:
+            if which == 'fix':
+                (ls.setdefault("flags", set())).discard(listen_norm(r["name"]))
+                self._listen_flags_save()
+            else:
+                try:
+                    os.remove(self._listen_meta(r["path"]))
+                except OSError:
+                    pass
+            self._listen_file_out(r["path"], 'fix' if which == 'fix' else 'done')
+        return {"ok": True, "state": self.listen_state()}
+
     # ---------------- «исправить потом» ----------------
     def _listen_flags_save(self):
         ls = self._ls()
@@ -270,6 +367,12 @@ class ListenMixin:
         key = listen_norm(ls["rows"][k]["name"])
         (flags.add if on else flags.discard)(key)
         self._listen_flags_save()
+        path = ls["rows"][k]["path"]
+        if path:
+            if on:
+                self._listen_file_to(path, 'fix')
+            else:
+                self._listen_file_out(path, 'fix')
         return {"row": self._listen_row(k), "flagged": self._listen_flagged()}
 
     def _listen_flagged(self):
@@ -289,6 +392,7 @@ class ListenMixin:
         ls = self._ls()
         r = ls["rows"][k]
         return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
+                "col": r.get("col"), "ci": r.get("ci", 0), "tr": r.get("tr", k + 1), "rep": r.get("rep"),
                 "dups": r["dups"], "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
                 "done": bool(r["path"]) and os.path.exists(self._listen_meta(r["path"])),     # прошла через «Сохранить»
                 "flag": listen_norm(r["name"]) in (ls.get("flags") or ()),                    # «исправить потом»
@@ -330,8 +434,10 @@ class ListenMixin:
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None,
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
-            "found": sum(1 for r in rows if r["path"]),
-            "voice": ls.get("voice"),
+            "found": sum(1 for r in rows if r["path"] and r.get("rep") is None),
+            "cols": ls.get("cols") or [], "voice": ls.get("voice"),
+            "out": {"done": os.path.join(ls["folder"], LISTEN_DONE_DIR) if ls["folder"] else None,
+                    "fix": os.path.join(ls["folder"], LISTEN_FIX_DIR) if ls["folder"] else None},
         }
 
     def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None):
@@ -535,79 +641,11 @@ class ListenMixin:
             r = self.listen_tpl_set(path, ranges, gain, tempo)
             tpl_new = (r.get("tpl") or {}).get("from")
         self._listen_unflag_path(path)
+        if as_var:
+            self._listen_file_to(path, 'done')
         if light:                                             # автопрогон: без всего состояния — быстрее
             return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "tpl": {"from": self._ls()["tpl"]["from"]} if self._ls().get("tpl") else None}
         return {"ok": True, "ms": len(seg), "tpl_new": tpl_new, "state": self.listen_state()}
-
-    def listen_export(self, mode='done'):
-        """Финальная папка для сдачи: только аудио (раскладка ru / kz — как в папке
-        записей), без «_до_правок», «_синтез» и служебных файлов. mode: done —
-        только сохранённые, all — все найденные. Что не готово — списком рядом."""
-        ls = self._ls()
-        if not ls["folder"] or not ls["rows"]:
-            return {"error": "Сначала откройте папку записей и таблицу."}
-        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not picked:
-            return {"error": "cancel"}
-        parent = picked if isinstance(picked, str) else picked[0]
-        base = os.path.basename(os.path.normpath(ls["folder"])) + '_финал'
-        dest, n = os.path.join(parent, base), 2
-        while os.path.exists(dest):
-            dest, n = os.path.join(parent, f"{base}_{n}"), n + 1
-        flags = ls.get("flags") or set()
-        take, todo, flagged, missing, seen = [], [], [], [], set()
-        # папка разделена на ru / kz — собираем оба языка (поиск как в _listen_match, без смены общего языка)
-        langs = sorted(ls["lang_dirs"]) if ls["lang_dirs"] else [None]
-        rows = []
-        for lang in langs:
-            tag = f" ({lang})" if lang else ''
-            for r in ls["rows"]:
-                hits = ls["index"].get(listen_norm(r["name"]), [])
-                if lang:
-                    hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (lang, None)]
-                rows.append((r["name"] + tag, listen_norm(r["name"]), hits[0] if hits else None))
-        for name, key, p in rows:
-            if not p:
-                missing.append(name)
-                continue
-            if key in flags:
-                flagged.append(name)
-                if mode != 'all':
-                    continue
-            if p in seen:
-                continue
-            seen.add(p)
-            if mode != 'all' and not os.path.exists(self._listen_meta(p)):
-                todo.append(name)
-                continue
-            take.append(p)
-        if not take:
-            return {"error": "Нечего собирать — нет сохранённых записей."}
-        self.player.stop()
-        copied, failed = 0, []
-        for p in take:
-            try:
-                rel = os.path.relpath(p, ls["folder"])
-                if rel.startswith('..'):
-                    rel = os.path.basename(p)
-                out = os.path.join(dest, rel)
-                os.makedirs(os.path.dirname(out), exist_ok=True)
-                shutil.copy2(p, out)
-                copied += 1
-            except OSError as e:
-                failed.append(f"{os.path.basename(p)}: {e}")
-        report = None
-        if todo or flagged or missing or failed:
-            report = dest + '_не_готово.txt'
-            parts = [("Не проверены (жёлтые)", todo), ("Помечены «исправить»", flagged),
-                     ("Нет записи", sorted(set(missing))), ("Не скопировались", failed)]
-            with open(report, 'w', encoding='utf-8') as f:
-                for title, items in parts:
-                    if items:
-                        f.write(f"{title} — {len(items)}:\n" + "\n".join(items) + "\n\n")
-        flagged = sorted(set(flagged))
-        return {"ok": True, "dest": dest, "copied": copied, "todo": len(todo), "flagged": len(flagged),
-                "missing": len(set(missing)), "failed": len(failed), "report": report}
 
     def listen_mark_done(self, path, light=False):
         """Запись хороша как есть — отметить проверенной, файл не трогаем."""
@@ -620,6 +658,7 @@ class ListenMixin:
             with open(meta, 'w', encoding='utf-8') as f:
                 json.dump({"ranges": [[0, dur]], "gain": 0.0, "tempo": 1.0}, f)
         self._listen_unflag_path(path)
+        self._listen_file_to(path, 'done')
         return {"ok": True} if light else {"ok": True, "state": self.listen_state()}
 
     def listen_edit_restore(self, path):
@@ -628,6 +667,7 @@ class ListenMixin:
             os.remove(self._listen_meta(path))
         except OSError:
             pass
+        self._listen_file_out(path, 'done')
         if os.path.exists(self._audit_backup(path)):
             r = self.audit_edit_restore(path)
             if r.get("error"):

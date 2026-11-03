@@ -1467,7 +1467,7 @@
                 <button class="btn-ghost btn-ghost--info" onclick="listenPick('folder')" title="Папка с записями переменных">Папка</button>
                 <button class="btn-ghost btn-ghost--info" onclick="listenPhrases()" title="Начало и конец фразы — из папки кусочков (Фразы_Переменные)">Начало / конец</button>
                 <button class="btn-ghost btn-ghost--info" onclick="listenPick('table')" title="Таблица с названиями переменных">Таблица</button>
-                <button class="btn-ghost btn-ghost--good" onclick="listenExport()" title="Собрать папку для сдачи: только готовые аудио, без служебных файлов">Финальная папка</button>
+                <button class="btn-ghost btn-ghost--good" onclick="listenExport()" title="Папки с результатом: «Готовые» и «Исправить» — открыть">Папки</button>
                 <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial('listen')" title="Обучение: ролик про прослушку">?</button>
             </div>
             <div class="constructor-title">
@@ -1488,13 +1488,15 @@
                     <button type="button" id="listenTodoMode" onclick="listenTodoMode()" title="Только не проверенные: запись есть, ещё не сохранена и не помечена">Не проверены <b>0</b></button>
                     <button type="button" id="listenFlagMode" onclick="listenFlagMode(true)" title="Второй круг: только помеченные «исправить»">Помеченные <b>0</b></button>
                 </div>
-                <div class="listen-list" id="listenList"></div>
+                <div class="listen-cols" id="listenCols"></div>
+                <div class="listen-list lg" id="listenList"></div>
             </aside>
             <section class="listen-main">
                 <div class="lp-card">
                     <div class="lp-top">
                         <span class="lp-pos" id="listenPos"></span>
                         <span class="lp-status" id="listenStatus"></span>
+                        <span class="lp-unfile" id="listenUnfile"></span>
                         <span class="lp-top__spacer"></span>
                         <div class="listen-opts">
                             <span class="listen-lang listen-lang--sm" id="listenLangTop" title="Язык: пара начало / конец, записи из ru / kz и синтез"></span>
@@ -1730,6 +1732,6 @@
     <script src="ui_base.js?v=1"></script>
     <script src="script.js?v=22"></script>
     <script src="tutorial.js?v=16"></script>
-    <script src="listen.js?v=22"></script>
+    <script src="listen.js?v=23"></script>
 </body>
 </html>
