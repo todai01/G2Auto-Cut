@@ -468,7 +468,7 @@
             <div class="help-section">
                 <div class="help-section__title">Порядок работы</div>
                 <ol class="help-flow">
-                    <li><b>TTS-проект</b> — таблица, запись диктора, автопроверка и апрув в одном экране.</li>
+                    <li><b>Запись озвучки</b> — таблица, запись диктора, автопроверка и апрув в одном экране.</li>
                     <li><b>Пакетная сборка</b> — суммы по эталону собираются через Audacity.</li>
                     <li><b>Готовая папка с переменными</b> — дубли раскладываются по категориям, собирается эталон.</li>
                     <li><b>Конструктор</b> — любая комбинация из сохранённых сумм.</li>
@@ -670,7 +670,7 @@
 
                 <button class="option-card option-card--tts rise" style="--d: 1" id="btnTts" onclick="openTts()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-mic"></use></svg></span>
-                    <div><span class="option-title">TTS-проект</span><span class="option-desc" id="descTts">Таблица + запись → автопроверка → апрув</span></div>
+                    <div><span class="option-title">Запись озвучки</span><span class="option-desc" id="descTts">Запись по таблице → автопроверка → файлы</span></div>
                 </button>
 
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
@@ -1052,7 +1052,7 @@
                 <button class="btn-ghost btn-alert btn-ghost--compact" id="ttsMarksBtn" style="display:none" onclick="ttsMarksRetry()" title="Отметки start/end и переменных ещё не записаны в таблицу (например, она открыта в Excel)"></button>
             </div>
             <div class="tts-title">
-                <span class="tts-title__main">TTS</span>
+                <span class="tts-title__main">Запись озвучки</span>
                 <span class="tts-title__sub"><span id="ttsMeta">Таблица не загружена</span>
                     <span class="tts-lang" id="ttsLang" title="Язык распознавания речи">
                         <button type="button" data-l="ru" onclick="ttsSetLang('ru')">RU</button><button type="button" data-l="kz" onclick="ttsSetLang('kz')">KZ</button>

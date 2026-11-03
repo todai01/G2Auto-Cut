@@ -5156,7 +5156,7 @@ let isProcessing = false;
         async function openTts() {
             let st = await pywebview.api.tts_state();
             if (!st || !st.loaded) {
-                let how = await showBeautifulChoice('<b>TTS-проект</b><br><br>Загрузите таблицу: лист фраз с колонками '
+                let how = await showBeautifulChoice('<b>Запись озвучки</b><br><br>Загрузите таблицу: лист фраз с колонками '
                     + '<code>&lt;phrase&gt;</code>, <code>&lt;name_phrase&gt;</code>, флаги <code>&lt;start&gt;</code> / '
                     + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных (суммы, даты).<br><br>'
                     + '<b>Продолжить работу</b> — выберите папку прежнего проекта (или папку «Записи» в ней): '

@@ -2411,3 +2411,86 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .stage-tts:not(.show-assembly) .tts-asm-heard,
 .stage-tts:not(.show-assembly) .tts-assembly__title .tts-pill,
 .stage-tts:not(.show-assembly) .tts-asm-num{ display: none; }
+
+
+/* ============================================================
+   АКЦЕНТЫ И ГЛУБИНА
+   Строгая тема не должна быть «мёртвой»: слои фона отличаются
+   друг от друга, у каждого вида действий свой приглушённый цвет
+   (синий — работа, зелёный — готово, жёлтый — переменные),
+   у кнопок и карточек есть понятная реакция на наведение.
+   Всё статично: меняется только цвет, за 0,1 с.
+   ============================================================ */
+:root{
+    --bg: #1b1b1c;
+    --panel: #252526;
+    --panel-raised: #2d2d30;
+    --screen: #171718;
+    --hover: #323237;
+    --border: #3f3f44;
+    --border-soft: #333337;
+}
+
+button, .option-card, .menu-row, .menu-tool, .menu-recent__item, .search-input, select.search-input{
+    transition: background-color .1s linear, border-color .1s linear, color .1s linear;
+}
+
+/* Шапка — отдельная плашка, а не просто линия */
+.setup-header{
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 14px; border-bottom-color: var(--border);
+}
+.setup-brand__mark{ font-size: 22px; }
+
+/* Заголовки секций — с цветной меткой */
+.section-label span::before{
+    content: ""; display: inline-block; width: 3px; height: 11px; margin-right: 8px;
+    background: var(--accent-primary); vertical-align: -1px;
+}
+
+/* Карточки меню: цветная полоса слева по смыслу действия */
+.option-card, .menu-row{ box-shadow: inset 3px 0 0 var(--row-accent, var(--accent-primary)); }
+.option-card{ background: var(--panel); border-color: var(--border); }
+.option-card:hover, .menu-row:hover{ background: var(--hover); border-color: var(--row-accent, var(--accent-primary)); }
+.option-card .option-icon{ background: var(--tint-primary); color: var(--accent-primary); border-color: transparent; }
+.option-card .option-title{ color: var(--text); }
+.option-card.loaded{ --row-accent: var(--accent-good); background: var(--panel); }
+.option-card.loaded .option-icon{ background: var(--tint-good); color: var(--accent-good); border-color: transparent; }
+.option-card--tts .option-icon{ background: var(--tint-primary); color: var(--accent-primary); border-color: transparent; }
+.menu-row__icon{ color: var(--row-accent, var(--accent-primary)); background: var(--row-tint, var(--tint-primary)); }
+.menu-row:hover .menu-row__go{ color: var(--row-accent, var(--accent-primary)); }
+.menu-row{ background: var(--panel); border-color: var(--border); }
+
+/* Утилиты — плитки, а не пустые рамки */
+.menu-tool{ background: var(--panel); border-color: var(--border-soft); }
+.menu-tool__icon{ color: var(--accent-primary); opacity: .75; }
+.menu-tool:hover{ background: var(--hover); border-color: var(--accent-primary); }
+.menu-tool:hover .menu-tool__icon{ opacity: 1; }
+
+.menu-recent__item:hover{ background: var(--panel); border-color: var(--border); }
+
+/* Кнопки: рамка при наведении — акцентная; «информационные» и «переменные» окрашены текстом */
+.btn-ghost:hover, .btn-icon:hover, .btn-nav:hover, .btn-tile:hover, .btn-secondary:hover{ border-color: var(--accent-primary); }
+.btn-ghost--info{ color: var(--accent-primary); }
+.btn-ghost--var{ color: var(--accent-var); }
+.btn-ghost--info:hover, .btn-ghost--var:hover{ background: var(--hover); }
+.btn-play:active, .custom-alert-btn:active, .splash-btn:active, .entry__start:active{ filter: brightness(.9); }
+.btn-ghost:active, .btn-icon:active, .btn-nav:active, .btn-tile:active{ background: var(--panel); }
+
+/* Счётчики: цифры заметнее подписей */
+.stat-row{ background: var(--panel-raised); }
+.stat-row span span{ color: var(--text); font-weight: 600; }
+
+/* Экран фразы: цветная верхняя кромка и крупнее текст */
+.screen{ border-top: 2px solid var(--accent-primary); background: var(--screen); }
+.hero-phrase{ font-weight: 500; letter-spacing: -0.005em; }
+
+/* Окна: акцентная кромка сверху */
+.custom-alert-box{ border-top: 2px solid var(--accent-primary); background: var(--panel); }
+
+/* Заставка */
+.entry__mark{ font-size: 52px; }
+.entry__tagline{ border-bottom-color: var(--border); }
+.entry__tagline::after{
+    content: ""; display: block; width: 56px; height: 2px; background: var(--accent-primary); margin: 18px 0 -22px;
+}

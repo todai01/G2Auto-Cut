@@ -655,18 +655,18 @@ class TtsFlowMixin:
         folder = picked if isinstance(picked, str) else picked[0]
         root = self.tts_project_root(folder)
         if not os.path.exists(os.path.join(root, TTS_STATE_FILE)):
-            return {"error": "В этой папке нет прежней работы TTS (нет файла tts_project.json). "
+            return {"error": "В этой папке нет прежней работы по записи озвучки (нет файла tts_project.json). "
                              "Выберите папку проекта или папку «Записи» внутри неё."}
         msg = self._tts_attach_folder(root)
         return {**self.tts_state(), "message": msg}
 
     def tts_open_project(self, path):
-        """Продолжить TTS-проект (tts_project.json в папке)."""
+        """Продолжить проект записи озвучки (tts_project.json в папке)."""
         try:
             with open(os.path.join(path, TTS_STATE_FILE), 'r', encoding='utf-8') as f:
                 data = json.load(f)
         except (OSError, ValueError):
-            return {"error": "Не нашёл сохранённый TTS-проект в этой папке."}
+            return {"error": "Не нашёл сохранённый проект записи озвучки в этой папке."}
         self.tts = None
         st = self._tts()
         old = data.get("v") != TTS_STATE_VERSION
