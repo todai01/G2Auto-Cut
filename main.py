@@ -15,7 +15,6 @@ from core.project_handler import ProjectMixin
 from core.audacity_montage import MontageMixin
 from core.converter import ConverterMixin
 from core.constructor_handler import ConstructorMixin
-from core.filename_match_handler import FilenameMatchMixin
 from core.table_to_pptx_handler import TableToPptxMixin
 from core.timing_editor import TimingEditorMixin
 from core.auto_check import AutoCheckMixin
@@ -38,7 +37,7 @@ from utils.file_utils import FileUtils
 # которая зависит от того, откуда программу запустили.
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin, ClonePrepMixin, AuditFixMixin, ListenMixin, BatchSynthMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin, ClonePrepMixin, AuditFixMixin, ListenMixin, BatchSynthMixin):
     def __init__(self):
         super().__init__()
 

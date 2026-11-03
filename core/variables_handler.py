@@ -328,47 +328,6 @@ class VariablesMixin:
             print(f"Ошибка нормализации: {e}")
             webview.windows[0].evaluate_js("document.getElementById('progressContainer').style.display='none';")
 
-    def strip_words_from_filenames(self):
-        """Утилита: переименовывает файлы в выбранной папке, оставляя только цифры."""
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return
-
-        target_dir = folder[0]
-        renamed_count = 0
-
-        try:
-            # Сканируем главную папку и все её подпапки
-            for root, dirs, files in os.walk(target_dir):
-                for file in files:
-                    if file.lower().endswith(('.wav', '.mp3', '.ogg', '.flac')):
-                        name, ext = os.path.splitext(file)
-
-                        # Извлекаем все цифры из названия
-                        digits_only = re.sub(r'\D', '', name)
-
-                        # Если цифры есть, и название файла содержит что-то кроме цифр (буквы, пробелы)
-                        if digits_only and digits_only != name:
-                            old_path = os.path.join(root, file)
-                            new_path = os.path.join(root, f"{digits_only}{ext}")
-
-                            # Переименовываем с защитой от дубликатов
-                            if not os.path.exists(new_path):
-                                os.rename(old_path, new_path)
-                                renamed_count += 1
-                            else:
-                                counter = 1
-                                while os.path.exists(os.path.join(root, f"{digits_only}_{counter}{ext}")):
-                                    counter += 1
-                                os.rename(old_path, os.path.join(root, f"{digits_only}_{counter}{ext}"))
-                                renamed_count += 1
-
-            webview.windows[0].evaluate_js(
-                f"showBeautifulAlert('✅ <b>Очистка завершена!</b><br><br>Переименовано файлов: <b>{renamed_count}</b>.<br>Все текстовые приписки (миллион, тысяч и т.д.) удалены.');")
-
-        except Exception as e:
-            webview.windows[0].evaluate_js(f"showBeautifulAlert('❌ <b>Ошибка:</b><br><br>{e}');")
-
     def navigate_var_chunk_ui(self, direction):
         """Быстрое перелистывание индексов переменных (только для UI)"""
         if not getattr(self, 'cascade_ordered_cats', None):
@@ -2426,8 +2385,7 @@ class VariablesMixin:
     @staticmethod
     def _sum_bare_digits_name(name):
         """Имя файла для папки яруса «Суммы»: только цифры + расширение —
-        то же самое, что делает утилита «Очистить названия файлов», но
-        сразу при сохранении, а не отдельным шагом после."""
+        сразу при сохранении."""
         stem, ext = os.path.splitext(name)
         digits = re.sub(r'\D', '', stem)
         return f"{digits}{ext}" if digits else name

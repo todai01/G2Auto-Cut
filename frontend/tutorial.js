@@ -112,10 +112,6 @@ const TUTORIAL = [
           open: () => { let b = document.querySelector('.menu-grid #btnLoadExcel'); if (b) b.click(); } },
     ] },
     { section: 'Утилиты', items: [
-        { id: 'rename_match', title: 'Названия по Excel', sub: 'Разложить файлы по ru / kz',
-          steps: ['Утилиты → Названия по Excel → таблица и папка с файлами.',
-                  'Короткие имена файлов ищутся в таблице, файлы раскладываются по языкам.'],
-          open: () => openRenameMatch() },
         { id: 'pptx', title: 'Таблица → PowerPoint', sub: 'Строка = слайд',
           steps: ['Утилиты → Таблица → PowerPoint → выберите Excel.',
                   'Каждая строка — отдельный слайд, колонки — с паузами между ними. Удобно читать с экрана.'],
@@ -130,10 +126,6 @@ const TUTORIAL = [
                   '«Папка с таймингами» — подхватит все три сразу. «Голосов» — сколько, и «Папки с клонами» — по одной на голос.',
                   '«Нарезать»: «Клоны_финал» рядом с таймингами — в нём папка на каждый голос, внутри ru, kz, без языка. Клон узнаётся по метке ru / kz / без в имени, иначе — по длительности.'],
           open: () => openClonePrep() },
-        { id: 'strip', title: 'Очистить названия', sub: 'Оставить только цифры',
-          steps: ['Утилиты → Очистить названия → папка.',
-                  'Из имён файлов убираются слова «миллион», «тысяч» и т.п. — остаются цифры.'],
-          open: () => stripFilenames() },
     ] },
 ];
 
@@ -241,7 +233,6 @@ function tutContextTopic() {
     if (ov('auditOverlay')) return 'audit';
     if (ov('cloneOverlay')) return 'clone';
     if (ov('converterOverlay')) return 'converter';
-    if (ov('renameMatchOverlay')) return 'rename_match';
     if (ov('tablePptxOverlay')) return 'pptx';
     if (shown('stage4-tts')) return ttsTutTopic();
     if (shown('stage3-constructor')) return 'constructor';
