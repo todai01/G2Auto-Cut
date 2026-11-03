@@ -1803,6 +1803,12 @@ class TtsFlowMixin(EditBasicsMixin):
             elif unit_id < len(st["units"]):
                 score = similarity(t.get("heard") or '', st["units"][unit_id]["text"]) if t.get("heard") else 0.0
                 t.update({"unit": unit_id, "score": round(score, 3), "status": "manual"})
+                if t.get("raw_chunk"):                     # чанк сырой записи: язык — по выбранному значению
+                    lg = self._tts_cat_lang(st["units"][unit_id].get("cat"))
+                    if lg:
+                        t["lang"] = lg
+                    for k in ("tier_clips", "tier_len", "tier_write"):
+                        t.pop(k, None)
             t["approved"] = False
             self._tts_save()
         return self.tts_state()
@@ -2408,6 +2414,10 @@ class TtsFlowMixin(EditBasicsMixin):
                                      if unit.get("kind") == "value" else None)
         if not base:
             return unit
+        own = self._tts_cat_lang(unit.get("cat")) if unit.get("kind") == "value" and not unit.get("tiers") else None
+        if own:                                            # столбец уже своего языка (<ru_late>) — файл как обычно
+            return {**unit, "tiers": [{**x, "lang": own, "plain": True, "tier": f'{x["tier"]}_{own}', "label": f'{x["label"]} · {own.upper()}'}
+                                      for x in base]}
         langs = [t["lang"]] if t.get("lang") in self.TTS_BIL_LANGS else self.TTS_BIL_LANGS     # чанк одного языка — один ярус
         return {**unit, "tiers": [{**x, "lang": lg, "tier": f'{x["tier"]}_{lg}', "label": f'{x["label"]} · {lg.upper()}'}
                                   for x in base for lg in langs]}
@@ -2415,6 +2425,12 @@ class TtsFlowMixin(EditBasicsMixin):
     def _tts_bil_ok(self, unit):
         """Два языка — строка переменных (не суммы) или одиночное значение из листа переменных."""
         return (bool(unit.get("tiers")) or unit.get("kind") == "value") and not str(unit.get("cat", '')).startswith('sum_l')
+
+    @staticmethod
+    def _tts_cat_lang(cat):
+        """Язык столбца по названию: <ru_late> → ru, <kz_late> → kz; иначе None."""
+        m = re.search(r'(?:^|_)(ru|kz|kk)(?:_|$)', str(cat or '').lower())
+        return None if not m else ('kz' if m.group(1) in ('kz', 'kk') else 'ru')
 
     @staticmethod
     def _tts_lang_path(path, lang):
@@ -2445,16 +2461,29 @@ class TtsFlowMixin(EditBasicsMixin):
     # громкости (без распознавания): чанков ровно столько, сколько значений — по самым длинным паузам.
     RAW_MIN_GAP_MS = 220          # короче — пауза внутри слова / между RU и KZ, не граница
 
+    def _tts_bil_allowed(self, sheet):
+        """Лист переменных, который пишется по языкам: не суммы и без языка в названии листа (…_ru / …_kz)."""
+        sh = (self._tts().get("var_sheets") or {}).get(sheet)
+        return bool(sh) and not self._tts_is_sum_sheet(sh) and not re.search(r'_(ru|kz|kk)$', str(sheet))
+
     def _tts_raw_seq(self, sheet=None, mode='ru_first'):
         """Порядок чанков записи: [{"unit": значение, "lang": язык}]. mode: 'ru_first' / 'kz_first' — сначала все
-        значения одного языка, потом другого; 'pair' — RU и KZ каждого значения подряд, в одном чанке."""
+        значения одного языка, потом другого; 'pair' — RU и KZ каждого значения подряд, в одном чанке.
+        Столбцы с языком в названии (<ru_late>, <kz_late>) — сначала весь столбец одного языка сверху вниз, потом другого."""
         st = self._tts()
         sheets = [sheet] if sheet else [k for k in (st.get("var_sheets") or {}) if self._tts_bil_allowed(k)]
-        units = [u["id"] for k in sheets for u in st["units"] if u["kind"] == "value" and u.get("sheet") == k and not u.get("tiers")]
-        if mode == 'pair':
-            return [{"unit": u, "lang": None} for u in units]
         first, second = ('kz', 'ru') if mode == 'kz_first' else ('ru', 'kz')
-        return [{"unit": u, "lang": first} for u in units] + [{"unit": u, "lang": second} for u in units]
+        out = []
+        for k in sheets:
+            units = [u for u in st["units"] if u["kind"] == "value" and u.get("sheet") == k and not u.get("tiers")]
+            by_lang = {lg: [u["id"] for u in units if self._tts_cat_lang(u.get("cat")) == lg] for lg in ('ru', 'kz')}
+            if by_lang["ru"] or by_lang["kz"]:
+                out += [{"unit": u, "lang": first} for u in by_lang[first]] + [{"unit": u, "lang": second} for u in by_lang[second]]
+            elif mode == 'pair':
+                out += [{"unit": u["id"], "lang": None} for u in units]
+            else:
+                out += [{"unit": u["id"], "lang": first} for u in units] + [{"unit": u["id"], "lang": second} for u in units]
+        return out
 
     def tts_raw_vars(self, sheet=None, mode='ru_first'):
         """Выбрать сырую запись и нарезать на чанки по паузам; чанки получают названия и язык по порядку таблицы
@@ -2528,15 +2557,84 @@ class TtsFlowMixin(EditBasicsMixin):
             if not wav_slice(path, os.path.join(chunks_dir, name), lo, hi):
                 audio[lo:hi].export(os.path.join(chunks_dir, name), format="wav")
             takes.append({"file": os.path.join(TTS_CHUNKS_DIR, name), "start_ms": lo, "ms": hi - lo, "orig": [lo, hi], "raw": path,
-                          "heard": '', "listened": False, "chunk": i + 1, "bil": True, "seq": i,
-                          "unit": seq[i]["unit"] if i < len(seq) else None, "lang": seq[i]["lang"] if i < len(seq) else None,
-                          "score": 1.0, "status": "manual", "approved": False})
+                          "heard": '', "listened": False, "chunk": i + 1, "bil": True, "seq": i, "raw_chunk": True,
+                          "unit": None, "lang": None, "score": 0.0, "status": "none", "approved": False})
             if i % 50 == 0:
                 self._tts_push({"stage": "cut", "done": i + 1, "total": len(ranges)})
         st.update({"work_dir": work_dir, "raw_path": path, "index": 0, "takes": takes, "raw_seq": list(seq)})
         self.__dict__['_tts_claims_cache'] = {}
         self._tts_save()
         return {"chunks": len(takes), "expected": n}
+
+    def tts_raw_bind(self, i):
+        """Чанк открыли в «Сборке» — даём название: следующее по порядку таблицы после ближайшего названного
+        чанка слева (поправили название — следующие идут уже от него)."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return self.tts_state()
+        t = st["takes"][i]
+        seq = st.get("raw_seq") or []
+        if t.get("unit") is None and t.get("raw_chunk") and seq:
+            pos = None
+            prev = [x for x in st["takes"] if x.get("raw_chunk") and x.get("unit") is not None and x.get("chunk", 0) < t.get("chunk", 0)]
+            if prev:
+                p = max(prev, key=lambda x: x["chunk"])
+                hit = [k for k, e in enumerate(seq) if e["unit"] == p["unit"] and (e["lang"] in (None, p.get("lang")))]
+                if hit:
+                    between = sum(1 for x in st["takes"] if x.get("raw_chunk") and p["chunk"] < x.get("chunk", 0) < t["chunk"])
+                    pos = hit[0] + 1 + between                 # удалённые чанки (кашель) не считаются
+            if pos is None:
+                pos = sum(1 for x in st["takes"] if x.get("raw_chunk") and x.get("chunk", 0) < t.get("chunk", 0))
+            if 0 <= pos < len(seq):
+                t.update({"unit": seq[pos]["unit"], "lang": seq[pos]["lang"], "seq": pos, "status": "manual", "score": 1.0})
+                for k in ("tier_clips", "tier_len", "tier_write"):
+                    t.pop(k, None)
+                self._tts_save()
+        return self.tts_state()
+
+    def tts_raw_folder(self, mode='ru_first', sheet=None):
+        """Чанки уже нарезаны (папка с WAV): на ленту по порядку имён файлов, названия — в «Сборке», как у «Сырой записи»."""
+        st = self._tts()
+        if not st["units"]:
+            return {"error": "Сначала загрузите таблицу."}
+        sheet = sheet or (st.get("prompt_mode") if st.get("prompt_mode") in (st.get("var_sheets") or {}) else None)
+        seq = self._tts_raw_seq(sheet, mode)
+        if not seq:
+            return {"error": "В таблице нет листа переменных."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        src = picked if isinstance(picked, str) else picked[0]
+        nat = lambda n: [int(x) if x.isdigit() else x.lower() for x in re.split(r'(\d+)', n)]
+        files = sorted((f for f in os.listdir(src) if f.lower().endswith(('.wav', '.mp3', '.flac', '.ogg'))), key=nat)
+        if not files:
+            return {"error": "В папке нет аудиофайлов."}
+        if not st.get("work_dir"):
+            self._tts_attach_folder(src)
+        st = self._tts()
+        if st["takes"] and not ui_confirm("На ленте уже есть дубли. Заменить их чанками из папки?<br><br>Сохранённые значения останутся на месте.",
+                                          "Заменить", "Отмена"):
+            return {"error": "cancel"}
+        wd = st["work_dir"]
+        chunks_dir = os.path.join(wd, TTS_CHUNKS_DIR)
+        os.makedirs(chunks_dir, exist_ok=True)
+        takes = []
+        for n, f in enumerate(files, 1):
+            path = os.path.join(src, f)
+            dst = os.path.join(chunks_dir, f"{n:04d}.wav")
+            if os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(dst)):
+                if f.lower().endswith('.wav'):
+                    shutil.copy2(path, dst)
+                else:
+                    AudioSegment.from_file(path).export(dst, format="wav")
+            ms = len(AudioSegment.from_file(dst))
+            takes.append({"file": os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav"), "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": path,
+                          "heard": '', "listened": False, "chunk": n, "bil": True, "seq": n - 1, "raw_chunk": True, "src_name": f,
+                          "unit": None, "lang": None, "score": 0.0, "status": "none", "approved": False})
+        st.update({"index": 0, "takes": takes, "raw_seq": list(seq)})
+        self.__dict__['_tts_claims_cache'] = {}
+        self._tts_save()
+        return {"state": self.tts_state(), "chunks": len(takes), "expected": len(seq)}
 
     def _tts_raw_renumber(self, fn):
         """fn(seq_index) → новый номер или None (удалить привязку); названия — по списку st["raw_seq"]."""
@@ -2575,7 +2673,7 @@ class TtsFlowMixin(EditBasicsMixin):
     def _tts_tier_path(self, unit, tier):
         """Эталон яруса — в едином формате «Значения/<лист>/<категория>/<значение>.wav»
         (суммы тоже: «Значения/sum_ru/million_ru/5.wav»)."""
-        if tier.get("lang"):
+        if tier.get("lang") and not tier.get("plain"):
             return self._tts_lang_path(self._tts_value_file(unit["sheet"], tier["cat"], tier["value"]), tier["lang"])
         if str(unit.get("cat", '')).startswith('sum_l'):
             return self._tts_value_file(unit["sheet"], tier["cat"], self._tts_sum_raw_value(unit["sheet"], tier["cat"], tier["value"]))

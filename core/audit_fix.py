@@ -175,14 +175,16 @@ class AuditFixMixin:
         в проекте не перезаписываем."""
         st = getattr(self, 'tts', None) or {}
         wd, xl = st.get("work_dir"), st.get("excel_path")
-        if not wd or not os.path.isdir(wd):
-            return {"error": "Сначала откройте проект Студии (папку проекта) — туда лягут записи."}
         if not xl or not os.path.exists(xl):
             return {"error": "Сначала загрузите таблицу (кнопка «Таблица»)."}
         picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER, directory=st.get("import_dir") or '')
         if not picked:
             return {"error": "cancel"}
         src_dir = picked if isinstance(picked, str) else picked[0]
+        if not wd or not os.path.isdir(wd):                # проекта ещё нет — он там, где лежат записи
+            self._tts_attach_folder(src_dir)
+            st = self.tts
+            wd = st.get("work_dir")
         res = self._audit_studio(src_dir, xl, only_work=False)     # чужая папка — все подпапки, кроме корзины
         if res.get("error"):
             return res

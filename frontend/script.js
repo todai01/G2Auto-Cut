@@ -6939,7 +6939,6 @@ let isProcessing = false;
                 if (!st) return;
             }
             openTtsScreen(st);
-            if (st.vars_only || (st.analysis && st.analysis.vars_only)) await ttsVarCtxMaybeAsk();
             if (!st.has_takes && !(st.vars_only || (st.analysis && st.analysis.vars_only))) {
                 let how = await showBeautifulChoice(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
                     + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>`
@@ -7086,6 +7085,13 @@ let isProcessing = false;
 
         async function ttsImportExisting() {
             if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            if (tts && Object.keys(tts.var_sheets || {}).length) {          // таблица переменных: в папке — чанки или готовые файлы?
+                let how = await showBeautifulChoice('<b>Готовые записи</b><br><br>Что лежит в папке?<br><br>'
+                    + '<b>Чанки</b> — нарезанные куски без названий, по порядку таблицы: встанут на ленту, название — в «Сборке».<br>'
+                    + '<b>Файлы с названиями</b> — уже названы как значения таблицы: разложу по местам.', 'Чанки', 'Файлы с названиями', 'N', 'Отмена');
+                if (!how) return;
+                if (how === 'ok') return ttsRawFolder();
+            }
             let r = await pywebview.api.tts_import_existing();
             if (!r || r.error) { if (r && r.error !== 'cancel') showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
             if (r.state) { tts = r.state; ttsRender(); }
@@ -7106,7 +7112,6 @@ let isProcessing = false;
             if (st) {
                 tts = st; ttsRender(); ttsPromptKey = null;
                 if (st.prompt0) ttsRenderPrompt(st.prompt0, 'next'); else ttsLoadPrompt();
-                if (st.vars_only) ttsVarCtxMaybeAsk();
             }
         }
 
@@ -7126,17 +7131,35 @@ let isProcessing = false;
         async function ttsRawDone(p) {
             tts = p.state; ttsRender(); ttsLoadPrompt();
             let diff = p.chunks - p.expected;
-            await showBeautifulAlert(diff === 0
-                ? `✅ <b>Нарезано ${p.chunks} чанков — столько же, сколько значений × 2 языка</b><br><br>Названия и язык поставлены по порядку таблицы.`
-                : `⚠️ <b>Чанков ${p.chunks}, ожидалось ${p.expected}</b><br><br>${diff > 0 ? 'Лишних чанков — кашель, повторы: уберите кнопкой «лишний чанк» в «Сборке».' : 'Не хватает чанков — значения слиплись или пропущены: «пропуск значения» сдвинет названия.'}<br>`
-                + 'Названия идут по порядку, так что сбой заметен сразу — исправляйте по ходу, остальные сдвинутся.');
+            await showBeautifulAlert((diff === 0 ? `✅ <b>Чанков ${p.chunks} — столько же, сколько значений</b>`
+                : `⚠️ <b>Чанков ${p.chunks}, значений ${p.expected}</b>`)
+                + '<br><br>На ленте — просто чанки. Название даю в «Сборке»: следующее по порядку таблицы. Не то — «Другая фраза» (F), '
+                + 'следующие чанки пойдут уже от него. Лишний чанк (кашель, повтор) — «Удалить дубль» (Del).');
             await ttsRawCtxAsk(true);
             ttsCutStart();                                  // «Срезка»: первый чанк в «Сборке», Enter — сохранить и дальше
+        }
+        // Готовые чанки из папки: на ленту по порядку имён файлов
+        async function ttsRawFolder() {
+            let how = await showBeautifulChoice('<b>Готовые чанки</b><br><br>С какого языка начинается порядок чанков?', 'Сначала RU, потом KZ', 'Сначала KZ, потом RU', 'K', 'Отмена');
+            if (!how) return;
+            let r = await pywebview.api.tts_raw_folder(how === 'ok' ? 'ru_first' : 'kz_first', null);
+            if (!r || r.error === 'cancel') return;
+            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            ttsRawDone({ state: r.state, chunks: r.chunks, expected: r.expected });
+        }
+        // чанк без названия открыли в «Сборке» — сначала даём название по порядку
+        let ttsRawBinding = false;
+        async function ttsRawBindCur() {
+            let t = ttsCurTake();
+            if (!t || ttsRawBinding) return;
+            ttsRawBinding = true;
+            try { tts = await pywebview.api.tts_raw_bind(t.i); } finally { ttsRawBinding = false; }
+            ttsRenderRail(); ttsRenderCurrent(); ttsRenderAssembly(true);
         }
         // «Фразы_Переменные»: начало и конец для RU и для KZ (файлы из папки ru / kz)
         async function ttsRawCtxAsk(first) {
             let t = ttsCurTake(), u = t && ttsUnit(t.unit), sheet = u && u.sheet;
-            if (!sheet) { let k = tts.takes.find(x => x.seq != null && x.unit != null); sheet = k && ttsUnit(k.unit).sheet; }
+            if (!sheet) { let k = tts.takes.find(x => x.seq != null && x.unit != null); sheet = k ? ttsUnit(k.unit).sheet : Object.keys(tts.var_sheets || {})[0]; }
             if (!sheet) return;
             let names = { ru: 'русский', kz: 'казахский' };
             for (let lang of ['ru', 'kz']) {
@@ -7154,9 +7177,8 @@ let isProcessing = false;
             await pywebview.api.tts_var_ctx_asked(sheet);
             if (!first) { ttsTR = null; let c = ttsCurTake(); if (c) ttsTiersLoad(c.i); }
         }
-        const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${t.seq + 1}</b> из ${tts.raw_total}${t.lang ? ` · <em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em>` : ''}</span>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSkip()" title="В записи нет значения перед этим чанком — этот и следующие получат следующие названия">пропуск значения</button>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawDrop()" title="Чанк лишний (кашель, повтор) — убрать, названия следующих сдвинутся назад (Ctrl+Z вернёт)">лишний чанк</button></div>`;
+        const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${String(t.chunk).padStart(4, '0')}</b>${t.src_name ? ` · ${escapeHtml(t.src_name)}` : ''} → <b>${escapeHtml(ttsUnit(t.unit).name)}</b>${t.lang ? ` <em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em>` : ''} · значение ${t.seq + 1} из ${tts.raw_total}</span>
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsOpenUnits('assign')" title="Название не то — выбрать другое значение; следующие чанки пойдут от него">другое название <kbd>F</kbd></button></div>`;
         async function ttsRawSkip() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_skip(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); showToast('Названия сдвинуты вперёд — с этого чанка'); }
         async function ttsRawDrop() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_drop(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsCutNext(Math.max(-1, t.i - 1)); showToast('Чанк убран, названия сдвинуты назад · Ctrl+Z — вернуть', 3000); }
 
@@ -7293,7 +7315,7 @@ let isProcessing = false;
                         data-i="${t.i}" onclick="ttsRailClick(${t.i})" draggable="true"
                         ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
-                    <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
+                    <span class="tts-take__name">${t.raw_chunk && !t.approved ? (t.src_name ? escapeHtml(t.src_name.replace(/\.[^.]+$/, '')) : 'чанк') : t.name ? escapeHtml(t.name) : '—'}</span>
                     <span class="tts-take__meta">${t.ready ? 'готовый' : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
             // Готовые фразы с переменными, которых нет на ленте, — добавить для правки.
@@ -7369,6 +7391,11 @@ let isProcessing = false;
             let el = document.getElementById('ttsAssembly');
             let t = ttsCurTake();
             let u = t ? ttsUnit(t.unit) : null;
+            if (!u && t && t.raw_chunk) {                  // чанк без названия — название даём сейчас, по порядку таблицы
+                el.innerHTML = '<div class="tts-assembly__title">Сборка</div><div class="tts-dim">Подбираю название…</div>';
+                if (document.getElementById('stage4-tts').classList.contains('show-assembly')) ttsRawBindCur();
+                return;
+            }
             if (!u) { el.innerHTML = '<div class="tts-assembly__title">Сборка</div><div class="tts-dim">Выберите дубль на ленте</div>'; return; }
             let chain = u.chain !== null && u.chain !== undefined ? (tts.chains || [])[u.chain] : null;
             let block = p => `<div class="tts-block ${p.id === u.id ? 'is-current' : ''} ${p.saved ? 'is-saved' : ''}"
@@ -10053,8 +10080,8 @@ let isProcessing = false;
         // Дубли строк сумм/дат, ещё не сохранённые эталонами, — по порядку записи.
         function ttsCutList() {
             if (!tts) return [];
-            return tts.takes.filter(t => t.unit !== null && !t.approved && !t.rejected
-                && tts.units[t.unit] && (tts.units[t.unit].tiers || t.bil)).map(t => t.i);
+            return tts.takes.filter(t => !t.approved && !t.rejected && (t.raw_chunk
+                || t.unit !== null && tts.units[t.unit] && (tts.units[t.unit].tiers || t.bil))).map(t => t.i);
         }
         function ttsFlowHTML() {
             if (!ttsValueMode()) return '';
@@ -10253,7 +10280,6 @@ let isProcessing = false;
             ttsRender();
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
-            if (mode !== 'phrases') ttsVarCtxMaybeAsk();
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
                 : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Значения/sum_…»'
                 : 'Читаем строки таблицы — Enter в «Сборке» сохранит каждое значение эталоном в «Значения»', 5000);
