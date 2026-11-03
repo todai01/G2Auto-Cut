@@ -2494,3 +2494,31 @@ button, .option-card, .menu-row, .menu-tool, .menu-recent__item, .search-input, 
 .entry__tagline::after{
     content: ""; display: block; width: 56px; height: 2px; background: var(--accent-primary); margin: 18px 0 -22px;
 }
+
+
+/* ===== Студия озвучки: нарезка по паузам и синтез ===== */
+.vc-file{ font-size: var(--fs-sm); color: var(--text-dim); background: var(--screen); border: 1px solid var(--border-soft);
+    padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); margin-bottom: var(--space-4); word-break: break-all; text-align: left; }
+.vc-file b{ color: var(--text); }
+.vc-field{ display: block; margin-bottom: var(--space-3); text-align: left; }
+.vc-head{ display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--fs-sm); color: var(--text); margin-bottom: 6px; }
+.vc-head b{ color: var(--accent-primary); font-variant-numeric: tabular-nums; font-weight: 600; }
+.vc-result{ display: flex; align-items: center; gap: var(--space-4); text-align: left; padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-raised);
+    font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.45; margin: var(--space-4) 0; min-height: 64px; }
+.vc-result b{ color: var(--text); }
+.vc-result__num{ flex: none; font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.vc-result.is-good{ border-color: rgba(90,164,105,0.5); }
+.vc-result.is-good .vc-result__num{ color: var(--accent-good); }
+.vc-result.is-warn{ border-color: rgba(197,163,50,0.5); }
+.vc-result.is-warn .vc-result__num{ color: var(--accent-var); }
+.vc-result.is-bad{ border-color: rgba(208,96,90,0.55); }
+.vc-result.is-bad .vc-result__num{ color: var(--accent-trash); }
+.vc-result.is-busy{ opacity: .6; }
+
+.vs-row{ text-align: left; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-raised);
+    padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.vs-row__head{ display: flex; gap: var(--space-3); align-items: baseline; }
+.vs-row__ref{ display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); font-size: var(--fs-sm); }
+.vs-row__act{ display: flex; justify-content: flex-end; }
+.vs-err{ margin-top: var(--space-3); font-size: var(--fs-sm); color: var(--accent-trash); text-align: left; }

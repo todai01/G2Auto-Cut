@@ -5156,7 +5156,7 @@ let isProcessing = false;
         async function openTts() {
             let st = await pywebview.api.tts_state();
             if (!st || !st.loaded) {
-                let how = await showBeautifulChoice('<b>Запись озвучки</b><br><br>Загрузите таблицу: лист фраз с колонками '
+                let how = await showBeautifulChoice('<b>Студия озвучки</b><br><br>Загрузите таблицу: лист фраз с колонками '
                     + '<code>&lt;phrase&gt;</code>, <code>&lt;name_phrase&gt;</code>, флаги <code>&lt;start&gt;</code> / '
                     + '<code>&lt;start_2&gt;</code> / <code>&lt;end&gt;</code> и листы переменных — шапка <code>&lt;ru_var_название&gt;</code> / <code>&lt;kz_var_название&gt;</code> '
                     + '(язык, потом <code>var</code>, потом название сегмента). Таблица только с переменными тоже подойдёт.<br><br>'
@@ -5188,28 +5188,185 @@ let isProcessing = false;
             }
         }
 
-        // В таблице только переменные (<ru_var_…> / <kz_var_…>) — берём их в работу:
-        // сразу открываем список значений; папку проекта просим выбрать один раз.
+        // ===== Студия озвучки: в таблице только переменные =====
+        // Алгоритм: таблица → фиксируем var → папка проекта → какой материал:
+        //   1. сырой WAV — нарезка по паузам → чанки по порядку таблицы;
+        //   2. запись в реальном времени — суфлёр, зажатый пробел, «Сборка»;
+        //   3. синтез по референсу → дубли на ленте → «Сборка».
         async function ttsStartVarsOnly(st) {
             let cats = Object.values(st.var_sheets || {}).reduce((a, v) => a + v.categories.length, 0);
             let vals = Object.values(st.var_sheets || {}).reduce((a, v) => a + v.categories.reduce((b, c) => b + c.count, 0), 0);
             if (!st.project) {
-                let how = await showBeautifulChoice(`<b>Таблица с переменными</b><br><br>Нашёл переменных: <b>${cats}</b> (значений: <b>${vals}</b>).<br><br>`
-                    + `Выберите папку проекта — туда лягут записанные значения. Если в папке уже была работа, продолжу её.`,
+                let how = await showBeautifulChoice(`<b>Нашёл переменные</b><br><br>Категорий: <b>${cats}</b>, значений: <b>${vals}</b>.<br><br>`
+                    + `Выберите папку проекта — туда лягут записи и готовые значения. Если в папке уже была работа, продолжу её.`,
                     'Выбрать папку', 'Позже', 'P', 'Отмена');
                 if (how === 'ok') {
                     let res = await pywebview.api.tts_pick_workdir();
                     if (res && res.error && res.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(res.error));
                     else if (res && !res.error) {
-                        tts = res; ttsRender();
+                        tts = res; ttsRender(); ttsLoadPrompt();
                         if (res.message) showToast(res.message);
                         st = res;
                     }
                 } else if (how !== 'alt') return;
+            } else {
+                showToast(`Нашёл переменные: категорий ${cats}, значений ${vals}`);
             }
-            let first = Object.keys(st.var_sheets || {})[0];
-            if (first) ttsVarsTab = first;
-            await ttsOpenVars();
+            let k = await ttsChooseMaterial();
+            if (k === 'raw') await ttsValsRawFlow();
+            else if (k === 'live') await ttsToggleRec();
+            else if (k === 'synth') await ttsValsSynthOpen();
+        }
+
+        function ttsChooseMaterial() {
+            return new Promise(resolve => {
+                ttsOpenListOverlay('Какой материал для озвучки?', false);
+                let items = [
+                    ['raw', 'Сырой WAV', 'Нарезка по паузам → чанки → значения по порядку таблицы'],
+                    ['live', 'Запись в реальном времени', 'Суфлёр → зажатый пробел → «Сборка»'],
+                    ['synth', 'Синтез по референсу', 'Загрузка референса → синтез → «Сборка»']];
+                document.getElementById('ttsList').innerHTML = items.map(([k, t, d]) =>
+                    `<button type="button" class="audit-category-item" data-k="${k}">${t}
+                        <span class="audit-choice-desc">${d}</span></button>`).join('');
+                document.querySelectorAll('#ttsList [data-k]').forEach(b => b.onclick = () => {
+                    ttsListOnClose = null;
+                    ttsCloseList(); resolve(b.dataset.k);
+                });
+                ttsListOnClose = () => resolve(null);
+            });
+        }
+
+        // --- ветка 1: сырой WAV → нарезка по паузам ---
+        let ttsvc = null, ttsvcTimer = null;
+        async function ttsValsRawFlow() {
+            let r = await pywebview.api.tts_vals_pick_raw();
+            if (!r || r.error === 'cancel') return;
+            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            if (r.message) showToast(r.message);
+            ttsvc = r;
+            document.getElementById('ttsvcFile').innerHTML = `<b>${escapeHtml(r.name)}</b> · ${r.duration_sec} с · значений в таблице: <b>${r.values}</b>`;
+            document.getElementById('ttsvcPause').value = r.suggested.pause;
+            document.getElementById('ttsvcSens').value = r.suggested.sens;
+            document.getElementById('ttsvcPad').value = r.suggested.pad;
+            document.getElementById('ttsValsCutOverlay').style.display = 'flex';
+            ttsValsCutLabels();
+            ttsValsCutShow(r.predicted);
+        }
+        function ttsValsCutLabels() {
+            document.getElementById('ttsvcPauseTxt').innerText = document.getElementById('ttsvcPause').value + ' мс';
+            document.getElementById('ttsvcSensTxt').innerText = document.getElementById('ttsvcSens').value.replace('-', '−') + ' дБ';
+            document.getElementById('ttsvcPadTxt').innerText = document.getElementById('ttsvcPad').value + ' мс';
+        }
+        function ttsValsCutChanged() {
+            ttsValsCutLabels();
+            document.getElementById('ttsvcResult').className = 'vc-result is-busy';
+            clearTimeout(ttsvcTimer);
+            ttsvcTimer = setTimeout(async () => {
+                let res = await pywebview.api.tts_vals_predict(+document.getElementById('ttsvcPause').value, +document.getElementById('ttsvcSens').value);
+                ttsValsCutShow(res && !res.error ? res.chunks : null);
+            }, 300);
+        }
+        function ttsValsCutShow(n) {
+            let el = document.getElementById('ttsvcResult'), vals = ttsvc ? ttsvc.values : 0;
+            if (n === null || n === undefined) { el.className = 'vc-result'; el.innerText = 'Не удалось посчитать'; return; }
+            let note, cls = 'vc-result is-good';
+            if (n <= 1) { cls = 'vc-result is-bad'; note = 'Вся запись останется одним куском — уменьшите паузу или поднимите чувствительность.'; }
+            else if (n === vals) note = 'Столько же, сколько значений в таблице — то, что нужно.';
+            else if (n > vals) { cls = 'vc-result is-warn'; note = 'Кусков больше значений: часть значений разбита на куски — склеите их в «Сборке» (или увеличьте паузу).'; }
+            else { cls = 'vc-result is-warn'; note = 'Кусков меньше значений: в куске может быть два значения — разрежьте его в «Сборке» (или уменьшите паузу).'; }
+            el.className = cls;
+            el.innerHTML = `<span class="vc-result__num">≈ ${n}</span><span><b>кусков получится</b><br>${note}</span>`;
+        }
+        function ttsValsCutClose() { clearTimeout(ttsvcTimer); document.getElementById('ttsValsCutOverlay').style.display = 'none'; }
+        async function ttsValsCutGo() {
+            let pause = +document.getElementById('ttsvcPause').value, sens = +document.getElementById('ttsvcSens').value,
+                pad = +document.getElementById('ttsvcPad').value;
+            ttsValsCutClose();
+            ttsShowBusy('Режу запись на дубли…', 0);
+            let res = await pywebview.api.tts_vals_cut(pause, sens, pad);
+            if (res && res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); ttsRender(); }
+        }
+
+        // --- ветка 3: синтез по референсу ---
+        let ttsvs = null;
+        async function ttsValsSynthOpen() {
+            if (!tts || !tts.loaded) { showToast('Сначала загрузите таблицу'); return; }
+            ttsvs = await pywebview.api.tts_vals_synth_state();
+            document.getElementById('ttsValsSynthOverlay').style.display = 'flex';
+            ttsValsSynthRender();
+        }
+        function ttsValsSynthClose() { document.getElementById('ttsValsSynthOverlay').style.display = 'none'; }
+        function ttsValsSynthRender() {
+            let box = document.getElementById('ttsValsSynthBody');
+            if (!box || !ttsvs) return;
+            let rows = ttsvs.langs.map(l => `<div class="vs-row">
+                <div class="vs-row__head"><b>${l.lang.toUpperCase()}</b>
+                    <span class="tts-dim">значений: ${l.units} · синтезировано: ${l.done}${l.queued ? ` · в очереди: ${l.queued}` : ''}</span></div>
+                <div class="vs-row__ref">
+                    <span class="${l.ref_ok ? '' : 'tts-dim'}">${l.ref ? 'Референс: ' + escapeHtml(l.ref) : 'Референс не выбран'}</span>
+                    <button class="btn-ghost btn-ghost--compact" onclick="ttsValsSynthPickRef('${l.lang}')">${l.ref ? 'Другой файл' : 'Загрузить референс'}</button>
+                </div>
+                <input type="text" class="search-input" id="ttsvsText_${l.lang}" value="${escapeHtml(l.text)}" spellcheck="false"
+                    placeholder="Текст референса — что сказано в записи, дословно"
+                    onchange="ttsValsSynthSetText('${l.lang}', this.value)">
+                <div class="vs-row__act">
+                    <button class="btn-ghost btn-ghost--compact" onclick="ttsValsSynthRun('${l.lang}')" ${l.ref_ok && l.text ? '' : 'disabled'}>Синтезировать ${l.lang.toUpperCase()}</button>
+                </div></div>`).join('');
+            let errs = Object.keys(ttsvs.errors || {}).length;
+            box.innerHTML = rows + `<div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="ttsValsSynthStop()" ${ttsvs.queue ? '' : 'disabled'}>Остановить очередь${ttsvs.queue ? ` (${ttsvs.queue})` : ''}</button>
+                <button class="custom-alert-btn" onclick="ttsValsSynthClose()">Закрыть</button></div>`
+                + (errs ? `<div class="vs-err">Ошибок синтеза: ${errs}. ${escapeHtml(Object.values(ttsvs.errors)[0])}</div>` : '');
+        }
+        async function ttsValsSynthPickRef(lang) {
+            let res = await pywebview.api.tts_vals_synth_pick_ref(lang);
+            if (!res || res.error === 'cancel') return;
+            if (res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
+            ttsvs = res; ttsValsSynthRender();
+        }
+        async function ttsValsSynthSetText(lang, text) {
+            let res = await pywebview.api.tts_vals_synth_set_text(lang, text);
+            if (res && !res.error) { ttsvs = res; ttsValsSynthRender(); }
+        }
+        async function ttsValsSynthRun(lang) {
+            let res = await pywebview.api.tts_vals_synth_run(null, lang);
+            if (res && res.error) showToast(res.error);
+            if (res && res.langs) { ttsvs = res; ttsValsSynthRender(); }
+            else if (res && !res.error) { ttsvs = res; }
+            if (res && !res.error) showToast('Синтез запущен: готовые значения появятся на ленте дублей');
+        }
+        async function ttsValsSynthStop() {
+            let res = await pywebview.api.tts_vals_synth_stop();
+            if (res) { ttsvs = res; ttsValsSynthRender(); }
+        }
+        function ttsValsSynthEvent(p) {
+            if (p.state) { tts = p.state; ttsRender(); }
+            if (p.synth) { ttsvs = p.synth; if (document.getElementById('ttsValsSynthOverlay').style.display === 'flex') ttsValsSynthRender(); }
+            if (p.error) showToast(p.error);
+            else if (p.message) showToast(p.message);
+        }
+
+        // --- разрез и склейка дубля в «Сборке» ---
+        async function ttsEditorSplit() {
+            let t = ttsCurTake();
+            if (!t || !ttsEd) return;
+            if (ttsEd.mark == null) { showToast('Кликните по дорожке там, где кончается первое значение, — потом «Разрезать»'); return; }
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_take_split(t.i, Math.round(ttsEd.mark - tlBase()));
+            if (res && res.error) { showToast(res.error); return; }
+            ttsEd = null;
+            tts = res; ttsRender();
+            if (res.message) showToast(res.message);
+        }
+        async function ttsTakeMerge() {
+            let t = ttsCurTake();
+            if (!t) return;
+            await ttsStopPlay();
+            let res = await pywebview.api.tts_take_merge(t.i);
+            if (res && res.error) { showToast(res.error); return; }
+            ttsEd = null;
+            tts = res; ttsRender();
+            if (res.message) showToast(res.message);
         }
 
         async function ttsPickExcelFlow() {
@@ -5286,6 +5443,7 @@ let isProcessing = false;
         }
 
         async function ttsLoadRecording() {
+            if (tts && tts.vars_only) { await ttsValsRawFlow(); return; }
             let res = await pywebview.api.tts_pick_recording();
             if (res && res.state) { tts = res.state; ttsRender(); ttsLoadPrompt(); }
             if (res && res.message) showToast(res.message);
@@ -5323,6 +5481,11 @@ let isProcessing = false;
                 if (p.added) ttsLiveFlash('ok', tts.takes.slice(-p.added).map(t => t.name || 'не фраза').join(' · '));
             } else if (p.stage === 'synth') {
                 ttsSynthEvent(p);
+            } else if (p.stage === 'vals_cut') {
+                if (p.state) { tts = p.state; ttsRender(); ttsLoadPrompt(); }
+                if (p.message) showToast(p.message);
+            } else if (p.stage === 'vals_synth') {
+                ttsValsSynthEvent(p);
             } else if (p.stage === 'marks') {
                 ttsShowMarksPending(p.pending, p.error);
             } else if (p.stage === 'live_partial') {
@@ -5368,6 +5531,8 @@ let isProcessing = false;
             document.getElementById('ttsMeta').innerText = tts.loaded
                 ? `${tts.excel_name}${tts.project ? ' · ' + tts.project : ''}` : 'Таблица не загружена';
             document.getElementById('ttsLang').style.display = tts.loaded ? '' : 'none';
+            let synBtn = document.getElementById('ttsValsSynthBtn');
+            if (synBtn) synBtn.style.display = tts.vars_only ? '' : 'none';
             ttsLangShow(ttsLangNow || tts.lang);
             document.getElementById('ttsStatSaved').innerText = s.saved;
             document.getElementById('ttsStatUnits').innerText = s.units;
@@ -5408,7 +5573,7 @@ let isProcessing = false;
                         ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
-                    <span class="tts-take__meta">${t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
+                    <span class="tts-take__meta">${t.unit !== null && (t.seq || t.synth) ? (t.synth ? 'синтез' : 'по порядку') : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
             rail.classList.toggle('is-playing', ttsPlayingIdx === tts.index);
             let cur = rail.querySelector('.is-current');
@@ -5429,11 +5594,11 @@ let isProcessing = false;
             }
             let u = ttsUnit(t.unit);
             let [label, tone] = ttsTakeStatus(t);
-            let where = u ? (u.kind === 'piece' ? 'Фразы_Переменные' : 'Проверенные') : '';
+            let where = u ? (u.kind === 'piece' ? 'Фразы_Переменные' : (u.kind === 'value' ? `Значения / ${u.sheet} / ${u.cat}` : 'Проверенные')) : '';
             el.innerHTML = `
                 <div class="tts-current__head">
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
-                    <span class="tts-current__score">${u ? Math.round(t.score * 100) + '%' : ''}</span>
+                    <span class="tts-current__score">${u && !t.seq && !t.synth ? Math.round(t.score * 100) + '%' : ''}</span>
                     <span class="tts-current__num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                 </div>
                 <div class="tts-current__text">${u ? ttsUnitTextHTML(u) : '<span class="tts-dim">Фраза не определена</span>'}</div>
@@ -5450,6 +5615,8 @@ let isProcessing = false;
 
         function ttsTakeStatus(t) {
             if (t.unit_saved) return t.approved ? ['Сохранён этот дубль', 'good'] : ['Фраза уже сохранена другим дублем', 'good'];
+            if (t.unit !== null && t.synth) return ['Синтез по референсу', 'info'];
+            if (t.unit !== null && t.seq) return ['По порядку таблицы', 'info'];
             return TTS_STATUS[t.status] || TTS_STATUS.none;
         }
 
@@ -5485,7 +5652,7 @@ let isProcessing = false;
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             let [label, tone] = ttsTakeStatus(t);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
-                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : 'обычная фраза'}</span>
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : (u.kind === 'value' ? 'значение переменной' : 'обычная фраза')}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
@@ -5498,6 +5665,8 @@ let isProcessing = false;
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdCutBtn" onclick="ttsEditorCut()" disabled title="Вырезать выделенное (выделите мышью на клипе)">Вырезать <kbd>X</kbd></button>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdUndo" onclick="ttsEdUndo()" disabled>&#8630; <kbd>Ctrl+Z</kbd></button>
                         <button class="btn-ghost btn-ghost--compact" id="ttsEdRedo" onclick="ttsEdUndo(true)" disabled>&#8631;</button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorSplit()" title="Два значения в одном куске: кликните по дорожке там, где кончается первое, и нажмите — дубль разрежется на два">Разрезать по метке</button>
+                        <button class="btn-ghost btn-ghost--compact" onclick="ttsTakeMerge()" title="Одно значение разбито на несколько кусков: склеить этот дубль со следующим">Склеить со следующим</button>
                         <button class="btn-ghost btn-ghost--compact" onclick="ttsEditorReset()" title="Вернуть дубль, как его нарезала программа (тоже отменяется Ctrl+Z)">Сбросить</button>
                         <span class="tts-ed__zoom">
                             <button class="btn-ghost btn-ghost--compact" onclick="ttsEdZoom(0.66)" title="Отдалить (Ctrl + колесо)">&minus;</button>
@@ -5702,6 +5871,7 @@ let isProcessing = false;
                 let ln = tlLane(ttsEd.sel.k);
                 ctx.fillStyle = 'rgba(122,162,255,0.28)'; ctx.fillRect(tlX(a), ln.top, tlX(b) - tlX(a), ln.h);
             }
+            if (ttsEd.mark != null) { ctx.fillStyle = '#c5a332'; ctx.fillRect(tlX(ttsEd.mark) - 1, 0, 2, H); }
             if (ttsEd.play != null) { ctx.fillStyle = '#2fbf7d'; ctx.fillRect(tlX(ttsEd.play) - 1, 0, 2, H); }
             let time = document.getElementById('ttsEdTime');
             if (time) {
@@ -5767,8 +5937,10 @@ let isProcessing = false;
                 ttsEditorApply(); return;
             }
             if (d.kind === 'body' && d.moved && ttsEd.sel && Math.abs(ttsEd.sel.t1 - ttsEd.sel.t0) >= 15) { ttsEditorDraw(); return; }
-            // Просто клик — слушать с этого места.
+            // Просто клик — слушать с этого места (и поставить метку для «Разрезать»).
             ttsEd.sel = null;
+            ttsEd.mark = d.t0;
+            ttsEditorDraw();
             ttsPlayFrom(d.t0);
         });
 

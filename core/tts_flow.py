@@ -391,6 +391,8 @@ class TtsFlowMixin:
             pass
 
     def _tts_target(self, unit):
+        if unit["kind"] == "value":          # значение переменной: Значения/<лист>/<категория>/<значение>.wav
+            return self._tts_value_file(unit["sheet"], unit["cat"], unit["value"])
         folder = TTS_VAR_DIR if unit["kind"] == "piece" else TTS_DONE_DIR
         return os.path.join(self._tts()["work_dir"], folder, f"{unit['name']}.wav")
 
@@ -403,6 +405,8 @@ class TtsFlowMixin:
 
     @staticmethod
     def _tts_text_key(u):
+        if u.get("kind") == "value":
+            return None
         t = str(u.get("text") or '').lower().replace('ё', 'е')
         q = '?' if t.rstrip().endswith('?') else ''
         words = re.findall(r"[\w'-]+", t)
@@ -514,7 +518,7 @@ class TtsFlowMixin:
         pieces = [u for u in units if u["kind"] == "piece"]
         return {
             "loaded": bool(units) or bool(st["var_sheets"]), "has_takes": bool(st["takes"]),
-            "vars_only": not units and bool(st["var_sheets"]),
+            "vars_only": bool(st.get("vars_only")) and bool(units),
             "excel_name": os.path.basename(st["excel_path"] or ''), "sheet": st.get("sheet"),
             "lang": st.get("lang", "ru"), "lang_auto": bool(units) and len(self._tts_langs()) > 1,
             "project": os.path.basename(wd) if wd else '',
@@ -587,21 +591,46 @@ class TtsFlowMixin:
                                   if not chosen["var_keys"] or k in chosen["var_keys"]
                                   or any(c["key"] in chosen["var_keys"] for c in v["categories"])}})
         st["index"] = 0
+        st["vars_only"] = False
         self._tts_save()
         return self.tts_state()
 
+    def _tts_value_units(self, var_sheets):
+        """Значения переменных по порядку таблицы (лист → категория → значение):
+        каждое — отдельная «фраза» для записи, суфлёра и сохранения."""
+        units = []
+        for sk, sh in var_sheets.items():
+            for c in sh["categories"]:
+                for v in c["values"]:
+                    text = self._tts_value_text(sk, c["key"], v)[0]
+                    units.append({"id": len(units), "kind": "value", "name": clean_name(v) or str(v), "text": text,
+                                  "role": None, "row": len(units) + 2, "vars": [], "var_before": None,
+                                  "var_after": None, "chain": None, "lang": c.get("lang"),
+                                  "sheet": sk, "cat": c["key"], "value": v})
+        return units
+
     def _tts_load_vars_only(self, path, parsed):
         """В таблице только переменные (<ru_var_…> / <kz_var_…>) — без листа фраз.
-        Берём их в работу: значения каждого сегмента записываются/синтезируются
-        на экране «Переменные»."""
+        Каждое значение становится «фразой»: его можно записать с микрофона,
+        нарезать из сырого WAV или синтезировать по референсу."""
         st = self._tts()
         if st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
             st["takes"] = []
+        old_units = st.get("units") or []
+        st["var_sheets"] = parsed["var_sheets"]
+        units = self._tts_value_units(parsed["var_sheets"])
+        if st["takes"] and old_units:
+            # Та же таблица перечитана — дубли остаются у своих значений.
+            by_key = {(u["cat"], u["value"]): u["id"] for u in units}
+            for t in st["takes"]:
+                uid = t.get("unit")
+                if uid is not None and uid < len(old_units):
+                    ou = old_units[uid]
+                    t["unit"] = by_key.get((ou.get("cat"), ou.get("value")))
         langs = sorted({c["lang"] for v in parsed["var_sheets"].values() for c in v["categories"] if c.get("lang")})
         st.update({"excel_path": path, "sheet": None, "lang": langs[0] if langs else "ru",
-                   "units": [], "chains": [], "v": TTS_STATE_VERSION, "lines": [], "mark_cols": {},
-                   "var_cols": [], "head_row": 1, "marks_dirty": [],
-                   "var_sheets": parsed["var_sheets"], "index": 0})
+                   "units": units, "chains": [], "v": TTS_STATE_VERSION, "lines": [], "mark_cols": {},
+                   "var_cols": [], "head_row": 1, "marks_dirty": [], "index": 0, "vars_only": True})
         self._tts_save()
         return self.tts_state()
 
@@ -704,18 +733,18 @@ class TtsFlowMixin:
         folder = picked if isinstance(picked, str) else picked[0]
         root = self.tts_project_root(folder)
         if not os.path.exists(os.path.join(root, TTS_STATE_FILE)):
-            return {"error": "В этой папке нет прежней работы по записи озвучки (нет файла tts_project.json). "
+            return {"error": "В этой папке нет прежней работы в Студии озвучки (нет файла tts_project.json). "
                              "Выберите папку проекта или папку «Записи» внутри неё."}
         msg = self._tts_attach_folder(root)
         return {**self.tts_state(), "message": msg}
 
     def tts_open_project(self, path):
-        """Продолжить проект записи озвучки (tts_project.json в папке)."""
+        """Продолжить проект Студии озвучки (tts_project.json в папке)."""
         try:
             with open(os.path.join(path, TTS_STATE_FILE), 'r', encoding='utf-8') as f:
                 data = json.load(f)
         except (OSError, ValueError):
-            return {"error": "Не нашёл сохранённый проект записи озвучки в этой папке."}
+            return {"error": "Не нашёл сохранённый проект Студии озвучки в этой папке."}
         self.tts = None
         st = self._tts()
         old = data.get("v") != TTS_STATE_VERSION
@@ -1171,6 +1200,8 @@ class TtsFlowMixin:
         stack = self.__dict__.setdefault('_tts_del_stack', [])
         stack.append(rec)
         del stack[:-100]
+        if hasattr(self, '_vals_reflow'):
+            self._vals_reflow()                       # нарезка по порядку: значения сдвигаются
         self._tts_save()
         u = st["units"][t["unit"]]["name"] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
         return {**self.tts_state(), "deleted": u or 'дубль', "can_undo": True}
@@ -1192,6 +1223,8 @@ class TtsFlowMixin:
         st["index"] = i
         if rec.get("prompt_pos") is not None:
             st["prompt_pos"] = rec["prompt_pos"]
+        if hasattr(self, '_vals_reflow'):
+            self._vals_reflow()
         self._tts_save()
         t = rec["take"]
         u = st["units"][t["unit"]]["name"] if t.get("unit") is not None and t["unit"] < len(st["units"]) else None
@@ -1251,6 +1284,7 @@ class TtsFlowMixin:
             elif unit_id < len(st["units"]):
                 score = similarity(t.get("heard") or '', st["units"][unit_id]["text"]) if t.get("heard") else 0.0
                 t.update({"unit": unit_id, "score": round(score, 3), "status": "manual"})
+            t.pop("seq", None)                      # назначено вручную — «по порядку» его больше не двигает
             t["approved"] = False
             self._tts_save()
         return self.tts_state()
@@ -1676,8 +1710,12 @@ class TtsFlowMixin:
             texts[key] = text
         else:
             texts.pop(key, None)
+        new_text = self._tts_value_text(sheet, cat, value)[0]
+        for u in st["units"]:
+            if u["kind"] == "value" and (u["sheet"], u["cat"], u["value"]) == (sheet, cat, value):
+                u["text"] = new_text
         self._tts_save()
-        return {"text": self._tts_value_text(sheet, cat, value)[0]}
+        return {"text": new_text}
 
     def tts_var_play(self, sheet, cat, value):
         path = self._tts_value_file(sheet, cat, value)

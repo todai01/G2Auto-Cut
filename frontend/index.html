@@ -468,7 +468,7 @@
             <div class="help-section">
                 <div class="help-section__title">Порядок работы</div>
                 <ol class="help-flow">
-                    <li><b>Запись озвучки</b> — таблица, запись диктора, автопроверка и апрув в одном экране.</li>
+                    <li><b>Студия озвучки</b> — таблица, запись диктора, автопроверка и апрув в одном экране.</li>
                     <li><b>Пакетная сборка</b> — суммы по эталону собираются через Audacity.</li>
                     <li><b>Готовая папка с переменными</b> — дубли раскладываются по категориям, собирается эталон.</li>
                     <li><b>Конструктор</b> — любая комбинация из сохранённых сумм.</li>
@@ -670,7 +670,7 @@
 
                 <button class="option-card option-card--tts rise" style="--d: 1" id="btnTts" onclick="openTts()">
                     <span class="option-icon"><svg class="icon"><use href="#icon-mic"></use></svg></span>
-                    <div><span class="option-title">Запись озвучки</span><span class="option-desc" id="descTts">Запись по таблице → автопроверка → файлы</span></div>
+                    <div><span class="option-title">Студия озвучки</span><span class="option-desc" id="descTts">Фразы и переменные: запись, WAV, синтез</span></div>
                 </button>
 
                 <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
@@ -1047,12 +1047,13 @@
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadExcel()" title="Таблица с фразами (лист с колонкой &lt;phrase&gt;) и листами переменных">Таблица</button>
                 <button class="btn-ghost btn-ghost--rec" id="ttsRecBtn" onclick="ttsToggleRec()" title="Записывать с микрофона: готовые фразы появляются на ленте прямо во время записи">● Записывать <kbd>R</kbd></button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
+                <button class="btn-ghost btn-ghost--info" id="ttsValsSynthBtn" style="display:none" onclick="ttsValsSynthOpen()" title="Синтез значений по референсу диктора">Синтез</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
                 <button class="btn-ghost btn-ghost--compact tts-fs-btn" onclick="toggleFullscreen()" title="Полный экран (F11)">&#x26F6; <kbd>F11</kbd></button>
                 <button class="btn-ghost btn-alert btn-ghost--compact" id="ttsMarksBtn" style="display:none" onclick="ttsMarksRetry()" title="Отметки start/end и переменных ещё не записаны в таблицу (например, она открыта в Excel)"></button>
             </div>
             <div class="tts-title">
-                <span class="tts-title__main">Запись озвучки</span>
+                <span class="tts-title__main">Студия озвучки</span>
                 <span class="tts-title__sub"><span id="ttsMeta">Таблица не загружена</span>
                     <span class="tts-lang" id="ttsLang" title="Язык распознавания речи">
                         <button type="button" data-l="ru" onclick="ttsSetLang('ru')">RU</button><button type="button" data-l="kz" onclick="ttsSetLang('kz')">KZ</button>
@@ -1171,6 +1172,47 @@
             <input type="text" class="tts-list-search" id="ttsListSearch" placeholder="Поиск по тексту или имени…" oninput="ttsRenderList()" onkeydown="ttsListSearchKey(event)">
             <div class="tts-list-tabs" id="ttsListTabs"></div>
             <div class="tts-list" id="ttsList"></div>
+        </div>
+    </div>
+
+    <!-- Студия озвучки: нарезка сырого WAV по паузам (значения переменных) -->
+    <div id="ttsValsCutOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--md">
+            <div class="modal-head">
+                <h3 class="modal-title">Нарезка по паузам</h3>
+                <button class="modal-close" onclick="ttsValsCutClose()" title="Закрыть">&times;</button>
+            </div>
+            <div class="vc-file" id="ttsvcFile"></div>
+            <label class="vc-field">
+                <div class="vc-head"><span>Пауза для разреза</span><b id="ttsvcPauseTxt"></b></div>
+                <input type="range" id="ttsvcPause" min="50" max="3000" step="10" oninput="ttsValsCutChanged()">
+            </label>
+            <label class="vc-field">
+                <div class="vc-head"><span>Чувствительность к тишине</span><b id="ttsvcSensTxt"></b></div>
+                <input type="range" id="ttsvcSens" min="-80" max="-10" step="1" oninput="ttsValsCutChanged()">
+            </label>
+            <label class="vc-field">
+                <div class="vc-head"><span>Запас звука по краям</span><b id="ttsvcPadTxt"></b></div>
+                <input type="range" id="ttsvcPad" min="0" max="1000" step="10" oninput="ttsValsCutChanged()">
+            </label>
+            <div class="vc-result" id="ttsvcResult"></div>
+            <div class="modal-hint">Чанки пойдут по порядку, а значения — по порядку таблицы. Если в куске два значения — разрежьте его в «Сборке», если значение разбито на несколько кусков — склейте.</div>
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="ttsValsCutClose()">Отмена</button>
+                <button class="custom-alert-btn" onclick="ttsValsCutGo()">Нарезать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Студия озвучки: синтез значений по референсу -->
+    <div id="ttsValsSynthOverlay" class="custom-alert-overlay" onclick="if (event.target === this) ttsValsSynthClose()">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Синтез по референсу</h3>
+                <button class="modal-close" onclick="ttsValsSynthClose()" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Референс — запись диктора с короткой фразой. Сервис клонирует голос и озвучивает каждое значение; готовые синтезы появляются на ленте дублей — их можно послушать, поправить в «Сборке» и сохранить.</div>
+            <div id="ttsValsSynthBody"></div>
         </div>
     </div>
 
