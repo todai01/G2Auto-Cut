@@ -38,8 +38,6 @@ function extractLeadingIcon(text) {
 
 let isProcessing = false;
         let currentState = null;
-        let mergeParts = [null, null, null, null, null];
-        let saveFilenameForMerge = null;
         let playTimeout = null;
         let sumPlaybackTimers = [];
         function clearSumPlaybackTimers() {
@@ -47,134 +45,11 @@ let isProcessing = false;
             sumPlaybackTimers = [];
         }
 
-        // Значения по умолчанию — используются кнопкой «Сбросить»
-        const CUT_DEFAULTS = { pause: 500, sens: -35, pad: 250 };
-
-        function pauseWord(v)  { return v < 400 ? "Короткая" : (v > 900 ? "Длинная" : "Нормальная"); }
-        function sensWord(v)   { return v > -30 ? "Высокая" : (v < -45 ? "Строгая" : "Оптимальная"); }
-        function padWord(v)    { return v < 150 ? "Маленький" : (v > 300 ? "Большой" : "Безопасный"); }
-
-        function updateSettingsText() {
-            // Ползунки нарезки жили в меню основного режима (удалён) — без них выходим.
-            if (!document.getElementById('inpPause')) return;
-            let p = parseInt(document.getElementById('inpPause').value);
-            document.getElementById('valPause').innerText = `${pauseWord(p)} · ${p} мс`;
-
-            let s = parseInt(document.getElementById('inpSens').value);
-            document.getElementById('valSens').innerText = `${sensWord(s)} · ${s} дБ`;
-
-            let pad = parseInt(document.getElementById('inpPad').value);
-            document.getElementById('valPad').innerText = `${padWord(pad)} · ${pad} мс`;
-
-            // Свёрнутые настройки в меню: коротко, что сейчас стоит.
-            let sum = document.getElementById('cutSummary');
-            if (sum) sum.innerText = `${p} мс · ${String(s).replace('-', '−')} дБ · ${pad} мс`;
-        }
-
         function openMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'flex'; }
         function closeMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'none'; }
 
-        // ===== РУЧНОЙ ВВОД НАСТРОЕК НАРЕЗКИ =====
-
-        function openManualSettings() {
-            document.getElementById('manPause').value = document.getElementById('inpPause').value;
-            document.getElementById('manSens').value  = document.getElementById('inpSens').value;
-            document.getElementById('manPad').value   = document.getElementById('inpPad').value;
-            updateManualHints();
-            document.getElementById('manualOverlay').style.display = 'flex';
-            setTimeout(() => document.getElementById('manPause').focus(), 50);
-        }
-
-        function closeManualSettings() {
-            document.getElementById('manualOverlay').style.display = 'none';
-        }
-
-        function resetManualSettings() {
-            document.getElementById('manPause').value = CUT_DEFAULTS.pause;
-            document.getElementById('manSens').value  = CUT_DEFAULTS.sens;
-            document.getElementById('manPad').value   = CUT_DEFAULTS.pad;
-            updateManualHints();
-        }
-
-        // Ограничиваем значение допустимыми рамками ползунка
-        function clampToInput(sliderId, raw, fallback) {
-            let slider = document.getElementById(sliderId);
-            let v = parseInt(raw);
-            if (isNaN(v)) return fallback;
-            return Math.min(parseInt(slider.max), Math.max(parseInt(slider.min), v));
-        }
-
-        // Живые подсказки: объясняют простым языком, что даст введённое число
-        function updateManualHints() {
-            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
-            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
-            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
-
-            let hP = document.getElementById('hintPause');
-            hP.classList.toggle('is-warn', p < 200 || p > 1500);
-            hP.innerHTML = `Разрез произойдёт только там, где тишина длится дольше <b>${(p / 1000).toFixed(2)} сек</b>. `
-                + (p < 200
-                    ? 'Очень мало: программа разрежет даже короткие вдохи, дублей получится много и они будут рваными.'
-                    : p > 1500
-                        ? 'Очень много: короткие паузы между фразами программа пропустит, несколько фраз слипнутся в один дубль.'
-                        : 'Обычная речевая пауза между фразами — хороший баланс.');
-
-            let hS = document.getElementById('hintSens');
-            hS.classList.toggle('is-warn', sn > -25 || sn < -55);
-            hS.innerHTML = `Тишиной считается всё, что тише <b>${sn} дБ</b>. `
-                + (sn > -25
-                    ? 'Порог высокий: программа примет за тишину даже негромкую речь и может срезать начало слова.'
-                    : sn < -55
-                        ? 'Порог строгий: нужна почти стерильная тишина. При фоновом шуме разрезов почти не будет.'
-                        : 'Подходит для обычной студийной записи с лёгким фоновым шумом.');
-
-            let hPad = document.getElementById('hintPad');
-            hPad.classList.toggle('is-warn', pad < 80 || pad > 600);
-            hPad.innerHTML = `К каждому дублю добавится <b>${pad} мс</b> звука с обеих сторон. `
-                + (pad < 80
-                    ? 'Запас маленький: есть риск отрезать первый и последний звук слова.'
-                    : pad > 600
-                        ? 'Запас большой: в дубли попадут куски соседних фраз, придётся дочищать вручную.'
-                        : 'Слово гарантированно не обрежется, лишнего почти не попадёт.');
-        }
-
-        function applyManualSettings() {
-            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
-            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
-            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
-
-            document.getElementById('inpPause').value = p;
-            document.getElementById('inpSens').value  = sn;
-            document.getElementById('inpPad').value   = pad;
-
-            updateSettingsText();
-            closeManualSettings();
-            showToast(`Настройки применены: ${p} мс · ${sn} дБ · ${pad} мс`);
-        }
-
         // Пояснения по кнопкам «?»
         const SETTING_HELP = {
-            pause: {
-                title: 'Длина паузы для разреза',
-                body: 'Программа слушает запись и ищет места, где вы молчите. Этот параметр говорит, '
-                    + 'насколько долгим должно быть молчание, чтобы считать его концом фразы.<br><br>'
-                    + '<b>Бытовой пример:</b> представьте, что вы читаете вслух список. Между словами внутри '
-                    + 'предложения вы делаете короткие паузы, а между пунктами списка — длинные. '
-                    + 'Здесь вы задаёте, какую паузу считать «между пунктами».<br><br>'
-                    + '<b>Меньше число</b> — больше дублей, режет мелко.<br>'
-                    + '<b>Больше число</b> — меньше дублей, несколько фраз могут слипнуться.'
-            },
-            sens: {
-                title: 'Чувствительность к тихим звукам',
-                body: 'Абсолютной тишины в записи не бывает — всегда есть шум микрофона, дыхание, гул комнаты. '
-                    + 'Этот параметр задаёт громкость, ниже которой звук считается тишиной. '
-                    + 'Измеряется в децибелах, и число всегда отрицательное: чем оно меньше, тем тише.<br><br>'
-                    + '<b>Бытовой пример:</b> это как порог слышимости. Поставьте −20 дБ — программа «глуховата» '
-                    + 'и примет за тишину даже негромкую речь. Поставьте −60 дБ — у неё идеальный слух, '
-                    + 'и любой шорох она посчитает звуком.<br><br>'
-                    + '<b>Ближе к −20</b> — режет охотнее, но может отхватить начало слова.<br>'
-                    + '<b>Ближе к −60</b> — осторожнее, но при шумном фоне разрезов почти не будет.'
-            },
             header: {
                 title: 'Строка с заголовками',
                 body: 'Номер строки, в которой написаны названия колонок — например «51-100 миллионов» '
@@ -184,15 +59,6 @@ let isProcessing = false;
                     + 'строки — так устроен простой формат «текст в первом столбце, имя файла во втором».<br><br>'
                     + 'Обычно программа определяет это сама, менять вручную нужно редко — например, '
                     + 'если сверху есть лишняя строка с датой или заметкой.'
-            },
-            pad: {
-                title: 'Запас звука по краям',
-                body: 'Найдя границу фразы, программа отступает немного назад и немного вперёд, '
-                    + 'и только потом режет. Этот отступ и есть запас.<br><br>'
-                    + '<b>Бытовой пример:</b> как поля на листе бумаги. Режете точно по буквам — рискуете '
-                    + 'срезать край. Оставляете поля — текст цел.<br><br>'
-                    + '<b>Меньше число</b> — дубли плотные, но можно потерять первый или последний звук.<br>'
-                    + '<b>Больше число</b> — слово точно целое, но в дубль попадёт кусок соседней фразы.'
             }
         };
 
@@ -203,7 +69,6 @@ let isProcessing = false;
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            updateSettingsText();
             loadRecentProjects();
         });
 
@@ -725,9 +590,6 @@ let isProcessing = false;
             }
 
             if (state && state.tts) { openTtsScreen(state); return; }
-            // Не-TTS проекты раньше открывались в режиме проверки дублей — его больше нет.
-            showBeautifulAlert('ℹ️ <b>Проект не открыть одним кликом</b><br><br>Это проект режима проверки дублей, который убран из программы. '
-                + 'Для переменных откройте <b>Пакетную сборку</b> или <b>Готовую папку с переменными</b> в меню.');
         }
 
         // Заставка -> экран подготовки проекта. Если есть недавний проект —
@@ -884,28 +746,6 @@ let isProcessing = false;
             }, { passive: true });
         })();
 
-        // Плавное раскрытие «Настроек нарезки» (у <details> анимации нет).
-        function toggleMenuCut(e) {
-            let det = e.currentTarget.parentElement;
-            let body = document.getElementById('menuCutBody');
-            if (!body || !body.animate || !motionOK()) return;
-            e.preventDefault();
-            if (det.dataset.anim) return;
-            det.dataset.anim = '1';
-            const done = () => { delete det.dataset.anim; body.style.overflow = ''; };
-            body.style.overflow = 'hidden';
-            if (!det.open) {
-                det.open = true;
-                let h = body.scrollHeight;
-                body.animate([{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }],
-                             { duration: 260, easing: 'cubic-bezier(.2,.7,.3,1)' }).onfinish = done;
-            } else {
-                let h = body.scrollHeight;
-                body.animate([{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }],
-                             { duration: 200, easing: 'ease-in' }).onfinish = () => { det.open = false; done(); };
-            }
-        }
-
         function showWorkspace() {
             workspaceReady = true;
             embedAreaId = 'audacityEmbedArea';
@@ -926,10 +766,6 @@ let isProcessing = false;
             el.classList.toggle('setup-status--ready', !!ready);
         }
 
-        // Галочка «Авто-добавление тишины» была только в основном режиме (удалён).
-        // Обращения к ней остались в общих функциях — читаем безопасно.
-        function addSilenceOn() { let el = document.getElementById('addSilence'); return !!(el && el.checked); }
-        function resetSilence() { let el = document.getElementById('addSilence'); if (el) el.checked = false; }
 
         // Полоса общего прогресса: проверенные, готовые и переменные в одной шкале
         function updateProjectProgress(stats) {
@@ -1076,12 +912,6 @@ let isProcessing = false;
         }
 
         document.addEventListener('DOMContentLoaded', setupChunkTrack);
-
-        async function handleLoad(apiPromise) {
-            let state = await apiPromise;
-            updateUI(state);
-            if (state.has_audio) { showWorkspace(); playAudio(); }
-        }
 
         // Подсветка карточки «Загрузить текст (Excel)».
         // Раньше этот код был продублирован в двух местах и мог разойтись.
@@ -1317,196 +1147,6 @@ let isProcessing = false;
             }
         }
 
-        // ===== АВТОПОДБОР НАСТРОЕК НАРЕЗКИ =====
-
-        let tuneData = null;       // результат замеров по выбранному файлу
-        let tunePredictTimer = null;
-
-        async function loadAudio() {
-            // Шаг 1 — выбор файла (Python открывает системное окно)
-            let picked = await pywebview.api.pick_raw_audio();
-            if (!picked || picked.error === 'cancel') return;
-            if (picked.error) { showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked.error}`); return; }
-
-            // Шаг 2 — замеры. Могут занять пару секунд, показываем прогресс
-            updateProgress(30, `Анализ записи: ${picked.name}`);
-            let res;
-            try {
-                res = await pywebview.api.analyze_picked_audio();
-            } catch (e) {
-                document.getElementById('progressContainer').style.display = 'none';
-                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
-                return;
-            }
-            document.getElementById('progressContainer').style.display = 'none';
-
-            if (!res || res.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
-                return;
-            }
-
-            openAutoTune(res);
-        }
-
-        function openAutoTune(res) {
-            tuneData = res;
-
-            let mins = Math.floor(res.duration_sec / 60);
-            let secs = Math.round(res.duration_sec % 60);
-            document.getElementById('tuneFile').innerHTML =
-                `<b>${res.name}</b> · ${mins} мин ${secs} сек`;
-
-            document.getElementById('tuneNoise').innerText  = `${res.noise_db} дБ`;
-            document.getElementById('tuneSpeech').innerText = `${res.speech_db} дБ`;
-            document.getElementById('tuneSpread').innerText = `${res.spread} дБ`;
-
-            let spreadNote = document.getElementById('tuneSpreadNote');
-            if (res.spread < 10) {
-                spreadNote.innerText = 'Мало: фон почти такой же громкий, как речь. Нарезка будет неточной.';
-                spreadNote.className = 'measure-card__note is-warn';
-            } else if (res.spread < 20) {
-                spreadNote.innerText = 'Небольшой запас — возможны ошибки на тихих словах.';
-                spreadNote.className = 'measure-card__note';
-            } else {
-                spreadNote.innerText = 'Хороший запас, речь чётко отделена от фона.';
-                spreadNote.className = 'measure-card__note is-good';
-            }
-
-            document.getElementById('tuneVerdict').innerHTML = res.target_phrases
-                ? `В таблице Excel <b>${res.target_phrases}</b> фраз — настройки подобраны так, чтобы кусков получилось примерно столько же.`
-                : `Таблица Excel не загружена, поэтому подобрано «на глаз» по громкости записи. Загрузите Excel — и подбор станет точнее.`;
-
-            restoreTuneSuggestion();
-
-            // Быстрые варианты: та же чувствительность, разная длина паузы
-            let presets = (res.variants || []).map(v =>
-                `<button class="preset-chip" onclick="applyTunePreset(${v.pause})">${v.pause} мс<small>≈ ${v.chunks} кусков</small></button>`
-            ).join('');
-            document.getElementById('tunePresets').innerHTML = presets;
-
-            document.getElementById('autoTuneOverlay').style.display = 'flex';
-        }
-
-        function closeAutoTune() {
-            document.getElementById('autoTuneOverlay').style.display = 'none';
-        }
-
-        function restoreTuneSuggestion() {
-            if (!tuneData) return;
-            document.getElementById('tunePause').value = tuneData.suggested.pause;
-            document.getElementById('tuneSens').value  = tuneData.suggested.sens;
-            document.getElementById('tunePad').value   = tuneData.suggested.pad;
-            renderTuneResult(tuneData.predicted_chunks);
-        }
-
-        function applyTunePreset(pause) {
-            document.getElementById('tunePause').value = pause;
-            runTunePredict();
-        }
-
-        // Пересчитываем не на каждое нажатие клавиши, а когда человек перестал печатать
-        function scheduleTunePredict() {
-            clearTimeout(tunePredictTimer);
-            document.getElementById('tuneResult').className = 'tune-result is-busy';
-            document.getElementById('tuneResult').innerHTML = 'Пересчитываю…';
-            tunePredictTimer = setTimeout(runTunePredict, 400);
-        }
-
-        async function runTunePredict() {
-            clearTimeout(tunePredictTimer);
-            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
-            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
-
-            let res = await pywebview.api.predict_cut(pause, sens);
-            renderTuneResult(res ? res.chunks : null);
-        }
-
-        function renderTuneResult(chunks) {
-            let el = document.getElementById('tuneResult');
-            if (chunks === null || chunks === undefined) {
-                el.className = 'tune-result';
-                el.innerHTML = 'Не удалось посчитать. Попробуйте выбрать файл заново.';
-                return;
-            }
-
-            let target = tuneData ? tuneData.target_phrases : 0;
-            let note = '';
-            let cls = 'tune-result is-good';
-
-            if (chunks <= 1) {
-                cls = 'tune-result is-bad';
-                note = 'Вся запись останется одним куском. Увеличьте чувствительность — например, до '
-                     + `${Math.min(-10, parseInt(document.getElementById('tuneSens').value) + 4)} дБ.`;
-            } else if (target && chunks < target * 0.6) {
-                cls = 'tune-result is-warn';
-                note = `Это заметно меньше, чем ${target} фраз в таблице. Уменьшите паузу или поднимите чувствительность.`;
-            } else if (target && chunks > target * 1.6) {
-                cls = 'tune-result is-warn';
-                note = `Это заметно больше, чем ${target} фраз в таблице — фразы дробятся на части. Увеличьте паузу.`;
-            } else if (target) {
-                note = `В таблице ${target} фраз — цифры сходятся.`;
-            } else {
-                note = 'Проверьте на слух после нарезки: слова не должны обрываться.';
-            }
-
-            el.className = cls;
-            el.innerHTML = `<span class="tune-result__num">≈ ${chunks}</span>`
-                         + `<span class="tune-result__text"><b>кусков получится</b><br>${note}</span>`;
-        }
-
-        async function startCut() {
-            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
-            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
-            let pad   = clampToInput('inpPad',   document.getElementById('tunePad').value,   CUT_DEFAULTS.pad);
-
-            // Держим ползунки на экране подготовки в согласии с тем, чем резали
-            document.getElementById('inpPause').value = pause;
-            document.getElementById('inpSens').value  = sens;
-            document.getElementById('inpPad').value   = pad;
-            updateSettingsText();
-
-            closeAutoTune();
-            updateProgress(0, 'Нарезка...');
-            let state = await pywebview.api.load_raw_audio(pause, sens, pad);
-            document.getElementById('progressContainer').style.display = 'none';
-
-            // Чанки нарезаны — это фундамент в любом случае. Дальше решает
-            // пользователь, а не программа: обычный режим или каскад переменных.
-            if (state && state.await_mode_choice) {
-                document.getElementById('modeChoiceOverlay').style.display = 'flex';
-                return;
-            }
-
-            updateUI(state);
-            if (state.has_audio) { showWorkspace(); playAudio(); }
-            maybeNudgeExcelAfterCut();
-        }
-
-        async function chooseCutMode(mode) {
-            document.getElementById('modeChoiceOverlay').style.display = 'none';
-            updateProgress(0, mode === 'premade' ? 'Готовим каскад переменных...' : 'Открываем Audacity...');
-            document.getElementById('progressContainer').style.display = 'block';
-
-            let state = await pywebview.api.choose_mode_after_cut(mode);
-            document.getElementById('progressContainer').style.display = 'none';
-
-            if (mode === 'premade') {
-                nudgeExcelAfterCut = false;
-                document.getElementById('onlyStartCheck').checked = false;
-                handlePremadeResult(state);
-                return;
-            }
-
-            if (state && state.error) {
-                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-
-            updateUI(state);
-            if (state.has_audio) { showWorkspace(); playAudio(); }
-            maybeNudgeExcelAfterCut();
-        }
-
         // ===== «ГОТОВЫЕ ПЕРЕМЕННЫЕ»: НЕ ХВАТАЕТ start/end =====
         // Единая точка разбора ответа для обоих мест, откуда грузится
         // «Готовая папка» (обычная кнопка и режим сразу после нарезки) —
@@ -1586,31 +1226,6 @@ let isProcessing = false;
             let state = await pywebview.api.finish_create_start_end();
             document.getElementById('progressContainer').style.display = 'none';
             handlePremadeResult(state);
-        }
-
-        async function loadVariables() {
-            if (currentState && currentState.mode === 'VarBatch') {
-                showBeautifulAlert('ℹ️ <b>Режим переменных</b><br><br>Вкладки здесь не переключаются — конвейер уже открыт. Чтобы выйти, нажмите <b>Главное меню</b> в левом верхнем углу.');
-                return;
-            }
-            await handleLoad(pywebview.api.load_variables_mode());
-        }
-        async function loadChecked() {
-            // В конвейере переменных вкладка «Проверенные» не переключает
-            // экран (это сломало бы каскад) — вместо этого проигрывает
-            // сохранённую версию текущего дубля, если он уже отмечен.
-            if (currentState && currentState.mode === 'VarBatch') {
-                playAudio(false);
-                return;
-            }
-            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'checked'}));
-        }
-        async function loadMainMode() {
-            if (currentState && currentState.mode === 'VarBatch') {
-                showBeautifulAlert('ℹ️ <b>Режим конвейера</b><br><br>Вкладок здесь нет. Чтобы выйти, нажмите <b>Главное меню</b>.');
-                return;
-            }
-            await handleLoad(pywebview.api.dispatch('switch_mode', {mode: 'chunks'}));
         }
 
         // Запуск режима конвейера переменных (С выбором окна)
@@ -1869,20 +1484,6 @@ let isProcessing = false;
             showConnSuggest(state.connector_suggestions, 'workspace');
         }
 
-        // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ОТКРЫТЬ ГОТОВЫЕ ЧАНКИ" ---
-        async function loadFolder() {
-            updateProgress(0, 'Загрузка папки...');
-            document.getElementById('progressContainer').style.display = 'block';
-            let state = await pywebview.api.load_chunks_folder();
-            document.getElementById('progressContainer').style.display = 'none';
-            if (state && state.error) {
-                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-            if (state.has_audio) { showWorkspace(); playAudio(); }
-        }
-
         // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ГОТОВАЯ ПАПКА С ПЕРЕМЕННЫМИ" ---
         async function continueInitVarBatchPremade(hwnd) {
             let confirmed = await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
@@ -2047,9 +1648,6 @@ let isProcessing = false;
             // #btnEmbedAudacity, спрятанный в другой, скрытой сейчас
             // панели действий.
             embedBtnId = sumModeActive ? 'sumEmbedAudacityBtn' : 'btnEmbedAudacity';
-
-            let mergePanel = document.querySelector('.merge-panel');
-            if (mergePanel && sumModeActive) mergePanel.style.display = 'none';
 
             // Общая статистика проекта и переключатель Проверенные/Переменные/
             // Основной — не нужны в режиме «Суммы», у него свой счётчик «Готово».
@@ -3617,15 +3215,6 @@ let isProcessing = false;
             if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
         }
 
-        async function sumManualSave() {
-            let state = await pywebview.api.sum_manual_save(addSilenceOn());
-            if (state && state.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
-                return;
-            }
-            updateUI(state);
-        }
-
         // Одна кнопка вместо «Остаток»/«Склеить» — бэкенд сам решает, какую
         // из двух логик применить, по тому, открыт ли сейчас дубль в
         // Audacity (см. sum_fix_split в variables_handler.py): открыт —
@@ -3885,7 +3474,6 @@ let isProcessing = false;
             try {
                 let state = await pywebview.api.navigate_phrase(dir);
                 updateUI(state);
-                resetSilence();
 
                 let phraseEl = document.getElementById('phraseText');
                 clearTimeout(playTimeout);
@@ -3959,7 +3547,6 @@ let isProcessing = false;
                 isNavigatingChunk = true;
                 try {
                     updateUI(await pywebview.api.dispatch('navigate', {direction: dir, auto_play: true}));
-                    resetSilence();
                     clearTimeout(navChunkTimeout);
                     navChunkTimeout = setTimeout(async () => {
                         let res = await pywebview.api.dispatch('play_sync');
@@ -3978,150 +3565,6 @@ let isProcessing = false;
                     isNavigatingChunk = false;
                 }
             }
-        }
-
-        async function processAction(action) {
-            if (isProcessing) return; isProcessing = true;
-            try {
-                let addSil = addSilenceOn();
-                let state = await pywebview.api.dispatch('save', {kind: action, add_silence: addSil});
-                if (state) updateUI(state);
-                playAudio();
-                resetSilence();
-            } finally { isProcessing = false; }
-        }
-
-        // НОВОВВЕДЕНИЕ: Универсальная логика двойного нажатия с визуальным таймером
-        let tapTimers = {};
-        function handleDoubleTap(btnId, callbackFunction, originalText) {
-            let btn = document.getElementById(btnId);
-            if (!btn) return;
-
-            // Поддержка как старых кнопок с <kbd>, так и новых без них
-            let kbd = btn.querySelector('kbd');
-
-            if (tapTimers[btnId]) {
-                // Сценарий 2: Второе нажатие успело вовремя
-                clearTimeout(tapTimers[btnId]);
-                delete tapTimers[btnId];
-
-                btn.classList.remove('btn-waiting');
-                if (kbd) { kbd.innerText = originalText; } else { btn.innerText = originalText; }
-
-                callbackFunction(); // Выполняем нужное сохранение
-            } else {
-                // Сценарий 1: Первое нажатие - запускаем таймер
-                btn.classList.add('btn-waiting');
-                if (kbd) { kbd.innerText = 'Ещё раз!'; } else { btn.innerText = 'Ещё раз!'; }
-
-                tapTimers[btnId] = setTimeout(() => {
-                    // Время вышло - возвращаем в исходное состояние
-                    delete tapTimers[btnId];
-                    btn.classList.remove('btn-waiting');
-                    if (kbd) { kbd.innerText = originalText; } else { btn.innerText = originalText; }
-                }, 400); // 400 миллисекунд на подтверждение
-            }
-        }
-
-        // НОВОВВЕДЕНИЕ: Логика двойного нажатия для W (Good)
-        let lastWTime = 0;
-        function triggerGoodDoubleTap() {
-            let now = new Date().getTime();
-            if (now - lastWTime < 400) { // 400 миллисекунд на двойной клик
-                processAction('good');
-                lastWTime = 0;
-            } else {
-                lastWTime = now;
-            }
-        }
-
-        // НОВОВВЕДЕНИЕ: Логика двойного нажатия для R (Переменные)
-        let lastRTime = 0;
-        function triggerVarDoubleTap() {
-            let now = new Date().getTime();
-            if (now - lastRTime < 400) {
-                processAction('variable');
-                lastRTime = 0;
-            } else {
-                lastRTime = now;
-            }
-        }
-
-        function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-
-        function getVarName(type) {
-            if(type === 'date') return "Дата";
-            if(type === 'name') return "Имя";
-            if(type === 'amount') return "Сумма";
-            return "";
-        }
-
-        function getVarIcon(type) {
-            if(type === 'date') return iconHTML('calendar');
-            if(type === 'name') return iconHTML('user');
-            if(type === 'amount') return iconHTML('dollar-sign');
-            return "";
-        }
-
-        async function loadVarFile(varType) {
-            let result = await pywebview.api.load_var_file(varType);
-            if (result && result.filename) {
-                let btnLoad = document.getElementById(`btnVar${capitalize(varType)}Load`);
-                let btnMix = document.getElementById(`btnVar${capitalize(varType)}Mix`);
-
-                // Красим кнопку файла, давая понять, что он заряжен
-                btnLoad.innerHTML = `${getVarIcon(varType)} ${escapeHtml(getVarName(varType))}: ${escapeHtml(result.filename)}`;
-                btnLoad.style.color = 'var(--text)';
-                btnLoad.style.borderColor = 'var(--accent-var)';
-                btnLoad.style.background = 'var(--tint-var)';
-
-                btnMix.disabled = false;
-            }
-        }
-
-        async function mixWithVar(varType) {
-            let activeParts = mergeParts.filter(p => p !== null);
-            if (activeParts.length === 0) {
-                showBeautifulAlert("ℹ️ <b>Нечего выгружать</b><br><br>Сначала отметьте фразы на монтажном столе клавишами <b>1</b>, <b>2</b>…");
-                return;
-            }
-            if (isProcessing) return; isProcessing = true;
-
-            // НОВОВВЕДЕНИЕ: Считываем состояние галочки
-            let varAtStart = document.getElementById('varAtStart').checked;
-            await pywebview.api.build_scene_with_var(mergeParts, varType, varAtStart);
-
-            isProcessing = false;
-        }
-
-        async function saveSeparateParts() {
-            let activeParts = mergeParts.filter(p => p !== null);
-            if (activeParts.length === 0) {
-                showBeautifulAlert("ℹ️ <b>Нет фраз для экспорта</b><br><br>Отметьте их клавишами <b>1</b>, <b>2</b>…");
-                return;
-            }
-            if (isProcessing) return; isProcessing = true;
-
-            let addSil = addSilenceOn();
-
-            // Получаем ответ от Python с обновленными галочками
-            let newState = await pywebview.api.save_separate_parts(mergeParts, addSil);
-
-            // Экран обновляется, а уведомление об успехе или ошибке вызовет сам Python!
-            if (newState) {
-                updateUI(newState);
-            }
-
-            // Очистка слотов монтажного стола
-            mergeParts = [null, null, null, null, null];
-            saveFilenameForMerge = null;
-            for(let i=1; i<=5; i++) {
-                document.getElementById(`labelPart${i}`).innerText = "-";
-                document.getElementById(`btnPart${i}`).classList.remove('filled');
-                document.getElementById(`boxPart${i}`).classList.remove('has-data');
-            }
-            resetSilence();
-            isProcessing = false;
         }
 
         async function toggleChecked() {
@@ -4146,7 +3589,6 @@ let isProcessing = false;
                 if (isProcessing) return; isProcessing = true;
                 updateUI(await pywebview.api.delete_current_phrase());
                 isProcessing = false;
-                resetSilence();
             }, 600); // Время удержания крестика (0.6 секунды)
         }
 
@@ -4219,10 +3661,6 @@ let isProcessing = false;
             // НОВОВВЕДЕНИЕ: Применяем класс желтого свечения, если это переменная
             phraseEl.classList.toggle('is-var', !!state.is_var);
 
-            if (document.getElementById('varMixPanel')) {
-                document.getElementById('varMixPanel').style.display = (state.mode === 'Переменные') ? 'block' : 'none';
-            }
-
             if(state.stats) {
                 document.getElementById('statTotal').innerText = state.stats.total;
                 document.getElementById('statGood').innerText = state.stats.good;
@@ -4256,21 +3694,11 @@ let isProcessing = false;
                 document.getElementById('phraseText').innerText = state.phrase_text || state.var_batch_cat;
                 document.getElementById('chunkName').innerText = state.var_batch_name || "";
 
-                let mergePanel = document.querySelector('.merge-panel');
-                if(mergePanel) mergePanel.style.display = 'none';
-                let addSil = document.getElementById('addSilence');
-                if(addSil && addSil.parentElement) addSil.parentElement.style.display = 'none';
-
             } else {
                 document.getElementById('workspaceGrid').classList.remove('workspace-grid--varbatch');
                 document.getElementById('varBatchActions').style.display = 'none';
                 applySumModeLayout();
                 if (sumModeActive && state.sum_mode) renderSumPanel(state.sum_mode);
-
-                let mergePanel = document.querySelector('.merge-panel');
-                if(mergePanel) mergePanel.style.display = sumModeActive ? 'none' : 'block';
-                let addSil = document.getElementById('addSilence');
-                if(addSil && addSil.parentElement) addSil.parentElement.style.display = sumModeActive ? 'none' : 'flex';
             }
         }
 
@@ -4301,119 +3729,7 @@ let isProcessing = false;
 
         async function jumpToMissing(index) {
             updateUI(await pywebview.api.jump_to_phrase(index));
-            resetSilence();
             toggleMissingPanel();
-        }
-
-        function markPart(partNum) {
-            if (!currentState || !currentState.chunk_name) return;
-
-            // БЕРЕМ ТОЧНЫЙ ПУТЬ ДО ФАЙЛА НА ДИСКЕ (из Проверенных, Переменных или сырой папки)
-            let exactFilePath = currentState.completed_filepath || currentState.filepath;
-
-            // А для красоты на экране показываем имя
-            let rawName = currentState.raw_chunk_name || currentState.chunk_name.replace('.wav', '').replace('.mp3', '');
-            let displayName = currentState.custom_filename || rawName;
-
-            let idx = partNum - 1;
-            mergeParts[idx] = exactFilePath; // <-- В Python теперь уходит абсолютный путь!
-
-            document.getElementById(`labelPart${partNum}`).innerText = displayName;
-            document.getElementById(`btnPart${partNum}`).classList.add('filled');
-            document.getElementById(`boxPart${partNum}`).classList.add('has-data');
-
-            if(!saveFilenameForMerge) saveFilenameForMerge = currentState.custom_filename || currentState.chunk_name;
-        }
-
-        function clearPart(partNum) {
-            let idx = partNum - 1;
-            mergeParts[idx] = null;
-            document.getElementById(`labelPart${partNum}`).innerText = "-";
-            document.getElementById(`btnPart${partNum}`).classList.remove('filled');
-            document.getElementById(`boxPart${partNum}`).classList.remove('has-data');
-
-            if (partNum === 1 || mergeParts.every(p => p === null)) {
-                saveFilenameForMerge = null;
-            }
-        }
-
-        async function prepMerge() {
-            let activeParts = mergeParts.filter(p => p !== null);
-
-            if (activeParts.length === 0) {
-                showBeautifulAlert("ℹ️ <b>Нет частей для монтажа</b><br><br>Отметьте хотя бы одну часть клавишами <b>1</b>, <b>2</b>…");
-                return;
-            }
-
-            if (isProcessing) return; isProcessing = true;
-            await pywebview.api.prep_merge(mergeParts);
-            isProcessing = false;
-        }
-
-        async function saveMerge() {
-            if (!saveFilenameForMerge) { showBeautifulAlert("ℹ️ <b>Нет данных</b><br><br>Сначала выберите части для склейки."); return; }
-            if (isProcessing) return; isProcessing = true;
-            await pywebview.api.save_merge(saveFilenameForMerge, addSilenceOn(), false);
-            showToast("Склейка сохранена в «Проверенные»");
-
-            mergeParts = [null, null, null, null, null];
-            saveFilenameForMerge = null;
-            for(let i=1; i<=5; i++) {
-                document.getElementById(`labelPart${i}`).innerText = "-";
-                document.getElementById(`btnPart${i}`).classList.remove('filled');
-                document.getElementById(`boxPart${i}`).classList.remove('has-data');
-            }
-            resetSilence();
-            isProcessing = false;
-        }
-
-        async function saveMergeVar() {
-            if (!saveFilenameForMerge) { showBeautifulAlert("ℹ️ <b>Нет данных</b><br><br>Сначала выберите части для склейки."); return; }
-            if (isProcessing) return; isProcessing = true;
-            // Передаем true в Python, чтобы файл ушел в папку Переменные
-            await pywebview.api.save_merge(saveFilenameForMerge, addSilenceOn(), true);
-            showToast("Склейка сохранена в «Переменные»");
-
-            mergeParts = [null, null, null, null, null];
-            saveFilenameForMerge = null;
-            for(let i=1; i<=5; i++) {
-                document.getElementById(`labelPart${i}`).innerText = "-";
-                document.getElementById(`btnPart${i}`).classList.remove('filled');
-                document.getElementById(`boxPart${i}`).classList.remove('has-data');
-            }
-            resetSilence();
-            isProcessing = false;
-        }
-
-        let holdTimers = {};
-        let isLongPress = {};
-        const HOLD_DURATION = 600;
-
-        function startHold(keyNum, btnId, actionFunc) {
-            isLongPress[keyNum] = false;
-            let btn = document.getElementById(btnId);
-            if(btn) btn.classList.add('holding');
-
-            holdTimers[keyNum] = setTimeout(() => {
-                isLongPress[keyNum] = true;
-                if(btn) {
-                    btn.classList.remove('holding');
-                    btn.classList.add('executed');
-                    setTimeout(() => btn.classList.remove('executed'), 150);
-                }
-                actionFunc();
-            }, HOLD_DURATION);
-        }
-
-        function releaseHold(keyNum, btnId, shortActionFunc) {
-            clearTimeout(holdTimers[keyNum]);
-            let btn = document.getElementById(btnId);
-            if(btn) btn.classList.remove('holding');
-
-            if (!isLongPress[keyNum]) {
-                shortActionFunc();
-            }
-            isLongPress[keyNum] = false;
         }
 
         // Полный экран — F11 на любом экране программы.
@@ -4496,33 +3812,8 @@ let isProcessing = false;
                 return;
             }
 
-            // Окно автоподбора: Escape закрывает, печатать цифры не мешаем
-            let tuneOverlay = document.getElementById('autoTuneOverlay');
-            if (tuneOverlay && tuneOverlay.style.display === 'flex') {
-                if (e.code === 'Escape') {
-                    e.preventDefault();
-                    closeAutoTune();
-                }
-                return;
-            }
-
-            // Окно ручной настройки: Escape закрывает, остальные клавиши не мешаем
-            let manualOverlay = document.getElementById('manualOverlay');
-            if (manualOverlay && manualOverlay.style.display === 'flex') {
-                if (e.code === 'Escape') {
-                    e.preventDefault();
-                    closeManualSettings();
-                }
-                return;
-            }
-
-            // Выбор режима после нарезки, выбор start/end и ожидание меток —
-            // везде нужен явный клик, без горячих клавиш, чтобы не было
-            // случайного выхода куда-то на полпути.
-            let modeChoiceOverlay = document.getElementById('modeChoiceOverlay');
-            if (modeChoiceOverlay && modeChoiceOverlay.style.display === 'flex') {
-                return;
-            }
+            // Выбор start/end и ожидание меток — везде нужен явный клик,
+            // без горячих клавиш, чтобы не было случайного выхода на полпути.
             let startEndMissingOverlay = document.getElementById('startEndMissingOverlay');
             if (startEndMissingOverlay && startEndMissingOverlay.style.display === 'flex') {
                 if (e.code === 'Escape') { e.preventDefault(); closeStartEndMissing(); }
@@ -4755,8 +4046,6 @@ let isProcessing = false;
             label.innerText = (result && result.path) ? result.path : 'Папка не выбрана';
         }
 
-        let lastConvertedFiles = [];
-
         async function runConversion() {
             let btn = document.getElementById('btnRunConvert');
             let format = document.querySelector('input[name="convertFormat"]:checked').value;
@@ -4775,15 +4064,8 @@ let isProcessing = false;
                     msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
                 }
 
-                lastConvertedFiles = result.output_files || [];
                 closeConverter();
-
-                if (lastConvertedFiles.length) {
-                    document.getElementById('postConvertText').innerHTML = msg;
-                    document.getElementById('postConvertOverlay').style.display = 'flex';
-                } else {
-                    showBeautifulAlert(msg);
-                }
+                showBeautifulAlert(msg);
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Конвертировать';
@@ -5014,59 +4296,6 @@ let isProcessing = false;
             showToast(`Презентация сохранена: ${result.path}`);
         }
 
-        // --- Ненавязчивая подсказка "что дальше" после конвертации ---
-        function closePostConvert() {
-            document.getElementById('postConvertOverlay').style.display = 'none';
-        }
-
-        async function startCutFromConverted() {
-            let path = lastConvertedFiles[0];
-            closePostConvert();
-            if (!path) return;
-
-            let picked = await pywebview.api.select_raw_audio_path(path);
-            if (!picked || picked.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked ? picked.error : 'Файл не найден'}`);
-                return;
-            }
-
-            showMenu();
-            updateProgress(30, `Анализ записи: ${picked.name}`);
-            let res;
-            try {
-                res = await pywebview.api.analyze_picked_audio();
-            } catch (e) {
-                document.getElementById('progressContainer').style.display = 'none';
-                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
-                return;
-            }
-            document.getElementById('progressContainer').style.display = 'none';
-
-            if (!res || res.error) {
-                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
-                return;
-            }
-
-            nudgeExcelAfterCut = true;
-            openAutoTune(res);
-        }
-
-        // --- Ненавязчивая подсказка загрузить Excel после нарезки ---
-        // Срабатывает только для нарезки, начатой из конвертера, и только
-        // один раз — чтобы не надоедать при обычной работе.
-        let nudgeExcelAfterCut = false;
-
-        function closePostCutExcel() {
-            document.getElementById('postCutExcelOverlay').style.display = 'none';
-        }
-
-        function maybeNudgeExcelAfterCut() {
-            if (!nudgeExcelAfterCut) return;
-            nudgeExcelAfterCut = false;
-            if (excelIsLoaded) return;
-            document.getElementById('postCutExcelOverlay').style.display = 'flex';
-        }
-
         // === НОВОВВЕДЕНИЕ: Логика системы поиска ===
         function openSearch() {
             let totalChunks = currentState?.chunk_counter ? currentState.chunk_counter.split(' / ')[1] : 0;
@@ -5090,7 +4319,6 @@ let isProcessing = false;
             if (val.trim() !== "") {
                 let state = await pywebview.api.search_phrase(val);
                 updateUI(state);
-                resetSilence();
                 closeSearch();
 
                 // Проигрываем файл, если он уже выгружен (как при навигации Q/E)
@@ -5115,7 +4343,6 @@ let isProcessing = false;
             let val = parseInt(document.getElementById('searchChunkNum').value);
             if (val > 0) {
                 updateUI(await pywebview.api.dispatch('jump', {index: val - 1}));
-                resetSilence();
                 closeSearch();
 
                 // Проигрываем выбранный дубль, как при нажатии A/D
