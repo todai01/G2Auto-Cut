@@ -2185,19 +2185,6 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 .btn-help:hover{ border-color: var(--accent-primary); color: var(--accent-primary); background: var(--tint-primary); }
 
 /* Настройки нарезки — свёрнутая строка с текущими значениями */
-.menu-cut{ border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--panel); }
-.menu-cut__summary{
-    list-style: none; cursor: pointer; display: flex; align-items: center; gap: var(--space-2);
-    padding: 9px 14px; font-size: var(--fs-sm); color: var(--text-dim);
-}
-.menu-cut__summary::-webkit-details-marker{ display: none; }
-.menu-cut__summary::before{ content: "▸"; font-size: 10px; color: var(--text-faint); transition: transform .15s; }
-.menu-cut[open] .menu-cut__summary::before{ transform: rotate(90deg); }
-.menu-cut__summary:hover{ color: var(--text); }
-.menu-cut__title{ font-weight: 650; }
-.menu-cut__values{ margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); }
-.menu-cut__body{ border: none; border-top: 1px solid var(--border-soft); border-radius: 0 0 var(--radius-md) var(--radius-md); background: transparent; }
-.menu-cut__note{ font-size: var(--fs-xs); color: var(--text-faint); }
 
 /* Режимы — строки: иконка цветом режима, остальное спокойное */
 .menu-list{ display: flex; flex-direction: column; gap: 6px; }
@@ -2286,7 +2273,7 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 
 /* Наведение и нажатие — мягко, с подсветкой цветом режима. */
 .stage-loading .option-card,
-.menu-row, .menu-tool, .menu-cut{
+.menu-row, .menu-tool{
     transition: transform .25s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease, box-shadow .25s ease;
 }
 .stage-loading .option-card:hover{ transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.35), 0 0 0 1px rgba(77,149,234,.15); }
@@ -2297,10 +2284,6 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 .menu-tool:hover .menu-tool__icon{ transform: scale(1.15); }
 .stage-loading .option-card:hover .option-icon{ transform: scale(1.08); }
 .stage-loading .option-card:active, .menu-row:active, .menu-tool:active, .menu-recent__item:active{ transform: scale(.98); transition-duration: .08s; }
-.menu-cut:hover{ border-color: var(--border); }
-.menu-cut__values{ transition: color .2s ease; }
-.menu-cut[open] .menu-cut__values{ color: var(--accent-primary); }
-.menu-cut__summary::before{ transition: transform .25s cubic-bezier(.2,.7,.3,1); }
 
 /* Окно справки — мягко «выплывает». */
 #menuHelpOverlay[style*="flex"] .custom-alert-box{ animation: menuPop .32s cubic-bezier(.2,.7,.3,1) both; }
@@ -2331,9 +2314,9 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 /* --- «Прожектор»: мягкий свет вокруг курсора внутри карточек меню ---
    Координаты курсора (--mx/--my) ставит script.js. ::before — пятно
    света внутри, ::after — подсветка ближайшего к курсору участка рамки. */
-.stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut{ position: relative; isolation: isolate; }
+.stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item{ position: relative; isolation: isolate; }
 .stage-loading .option-card::before, .menu-row::before, .menu-tool::before, .menu-recent__item::before,
-.stage-loading .option-card::after, .menu-row::after, .menu-tool::after, .menu-recent__item::after, .menu-cut::after{
+.stage-loading .option-card::after, .menu-row::after, .menu-tool::after, .menu-recent__item::after{
     content: ""; position: absolute; pointer-events: none; border-radius: inherit;
     opacity: 0; transition: opacity .35s ease;
 }
@@ -2342,7 +2325,7 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
     background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%),
                 rgba(var(--glow-rgb, 120,170,255), .17), transparent 62%);
 }
-.stage-loading .option-card::after, .menu-row::after, .menu-tool::after, .menu-recent__item::after, .menu-cut::after{
+.stage-loading .option-card::after, .menu-row::after, .menu-tool::after, .menu-recent__item::after{
     inset: -1px; padding: 1px; z-index: 1;
     background: radial-gradient(160px circle at var(--mx, 50%) var(--my, 50%),
                 rgba(var(--glow-rgb, 120,170,255), .55), transparent 70%);
@@ -2350,7 +2333,7 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
     -webkit-mask-composite: xor; mask-composite: exclude;
 }
 .stage-loading .option-card:hover::before, .menu-row:hover::before, .menu-tool:hover::before, .menu-recent__item:hover::before,
-.stage-loading .option-card:hover::after, .menu-row:hover::after, .menu-tool:hover::after, .menu-recent__item:hover::after, .menu-cut:hover::after{ opacity: 1; }
+.stage-loading .option-card:hover::after, .menu-row:hover::after, .menu-tool:hover::after, .menu-recent__item:hover::after{ opacity: 1; }
 /* Свет — цветом режима */
 .menu-row--var{ --glow-rgb: 238,172,62; }
 .menu-row--good{ --glow-rgb: 47,191,125; }
@@ -2367,16 +2350,15 @@ body.sum-dragging .sum-editor{ border-style: dashed; }
 
 /* --- Наведение: карточка плавно чуть увеличивается, при уходе мыши —
    так же плавно возвращается (transition стоит на самой карточке). --- */
-.stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut{
+.stage-loading .option-card, .menu-row, .menu-tool, .menu-recent__item{
     transition: transform .3s cubic-bezier(.2,.7,.3,1), border-color .2s ease, background .2s ease, box-shadow .3s ease;
 }
 .stage-loading .option-card:hover, .menu-row:hover{ transform: scale(1.025); z-index: 2; }
 .menu-tool:hover{ transform: scale(1.045); z-index: 2; }
 .menu-recent__item:hover{ transform: scale(1.02); z-index: 2; }
-.menu-cut:hover{ transform: scale(1.015); z-index: 2; }
 .stage-loading .option-card:active, .menu-row:active, .menu-tool:active, .menu-recent__item:active{ transform: scale(.985); transition-duration: .1s; }
 @media (prefers-reduced-motion: reduce){
-    .stage-loading .option-card:hover, .menu-row:hover, .menu-tool:hover, .menu-recent__item:hover, .menu-cut:hover{ transform: none; }
+    .stage-loading .option-card:hover, .menu-row:hover, .menu-tool:hover, .menu-recent__item:hover{ transform: none; }
 }
 
 /* Параметры «Пакетной сборки» — тихие переключатели внутри карточки */
@@ -3587,7 +3569,6 @@ body.sum-mode .chunk-nav, body.sum-mode .btn-play, body.sum-mode #stripPanel{ di
 .radial__extra:empty{ display: none; }
 .radial__extra > *{ animation: radialInfoIn .35s var(--ease) both; }
 .radial__extra .menu-row__opts{ display: inline-flex; gap: 8px; margin: 0; }
-.radial__extra .menu-cut{ width: 100%; }
 .radial .progress-panel{ width: min(560px, 92vw); }
 .radial__link{ border: 0; background: transparent; color: var(--text-faint); font: inherit; font-size: 11.5px; cursor: pointer; text-decoration: underline dotted; }
 .radial__link:hover{ color: var(--accent-trash); }

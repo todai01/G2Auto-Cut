@@ -260,26 +260,6 @@
         </div>
     </div>
 
-    <div id="modeChoiceOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--md">
-            <div class="modal-head">
-                <h3 class="modal-title">Чанки нарезаны. В каком режиме работаем?</h3>
-            </div>
-            <div class="modal-hint">Дубли уже лежат в папке Chunks — это сделано в любом случае. Осталось выбрать, как собирать их дальше.</div>
-
-            <div class="mode-choice-grid">
-                <button class="option-card rise" onclick="chooseCutMode('normal')">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-edit-2"></use></svg></span>
-                    <div><span class="option-title">Обычный режим</span><span class="option-desc">По одной фразе, с меткой в Audacity</span></div>
-                </button>
-                <button class="option-card option-card--alt rise" onclick="chooseCutMode('premade')">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-refresh-cw"></use></svg></span>
-                    <div><span class="option-title">Готовые переменные</span><span class="option-desc">Каскад start + имя + end</span></div>
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- Не хватает эталонных файлов start/end -->
     <div id="startEndMissingOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">
@@ -514,50 +494,6 @@
         </div>
     </div>
 
-    <!-- Ненавязчивая подсказка "что дальше" после конвертации -->
-    <div id="postConvertOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--md">
-            <div class="modal-head">
-                <h3 class="modal-title">Готово! Что дальше?</h3>
-                <button class="modal-close" onclick="closePostConvert()" title="Закрыть">&times;</button>
-            </div>
-            <div class="modal-hint" id="postConvertText">Файл сконвертирован.</div>
-
-            <div class="mode-choice-grid">
-                <button class="option-card rise" onclick="startCutFromConverted()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-scissors"></use></svg></span>
-                    <div><span class="option-title">Начать нарезку</span><span class="option-desc">Взять этот файл и предложить настройки среза</span></div>
-                </button>
-                <button class="option-card option-card--alt rise" onclick="closePostConvert()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-octagon"></use></svg></span>
-                    <div><span class="option-title">Пока ничего</span><span class="option-desc">Просто закрыть окно</span></div>
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Ненавязчивая подсказка загрузить Excel после нарезки -->
-    <div id="postCutExcelOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--md">
-            <div class="modal-head">
-                <h3 class="modal-title">Нарезка готова. Загрузим текст?</h3>
-                <button class="modal-close" onclick="closePostCutExcel()" title="Закрыть">&times;</button>
-            </div>
-            <div class="modal-hint">Excel с текстом фраз ещё не подключён. Без него можно работать и так, но с ним фразы сопоставляются автоматически.</div>
-
-            <div class="mode-choice-grid">
-                <button class="option-card rise" onclick="closePostCutExcel(); loadExcel();">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
-                    <div><span class="option-title">Загрузить Excel</span><span class="option-desc">Подключить таблицу с текстом</span></div>
-                </button>
-                <button class="option-card option-card--alt rise" onclick="closePostCutExcel()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-octagon"></use></svg></span>
-                    <div><span class="option-title">Пока без Excel</span><span class="option-desc">Продолжить без таблицы</span></div>
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- Модальное окно: выбор категории переменной перед Аудитом -->
     <div id="auditCategoryOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--lg">
@@ -786,108 +722,6 @@
         </div>
     </div>
 
-    <!-- Модальное окно: автоподбор настроек нарезки -->
-    <div id="autoTuneOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--lg">
-            <div class="modal-head">
-                <h3 class="modal-title">Автоподбор настроек нарезки</h3>
-                <button class="modal-close" onclick="closeAutoTune()" title="Закрыть">&times;</button>
-            </div>
-
-            <div class="tune-file" id="tuneFile"></div>
-
-            <div class="measure-grid">
-                <div class="measure-card">
-                    <div class="measure-card__label">Уровень фона</div>
-                    <div class="measure-card__value" id="tuneNoise">—</div>
-                    <div class="measure-card__note">Тишина между фразами</div>
-                </div>
-                <div class="measure-card">
-                    <div class="measure-card__label">Уровень речи</div>
-                    <div class="measure-card__value measure-card__value--speech" id="tuneSpeech">—</div>
-                    <div class="measure-card__note">Когда вы говорите</div>
-                </div>
-                <div class="measure-card measure-card--wide">
-                    <div class="measure-card__label">Запас между ними</div>
-                    <div class="measure-card__value measure-card__value--spread" id="tuneSpread">—</div>
-                    <div class="measure-card__note" id="tuneSpreadNote">Чем больше, тем надёжнее разрез</div>
-                </div>
-            </div>
-
-            <div class="tune-verdict" id="tuneVerdict"></div>
-
-            <div class="tune-fields">
-                <label class="field">
-                    <span class="field-label">Пауза, мс<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
-                    <input type="number" id="tunePause" class="search-input" min="50" max="3000" step="10" oninput="scheduleTunePredict()">
-                </label>
-                <label class="field">
-                    <span class="field-label">Чувствительность, дБ<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
-                    <input type="number" id="tuneSens" class="search-input" min="-80" max="-10" step="1" oninput="scheduleTunePredict()">
-                </label>
-                <label class="field">
-                    <span class="field-label">Запас, мс<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
-                    <input type="number" id="tunePad" class="search-input" min="0" max="1000" step="10">
-                </label>
-            </div>
-
-            <div class="tune-result" id="tuneResult"></div>
-
-            <div class="tune-presets">
-                <span class="tune-presets__label">Быстро попробовать</span>
-                <div class="tune-presets__row" id="tunePresets"></div>
-            </div>
-
-            <div class="modal-actions">
-                <button class="custom-alert-btn btn-secondary" onclick="restoreTuneSuggestion()">Вернуть рекомендацию</button>
-                <button class="custom-alert-btn" onclick="startCut()">Нарезать</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Модальное окно: ручной ввод настроек нарезки -->
-    <div id="manualOverlay" class="custom-alert-overlay">
-        <div class="custom-alert-box modal--md">
-            <div class="modal-head">
-                <h3 class="modal-title">Ручная настройка нарезки</h3>
-                <button class="modal-close" onclick="closeManualSettings()" title="Закрыть">&times;</button>
-            </div>
-            <div class="modal-hint">Введите точные значения. Под каждым полем программа сразу объясняет, что получится.</div>
-
-            <label class="field">
-                <span class="field-label">
-                    Длина паузы для разреза, миллисекунд
-                    <button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button>
-                </span>
-                <input type="number" id="manPause" class="search-input" min="50" max="3000" step="10" value="500" oninput="updateManualHints()">
-                <span class="field-hint" id="hintPause"></span>
-            </label>
-
-            <label class="field">
-                <span class="field-label">
-                    Чувствительность к тихим звукам, дБ
-                    <button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button>
-                </span>
-                <input type="number" id="manSens" class="search-input" min="-80" max="-10" step="1" value="-35" oninput="updateManualHints()">
-                <span class="field-hint" id="hintSens"></span>
-            </label>
-
-            <label class="field">
-                <span class="field-label">
-                    Запас звука по краям, миллисекунд
-                    <button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button>
-                </span>
-                <input type="number" id="manPad" class="search-input" min="0" max="1000" step="10" value="250" oninput="updateManualHints()">
-                <span class="field-hint" id="hintPad"></span>
-            </label>
-
-            <div class="modal-actions">
-                <button class="custom-alert-btn btn-secondary" onclick="resetManualSettings()">Сбросить</button>
-                <button class="custom-alert-btn" onclick="applyManualSettings()">Применить</button>
-            </div>
-        </div>
-    </div>
-
     <!-- ЭКРАН 0 — Заставка -->
     <div id="stage0-splash" class="stage stage-splash">
         <div class="entry">
@@ -945,62 +779,6 @@
                 <button class="option-card option-card--tts rise" style="--d: 1" id="btnTts" onclick="openTts()" title="Запись фраз и переменных по таблице: суфлёр с микрофоном, распознавание и сверка с текстом, сборка и сохранение эталонов">
                     <span class="option-icon"><svg class="icon"><use href="#icon-mic"></use></svg></span>
                     <div><span class="option-title">Студия записи</span><span class="option-desc" id="descTts">Суфлёр · автосверка · сборка эталонов</span></div>
-                </button>
-
-                <button class="option-card rise" style="--d: 1" id="btnLoadExcel" onclick="loadExcel()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-file-text"></use></svg></span>
-                    <div><span class="option-title">1. Загрузить текст (Excel)</span><span class="option-desc" id="descExcel">Таблица не выбрана</span></div>
-                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'excel')">&times;</span>
-                </button>
-
-                <button class="option-card rise" style="--d: 2" id="btnLoadAudio" onclick="loadAudio()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-sliders"></use></svg></span>
-                    <div><span class="option-title">2. Резать сырой WAV</span><span class="option-desc" id="descAudio">Новый проект</span></div>
-                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'project')">&times;</span>
-                </button>
-
-                <!-- Настройки нарезки подбираются сами — ползунки свёрнуты -->
-                <details class="menu-cut rise" style="--d: 3">
-                    <summary class="menu-cut__summary" onclick="toggleMenuCut(event)">
-                        <span class="menu-cut__title">Настройки нарезки</span>
-                        <span class="menu-cut__values" id="cutSummary">500 мс · −35 дБ · 250 мс</span>
-                    </summary>
-                    <div class="settings-panel menu-cut__body" id="menuCutBody">
-                        <div class="settings-head">
-                            <span class="menu-cut__note">Обычно подбираются автоматически под запись</span>
-                            <button class="btn-manual" onclick="openManualSettings()">Ручной ввод</button>
-                        </div>
-
-                        <label class="slider-field">
-                            <div class="slider-head">
-                                <span class="slider-name">Длина паузы для разреза<button type="button" class="help-btn" onclick="explainSetting(event, 'pause')" title="Что это такое?">?</button></span>
-                                <span id="valPause" class="slider-value">Нормальная</span>
-                            </div>
-                            <input type="range" id="inpPause" min="50" max="3000" step="10" value="500" oninput="updateSettingsText()">
-                        </label>
-
-                        <label class="slider-field">
-                            <div class="slider-head">
-                                <span class="slider-name">Чувствительность к тихим звукам<button type="button" class="help-btn" onclick="explainSetting(event, 'sens')" title="Что это такое?">?</button></span>
-                                <span id="valSens" class="slider-value">Оптимальная</span>
-                            </div>
-                            <input type="range" id="inpSens" min="-80" max="-10" step="1" value="-35" oninput="updateSettingsText()">
-                        </label>
-
-                        <label class="slider-field">
-                            <div class="slider-head">
-                                <span class="slider-name">Запас звука по краям<button type="button" class="help-btn" onclick="explainSetting(event, 'pad')" title="Что это такое?">?</button></span>
-                                <span id="valPad" class="slider-value">Безопасный</span>
-                            </div>
-                            <input type="range" id="inpPad" min="0" max="1000" step="10" value="250" oninput="updateSettingsText()">
-                        </label>
-                    </div>
-                </details>
-
-                <button class="option-card rise" style="--d: 4" id="btnLoadFolder" onclick="loadFolder()">
-                    <span class="option-icon"><svg class="icon"><use href="#icon-folder"></use></svg></span>
-                    <div><span class="option-title">3. Открыть готовые чанки</span><span class="option-desc" id="descFolder">Продолжить работу</span></div>
-                <span class="option-clear" role="button" tabindex="0" title="Сбросить, чтобы загрузить заново" onclick="clearLoaded(event, 'project')">&times;</span>
                 </button>
 
                 <div id="progressContainer" class="progress-panel">
@@ -1677,8 +1455,8 @@
     </div>
 
     <script src="ui_base.js?v=1"></script>
-    <script src="script.js?v=31"></script>
-    <script src="tutorial.js?v=18"></script>
+    <script src="script.js?v=32"></script>
+    <script src="tutorial.js?v=19"></script>
     <script src="listen.js?v=24"></script>
 </body>
 </html>

@@ -2459,14 +2459,6 @@ class VariablesMixin:
         }
         return result
 
-    def toggle_sum_stage2(self, active):
-        """Кнопка «Логика 2»: Миллионы + Сотни тысяч + Тенге, без «Сотни» и
-        «Тысячи» — включается вручную, а не по достижению потолка (900/99),
-        потому что до конца доходить не обязательно. Имя sum_manual_stage2
-        осталось историческим — это переключатель ЛОГИКИ (какой набор
-        ярусов участвует), не отдельный экран/этап."""
-        self.sum_manual_stage2 = bool(active)
-        return self.get_sum_manual_state()
 
     def toggle_sum_mode(self, active):
         self.sum_manual_active = bool(active)

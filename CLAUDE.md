@@ -48,7 +48,7 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   (правка «до правок», громкость), `utils/app_boot.py` (запуск окна, selftest), `frontend/ui_base.js` (окна, тосты).
   Прослушка перед первым синтезом спрашивает голос (`listen_voices` — имена с сервиса, `listen_set_voice`).
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
-- Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
+- Экран отбора дублей (Пакетная сборка, Готовая папка; входы «Классики» — текст / сырой WAV / готовые чанки — убраны): `phrase_handler.py` (Excel), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`, `table_to_pptx_handler.py`.
 - Синтез по таблице (утилита): `core/batch_synth.py` + окно `#bsynthOverlay` — Excel (шапка `<firstname>`…) →
   каждое значение готовым голосом по одному с паузой (строка за строкой, слева направо), спрашивает с какой строки

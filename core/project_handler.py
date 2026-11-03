@@ -3,12 +3,8 @@ import re
 import math
 import time
 import webview
-from pydub import AudioSegment
-from pydub.silence import detect_nonsilent
 
 from core import project_state, recent_projects
-from core.ui_dialogs import ui_confirm, ui_toast
-from utils.wav_io import slice_or_export
 from core.variables_handler import SUM_TIER_ORDER, SUM_TIER_DEFAULT_DIR, VALUES_DIR
 
 try:
@@ -37,26 +33,6 @@ class ProjectMixin:
     #  АВТОПОДБОР НАСТРОЕК НАРЕЗКИ
     # ==================================================================
 
-    def pick_raw_audio(self):
-        """Шаг 1: пользователь выбирает файл. Тяжёлый анализ идёт отдельно,
-        чтобы интерфейс успел показать полосу прогресса."""
-        file_types = ('Audio Files (*.wav)', 'All files (*.*)')
-        filename = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
-        if not filename:
-            return {"error": "cancel"}
-
-        self.pending_raw_path = filename[0]
-        self.pending_levels = None
-        return {"name": os.path.basename(filename[0])}
-
-    def select_raw_audio_path(self, path):
-        """Как pick_raw_audio, но без диалога выбора — путь уже известен
-        (например, файл только что вышел из конвертера MP4)."""
-        if not path or not os.path.exists(path):
-            return {"error": "Файл не найден на диске."}
-        self.pending_raw_path = path
-        self.pending_levels = None
-        return {"name": os.path.basename(path)}
 
     def _frame_levels(self, audio):
         """Громкость записи по коротким окнам, в дБ. Это основа всех замеров."""
@@ -146,50 +122,6 @@ class ProjectMixin:
             _, sug_thresh, sug_pause, predicted = best
         return noise_db, speech_db, spread, sug_thresh, sug_pause, predicted
 
-    def analyze_picked_audio(self):
-        """Шаг 2: замеряем фон и речь, подбираем настройки под число фраз из Excel."""
-        path = getattr(self, 'pending_raw_path', None)
-        if not path or not os.path.exists(path):
-            return {"error": "Файл не выбран. Нажмите «Резать сырой WAV» ещё раз."}
-
-        try:
-            audio = AudioSegment.from_file(path)
-        except Exception as e:
-            return {"error": f"Не удалось открыть аудиофайл.\n\n{os.path.basename(path)}\n\nПодробности: {e}"}
-
-        levels = self._frame_levels(audio)
-        if not levels:
-            return {"error": "Запись пустая или слишком короткая для анализа."}
-
-        self.pending_levels = levels
-        target = len(self.phrases_data) if getattr(self, 'phrases_data', None) else 0
-        noise_db, speech_db, spread, sug_thresh, sug_pause, predicted = self._suggest_cut_settings(levels, target)
-
-        sug_pad = 150 if sug_pause < 300 else 200
-
-        # Несколько соседних вариантов, чтобы было видно, как меняется дробление
-        variants = []
-        for pause in (150, 250, 400, 600, 900):
-            variants.append({"pause": pause, "chunks": self._count_ranges(levels, sug_thresh, pause)})
-
-        return {
-            "name": os.path.basename(path),
-            "duration_sec": round(len(audio) / 1000.0, 1),
-            "noise_db": noise_db,
-            "speech_db": speech_db,
-            "spread": round(spread, 1),
-            "target_phrases": target,
-            "suggested": {"pause": sug_pause, "sens": sug_thresh, "pad": sug_pad},
-            "predicted_chunks": predicted,
-            "variants": variants
-        }
-
-    def predict_cut(self, min_silence, silence_thresh):
-        """Пересчёт числа кусков, когда пользователь правит цифры руками."""
-        levels = getattr(self, 'pending_levels', None)
-        if not levels:
-            return {"chunks": None}
-        return {"chunks": self._count_ranges(levels, int(silence_thresh), int(min_silence))}
 
     # ==================================================================
     #  ЛЕНТА ДУБЛЕЙ
@@ -241,134 +173,6 @@ class ProjectMixin:
 
     # ==================================================================
 
-    def load_raw_audio(self, min_silence, silence_thresh, keep_silence, filepath=None):
-        # Файл уже выбран на этапе автоподбора — второй раз не спрашиваем
-        raw_filepath = filepath or getattr(self, 'pending_raw_path', None)
-
-        if not raw_filepath or not os.path.exists(raw_filepath):
-            file_types = ('Audio Files (*.wav)', 'All files (*.*)')
-            filename = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN, file_types=file_types)
-            if not filename:
-                return self.get_ui_state()
-            raw_filepath = filename[0]
-        raw_dir = os.path.dirname(raw_filepath)
-        # Если сырой файл лежит прямо в папке «Chunks»/«Переменные»/«Проверенные»
-        # (например, её же выбрали местом для записи) — рабочей папкой берём
-        # родителя, иначе Проверенные/_Остатки создались бы ВНУТРИ Chunks и
-        # засоряли бы её очередь при следующем открытии проекта.
-        self.work_dir = os.path.dirname(raw_dir) if os.path.basename(raw_dir).lower() in _SCAN_EXCLUDE_SUBDIRS else raw_dir
-        self.project_name = os.path.basename(self.work_dir)
-
-        # Если в этой папке уже есть сохранённый проект — подтягиваем тексты
-        # из Excel, чтобы не загружать их заново после повторной нарезки.
-        project_state.apply(self, project_state.load(self.work_dir))
-
-        chunks_dir = os.path.join(self.work_dir, 'Chunks')
-
-        for folder in ['Chunks', 'Переменные', 'Проверенные']:
-            os.makedirs(os.path.join(self.work_dir, folder), exist_ok=True)
-
-        audio = AudioSegment.from_file(raw_filepath)
-        self.raw_audio_full = audio
-        nonsilent_ranges = detect_nonsilent(audio, min_silence_len=int(min_silence), silence_thresh=int(silence_thresh))
-
-        # Чистим старые дубли перед новой нарезкой, но не трогаем start/end —
-        # если в эту же папку раньше уже клали эталоны для «Готовых
-        # переменных», повторная нарезка не должна их стирать.
-        AUDIO_EXT = ('.wav', '.mp3', '.ogg', '.flac')
-        for f in os.listdir(chunks_dir):
-            full_path = os.path.join(chunks_dir, f)
-            if not os.path.isfile(full_path):
-                continue
-            clean_f = f.strip().lower()
-            if clean_f.startswith(('start', 'end')) and clean_f.endswith(AUDIO_EXT):
-                continue
-            os.remove(full_path)
-
-        labels_path = os.path.join(self.work_dir, 'labels.txt')
-        with open(labels_path, 'w', encoding='utf-8') as label_file:
-            for i, (start_ms, end_ms) in enumerate(nonsilent_ranges):
-                start_adjusted = max(0, start_ms - keep_silence)
-                end_adjusted = min(len(audio), end_ms + keep_silence)
-                start_sec, end_sec = start_adjusted / 1000.0, end_adjusted / 1000.0
-                chunk_name_no_ext = f"фраза_{i + 1:04d}"
-                label_file.write(f"{start_sec}\t{end_sec}\t{chunk_name_no_ext}\n")
-                # Байт в байт из исходника — без перекодирования.
-                slice_or_export(raw_filepath, os.path.join(chunks_dir, f"{chunk_name_no_ext}.wav"),
-                                start_adjusted, end_adjusted, audio)
-
-                percent = int(((i + 1) / len(nonsilent_ranges)) * 100)
-                try:
-                    webview.windows[0].evaluate_js(
-                        f"updateProgress({percent}, 'Нарезка: {i + 1} из {len(nonsilent_ranges)}');")
-                except:
-                    pass
-
-        # Нарезка — это фундамент, он нужен в любом режиме. А вот что делать
-        # дальше (открывать Audacity с метками или сразу собирать каскад
-        # переменных) — решает пользователь на следующем экране, а не
-        # программа за него. Здесь только запоминаем, куда резали.
-        self._pending_chunks_dir = chunks_dir
-        self._pending_raw_filepath = raw_filepath
-        self._pending_labels_path = labels_path
-        return {"await_mode_choice": True}
-
-    def choose_mode_after_cut(self, mode):
-        """Второй шаг после нарезки: пользователь выбрал, в каком режиме
-        продолжать работать с только что нарезанными чанками."""
-        chunks_dir = getattr(self, '_pending_chunks_dir', None)
-        raw_filepath = getattr(self, '_pending_raw_filepath', None)
-        labels_path = getattr(self, '_pending_labels_path', None)
-        if not chunks_dir:
-            return self.get_ui_state()
-
-        if mode == 'premade':
-            # Этому режиму Audacity с метками не нужен вообще — каскад
-            # читает файлы прямо из папки Chunks и попросит start/end сам.
-            return self.load_premade_variables_folder(None, chunks_dir)
-
-        # --- ОБЫЧНЫЙ РЕЖИМ: БЕЗОПАСНАЯ ИНТЕГРАЦИЯ С AUDACITY ---
-        try:
-            webview.windows[0].evaluate_js("updateProgress(0, 'Запуск Audacity (подождите пару секунд)...');")
-        except:
-            pass
-
-        try:
-            self.audacity.send_command('New:', auto_start=True)
-
-            # Умное ожидание загрузки Audacity: стучимся к нему, пока не ответит.
-            resp = ""
-            for _ in range(15):
-                resp = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
-                if resp and '[' in resp:
-                    break
-                time.sleep(0.5)
-
-            tracks_before = resp.count('"kind"')
-            self.audacity.send_command(f'Import2: Filename="{os.path.abspath(raw_filepath).replace(chr(92), "/")}"')
-
-            # Ждём, пока импортированная дорожка реально появится в проекте,
-            # вместо слепой паузы в 1с на любой скорости диска и файла.
-            for _ in range(10):
-                resp2 = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON')
-                if resp2 and resp2.count('"kind"') > tracks_before:
-                    break
-                time.sleep(0.2)
-
-            self.audacity.send_command('NewMonoTrack:')
-            time.sleep(0.2)
-            self.audacity.send_command(f'ImportLabels: Filename="{os.path.abspath(labels_path).replace(chr(92), "/")}"')
-        except Exception as e:
-            try:
-                webview.windows[0].evaluate_js(
-                    f"showBeautifulAlert('⚠️ <b>Аудио нарезано, но Audacity не ответил!</b><br><br>Чанки успешно сохранены в папку, но собрать проект в Audacity автоматически не удалось.<br>Ошибка: {e}');")
-            except:
-                pass
-        # -----------------------------------------------------
-
-        self.current_mode = 'Chunks'
-        self.state_memory = {'Chunks': [0, 0], 'Переменные': [0, 0], 'Проверенные': [0, 0]}
-        return self._scan_and_load_folder(chunks_dir, 'Chunks')
 
     def get_recent_projects(self):
         """Список недавних проектов для стартового экрана."""
@@ -410,53 +214,6 @@ class ProjectMixin:
 
         return self._scan_and_load_folder(os.path.join(path, mode), mode)
 
-    def load_chunks_folder(self):
-        folder = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not folder:
-            return self.get_ui_state()
-
-        selected_path = folder[0]
-        self.work_dir = os.path.dirname(selected_path) if os.path.basename(selected_path).lower() in \
-            _SCAN_EXCLUDE_SUBDIRS else selected_path
-        self.project_name = os.path.basename(self.work_dir)
-
-        # Восстанавливаем сохранённый снимок проекта (тексты из Excel, номер
-        # текущего дубля, режим) — если он раньше сохранялся в эту папку.
-        project_state.apply(self, project_state.load(self.work_dir))
-
-        has_tracks = False
-        response = self.audacity.send_command('GetInfo: Type=Tracks Format=JSON', auto_start=True)
-        if response and 'name' in response.lower():
-            has_tracks = True
-
-        if has_tracks:
-            use_existing = ui_confirm('ℹ️ <b>В Audacity уже открыт проект</b><br><br>Использовать его или создать новый?',
-                                      ok='Использовать', cancel='Новый проект')
-            if use_existing:
-                ui_toast('Укажите ИСХОДНЫЙ WAV-файл — он нужен только для точного среза')
-                raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                                                                 file_types=('Audio Files (*.wav)', 'All files (*.*)'))
-                if raw_file:
-                    self.raw_audio_full = AudioSegment.from_file(raw_file[0])
-                return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'), 'Chunks')
-
-        ui_toast('Выберите ИСХОДНЫЙ WAV-файл для памяти Audacity')
-        raw_file = webview.windows[0].create_file_dialog(webview.FileDialog.OPEN,
-                                                         file_types=('Audio Files (*.wav)', 'All files (*.*)'))
-        if raw_file:
-            self.raw_audio_full = AudioSegment.from_file(raw_file[0])
-            self.audacity.send_command('New:', auto_start=True)
-            time.sleep(1)
-            self.audacity.send_command(f'Import2: Filename="{os.path.abspath(raw_file[0]).replace(chr(92), "/")}"')
-            time.sleep(0.5)
-            self.audacity.send_command('NewMonoTrack:')
-            time.sleep(0.2)
-            labels_path = os.path.join(self.work_dir, 'labels.txt')
-            if os.path.exists(labels_path):
-                self.audacity.send_command(
-                    f'ImportLabels: Filename="{os.path.abspath(labels_path).replace(chr(92), "/")}"')
-
-        return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'), 'Chunks')
 
     def load_main_mode(self):
         return self._scan_and_load_folder(os.path.join(self.work_dir, 'Chunks'),
@@ -1289,30 +1046,6 @@ class ProjectMixin:
             return {"error": f"Не удалось сохранить таблицу (может, она открыта в Excel?): {e}"}
         return {"saved": path, "rows": kept}
 
-    def clear_loaded(self, what):
-        """«×» на карточке главного меню: сбросить загруженное, чтобы
-        загрузить заново. what='excel' — таблицу с текстом; иначе — проект
-        (нарезку/папку чанков). Прогресс проекта перед этим сохраняется."""
-        if what == 'excel':
-            self.phrases_data = []
-            self.excel_name = None
-            self.excel_path = None
-            self.excel_cols = None
-            self.phrase_index = 0
-            if getattr(self, 'work_dir', ''):
-                project_state.save(self)
-        else:
-            if getattr(self, 'work_dir', ''):
-                project_state.save(self)
-            self.work_dir = ""
-            self.project_name = ""
-            self.chunks_data = []
-            self.chunk_index = 0
-            self.raw_audio_full = None
-            self.pending_raw_path = None
-            self.current_mode = 'Chunks'
-            self.sum_manual_active = False
-        return {"status": "ok"}
 
     def _sync_audacity_selection(self):
         """Синхронизирует выделение текущего дубля (чанка) в Audacity и приближает его."""

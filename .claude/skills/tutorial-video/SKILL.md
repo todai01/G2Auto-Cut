@@ -20,7 +20,6 @@ description: Переснять ролики обучения GVox (frontend/tut
 | c_ctor.py | constructor |
 | c_vars.py | vars_ready, vars_batch |
 | c_listen.py | listen (синтез — на `tools/demo/mock_synth.html`, запускать через `xvfb-run -a`) |
-| c_cut.py | cut_wav |
 | c_utils.py | pptx, converter, clone |
 
 ## Переснять
