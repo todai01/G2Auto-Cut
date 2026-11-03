@@ -433,3 +433,153 @@ class TtsValuesMixin:
         sy = self._vals_synth()
         sy.setdefault("errors", {})[str(uid)] = message
         self._tts_push({"stage": "vals_synth", "synth": self.tts_vals_synth_state(), "uid": uid, "error": message})
+
+    # ---------------- «Сборка»: короткий вариант с контекстом ----------------
+    # Значение слушают в окружении: конец стартовой фразы + значение + начало
+    # конечной. У стартовой фразы чуть сокращается начало, у конечной — конец
+    # (чтобы не слушать длинное целиком). Файлы на диске не трогаются: короткий
+    # вариант собирается во временный файл.
+
+    def _vals_keep_ms(self):
+        return int((self._tts().get("vals_ctx") or {}).get("keep_ms", 1500))
+
+    def _vals_trim(self, seg, keep_ms, head):
+        """head=True — оставить хвост (стартовая фраза: начало срезается),
+        False — оставить начало (конечная фраза: конец срезается). Разрез — в тишине."""
+        if len(seg) <= keep_ms + 200:
+            return seg
+        cut = len(seg) - keep_ms if head else keep_ms
+        q = self._tts_quiet_point(seg, max(0, cut - 250) / 1000.0, min(len(seg), cut + 250) / 1000.0)
+        return seg[q:] if head else seg[:q]
+
+    def _vals_unit_audio(self, st, unit, take=None):
+        """Звук фразы для сборки: выбранный дубль, иначе сохранённый файл, иначе последний дубль."""
+        wd = st.get("work_dir")
+        if take is not None:
+            path = os.path.join(wd, take["file"])
+            if os.path.exists(path):
+                return AudioSegment.from_file(self._tts_preview(path, *self._tts_sound(take)))
+        target = self._tts_target(unit)
+        if wd and os.path.exists(target):
+            return AudioSegment.from_file(target)
+        for t in reversed(st["takes"]):
+            if t.get("unit") == unit["id"] and not t.get("rejected"):
+                path = os.path.join(wd, t["file"])
+                if os.path.exists(path):
+                    return AudioSegment.from_file(self._tts_preview(path, *self._tts_sound(t)))
+        return None
+
+    def tts_ctx_play(self, i):
+        """Прослушать дубль в коротком контексте: [стартовая] + значение + [конечная]."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"playing": False, "error": "Нет такого дубля."}
+        t = st["takes"][i]
+        uid = t.get("unit")
+        if uid is None or uid >= len(st["units"]):
+            return {"playing": False, "error": "Дубль не привязан к фразе."}
+        u = st["units"][uid]
+        cat = u.get("cat")
+        if not cat or not st.get("work_dir"):
+            return {"playing": False, "error": "Для этой фразы нет контекста."}
+        find = lambda role: next((x for x in st["units"] if x.get("ctx") and x.get("cat") == cat and x.get("role") == role), None)
+        start_u, end_u = find("start"), find("end")
+        if not start_u and not end_u:
+            return {"playing": False, "error": "Стартовая и конечная фразы не заданы — задайте их в «Фразы_Переменные»."}
+        # значение: сам дубль (если это значение) или любое готовое значение этой категории
+        if u["kind"] == "value":
+            value = self._vals_unit_audio(st, u, t)
+        else:
+            value = next((a for a in (self._vals_unit_audio(st, x) for x in st["units"]
+                                      if x.get("kind") == "value" and x.get("cat") == cat) if a is not None), None)
+        keep = self._vals_keep_ms()
+        parts, used = [], []
+        if start_u:
+            a = self._vals_unit_audio(st, start_u, t if u is start_u else None)
+            if a is not None:
+                parts.append(self._vals_trim(a, keep, True))
+                used.append("начало")
+        if value is not None:
+            parts.append(value)
+            used.append("значение")
+        if end_u:
+            a = self._vals_unit_audio(st, end_u, t if u is end_u else None)
+            if a is not None:
+                parts.append(self._vals_trim(a, keep, False))
+                used.append("конец")
+        if len(parts) < 2:
+            return {"playing": False, "error": "Для контекста не хватает записей: запишите (или сохраните) стартовую, конечную фразы и значение."}
+        rate = parts[0].frame_rate
+        out = None
+        for p in parts:
+            p = p.set_frame_rate(rate).set_channels(1)
+            out = p if out is None else out + p
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_vals_ctx_{os.getpid()}.wav")
+        out.export(tmp, format="wav")
+        self._tts_mark_listened()
+        self.player.play(tmp)
+        return {"playing": True, "duration": len(out) / 1000.0, "parts": used}
+
+    # ---------------- Фразы_Переменные: правка готовых файлов ----------------
+
+    def _vals_take_from_file(self, uid, src, tag):
+        """Файл → дубль на ленте (копия в «Чанки»): правится в «Сборке», исходник не трогается."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        if not wd:
+            return None
+        os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
+        n = 1
+        while os.path.exists(os.path.join(wd, TTS_CHUNKS_DIR, f"{tag}{uid + 1:04d}_{n}.wav")):
+            n += 1
+        rel = os.path.join(TTS_CHUNKS_DIR, f"{tag}{uid + 1:04d}_{n}.wav")
+        dst = os.path.join(wd, rel)
+        if src.lower().endswith('.wav'):
+            shutil.copy2(src, dst)
+        else:
+            AudioSegment.from_file(src).export(dst, format="wav")
+        ms = len(AudioSegment.from_file(dst))
+        st["takes"] = [t for t in st["takes"] if not (t.get("unit") == uid and t.get("piece_edit") and not t.get("approved"))]
+        st["takes"].append({"file": rel, "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": dst,
+                            "heard": st["units"][uid]["text"], "listened": False, "chunk": uid + 1, "unit": uid,
+                            "score": 0.0, "status": "manual", "piece_edit": True})
+        st["index"] = len(st["takes"]) - 1
+        self._tts_save()
+        return st["index"]
+
+    def tts_piece_edit(self, unit_id):
+        """Править готовую фразу: открыть её в «Сборке» (подрезка, вырезы, громкость, темп)."""
+        st = self._tts()
+        if not (0 <= unit_id < len(st["units"])):
+            return {"error": "Нет такой фразы."}
+        # уже есть дубль этой фразы — просто к нему
+        for k in range(len(st["takes"]) - 1, -1, -1):
+            t = st["takes"][k]
+            if t.get("unit") == unit_id and not t.get("rejected") and not t.get("approved"):
+                st["index"] = k
+                self._tts_save()
+                return self.tts_state()
+        target = self._tts_target(st["units"][unit_id])
+        if not st.get("work_dir") or not os.path.exists(target):
+            return {"error": "Файла этой фразы ещё нет — запишите её, нарежьте из WAV или синтезируйте."}
+        self._vals_take_from_file(unit_id, target, "e")
+        return self.tts_state()
+
+    def tts_piece_replace(self, unit_id):
+        """Заменить фразу своим файлом: он встаёт на ленту дублей, дальше — «Сборка» и «Сохранить»."""
+        st = self._tts()
+        if not (0 <= unit_id < len(st["units"])):
+            return {"error": "Нет такой фразы."}
+        if not st.get("work_dir"):
+            return {"error": "Сначала выберите папку проекта."}
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN, file_types=('Audio Files (*.wav;*.mp3)', 'All files (*.*)'))
+        if not picked:
+            return {"error": "cancel"}
+        src = picked if isinstance(picked, str) else picked[0]
+        try:
+            self._vals_take_from_file(unit_id, src, "r")
+        except Exception as e:
+            return {"error": f"Не удалось открыть файл: {e}"}
+        return self.tts_state()

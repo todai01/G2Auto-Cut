@@ -519,6 +519,8 @@ class TtsFlowMixin:
         return {
             "loaded": bool(units) or bool(st["var_sheets"]), "has_takes": bool(st["takes"]),
             "vars_only": bool(st.get("vars_only")) and bool(units),
+            "vals_ctx": {"cats": (st.get("vals_ctx") or {}).get("cats") or {},
+                         "keep_ms": (st.get("vals_ctx") or {}).get("keep_ms", 1500)},
             "excel_name": os.path.basename(st["excel_path"] or ''), "sheet": st.get("sheet"),
             "lang": st.get("lang", "ru"), "lang_auto": bool(units) and len(self._tts_langs()) > 1,
             "project": os.path.basename(wd) if wd else '',
@@ -595,18 +597,53 @@ class TtsFlowMixin:
         self._tts_save()
         return self.tts_state()
 
-    def _tts_value_units(self, var_sheets):
-        """Значения переменных по порядку таблицы (лист → категория → значение):
-        каждое — отдельная «фраза» для записи, суфлёра и сохранения."""
+    @staticmethod
+    def _vals_key(u):
+        """Устойчивый ключ юнита: по нему дубли находят свою фразу после пересборки списка."""
+        if u.get("kind") == "value":
+            return ("v", u.get("cat"), u.get("value"))
+        if u.get("ctx"):
+            return ("p", u.get("cat"), u.get("role"))
+        return ("u", u.get("name"))
+
+    def _tts_value_units(self, var_sheets, ctx=None):
+        """Фразы-значения по порядку таблицы. У каждой категории сначала идут
+        её стартовая и конечная фразы (если заданы), потом значения. Стартовая
+        и конечная — «кусочки» (Фразы_Переменные), значения — Значения/…"""
+        ctx = (ctx or {}).get("cats") or {}
         units = []
         for sk, sh in var_sheets.items():
             for c in sh["categories"]:
+                cc = ctx.get(c["key"]) or {}
+                for role in ("start", "end"):
+                    text = str(cc.get(role) or '').strip()
+                    if text:
+                        units.append({"id": len(units), "kind": "piece", "name": clean_name(f"{c['key']}_{role}"),
+                                      "text": text, "role": role, "row": len(units) + 2, "vars": [],
+                                      "var_before": None, "var_after": None, "chain": None, "lang": c.get("lang"),
+                                      "sheet": sk, "cat": c["key"], "ctx": True})
                 for v in c["values"]:
                     text = self._tts_value_text(sk, c["key"], v)[0]
                     units.append({"id": len(units), "kind": "value", "name": clean_name(v) or str(v), "text": text,
                                   "role": None, "row": len(units) + 2, "vars": [], "var_before": None,
                                   "var_after": None, "chain": None, "lang": c.get("lang"),
                                   "sheet": sk, "cat": c["key"], "value": v})
+        return units
+
+    def _vals_rebuild_units(self):
+        """Список фраз пересобирается (новые стартовые/конечные фразы, перечитанная
+        таблица) — дубли остаются у своих фраз."""
+        st = self._tts()
+        old = st.get("units") or []
+        units = self._tts_value_units(st["var_sheets"], st.get("vals_ctx"))
+        by_key = {self._vals_key(u): u["id"] for u in units}
+        for t in st["takes"]:
+            uid = t.get("unit")
+            if uid is not None:
+                t["unit"] = by_key.get(self._vals_key(old[uid])) if uid < len(old) else None
+                if t["unit"] is None:
+                    t.update({"status": "none", "score": 0.0, "approved": False})
+        st["units"] = units
         return units
 
     def _tts_load_vars_only(self, path, parsed):
@@ -616,21 +653,35 @@ class TtsFlowMixin:
         st = self._tts()
         if st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
             st["takes"] = []
-        old_units = st.get("units") or []
+            st["vals_ctx"] = {}
         st["var_sheets"] = parsed["var_sheets"]
-        units = self._tts_value_units(parsed["var_sheets"])
-        if st["takes"] and old_units:
-            # Та же таблица перечитана — дубли остаются у своих значений.
-            by_key = {(u["cat"], u["value"]): u["id"] for u in units}
-            for t in st["takes"]:
-                uid = t.get("unit")
-                if uid is not None and uid < len(old_units):
-                    ou = old_units[uid]
-                    t["unit"] = by_key.get((ou.get("cat"), ou.get("value")))
+        self._vals_rebuild_units()
         langs = sorted({c["lang"] for v in parsed["var_sheets"].values() for c in v["categories"] if c.get("lang")})
         st.update({"excel_path": path, "sheet": None, "lang": langs[0] if langs else "ru",
-                   "units": units, "chains": [], "v": TTS_STATE_VERSION, "lines": [], "mark_cols": {},
+                   "chains": [], "v": TTS_STATE_VERSION, "lines": [], "mark_cols": {},
                    "var_cols": [], "head_row": 1, "marks_dirty": [], "index": 0, "vars_only": True})
+        self._tts_save()
+        return self.tts_state()
+
+    def tts_vals_set_context(self, items, keep_s=None):
+        """Стартовая и конечная фразы переменных: items — [{cat, start, end}].
+        Они становятся отдельными фразами (Фразы_Переменные) и попадают в
+        «Сборку»; keep_s — сколько секунд оставлять в коротком варианте."""
+        st = self._tts()
+        ctx = st.setdefault("vals_ctx", {})
+        cats = ctx.setdefault("cats", {})
+        for it in items or []:
+            cat = it.get("cat")
+            if cat:
+                cats[cat] = {"start": str(it.get("start") or '').strip(), "end": str(it.get("end") or '').strip()}
+        if keep_s is not None:
+            try:
+                ctx["keep_ms"] = int(max(0.3, min(10.0, float(keep_s))) * 1000)
+            except (TypeError, ValueError):
+                pass
+        self._vals_rebuild_units()
+        st["index"] = max(0, min(st.get("index", 0), max(0, len(st["takes"]) - 1)))
+        st["prompt_pos"] = 0
         self._tts_save()
         return self.tts_state()
 

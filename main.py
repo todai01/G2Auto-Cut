@@ -4,7 +4,7 @@ import webview
 import sys
 from pydub import AudioSegment
 
-# 🧠 Основная логика (миксины из папки core)
+# Основная логика (миксины из папки core)
 from core.variables_handler import VariablesMixin
 from core.phrase_handler import PhrasesMixin
 from core.project_handler import ProjectMixin
@@ -22,7 +22,7 @@ from core.tts_synth import TtsSynthMixin
 from core.tts_values import TtsValuesMixin
 from core import project_state
 
-# 🛠 Вспомогательные утилиты (из папки utils)
+# Вспомогательные утилиты (из папки utils)
 from utils.audacity_client import AudacityClient
 from utils.audio_player import AudioPlayer
 from utils.file_utils import FileUtils
@@ -247,7 +247,7 @@ class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMix
         return {"playing": False, "duration": 0}
 
     def toggle_fullscreen(self):
-        """Полный экран (F11 или кнопка ⛶) — и обратно."""
+        """Полный экран (F11 или кнопка) — и обратно."""
         try:
             webview.windows[0].toggle_fullscreen()
             self._fullscreen = not getattr(self, '_fullscreen', False)

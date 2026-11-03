@@ -29,11 +29,15 @@ const EMOJI_ICON_MAP = {
     '🎚': { icon: 'sliders', tone: 'info' },
     '🎧': { icon: 'headphones', tone: 'info' },
 };
+// Эмодзи внутри текста не показываем: остаются только линейные иконки программы.
+// (Обычные знаки ✓ ✕ ➜ ❚ — не эмодзи, их оставляем.)
+const EMOJI_RE = /(?![\u2713\u2715\u275A\u279C])[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu;
+function stripEmoji(s) { return String(s || '').replace(EMOJI_RE, ''); }
 function extractLeadingIcon(text) {
     let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2139}])️?\s*/u.exec(text || '');
-    if (!m) return { icon: 'alert-circle', tone: 'info', text: text || '' };
+    if (!m) return { icon: 'alert-circle', tone: 'info', text: stripEmoji(text || '') };
     let mapped = EMOJI_ICON_MAP[m[0].trim()] || EMOJI_ICON_MAP[m[1]] || { icon: 'alert-circle', tone: 'info' };
-    return { icon: mapped.icon, tone: mapped.tone, text: (text || '').slice(m[0].length) };
+    return { icon: mapped.icon, tone: mapped.tone, text: stripEmoji((text || '').slice(m[0].length)) };
 }
 
 let isProcessing = false;
@@ -5212,10 +5216,84 @@ let isProcessing = false;
             } else {
                 showToast(`Нашёл переменные: категорий ${cats}, значений ${vals}`);
             }
+            if (!ttsHasCtx()) await ttsValsCtxAsk();
             let k = await ttsChooseMaterial();
             if (k === 'raw') await ttsValsRawFlow();
             else if (k === 'live') await ttsToggleRec();
             else if (k === 'synth') await ttsValsSynthOpen();
+        }
+
+        // --- стартовая и конечная фразы переменных ---
+        let ttsvcx = null;
+        function ttsHasCtx() {
+            let c = (tts && tts.vals_ctx && tts.vals_ctx.cats) || {};
+            return Object.values(c).some(x => x.start || x.end);
+        }
+        function ttsValsCtxCats() {
+            let out = [];
+            Object.entries((tts && tts.var_sheets) || {}).forEach(([sk, sh]) => sh.categories.forEach(c => out.push({ key: c.key, label: c.label, sheet: sh.label })));
+            return out;
+        }
+        function ttsValsCtxAsk() {
+            return new Promise(resolve => {
+                let cats = ttsValsCtxCats(), cur = (tts.vals_ctx && tts.vals_ctx.cats) || {};
+                ttsvcx = { resolve, cats };
+                document.getElementById('ttsValsCtxBody').innerHTML = cats.map((c, i) => `<div class="vs-row">
+                    <div class="vs-row__head"><b>${escapeHtml(c.label)}</b><span class="tts-dim">файлы: ${escapeHtml(c.key)}_start / ${escapeHtml(c.key)}_end</span></div>
+                    <input type="text" class="search-input" id="ttsvcxS_${i}" value="${escapeHtml((cur[c.key] || {}).start || '')}" spellcheck="false" placeholder="Стартовая фраза (до значения)">
+                    <input type="text" class="search-input" id="ttsvcxE_${i}" value="${escapeHtml((cur[c.key] || {}).end || '')}" spellcheck="false" placeholder="Конечная фраза (после значения)">
+                </div>`).join('');
+                document.getElementById('ttsvcxKeep').value = ((tts.vals_ctx && tts.vals_ctx.keep_ms) || 1500) / 1000;
+                ttsValsCtxKeepLabel();
+                document.getElementById('ttsValsCtxOverlay').style.display = 'flex';
+            });
+        }
+        function ttsValsCtxKeepLabel() { document.getElementById('ttsvcxKeepTxt').innerText = (+document.getElementById('ttsvcxKeep').value).toFixed(1) + ' с'; }
+        async function ttsValsCtxClose(save) {
+            let c = ttsvcx; if (!c) return;
+            let res = null;
+            if (save) {
+                let items = c.cats.map((k, i) => ({ cat: k.key, start: document.getElementById('ttsvcxS_' + i).value, end: document.getElementById('ttsvcxE_' + i).value }));
+                res = await pywebview.api.tts_vals_set_context(items, +document.getElementById('ttsvcxKeep').value);
+                if (res && res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res.error)); return; }
+            }
+            ttsvcx = null;
+            document.getElementById('ttsValsCtxOverlay').style.display = 'none';
+            if (res) { tts = res; ttsRender(); ttsLoadPrompt(); if (ttsVars && document.getElementById('ttsVarsOverlay').style.display === 'flex') ttsOpenVars(); }
+            c.resolve(!!save);
+        }
+        function ttsValsCtxOpen() { ttsValsCtxAsk(); }
+
+        // --- Фразы_Переменные: просмотр и правка готовых файлов ---
+        function ttsVarsPiecesHTML() {
+            let pcs = (tts.units || []).filter(u => u.kind === 'piece');
+            let bar = `<div class="tts-vvals__bar"><span class="tts-dim">Файлы папки «Фразы_Переменные». «Править» открывает фразу в «Сборке»: готовый файл меняется только после «Сохранить».</span>
+                <span class="tts-ed__spacer"></span>
+                ${tts.vars_only ? '<button class="btn-ghost btn-ghost--compact" onclick="ttsValsCtxOpen()">Стартовая и конечная фразы</button>' : ''}
+                <button class="btn-ghost btn-ghost--compact" onclick="pywebview.api.tts_open_folder('var')">Папка</button></div>`;
+            if (!pcs.length) return bar + '<div class="tts-dim tts-list__empty">Пока нет ни одной фразы</div>';
+            return bar + pcs.map(u => `<div class="pc-row ${u.saved ? 'is-ready' : ''}">
+                <span class="pc-name">${escapeHtml(u.name)}<small>${u.role || ''}</small></span>
+                <span class="pc-text">${escapeHtml(u.text)}</span>
+                <span class="pc-state">${u.saved ? 'сохранена' : 'нет файла'}</span>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsPiecePlay(${u.id})" ${u.saved ? '' : 'disabled'}>Слушать</button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsPieceEdit(${u.id})" ${u.saved || (u.takes || []).length ? '' : 'disabled'}>Править</button>
+                <button class="btn-ghost btn-ghost--compact" onclick="ttsPieceReplace(${u.id})">Заменить файлом</button></div>`).join('');
+        }
+        async function ttsPiecePlay(id) { await ttsStopPlay(); let r = await pywebview.api.tts_play_unit(id); if (r && r.error) showToast(r.error); }
+        function ttsPieceOpenAssembly(res) {
+            if (res && res.error) { if (res.error !== 'cancel') showToast(res.error); return; }
+            tts = res; ttsCloseVars(); ttsRender(); ttsShowAssembly(true);
+        }
+        async function ttsPieceEdit(id) { ttsPieceOpenAssembly(await pywebview.api.tts_piece_edit(id)); }
+        async function ttsPieceReplace(id) { ttsPieceOpenAssembly(await pywebview.api.tts_piece_replace(id)); }
+        async function ttsCtxPlay() {
+            let t = ttsCurTake();
+            if (!t) return;
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_ctx_play(t.i);
+            if (r && r.error) showToast(r.error);
+            else if (r && r.parts) showToast('Короткий вариант: ' + r.parts.join(' + '));
         }
 
         function ttsChooseMaterial() {
@@ -5598,7 +5676,7 @@ let isProcessing = false;
                 <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'piece' ? 'is-chain' : ''}"
                         data-i="${t.i}" onclick="ttsRailClick(${t.i})" draggable="true"
                         ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
-                    <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
+                    <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut"><svg class="icon"><use href="#icon-scissors"></use></svg></span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
                     <span class="tts-take__meta">${t.unit !== null && (t.seq || t.synth) ? (t.synth ? 'синтез' : 'по порядку') : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
@@ -5633,6 +5711,7 @@ let isProcessing = false;
                 <div class="tts-current__file">${u ? `${escapeHtml(u.name)}.wav → ${where}` : ''}${t.split ? ` · вырезан из дубля ${String(t.chunk).padStart(3, '0')}` : ''}</div>
                 <div class="tts-current__actions">
                     <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
+                    ${u && u.cat ? '<button class="btn-tile" onclick="ttsCtxPlay()" title="Конец стартовой фразы + значение + начало конечной. Файлы не меняются">В контексте</button>' : ''}
                     <button class="btn-tile btn-tile--good" onclick="ttsApprove()" ${u ? '' : 'disabled'}>Сохранить <kbd>Enter</kbd></button>
                     <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль с дорожки. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
@@ -5667,19 +5746,26 @@ let isProcessing = false;
             let chain = u.chain !== null && u.chain !== undefined ? (tts.chains || [])[u.chain] : null;
             let block = p => `<div class="tts-block ${p.id === u.id ? 'is-current' : ''} ${p.saved ? 'is-saved' : ''}"
                     ${p.saved ? `onclick="ttsPlayUnit(${p.id})" title="Слушать сохранённое"` : ''}>
-                    <span class="tts-block__role">${p.role || 'фраза'}${p.saved ? ' ✓' : ''}</span>
+                    <span class="tts-block__role">${p.role || (p.kind === 'value' ? 'значение' : 'фраза')}${p.saved ? ' ✓' : ''}</span>
                     <span class="tts-block__name">${escapeHtml(p.name)}</span>
                     <span class="tts-block__text">${escapeHtml(p.text)}</span></div>`;
             let varBlock = v => `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span>
                     <span class="tts-block__name">${escapeHtml(ttsVarLabel(v))}</span></div>`;
-            let blocks = chain
+            let ctxStart = u.ctx || u.kind === 'value' ? (tts.units || []).find(x => x.ctx && x.cat === u.cat && x.role === 'start') : null;
+            let ctxEnd = u.ctx || u.kind === 'value' ? (tts.units || []).find(x => x.ctx && x.cat === u.cat && x.role === 'end') : null;
+            let ctxBlocks = (ctxStart || ctxEnd) && !chain
+                ? (ctxStart ? block(ctxStart) : '')
+                    + (u.kind === 'value' ? block(u) : `<div class="tts-block tts-block--var"><span class="tts-block__role">переменная</span><span class="tts-block__name">любое готовое значение</span></div>`)
+                    + (ctxEnd ? block(ctxEnd) : '')
+                : null;
+            let blocks = ctxBlocks ? ctxBlocks : chain
                 ? chain.parts.map(id => tts.units[id]).map((p, k) =>
                     (k === 0 && p.var_before ? varBlock(p.var_before) : '') + block(p) + (p.var_after ? varBlock(p.var_after) : '')).join('')
                 : block(u);
             let saved = chain ? chain.parts.filter(id => tts.units[id].saved).length : (u.saved ? 1 : 0);
             let [label, tone] = ttsTakeStatus(t);
             el.innerHTML = `<div class="tts-assembly__title">Сборка <span class="tts-dim">${chain
-                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : (u.kind === 'value' ? 'значение переменной' : 'обычная фраза')}</span>
+                    ? `${escapeHtml(chain.name)} · кусочков сохранено ${saved} / ${chain.parts.length}` : (u.kind === 'value' ? 'значение переменной' : (u.ctx ? (u.role === 'start' ? 'стартовая фраза' : 'конечная фраза') : 'обычная фраза'))}</span>
                     <span class="tts-pill tts-pill--${tone}">${label}</span>
                     <span class="tts-dim tts-asm-num">дубль ${t.i + 1} / ${tts.takes.length}</span>
                     <button class="tts-asm-close" onclick="ttsShowAssembly(false)" title="Закрыть и вернуться к чтению (Esc или клик мимо карточек)">Закрыть <kbd>Esc</kbd></button></div>
@@ -5708,6 +5794,7 @@ let isProcessing = false;
                 </div>
                 <div class="tts-asm-actions">
                     <button class="btn-tile ${ttsPlayingIdx === t.i ? 'is-active' : ''}" onclick="ttsTogglePlay()">${ttsPlayingIdx === t.i ? 'Стоп' : 'Слушать'} <kbd>Space</kbd></button>
+                    ${u.cat ? '<button class="btn-tile" onclick="ttsCtxPlay()" title="Конец стартовой фразы + значение + начало конечной. Файлы не меняются">В контексте</button>' : ''}
                     <button class="btn-tile btn-tile--good" onclick="ttsApprove()">Сохранить <kbd>Enter</kbd></button>
                     <button class="btn-tile" onclick="ttsOpenUnits('assign')">Другая фраза <kbd>F</kbd></button>
                     <button class="btn-tile btn-tile--sub" onclick="ttsReject()" title="Убрать дубль и записать фразу заново. Ctrl+Z — вернуть">Удалить дубль <kbd>Del</kbd></button>
@@ -6445,7 +6532,7 @@ let isProcessing = false;
                         <span class="tts-syn__lbl">Живые слова</span>
                         ${chip(sy.hybrid, 'Гибрид', 'ttsSynthSetup({hybrid: true})')}${chip(!sy.hybrid, 'Всё синтезом', 'ttsSynthSetup({hybrid: false})')}
                         ${sy.hybrid ? sy.words.map(w => w.ok
-                            ? `<span class="tts-syn__word is-ok" title="Живое, из «${escapeHtml(w.src || '')}»"><button type="button" onclick="ttsSynthWordPlay('${w.form}')">&#9654; ${escapeHtml(w.form)}</button><button type="button" title="Поправить на дорожке «${escapeHtml(w.src || '')}»" onclick="ttsMkReopen('${escapeHtml(w.src || '')}')">&#9998;</button><button type="button" title="Убрать — это слово пойдёт в синтез" onclick="ttsSynthWordRemove('${w.form}')">&times;</button></span>`
+                            ? `<span class="tts-syn__word is-ok" title="Живое, из «${escapeHtml(w.src || '')}»"><button type="button" onclick="ttsSynthWordPlay('${w.form}')">&#9654; ${escapeHtml(w.form)}</button><button type="button" title="Поправить на дорожке «${escapeHtml(w.src || '')}»" onclick="ttsMkReopen('${escapeHtml(w.src || '')}')"><svg class="icon"><use href="#icon-edit-2"></use></svg></button><button type="button" title="Убрать — это слово пойдёт в синтез" onclick="ttsSynthWordRemove('${w.form}')">&times;</button></span>`
                             : `<span class="tts-syn__word" title="Нет живой записи этой формы — синтезируется вместе с числом. Добавьте запись, где диктор её говорит.">${escapeHtml(w.form)} — синтез</span>`).join('') : ''}
                         ${sy.hybrid ? `<button class="btn-ghost btn-ghost--compact" onclick="ttsMkOpen(false)" ${sy.etalon_ok ? '' : 'disabled'} title="Открыть дорожку эталона и выделить слова мышью">Разметить в эталоне</button>
                                <button class="btn-ghost btn-ghost--compact" onclick="ttsMkOpen(true)" title="Другая запись диктора, где есть недостающие формы (например «миллиона», «тысяч»)">+ запись со словами</button>` : ''}
@@ -6693,7 +6780,10 @@ let isProcessing = false;
         }
 
         function ttsRenderVars() {
-            let tabs = [['chains', `Фразы · ${ttsVars.chains.length}`]].concat(ttsVars.sheets.map(sh => {
+            let pcs = (tts.units || []).filter(u => u.kind === 'piece');
+            let tabs = [['chains', `Фразы · ${ttsVars.chains.length}`]]
+                .concat(pcs.length || tts.vars_only ? [['pieces', `Фразы_Переменные · ${pcs.filter(u => u.saved).length}/${pcs.length}`]] : [])
+                .concat(ttsVars.sheets.map(sh => {
                 let ready = sh.categories.reduce((a, c) => a + c.ready, 0), all = sh.categories.reduce((a, c) => a + c.values.length, 0);
                 return [sh.key, `${sh.label} · ${ready}/${all}`];
             })).concat([['synth', ttsSynth ? `Синтез сумм · ${ttsSynth.approved}/${ttsSynth.items.length}` : 'Синтез сумм']]);
@@ -6701,6 +6791,7 @@ let isProcessing = false;
                 `<button type="button" class="chip ${k === ttsVarsTab ? 'chip-mode--active' : ''}" onclick="ttsVarsSetTab('${k}')">${escapeHtml(l)}</button>`).join('');
             let body = document.getElementById('ttsVarsBody');
             if (ttsVarsTab === 'chains') { body.innerHTML = ttsVarsChainsHTML(); return; }
+            if (ttsVarsTab === 'pieces') { body.innerHTML = ttsVarsPiecesHTML(); return; }
             if (ttsVarsTab === 'synth') {
                 if (!ttsSynth) { body.innerHTML = '<div class="tts-dim tts-list__empty">Загружаю…</div>'; ttsSynthLoad(); return; }
                 let list = body.querySelector('.tts-syn__list'), top = list ? list.scrollTop : null;
@@ -6986,7 +7077,7 @@ let isProcessing = false;
             let label = on ? ttsDevLabel(cfg.name, cfg.nth, cfg.same) : '';
             let short = s => s.length > 18 ? s.slice(0, 17) + '…' : s;
             let num = on && (cfg.same > 1 || cfg.nth) ? ` №${(cfg.nth || 0) + 1}` : '';
-            btn.innerHTML = on ? `&#127911; ${escapeHtml(short(cfg.name))}${num}` : '&#127911; Устройства';
+            btn.innerHTML = on ? `<svg class="icon"><use href="#icon-headphones"></use></svg> ${escapeHtml(short(cfg.name))}${num}` : '<svg class="icon"><use href="#icon-headphones"></use></svg> Устройства';
             btn.title = `Микрофон диктора: ${mic && mic.name ? ttsDevLabel(mic.name, mic.nth, mic.same) : 'не выбран'}\n`
                 + `Ваши наушники: ${on ? label + ` (громкость прослушки ${Math.round((cfg.volume || 1) * 100)}%)` : 'как в Windows'}\nКлик — сменить`;
         }
@@ -7014,9 +7105,9 @@ let isProcessing = false;
                         ${escapeHtml(ttsDevLabel(d.name, d.nth, d.same))}
                         <span class="audit-choice-desc">${on ? 'выбрано' : (d.default ? 'по умолчанию в Windows' : '')}</span></button>`;
                 document.getElementById('ttsList').innerHTML = `
-                    <div class="tts-dev-head">🎙 Микрофон диктора</div>
+                    <div class="tts-dev-head"><svg class="icon"><use href="#icon-mic"></use></svg> Микрофон диктора</div>
                     ${list.devices.map(d => item(d, 'mic', micNow && micNow.id === d.id)).join('')}
-                    <div class="tts-dev-head">🎧 Ваши наушники <span class="tts-dim">— голос диктора вживую и всё прослушивание</span></div>
+                    <div class="tts-dev-head"><svg class="icon"><use href="#icon-headphones"></use></svg> Ваши наушники <span class="tts-dim">— голос диктора вживую и всё прослушивание</span></div>
                     <button type="button" class="audit-category-item ${outNow ? '' : 'is-first'}" data-kind="out" data-id="-1">Как в Windows (по умолчанию)
                         <span class="audit-choice-desc">${outNow ? '' : 'выбрано'}</span></button>
                     ${list.outputs.map(d => item(d, 'out', outNow && outNow.id === d.id)).join('')}
@@ -7107,7 +7198,7 @@ let isProcessing = false;
                 + (quiet ? ' · микрофон тихий — громкость выровняется' : '')
                 + (s.asr_s ? ` · распознавание ${s.asr_s} с` : '')
                 + (s.pending_n > 1 ? ` · в очереди ${s.pending_n}` : '')
-                + (s.overflows ? ` · ⚠ звук прерывался ${s.overflows} раз — компьютер не успевает` : '')
+                + (s.overflows ? ` · звук прерывался ${s.overflows} раз — компьютер не успевает` : '')
 ;
             if (s.error) showToast('Запись остановилась: ' + s.error);
             // Только что листали — не перебиваем выбранную фразу старым ответом опроса.
@@ -7210,7 +7301,7 @@ let isProcessing = false;
                 return;
             }
             if (pr.done && !browse) {
-                text.innerHTML = 'Все фразы прочитаны 🎉';
+                text.innerHTML = 'Все фразы прочитаны';
                 meta.innerText = `${pr.total} из ${pr.total}`;
                 next.innerText = 'Сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить';
                 ttsPromptKey = 'done';
@@ -7342,7 +7433,7 @@ let isProcessing = false;
             } else if (f && f.kind === 'ok') {
                 cls = 'is-ok'; html = `<span class="lv-ico">✓</span><span>Записано: <b>${escapeHtml(f.text)}</b></span>`;
             } else if (f && f.kind === 'lang') {
-                cls = 'is-cmd'; html = `<span class="lv-ico">🌐</span><span>${escapeHtml(f.text)}</span>`;
+                cls = 'is-cmd'; html = `<span class="lv-ico"><svg class="icon"><use href="#icon-zap"></use></svg></span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'miss-msg') {
                 cls = 'is-miss'; html = `<span class="lv-ico">!</span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'miss') {
@@ -7352,7 +7443,7 @@ let isProcessing = false;
             } else if (f && f.kind === 'partial') {
                 cls = 'is-wait'; html = `<span class="lv-ico">▸</span><span>${escapeHtml(f.text)}</span>`;
             } else if (f && f.kind === 'mark') {
-                cls = 'is-cmd'; html = `<span class="lv-ico">✎</span><span>Отмечено — ${escapeHtml(f.text)}</span>`;
+                cls = 'is-cmd'; html = `<span class="lv-ico"><svg class="icon"><use href="#icon-edit-2"></use></svg></span><span>Отмечено — ${escapeHtml(f.text)}</span>`;
             } else if (f && TTS_LIVE_CMD[f.kind]) {
                 let [ico, name] = TTS_LIVE_CMD[f.kind];
                 cls = 'is-cmd'; html = `<span class="lv-ico">${ico}</span><span>${escapeHtml(f.text || name)}</span>`;
@@ -7393,7 +7484,7 @@ let isProcessing = false;
             let box = document.getElementById('ttsMarks');
             if (!box) return;
             if (!pr || pr.done || !pr.current) { box.innerHTML = ''; return; }
-            if (pr.current.every(p => p.kind === 'value')) { box.innerHTML = ''; return; }   // у значений переменных ролей нет
+            if (tts && tts.vars_only) { box.innerHTML = ''; return; }   // в таблице только переменные: ролей и отметок нет
             let vars = pr.var_cols || [];
             let last = pr.current.length - 1;
             box.innerHTML = pr.current.map((p, k) => `
@@ -7529,7 +7620,7 @@ let isProcessing = false;
             if (!b) return;
             let on = ttsAutoAsmOn();
             b.classList.toggle('is-on', on);
-            b.innerHTML = on ? '&#9986; Проверять сразу: вкл' : '&#9986; Проверять сразу: выкл';
+            b.innerHTML = on ? '<svg class="icon"><use href="#icon-scissors"></use></svg> Проверять сразу: вкл' : '<svg class="icon"><use href="#icon-scissors"></use></svg> Проверять сразу: выкл';
         }
         function ttsAutoAsmToggle() {
             let on = !ttsAutoAsmOn();
@@ -7596,7 +7687,7 @@ let isProcessing = false;
             if (!b) return;
             let on = ttsFastOn();
             b.classList.toggle('is-on', on);
-            b.innerHTML = on ? '&#9889; Не ждать: вкл' : '&#9889; Не ждать: выкл';
+            b.innerHTML = on ? '<svg class="icon"><use href="#icon-zap"></use></svg> Не ждать: вкл' : '<svg class="icon"><use href="#icon-zap"></use></svg> Не ждать: выкл';
             ttsAutoAsmRender();
             ttsNoAsrRender();
         }

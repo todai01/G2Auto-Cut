@@ -184,7 +184,7 @@ class VariablesMixin:
         self.audacity.send_command(f'SelectTime: Start=0 End={end_paste_time + 5.0} RelativeTo=ProjectStart')
         self.audacity.send_command('ZoomSel:')
 
-        # 👇 ПРИНУДИТЕЛЬНО 8000 Гц
+        # ПРИНУДИТЕЛЬНО 8000 Гц
         self.audacity.send_command('SetProject: Rate=8000')
 
         self.is_in_audacity = True
@@ -1093,7 +1093,7 @@ class VariablesMixin:
         self.audacity.send_command(
             f'SelectTime: Start={start_len} End={start_len + phrase_len} RelativeTo=ProjectStart')
 
-        # 👇 ПРИНУДИТЕЛЬНО 8000 Гц
+        # ПРИНУДИТЕЛЬНО 8000 Гц
         self.audacity.send_command('SetProject: Rate=8000')
 
         self.is_in_audacity = True

@@ -1049,7 +1049,7 @@
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
                 <button class="btn-ghost btn-ghost--info" id="ttsValsSynthBtn" style="display:none" onclick="ttsValsSynthOpen()" title="Синтез значений по референсу диктора">Синтез</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
-                <button class="btn-ghost btn-ghost--compact tts-fs-btn" onclick="toggleFullscreen()" title="Полный экран (F11)">&#x26F6; <kbd>F11</kbd></button>
+                <button class="btn-ghost btn-ghost--compact tts-fs-btn" onclick="toggleFullscreen()" title="Полный экран (F11)"><svg class="icon"><use href="#icon-monitor"></use></svg> <kbd>F11</kbd></button>
                 <button class="btn-ghost btn-alert btn-ghost--compact" id="ttsMarksBtn" style="display:none" onclick="ttsMarksRetry()" title="Отметки start/end и переменных ещё не записаны в таблицу (например, она открыта в Excel)"></button>
             </div>
             <div class="tts-title">
@@ -1081,10 +1081,10 @@
                     <button class="tts-rbtn tts-rbtn--live tts-rbtn--go" onclick="ttsLiveAction('commit')" title="Зафиксировать последний кусок как эту фразу — даже если распознавание его не поняло или ещё думает">&#10003; Зафиксировать <kbd>Enter</kbd></button>
                     <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('redo')" title="Отменить сразу (даже пока держите Space или идёт распознавание) — фраза с начала; иначе удалить последнюю запись">&#8634; Заново <kbd>Backspace</kbd></button>
                     <button class="tts-rbtn tts-rbtn--fast" id="ttsNoAsrBtn" onclick="ttsNoAsrToggle()" title="Без распознавания: вы читаете фразу с суфлёра — отпустили Space, дубль сразу привязан к ней (без ожидания, без модели). Оговорки ловите на слух в «Сборке» или аудитом в конце">Без распознавания</button>
-                    <button class="tts-rbtn tts-rbtn--fast" id="ttsFastBtn" onclick="ttsFastToggle()" title="Не ждать распознавания: отпустили Space — суфлёр сразу на следующей фразе, распознавание идёт в фоне; что не распозналось — сохранится жёлтым (сомнительный)">&#9889; Не ждать</button>
-                    <button class="tts-rbtn tts-rbtn--mon" id="ttsMonBtn" onclick="ttsMonitorPick()" title="Микрофон диктора и ваши наушники">&#127911; Устройства</button>
-                    <button class="tts-rbtn tts-rbtn--fast" id="ttsAutoAsmBtn" onclick="ttsAutoAsmToggle()" title="Записали фразу (отпустили Space) — «Сборка» открывается сама: дубль звучит, подрезаете, Enter — сохранить и читать дальше">&#9986; Проверять сразу</button>
-                    <button class="tts-rbtn" onclick="ttsShowAssembly()" title="Сборка последнего/выбранного дубля — обрезка и вырезы, не останавливая запись (клик по ячейке внизу — тоже)">&#9986; Сборка</button>
+                    <button class="tts-rbtn tts-rbtn--fast" id="ttsFastBtn" onclick="ttsFastToggle()" title="Не ждать распознавания: отпустили Space — суфлёр сразу на следующей фразе, распознавание идёт в фоне; что не распозналось — сохранится жёлтым (сомнительный)"><svg class="icon"><use href="#icon-zap"></use></svg> Не ждать</button>
+                    <button class="tts-rbtn tts-rbtn--mon" id="ttsMonBtn" onclick="ttsMonitorPick()" title="Микрофон диктора и ваши наушники"><svg class="icon"><use href="#icon-headphones"></use></svg> Устройства</button>
+                    <button class="tts-rbtn tts-rbtn--fast" id="ttsAutoAsmBtn" onclick="ttsAutoAsmToggle()" title="Записали фразу (отпустили Space) — «Сборка» открывается сама: дубль звучит, подрезаете, Enter — сохранить и читать дальше"><svg class="icon"><use href="#icon-scissors"></use></svg> Проверять сразу</button>
+                    <button class="tts-rbtn" onclick="ttsShowAssembly()" title="Сборка последнего/выбранного дубля — обрезка и вырезы, не останавливая запись (клик по ячейке внизу — тоже)"><svg class="icon"><use href="#icon-scissors"></use></svg> Сборка</button>
                     <button class="tts-rbtn tts-rbtn--live" onclick="ttsLiveAction('play')" title="Прослушать то, что только что записалось">&#9654; Прослушать <kbd>P</kbd></button>
                     <button class="tts-rbtn" onclick="ttsPromptMove(-1)" title="Предыдущая фраза (↑ или колёсико мыши над текстом)">&#8593;</button>
                     <button class="tts-rbtn" onclick="ttsPromptMove(1)" title="Следующая фраза (↓ или колёсико мыши над текстом)">&#8595;</button>
@@ -1172,6 +1172,27 @@
             <input type="text" class="tts-list-search" id="ttsListSearch" placeholder="Поиск по тексту или имени…" oninput="ttsRenderList()" onkeydown="ttsListSearchKey(event)">
             <div class="tts-list-tabs" id="ttsListTabs"></div>
             <div class="tts-list" id="ttsList"></div>
+        </div>
+    </div>
+
+    <!-- Студия озвучки: стартовая и конечная фразы переменных -->
+    <div id="ttsValsCtxOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Стартовая и конечная фразы</h3>
+                <button class="modal-close" onclick="ttsValsCtxClose(false)" title="Закрыть">&times;</button>
+            </div>
+            <div class="modal-hint">Фразы, между которыми стоит переменная: например «Вы опоздали на» … «дней». Они станут отдельными фразами
+                (папка «Фразы_Переменные») и попадут в «Сборку»: значение слушается коротко, в окружении, а сами файлы не меняются. Можно оставить пустым.</div>
+            <div id="ttsValsCtxBody"></div>
+            <label class="vc-field">
+                <div class="vc-head"><span>Короткий вариант в «Сборке»: оставлять у фразы, с каждой стороны от значения</span><b id="ttsvcxKeepTxt"></b></div>
+                <input type="range" id="ttsvcxKeep" min="0.5" max="5" step="0.1" oninput="ttsValsCtxKeepLabel()">
+            </label>
+            <div class="modal-actions">
+                <button class="custom-alert-btn btn-secondary" onclick="ttsValsCtxClose(false)">Пропустить</button>
+                <button class="custom-alert-btn" onclick="ttsValsCtxClose(true)">Сохранить и продолжить</button>
+            </div>
         </div>
     </div>
 

@@ -2522,3 +2522,13 @@ button, .option-card, .menu-row, .menu-tool, .menu-recent__item, .search-input, 
 .vs-row__ref{ display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); font-size: var(--fs-sm); }
 .vs-row__act{ display: flex; justify-content: flex-end; }
 .vs-err{ margin-top: var(--space-3); font-size: var(--fs-sm); color: var(--accent-trash); text-align: left; }
+
+/* ===== Фразы_Переменные: список готовых файлов ===== */
+.pc-row{ display: grid; grid-template-columns: minmax(150px, 220px) 1fr 90px auto auto auto; align-items: center; gap: var(--space-3);
+    padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--panel); margin-top: 6px; text-align: left; }
+.pc-row.is-ready{ border-left: 3px solid var(--accent-good); }
+.pc-name{ font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text); display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; }
+.pc-name small{ color: var(--text-faint); font-family: var(--font-ui); }
+.pc-text{ font-size: var(--fs-sm); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-state{ font-size: var(--fs-xs); color: var(--text-faint); }
+.pc-row.is-ready .pc-state{ color: var(--accent-good); }
