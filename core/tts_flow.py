@@ -2611,6 +2611,71 @@ class TtsFlowMixin(EditBasicsMixin):
             self._tts_save()
         return self.tts_state()
 
+    def _tts_raw_split_point(self, t):
+        """Где в чанке граница двух значений: середина самой длинной паузы внутри речи (не у самых краёв)."""
+        rms, length = self._tts_take_frames(t)
+        f = self.TIER_FRAME_MS
+        if not len(rms):
+            return length // 2
+        voiced = rms > max(float(rms.max()) * 0.05, 1e-4)
+        idx = np.nonzero(voiced)[0]
+        if len(idx) < 4:
+            return length // 2
+        v0, v1 = int(idx[0]), int(idx[-1])
+        best, j = (0, (v0 + v1) // 2), v0
+        while j <= v1:
+            if not voiced[j]:
+                e = j
+                while e <= v1 and not voiced[e]:
+                    e += 1
+                if e - j > best[0]:
+                    best = (e - j, (j + e) // 2)
+                j = e
+            else:
+                j += 1
+        return int(best[1] * f)
+
+    def tts_raw_split(self, i, at_ms=None):
+        """В чанке две переменные — разрезать на два чанка (at_ms — место, мс файла чанка; нет — по самой
+        длинной паузе). Второй встаёт следом и получает следующее название по порядку."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])) or not st["takes"][i].get("raw_chunk"):
+            return {"error": "Разрезать можно чанк сырой записи."}
+        t = st["takes"][i]
+        if t.get("approved"):
+            return {"error": "Чанк уже сохранён — сначала удалите сохранение (Del) или откройте другой."}
+        wd = st["work_dir"]
+        src = os.path.join(wd, t["file"])
+        length = len(self._tts_seg(src))
+        at = int(at_ms) if at_ms is not None else self._tts_raw_split_point(t)
+        if not 200 <= at <= length - 200:
+            return {"error": "Слишком близко к краю чанка — поставьте курсор между двумя словами."}
+        base = os.path.splitext(t["file"])[0]
+        n = 2
+        while os.path.exists(os.path.join(wd, f"{base}_{n}.wav")):
+            n += 1
+        f1, f2 = f"{base}_a{n}.wav", f"{base}_{n}.wav"
+        for rel, a, b in ((f1, 0, at), (f2, at, length)):
+            if not wav_slice(src, os.path.join(wd, rel), a, b):
+                self._tts_seg(src)[a:b].export(os.path.join(wd, rel), format="wav")
+        for x in st["takes"]:                              # номера следующих чанков — на один дальше
+            if x.get("raw_chunk") and x.get("chunk", 0) > t.get("chunk", 0):
+                x["chunk"] += 1
+        keep = {k: t[k] for k in ("raw_chunk", "bil", "src_name", "bound", "pinned", "unit", "lang", "seq", "status", "score") if k in t}
+        for k in list(t):
+            if k.startswith("tier_") or k in ("clips", "clips_orig", "edit", "lanes", "listened"):
+                t.pop(k, None)
+        t.update({"file": f1, "raw": os.path.join(wd, f1), "start_ms": 0, "ms": at, "orig": [0, at]})
+        second = {"file": f2, "raw": os.path.join(wd, f2), "start_ms": 0, "ms": length - at, "orig": [0, length - at],
+                  "heard": '', "listened": False, "chunk": t.get("chunk", 0) + 1, "bil": True, "raw_chunk": True,
+                  "src_name": keep.get("src_name"), "bound": True, "unit": None, "lang": None, "score": 0.0,
+                  "status": "none", "approved": False}
+        st["takes"].insert(i + 1, second)
+        t["bound"] = True
+        self._tts_raw_reflow()
+        self._tts_save()
+        return {**self.tts_state(), "at": at}
+
     def tts_raw_folder(self, mode='ru_first', sheet=None):
         """Чанки уже нарезаны (папка с WAV): на ленту по порядку имён файлов, названия — в «Сборке», как у «Сырой записи»."""
         st = self._tts()

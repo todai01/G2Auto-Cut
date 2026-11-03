@@ -7178,7 +7178,22 @@ let isProcessing = false;
             if (!first) { ttsTR = null; let c = ttsCurTake(); if (c) ttsTiersLoad(c.i); }
         }
         const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${String(t.chunk).padStart(4, '0')}</b>${t.src_name ? ` · ${escapeHtml(t.src_name)}` : ''} → <b>${escapeHtml(ttsUnit(t.unit).name)}</b>${t.lang ? ` <em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em>` : ''} · значение ${t.seq + 1} из ${tts.raw_total}</span>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsOpenUnits('assign')" title="Название не то — выбрать другое значение; следующие чанки пойдут от него">другое название <kbd>F</kbd></button></div>`;
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsOpenUnits('assign')" title="Название не то — выбрать другое значение; следующие чанки пойдут от него">другое название <kbd>F</kbd></button>
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSplit()" title="В чанке две переменные — разрезать на два: по самой длинной паузе, или там, где курсор / начало выделения на волне ниже">две переменные — разрезать &#9986;</button></div>`;
+        async function ttsRawSplit() {
+            let t = ttsCurTake();
+            if (!t) return;
+            let at = null, rng = ttsEdSelRange();                  // выделение — режем в его начале; курсор — по нему
+            if (rng) at = rng[0];
+            else if (ttsEd && ttsEd.i === t.i && ttsEd.cur && ttsEd.cur.t != null) at = Math.round(ttsEd.cur.t - tlBase());
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_raw_split(t.i, at);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            tts = r; ttsEd = null; ttsTR = null;
+            ttsRender(); ttsRenderRail(); ttsShowAssembly(true);
+            let nx = tts.takes[t.i + 1], nu = nx && ttsUnit(nx.unit);
+            showToast(`Разрезано на ${(r.at / 1000).toFixed(2)} с: первый — «${escapeHtml(ttsUnit(tts.takes[t.i].unit).name)}», второй — «${nu ? escapeHtml(nu.name) : '—'}» (следующий чанк)`, 4000);
+        }
         async function ttsRawSkip() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_skip(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); showToast('Названия сдвинуты вперёд — с этого чанка'); }
         async function ttsRawDrop() { let t = ttsCurTake(); if (!t) return; let r = await pywebview.api.tts_raw_drop(t.i); if (r && r.error) { showToast(r.error); return; } tts = r; ttsRender(); ttsCutNext(Math.max(-1, t.i - 1)); showToast('Чанк убран, названия сдвинуты назад · Ctrl+Z — вернуть', 3000); }
 
