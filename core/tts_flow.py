@@ -2676,6 +2676,50 @@ class TtsFlowMixin(EditBasicsMixin):
         self._tts_save()
         return {**self.tts_state(), "at": at}
 
+    def tts_raw_merge(self, i):
+        """Нарезка разделила одно значение на два чанка — склеить этот чанк со следующим. Из сырой записи —
+        одним куском вместе с паузой между ними; чанки из папки — подряд. Следующие названия сдвигаются назад."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"]) - 1):
+            return {"error": "Справа нет чанка, с которым склеить."}
+        t, nx = st["takes"][i], st["takes"][i + 1]
+        if not (t.get("raw_chunk") and nx.get("raw_chunk")):
+            return {"error": "Склеить можно чанки сырой записи."}
+        if t.get("approved") or nx.get("approved"):
+            return {"error": "Один из чанков уже сохранён — сначала удалите сохранение (Del)."}
+        wd = st["work_dir"]
+        base = os.path.splitext(t["file"])[0]
+        n = 2
+        while os.path.exists(os.path.join(wd, f"{base}_m{n}.wav")):
+            n += 1
+        rel = f"{base}_m{n}.wav"
+        dst = os.path.join(wd, rel)
+        o1, o2 = t.get("orig") or [0, 0], nx.get("orig") or [0, 0]
+        same_raw = t.get("raw") and t.get("raw") == nx.get("raw") and os.path.exists(t["raw"]) and o1[1] <= o2[0]
+        if same_raw and (o1[0] != 0 or o2[0] != 0):            # соседние куски одной записи — вместе с паузой
+            if not wav_slice(t["raw"], dst, o1[0], o2[1]):
+                AudioSegment.from_file(t["raw"])[o1[0]:o2[1]].export(dst, format="wav")
+            raw, orig, start = t["raw"], [o1[0], o2[1]], o1[0]
+        else:                                                  # отдельные файлы — подряд, с короткой паузой
+            a_ = AudioSegment.from_file(os.path.join(wd, t["file"]))
+            b_ = AudioSegment.from_file(os.path.join(wd, nx["file"]))
+            (a_ + AudioSegment.silent(150, frame_rate=a_.frame_rate) + b_.set_frame_rate(a_.frame_rate).set_channels(a_.channels)) \
+                .export(dst, format="wav")
+            raw, orig, start = dst, None, 0
+        ms = len(AudioSegment.from_file(dst))
+        for k in list(t):
+            if k.startswith("tier_") or k in ("clips", "clips_orig", "edit", "lanes", "listened"):
+                t.pop(k, None)
+        t.update({"file": rel, "raw": raw, "start_ms": start, "ms": ms, "orig": orig or [0, ms], "bound": True})
+        del st["takes"][i + 1]
+        for x in st["takes"]:                                  # номера следующих чанков — на один ближе
+            if x.get("raw_chunk") and x.get("chunk", 0) > nx.get("chunk", 0):
+                x["chunk"] -= 1
+        st["index"] = i
+        self._tts_raw_reflow()
+        self._tts_save()
+        return self.tts_state()
+
     def tts_raw_folder(self, mode='ru_first', sheet=None):
         """Чанки уже нарезаны (папка с WAV): на ленту по порядку имён файлов, названия — в «Сборке», как у «Сырой записи»."""
         st = self._tts()

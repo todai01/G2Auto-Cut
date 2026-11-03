@@ -7179,7 +7179,19 @@ let isProcessing = false;
         }
         const ttsRawBarHTML = t => `<div class="tts-rawbar"><span>Чанк <b>${String(t.chunk).padStart(4, '0')}</b>${t.src_name ? ` · ${escapeHtml(t.src_name)}` : ''} → <b>${escapeHtml(ttsUnit(t.unit).name)}</b>${t.lang ? ` <em class="tts-tiers__lang is-${t.lang}">${t.lang.toUpperCase()}</em>` : ''} · значение ${t.seq + 1} из ${tts.raw_total}</span>
             <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsOpenUnits('assign')" title="Название не то — выбрать другое значение; следующие чанки пойдут от него">другое название <kbd>F</kbd></button>
-            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSplit()" title="В чанке две переменные — разрезать на два: по самой длинной паузе, или там, где курсор / начало выделения на волне ниже">две переменные — разрезать &#9986;</button></div>`;
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawSplit()" title="В чанке две переменные — разрезать на два: по самой длинной паузе, или там, где курсор / начало выделения на волне ниже">две переменные — разрезать &#9986;</button>
+            <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRawMerge()" title="Одна переменная разрезалась на два чанка — склеить этот чанк со следующим (вместе с паузой между ними)">склеить со следующим &#43;</button></div>`;
+        async function ttsRawMerge() {
+            let t = ttsCurTake();
+            if (!t) return;
+            await ttsStopPlay();
+            let r = await pywebview.api.tts_raw_merge(t.i);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            tts = r; ttsEd = null; ttsTR = null;
+            ttsRender(); ttsRenderRail(); ttsShowAssembly(true);
+            let u = ttsUnit(tts.takes[t.i].unit);
+            showToast(`Склеено со следующим чанком — «${u ? escapeHtml(u.name) : '—'}»; названия дальше сдвинулись назад`, 3500);
+        }
         async function ttsRawSplit() {
             let t = ttsCurTake();
             if (!t) return;
