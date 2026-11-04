@@ -1473,6 +1473,7 @@
                     </div>
                     <div class="listen-decide">
                         <button class="listen-decide__btn listen-decide__btn--play" id="listenPlayBtn" onclick="listenPlayChain()" title="Слушать в фразе (P — только правку, ↑ / ↓ — строки)"><svg class="icon"><use href="#icon-play"></use></svg> Слушать <kbd>Space</kbd></button>
+                        <button class="listen-decide__btn listen-decide__btn--swap" onclick="listenSwap()" title="В записи звучит другое название (например, перепутаны марки) — поменять записи двух строк местами">&#8644; Поменять местами <kbd>M</kbd></button>
                         <button class="listen-decide__btn listen-decide__btn--fix" onclick="listenFlag()" title="Пометить «исправить» и дальше — исправите вторым кругом («Помеченные» слева)">Исправить <kbd>Backspace</kbd></button>
                         <button class="listen-decide__btn listen-decide__btn--ok" onclick="listenSave(true)" title="Сохранить и сразу следующее (файл пишется в фоне)">Сохранить <kbd>Enter</kbd></button>
                     </div>
@@ -1685,6 +1686,6 @@
 
     <script src="script.js?v=19"></script>
     <script src="tutorial.js?v=16"></script>
-    <script src="listen.js?v=25"></script>
+    <script src="listen.js?v=26"></script>
 </body>
 </html>

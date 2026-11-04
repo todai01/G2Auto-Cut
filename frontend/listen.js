@@ -83,7 +83,6 @@ function listenRender(light) {
     lEl('listenFile').innerHTML = !r ? '' : r.path
         ? `${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
         : 'записи с таким именем в папке нет — синтез (R)';
-    if (r) lEl('listenFile').innerHTML += ` · <button type="button" class="lp-link" onclick="listenSwap()" title="В записи звучит другое название (марка перепутана) — поменять записи местами с нужной строкой">⇄ не та запись</button>`;
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
             <i>${label}</i><b>${escapeHtml(name || '—')}</b>${ok ? '<span>✎</span>' : ''}</button>`;
@@ -872,6 +871,7 @@ function listenKey(e) {
     if (e.code === 'KeyR') { e.preventDefault(); listenSynthQuick(); return; }
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
     if (e.code === 'KeyP') { e.preventDefault(); listenPlayOnly(); return; }
+    if (e.code === 'KeyM') { e.preventDefault(); listenSwap(); return; }
     if (e.code === 'ArrowDown' || e.code === 'KeyS') { e.preventDefault(); listenStep(1); return; }
     if (e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); listenStep(-1); return; }
     if (e.code === 'KeyX' || e.code === 'Delete') { e.preventDefault(); listenEdCut(); return; }
