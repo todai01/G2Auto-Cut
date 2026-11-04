@@ -166,7 +166,7 @@ class Rec:
             setInterval(() => window.pywebview.api.__flush(), 300);""")
         self.pg.goto('file://' + APP)
         self.pg.wait_for_timeout(1500)
-        self.pg.evaluate("resumePromptAnswered = true; let ro = document.getElementById('resumeProjectOverlay'); if (ro) ro.style.display = 'none'")
+        self.pg.evaluate("resumePromptAnswered = true; document.getElementById('resumeProjectOverlay').style.display = 'none'")
         self.pg.add_style_tag(content='.toast{font-size:16px!important}')
         self.pg.evaluate(OVERLAY_JS)
         self.pg.mouse.move(self.mx, self.my)

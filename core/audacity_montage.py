@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import shutil
 import ctypes
 import webview
 from core.ui_dialogs import ui_alert, ui_toast

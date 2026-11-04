@@ -34,7 +34,7 @@ async function listenStart() {
     if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
     LS = r;
     listenOpen();
-    showToast(`Таблица: ${r.rows.length} значений в ${r.cols.length} ${r.cols.length === 1 ? 'столбце' : 'столбцах'} (${r.cols.join(', ')}) · записи есть у ${r.found}`, 5000);
+    showToast(`Таблица: ${r.rows.length} названий · есть запись у ${r.found}${r.column ? ` · ${r.column}` : ''}`, 4500);
 }
 
 function listenOpen() {
@@ -80,7 +80,7 @@ function listenRender(light) {
     lEl('listenName').classList.toggle('is-miss', !!r && !r.path);
     listenStatusRender();
     lEl('listenFile').innerHTML = !r ? '' : r.path
-        ? `${r.col ? escapeHtml(r.col) + ' · ' : ''}${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
+        ? `${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
         : 'записи с таким именем в папке нет — синтез (R)';
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
@@ -91,79 +91,56 @@ function listenRender(light) {
         + '<span class="listen-arrow">→</span>' + part('end', 'конец', LS.end, !!LS.end_path);
     listenRenderSynth();
 }
-// Список — как таблица: столбцы с подписями, строки идут слева направо; ячейка красится по состоянию
-function listenCellHTML(k) {
-    let r = LS.rows[k], tag = r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : '';
-    return `<button type="button" class="lg-cell ${k === LS.pos ? 'is-on' : ''} ${listenRowCls(r)} ${r.rep != null ? 'is-rep' : ''}" data-k="${k}" onclick="listenGo(${k})"
-        title="${escapeHtml(r.name)} · ${escapeHtml(r.col || '')}${r.rep != null ? ' · такое имя уже было выше — слушать повторно не нужно' : ''}">
-        <span class="lg-cell__name">${escapeHtml(r.name)}</span><span class="lg-cell__tag">${r.rep != null ? '↺' : tag}</span></button>`;
-}
 function listenRenderList() {
     if (!LS) return;
-    let q = (lEl('listenFilter').value || '').trim().toLowerCase(), n = (LS.cols || []).length || 1;
-    let ok = r => (!q || r.name.toLowerCase().includes(q)) && (!lFlagOnly || r.flag) && (!lTodoOnly || listenIsTodo(r));
-    let byRow = new Map();
-    LS.rows.forEach((r, k) => { if (!byRow.has(r.tr)) byRow.set(r.tr, new Array(n).fill(null)); byRow.get(r.tr)[r.ci || 0] = k; });
-    let filtered = q || lFlagOnly || lTodoOnly, html = '';
-    byRow.forEach(cells => {
-        if (filtered && !cells.some(k => k !== null && ok(LS.rows[k]))) return;
-        html += cells.map(k => k === null ? '<span class="lg-gap"></span>'
-            : filtered && !ok(LS.rows[k]) ? '<span class="lg-gap lg-gap--off">' + escapeHtml(LS.rows[k].name) + '</span>' : listenCellHTML(k)).join('');
-    });
-    let box = lEl('listenList');
-    box.style.setProperty('--lg-cols', n);
-    lEl('listenCols').style.setProperty('--lg-cols', n);
-    lEl('listenCols').innerHTML = (LS.cols || []).map(c => `<span title="${escapeHtml(c)}">${escapeHtml(c)}</span>`).join('');
-    box.innerHTML = html || '<div class="tts-list__empty tts-dim">Ничего не нашлось</div>';
+    let q = (lEl('listenFilter').value || '').trim().toLowerCase();
+    lEl('listenList').innerHTML = LS.rows.map((r, k) => ({ r, k })).filter(({ r }) => (!q || r.name.toLowerCase().includes(q)) && (!lFlagOnly || r.flag) && (!lTodoOnly || listenIsTodo(r))).map(({ r, k }) =>
+        `<button type="button" class="listen-row ${k === LS.pos ? 'is-on' : ''} ${listenRowCls(r)}" data-k="${k}" onclick="listenGo(${k})">
+            <span class="listen-row__dot"></span><span class="listen-row__name">${escapeHtml(r.name)}</span>
+            <span class="listen-row__tag">${r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет'}</span></button>`).join('');
     listenStatRender();
-    let on = box.querySelector('.is-on');
+    let on = lEl('listenList').querySelector('.is-on');
     if (on) on.scrollIntoView({ block: 'nearest' });
 }
 
 // Кружок: красный — записи нет, жёлтый — есть, ещё не сохранена, зелёный — сохранена
-const listenRowCls = r => r.flag ? 'is-flag' : !r.path ? 'is-miss' : r.done ? 'is-done' : 'is-todo';
+const listenRowCls = r => r.flag ? 'is-flag' : !r.path ? 'is-miss' : r.done ? '' : 'is-todo';
 // Статус текущей записи — плашка над именем
 function listenStatusRender() {
     let el = lEl('listenStatus'), r = lRow();
     if (!el) return;
-    let [c, t] = !r ? ['', ''] : r.synth === 'busy' ? ['is-busy', 'Синтез…'] : r.flag ? ['is-flag', 'В «Исправить»']
-        : !r.path ? ['is-miss', 'Нет записи'] : r.done ? ['is-done', 'В «Готовые»'] : ['is-todo', 'Не проверена'];
+    let [c, t] = !r ? ['', ''] : r.synth === 'busy' ? ['is-busy', 'Синтез…'] : r.flag ? ['is-flag', 'Исправить']
+        : !r.path ? ['is-miss', 'Нет записи'] : r.done ? ['is-done', 'Сохранена'] : ['is-todo', 'Не проверена'];
     el.className = 'lp-status ' + c; el.innerText = t;
-    let u = lEl('listenUnfile');
-    if (u) u.innerHTML = !r || !r.path ? '' : r.flag
-        ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="listenUnfile(LS.pos, 'fix')" title="Убрать из папки «Исправить» — пометка снимется">× из «Исправить»</button>`
-        : r.done ? `<button type="button" class="btn-ghost btn-ghost--compact" onclick="listenUnfile(LS.pos, 'done')" title="Убрать из папки «Готовые» — запись снова не проверена (правки звука остаются)">× из «Готовые»</button>` : '';
 }
 function listenStatRender() {
-    let rows = LS.rows.filter(r => r.rep == null);                 // повторы имён не считаем
-    let n = rows.length, done = rows.filter(r => r.path && r.done).length;
-    let fl0 = rows.filter(r => r.flag).length;
+    let n = LS.rows.length, done = LS.rows.filter(r => r.path && r.done).length;
+    let fl0 = LS.rows.filter(r => r.flag).length;
     lEl('listenProgNum').innerText = `${done} / ${LS.found}`;
     lEl('listenProgBar').style.width = LS.found ? `${Math.round(done / LS.found * 1000) / 10}%` : '0';
-    lEl('listenStat').innerText = n ? [`не проверено ${rows.filter(listenIsTodo).length}`, fl0 && `исправить ${fl0}`, n > LS.found && `без записи ${n - LS.found}`].filter(Boolean).join(' · ') : '';
-    let fl = fl0, b = lEl('listenFlagMode');
+    lEl('listenStat').innerText = n ? [`не проверено ${LS.rows.filter(listenIsTodo).length}`, fl0 && `исправить ${fl0}`, n > LS.found && `без записи ${n - LS.found}`].filter(Boolean).join(' · ') : '';
+    let fl = LS.rows.filter(r => r.flag).length, b = lEl('listenFlagMode');
     if (b) { b.innerHTML = `Помеченные <b>${fl}</b>`; b.classList.toggle('is-on', lFlagOnly); }
     let td = lEl('listenTodoMode');
-    if (td) { td.innerHTML = `Не проверены <b>${rows.filter(listenIsTodo).length}</b>`; td.classList.toggle('is-on', lTodoOnly); }
+    if (td) { td.innerHTML = `Не проверены <b>${LS.rows.filter(listenIsTodo).length}</b>`; td.classList.toggle('is-on', lTodoOnly); }
     if (lEl('listenFlagAll')) lEl('listenFlagAll').classList.toggle('is-on', !lFlagOnly && !lTodoOnly);
 }
 // Шаг по списку — без перерисовки всех строк: только отметка текущей
 function listenMarkList() {
-    let list = lEl('listenList'), old = list.querySelector('.lg-cell.is-on'), cur = list.querySelector(`.lg-cell[data-k="${LS.pos}"]`);
+    let list = lEl('listenList'), old = list.querySelector('.listen-row.is-on'), cur = list.querySelector(`.listen-row[data-k="${LS.pos}"]`);
     if (old && old !== cur) old.classList.remove('is-on');
     if (cur) {
         cur.classList.add('is-on');
-        let r = LS.rows[LS.pos], tag = cur.querySelector('.lg-cell__tag');
-        cur.classList.remove('is-miss', 'is-todo', 'is-flag', 'is-done');
-        cur.classList.add(listenRowCls(r));
-        if (tag) tag.innerText = r.rep != null ? '↺' : r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : '';
+        let r = LS.rows[LS.pos], tag = cur.querySelector('.listen-row__tag');
+        cur.classList.remove('is-miss', 'is-todo', 'is-flag');
+        let c = listenRowCls(r); if (c) cur.classList.add(c);
+        if (tag) tag.innerText = r.synth === 'busy' ? 'синтез…' : r.synth === 'ready' ? 'синтез ✓' : r.edited ? 'правка' : r.path ? '' : 'нет';
         cur.scrollIntoView({ block: 'nearest' });
     }
 }
 
 // ----- навигация: один вызов — сразу звук, волна и эта строка -----
 async function listenGo(k) {
-    if (LS && LS.rows[k] && LS.rows[k].rep != null) k = LS.rows[k].rep;       // повтор имени — на первое
     if (!LS || k === LS.pos) return;
     if (!(await listenLeave())) return;
     listenStopHead();
@@ -178,12 +155,7 @@ async function listenGo(k) {
     lPlayKind = 'chain';
     if (r.play && r.play.error !== 'skip') listenAfterPlay(r.play, tok);
 }
-function listenStep(d) {
-    if (!LS || !LS.rows.length) return;
-    let k = LS.pos + d;
-    while (k >= 0 && k < LS.rows.length && LS.rows[k].rep != null) k += d;        // повторы имён — мимо
-    if (k >= 0 && k < LS.rows.length) listenGo(k);
-}
+function listenStep(d) { if (LS && LS.rows.length) listenGo(Math.max(0, Math.min(LS.rows.length - 1, LS.pos + d))); }
 async function listenTarget(t) {
     if (t === lTarget) return;
     if (!(await listenLeave())) return;
@@ -474,12 +446,7 @@ function listenReplaySoon() {
     }, 350);
 }
 // next — после сохранения переменной перейти к следующей строке (и сразу её послушать)
-let lLastSaved = null;              // последняя сохранённая строка
-let lDecisions = [];                // решения по порядку (готово / исправить) — Ctrl+Z отменяет с конца
-function listenDecide(kind, pos, path) {
-    lDecisions.push({ kind, pos, path }); if (lDecisions.length > 300) lDecisions.shift();
-    if (kind === 'done') lLastSaved = { pos, path };
-}
+let lLastSaved = null;              // последняя сохранённая строка — Ctrl+Z отменит
 // Следующая несохранённая строка после from (жёлтая; withMiss — и красная, без записи)
 function listenNextTodo(from, withMiss) {
     let n = LS.rows.length;
@@ -488,12 +455,12 @@ function listenNextTodo(from, withMiss) {
         return -1;
     }
     if (lFlagOnly) {                                       // второй круг: следующая помеченная (по кругу)
-        for (let i = 1; i <= n; i++) { let k = (from + i) % n; if (LS.rows[k].flag && k !== from && LS.rows[k].rep == null) return k; }
+        for (let i = 1; i <= n; i++) { let k = (from + i) % n; if (LS.rows[k].flag && k !== from) return k; }
         return -1;
     }
     for (let k = from + 1; k < n; k++) {
         let r = LS.rows[k];
-        if (r.flag || r.rep != null) continue;             // помеченные — на второй круг; повторы имён — не слушаем
+        if (r.flag) continue;                              // помеченные — на второй круг
         if (r.path ? !r.done : withMiss) return k;
     }
     return -1;
@@ -518,7 +485,7 @@ async function listenSave(next) {
         if (lEd.target === 'var' && lRow() && !lRow().done) {          // хороша как есть — отметить сохранённой
             let r = await pywebview.api.listen_mark_done(lEd.path);
             if (r && r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
-            listenDecide('done', LS.pos, lEd.path);
+            lLastSaved = { pos: LS.pos, path: lEd.path };
             listenRenderList();
             if (!go) { listenRender(true); listenEdRender(); }
         }
@@ -529,7 +496,7 @@ async function listenSave(next) {
     if (!r || r.error) { showToast(r && r.error || 'Не сохранилось'); return false; }
     lEd.saved = listenSnap(); lEd.has_backup = true; lEd.auto = null; lEd.hist = [];
     if (r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
-    if (lEd.target === 'var') { listenDecide('done', LS.pos, lEd.path); listenMarkList(); listenRenderList(); }
+    if (lEd.target === 'var') { lLastSaved = { pos: LS.pos, path: lEd.path }; listenMarkList(); listenRenderList(); }
     showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше · Ctrl+Z — отменить' : ''}`);
     if (go) { listenNext(); return true; }
     listenRender(); listenEdRender();
@@ -547,27 +514,12 @@ async function listenUnsave(pos) {
     if (pos === LS.pos && lTarget === 'var') await listenLoadEditor();
     showToast(`«${row.name}»: сохранение отменено — подправьте и сохраните заново (Enter)`);
 }
-// Ctrl+Z без правок на экране — отменить последнее решение: «Готовые» или «Исправить» (вернуться к той ячейке)
+// Ctrl+Z без правок на экране — отменить последнее сохранение (вернуться к той строке)
 async function listenUndoSave() {
-    while (lDecisions.length) {
-        let d = lDecisions.pop(), row = LS.rows[d.pos];
-        if (!row || row.path !== d.path || (d.kind === 'done' ? !row.done || row.flag : !row.flag)) continue;      // уже отменено иначе
-        if (d.pos !== LS.pos) { await listenGo(d.pos); if (LS.pos !== d.pos) return; }
-        if (d.kind === 'done') await listenUnsave(d.pos); else await listenUnfile(d.pos, 'fix');
-        return;
-    }
-    showToast('Отменять нечего');
-}
-// Отменить «в папку» для этой ячейки: 'done' — убрать из «Готовые» (снова не проверена), 'fix' — из «Исправить»
-async function listenUnfile(pos, which) {
-    let row = LS.rows[pos];
-    if (!row || !row.path) return;
-    let r = await pywebview.api.listen_unfile(pos, which);
-    if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-    let keep = LS.pos; LS = r.state; LS.pos = keep;
-    lDecisions = lDecisions.filter(d => !(d.pos === pos && d.kind === (which === 'fix' ? 'fix' : 'done')));
-    listenRender(); listenEdRender();
-    showToast(which === 'fix' ? `«${row.name}» убрано из «Исправить»` : `«${row.name}» убрано из «Готовые» — снова не проверена`);
+    if (!lLastSaved || !LS.rows[lLastSaved.pos] || LS.rows[lLastSaved.pos].path !== lLastSaved.path) return;
+    let pos = lLastSaved.pos;
+    if (pos !== LS.pos) { await listenGo(pos); if (LS.pos !== pos) return; }
+    await listenUnsave(pos);
 }
 async function listenRestore() {
     if (!(await showBeautifulConfirm(`Вернуть исходную запись «${escapeHtml(lEd.name)}»? Все правки пропадут.`, 'Вернуть', 'Отмена'))) return;
@@ -640,6 +592,7 @@ function listenAutoRun() {
 }
 let lAutoGap = 600, lAutoGapT = null;
 try { let g = localStorage.getItem('gvox_listen_gap'); if (g !== null) lAutoGap = +g; } catch (e) {}
+function listenSetGap(ms) { lAutoGap = +ms; try { localStorage.setItem('gvox_listen_gap', ms); } catch (e) {} }
 function listenAutoPause() { if (lAuto) listenAutoSet(false, 'Автопрогон — пауза на этом имени. G — дальше'); }
 function listenAutoDone() {
     if (!lAuto || !isShown('stage5-listen')) return;
@@ -657,7 +610,7 @@ function listenSaveBg(auto) {
     let dirty = listenDirty(), args = [e.path, e.ranges, e.gain, e.tempo, true, true];
     if (!dirty && row.done && !row.flag) { listenNext(); return; }      // уже сохранена, правок нет
     e.saved = listenSnap(); e.hist = [];
-    row.done = true; row.flag = false; listenDecide('done', pos, e.path);
+    row.done = true; row.flag = false; lLastSaved = { pos, path: e.path };
     lAutoMoved = auto ? { pos, t: performance.now() } : null;   // «поздний Backspace» — только после автоперехода
     let q = dirty ? pywebview.api.listen_edit_save(...args) : pywebview.api.listen_mark_done(e.path, true);
     q.then(r => {
@@ -669,15 +622,15 @@ function listenSaveBg(auto) {
     listenNext();
 }
 function listenRenderRow(k) {
-    let el = lEl('listenList').querySelector(`.lg-cell[data-k="${k}"]`), r = LS.rows[k];
+    let el = lEl('listenList').querySelector(`.listen-row[data-k="${k}"]`), r = LS.rows[k];
     if (k === LS.pos) listenStatusRender();
     if (!el || !r) return;
-    el.classList.remove('is-miss', 'is-todo', 'is-flag', 'is-done');
-    el.classList.add(listenRowCls(r));
+    el.classList.remove('is-miss', 'is-todo', 'is-flag');
+    let c = listenRowCls(r); if (c) el.classList.add(c);
 }
 // ----- Backspace: «исправить потом» — пометить и дальше; второй круг — только помеченные -----
 let lAutoMoved = null, lFlagOnly = false, lTodoOnly = false;
-const listenIsTodo = r => !!r.path && !r.done && !r.flag && r.rep == null;     // жёлтая: запись есть, не сохранена, не помечена
+const listenIsTodo = r => !!r.path && !r.done && !r.flag;     // жёлтая: запись есть, не сохранена, не помечена
 async function listenFlag() {
     if (!LS || !LS.rows.length) return;
     // нажали чуть позже, чем автопрогон перешёл, — помечаем то, что только что прозвучало
@@ -693,8 +646,7 @@ async function listenFlag() {
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     LS.rows[k] = { ...LS.rows[k], ...r.row };
     if (lFlagOnly || lTodoOnly) listenRenderList(); else { listenRenderRow(k); listenStatRender(); }
-    if (on) listenDecide('fix', k, row.path);
-    showToast(on ? `«${row.name}» — в «Исправить» · Ctrl+Z — отменить` : `«${row.name}»: убрано из «Исправить»`, 1800);
+    showToast(on ? `«${row.name}» — исправить потом` : `«${row.name}»: пометка снята`, 1400);
     if (on && k === LS.pos && !lFlagOnly) {                // текущее — сразу дальше
         if (lEd) { lEd.hist = []; lEd.saved = listenSnap(); }   // правку не сохраняем и не спрашиваем
         listenStopHead(); pywebview.api.listen_stop();
@@ -731,16 +683,24 @@ function listenSrcAt(t) {
     return null;
 }
 
-// ----- папки «Готовые» и «Исправить» (лежат в папке записей, раскладка по столбцам таблицы) -----
+// ----- финальная папка для сдачи -----
 async function listenExport() {
     if (!LS || !LS.rows.length) { showToast('Сначала откройте папку и таблицу'); return; }
-    let rows = LS.rows.filter(r => r.rep == null && r.path), done = rows.filter(r => r.done && !r.flag).length, fix = rows.filter(r => r.flag).length;
-    let how = await showBeautifulChoice(`<b>Папки с результатом</b><br><br>Сохранили (Enter) — запись копируется в <b>«Готовые»</b>, пометили (Backspace) — в <b>«Исправить»</b>; внутри — по столбцам таблицы.<br><br>`
-        + `Готовые: <b>${done}</b> · Исправить: <b>${fix}</b> · не проверено: <b>${rows.filter(listenIsTodo).length}</b><br><br><span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(LS.folder || '')}</span>`,
-        'Открыть «Готовые»', 'Открыть «Исправить»', 'F', 'Закрыть');
+    let seen = new Set(), done = 0, todo = 0;
+    LS.rows.forEach(r => { if (!r.path || r.flag || seen.has(r.path)) return; seen.add(r.path); r.done ? done++ : todo++; });
+    let fl = LS.rows.filter(r => r.flag).length, miss = LS.rows.filter(r => !r.path).length;
+    let how = await showBeautifulChoice(`<b>Финальная папка</b><br><br>Только аудио, без «_до_правок», «_синтез» и служебных файлов; ru / kz — как в папке.<br><br>`
+        + `Сохранено: <b>${done}</b> · не проверено: <b>${todo}</b> · помечено: <b>${fl}</b> · без записи: <b>${miss}</b><br><br>`
+        + 'Дальше — выберите, куда положить папку.', `Только сохранённые (${done})`, 'Все найденные', 'A', 'Отмена');
     if (!how) return;
-    let dir = how === 'ok' ? LS.out.done : LS.out.fix, r = await pywebview.api.audit_open_folder(dir);
-    if (r && r.error) showToast(`Папки «${how === 'ok' ? 'Готовые' : 'Исправить'}» ещё нет — пока ничего не ${how === 'ok' ? 'сохранено' : 'помечено'}`);
+    showToast('Собираю финальную папку…', 2500);
+    let r = await pywebview.api.listen_export(how === 'ok' ? 'done' : 'all');
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    let rest = [r.todo && `не проверено ${r.todo}`, r.flagged && `помечено ${r.flagged}`, r.missing && `без записи ${r.missing}`, r.failed && `не скопировалось ${r.failed}`].filter(Boolean);
+    let open = await showBeautifulConfirm(`<b>Готово: ${r.copied} аудио</b><br><br><span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(r.dest)}</span>`
+        + (rest.length ? `<br><br>Не вошло: ${rest.join(' · ')} — список рядом с папкой, в «${escapeHtml(r.report.split(/[\\/]/).pop())}».` : ''), 'Открыть папку', 'Закрыть');
+    if (open) pywebview.api.audit_open_folder(r.dest);
 }
 
 // ----- синтез -----
@@ -755,8 +715,7 @@ function listenRenderSynth() {
         ${st === 'ready' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthPlay()">&#9654; в фразе</button>
             <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
             <button class="btn-ghost btn-ghost--compact" onclick="listenSynthDrop()">Отклонить</button>` : ''}
-        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}
-        <button class="btn-ghost btn-ghost--compact listen-voice__chip" onclick="listenVoiceAsk()" title="С каким голосом синтезировать — нажмите, чтобы выбрать другой">${LS.voice ? 'голос: ' + escapeHtml(LS.voice.label) : 'голос не выбран'} ✎</button>`;
+        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}`;
     listenStatusRender(); listenEdRender();
 }
 const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
@@ -836,32 +795,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'Escape' || (e.code === 'Enter' && e.target.tagName !== 'BUTTON')) { e.preventDefault(); listenPhrClose(); }
     if (e.target.tagName !== 'INPUT') e.stopImmediatePropagation();
 }, true);
-// С каким голосом синтез — спрашиваем при первом синтезе; поменять — «голос: … ✎».
-let lVoiceAsking = false;
-async function listenVoiceAsk() {
-    if (lVoiceAsking) return false;
-    lVoiceAsking = true;
-    try {
-        showToast('Загружаю список голосов с сервиса синтеза…', 8000);
-        let r = await pywebview.api.listen_voices(false);
-        document.querySelectorAll('.toast').forEach(t => t.remove());
-        if (!r || !r.voices || !r.voices.length) { showToast('Список голосов не получен'); return false; }
-        let cur = LS.voice ? LS.voice.index : r.voices[0].index;
-        let ok = await showBeautifulConfirm(`<b>С каким голосом синтезировать?</b>`
-            + (r.error ? `<div class="listen-voice__warn">Сервис не отдал список (${escapeHtml(r.error)}) — показываю голоса из программы.</div>` : '')
-            + `<div class="listen-voice">${r.voices.map(v => `<label><input type="radio" name="listenVoice" value="${v.index}" data-label="${escapeHtml(v.label)}" ${v.index === cur ? 'checked' : ''}>`
-                + `<span>${escapeHtml(v.label)}</span><i>№ ${v.index + 1}</i></label>`).join('')}</div>`, 'Выбрать', 'Отмена');
-        if (!ok) return false;
-        let el = document.querySelector('input[name="listenVoice"]:checked');
-        if (!el) return false;
-        LS = await pywebview.api.listen_set_voice(+el.value, el.dataset.label);
-        listenRenderSynth();
-        showToast(`Синтез — голосом «${el.dataset.label}»`);
-        return true;
-    } finally { lVoiceAsking = false; }
-}
 async function listenSynth() {
-    if (!LS.voice && !(await listenVoiceAsk())) return;
     let r = await pywebview.api.listen_synth(LS.pos, lEl('listenSynthText').value, LS.lang);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     LS = r.state; listenRenderList(); listenRenderSynth();
@@ -872,7 +806,6 @@ async function listenSynthQuick() {
     let row = lRow();
     if (!row) return;
     if (row.synth === 'busy') { showToast('Синтез уже идёт'); return; }
-    if (!LS.voice && !(await listenVoiceAsk())) return;
     let inp = lEl('listenSynthText'), text = inp && inp.value.trim() ? inp.value.trim() : row.name;
     let r = await pywebview.api.listen_synth(LS.pos, text, LS.lang, true);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
@@ -919,16 +852,6 @@ function listenEvent(p) {
 }
 
 // ----- клавиши -----
-// Ctrl+S — сохранить, Ctrl+Z — отменить (правку или последнее решение). true — клавишу забрали.
-function listenCtrlKey(e) {
-    if (!(e.ctrlKey || e.metaKey) || (e.code !== 'KeyS' && e.code !== 'KeyZ')) return false;
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return false;
-    let al = document.getElementById('customAlertOverlay');
-    if (al && al.style.display === 'flex') return false;
-    e.preventDefault();
-    if (e.code === 'KeyS') listenSave(true); else listenEdUndo();
-    return true;
-}
 function listenKey(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
     if (e.code === 'KeyG') { e.preventDefault(); listenAutoRun(); return; }

@@ -34,12 +34,11 @@ from pydub.silence import detect_nonsilent
 
 from core import recent_projects
 from core.auto_check import (ASR_RATE, NEED_MODEL, NOISE_MAX_DBFS, NOISE_MIN_MS,
-                             PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
+                             SPEECH_MIN_SCORE, PACK_GAP_SEC, _lat_to_cyr, _norm, _ratio,
                              fix_feature_size, mels_from_error, similarity)
 from core.num_words import synth_text
 from core.ui_dialogs import ui_confirm
-from core.edit_basics import EditBasicsMixin
-from utils.wav_io import export_like, fix_wav_header, wav_layout, wav_render, wav_slice
+from utils.wav_io import export_like, fix_wav_header, wav_concat, wav_layout, wav_render, wav_slice
 
 TTS_STATE_FILE = 'tts_project.json'
 TTS_RECORDS_DIR = 'Записи'
@@ -425,7 +424,7 @@ def align_stream(words, units, expected=0):
     return found
 
 
-class TtsFlowMixin(EditBasicsMixin):
+class TtsFlowMixin:
 
     # ---------------- состояние ----------------
 
@@ -748,6 +747,7 @@ class TtsFlowMixin(EditBasicsMixin):
     def _tts_reuse_clips(self, rem_clips, plan):
         """Дорожка по раскладке: куски записанных фраз (оценка по доле текста,
         с запасом — край подровняете) и новые куски из этой записи."""
+        st = self._tts()
         M = self.REUSE_MARGIN_MS
         like = rem_clips[0]["raw"]
         out, pos = [], 0
@@ -1101,6 +1101,18 @@ class TtsFlowMixin(EditBasicsMixin):
         self._tts_save()
         return self.tts_var_ctx_info(sheet)
 
+    def tts_var_ctx_clear(self, sheet=None, which=None, asked=True):
+        """Убрать свой файл (which) или оба; asked — больше не спрашивать для листа."""
+        st = self._tts()
+        sheet = sheet or st.get("prompt_mode")
+        c = (st.get("var_ctx") or {}).get(sheet)
+        if c:
+            for k in ([which] if which else ['start', 'end']):
+                c.pop(k, None)
+        if asked:
+            st.setdefault("var_ctx_asked", {})[sheet] = True
+        self._tts_save()
+        return self._tts_var_ctx_reply(sheet)
 
     def _tts_var_ctx_reply(self, sheet):
         return {"info": self.tts_var_ctx_info(sheet), "state": self.tts_state(),
@@ -1642,6 +1654,9 @@ class TtsFlowMixin(EditBasicsMixin):
         return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"], "twins": twins,
                 "tiers_saved": tiers_out}
 
+    def tts_reject(self, i):
+        """Прежняя «Плохой дубль» — теперь удаление (Ctrl+Z возвращает)."""
+        return self.tts_take_delete(i)
 
     def tts_take_delete(self, i):
         """Удалить дубль с дорожки. Если фраза была сохранена именно из него —
@@ -1806,6 +1821,17 @@ class TtsFlowMixin(EditBasicsMixin):
             n += 1
         shutil.move(path, dest)
 
+    def tts_open_folder(self, which):
+        st = self._tts()
+        if not st.get("work_dir"):
+            return {"error": "Проект ещё не создан."}
+        folder = os.path.join(st["work_dir"], TTS_VAR_DIR if which == 'var' else TTS_DONE_DIR)
+        os.makedirs(folder, exist_ok=True)
+        try:
+            os.startfile(folder)
+        except Exception as e:
+            return {"error": str(e)}
+        return {"status": "ok"}
 
     # ---------------- «Сборка»: монтаж дубля прямо в программе ----------------
     # Дубль показывается вместе с запасом записи вокруг (EDIT_CONTEXT_MS):
@@ -1823,6 +1849,80 @@ class TtsFlowMixin(EditBasicsMixin):
             t["orig"] = [t["start_ms"], t["start_ms"] + t["ms"]]
         return t["orig"]
 
+    def _tts_take_ranges(self, t, a=None, b=None, cuts=None):
+        """Абсолютные куски исходника (мс), из которых состоит дубль."""
+        ed = t.get("edit") or {}
+        orig = self._tts_orig(t)
+        a = ed.get("a", orig[0]) if a is None else a
+        b = ed.get("b", orig[1]) if b is None else b
+        cuts = ed.get("cuts", []) if cuts is None else cuts
+        ranges, cur = [], a
+        for c0, c1 in sorted((max(a, c0), min(b, c1)) for c0, c1 in cuts):
+            if c1 <= c0:
+                continue
+            if c0 > cur:
+                ranges.append((cur, c0))
+            cur = max(cur, c1)
+        if b > cur:
+            ranges.append((cur, b))
+        return ranges
+
+    def tts_editor_load(self, i):
+        st = self._tts()
+        t = st["takes"][i] if 0 <= i < len(st["takes"]) else None
+        raw = self._tts_raw(t) if t else None
+        if not raw or not os.path.exists(raw):
+            return {"error": "Нет исходной записи для этого дубля."}
+        ed = t.get("edit") or {}
+        orig = self._tts_orig(t)
+        a, b = ed.get("a", orig[0]), ed.get("b", orig[1])
+        total = getattr(self, '_tts_raw_len', None)
+        if not total or total[0] != raw or getattr(self, '_tts_rec', None):
+            lay = wav_layout(raw)
+            length = int(lay[2] / lay[3] * 1000 / lay[4]) if lay else len(AudioSegment.from_file(raw))
+            total = self._tts_raw_len = (raw, length)
+        lo, hi = max(0, a - EDIT_CONTEXT_MS), min(total[1], b + EDIT_CONTEXT_MS)
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_tts_ctx_{os.getpid()}.wav")
+        if wav_slice(raw, tmp, lo, hi):
+            seg = AudioSegment.from_file(tmp)
+        else:
+            seg = AudioSegment.from_file(raw)[lo:hi]
+        seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        samples = seg.get_array_of_samples()
+        per = 16000 * EDIT_BUCKET_MS // 1000
+        peaks = [max(abs(min(samples[k:k + per])), max(samples[k:k + per])) / 32768
+                 for k in range(0, len(samples), per)]
+        # Волна в масштабе (тихая запись не должна выглядеть плоской линией).
+        top = max(peaks) if peaks else 0
+        k_ = min(40.0, 0.9 / top) if top > 1e-4 else 1.0
+        peaks = [round(min(1.0, x * k_), 3) for x in peaks]
+        return {"i": i, "lo": lo, "hi": hi, "a": a, "b": b, "cuts": ed.get("cuts", []),
+                "orig": orig, "audacity": bool(t.get("audacity")), "peaks": peaks, "bucket": EDIT_BUCKET_MS}
+
+    def tts_editor_apply(self, i, a, b, cuts):
+        """Записать правку в файл дубля (из исходника, байт в байт)."""
+        st = self._tts()
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        t = st["takes"][i]
+        self._tts_orig(t)
+        a, b = int(a), int(b)
+        cuts = [[int(c0), int(c1)] for c0, c1 in (cuts or []) if int(c1) > int(c0)]
+        if b - a < 100:
+            return {"error": "Слишком короткий кусок."}
+        ranges = self._tts_take_ranges(t, a, b, cuts)
+        dst = os.path.join(st["work_dir"], t["file"])
+        if not wav_concat(self._tts_raw(t), dst, ranges):
+            src = AudioSegment.from_file(self._tts_raw(t))
+            out = sum((src[s:e] for s, e in ranges[1:]), src[ranges[0][0]:ranges[0][1]])
+            out.export(dst, format="wav")
+        t["edit"] = {"a": a, "b": b, "cuts": cuts}
+        t["ms"] = sum(e - s for s, e in ranges)
+        t["listened"] = False
+        t.pop("audacity", None)
+        self._tts_save()
+        return self.tts_state()
 
     def tts_editor_reset(self, i):
         """Вернуть дубль как его нарезала программа."""
@@ -2245,6 +2345,13 @@ class TtsFlowMixin(EditBasicsMixin):
         g = lambda t: parts[t][2] if t in parts else 0
         return g('million') * 1_000_000 + (g('hundred') + g('hundred_thousand') + g('thousand')) * 1000 + g('tenge')
 
+    def _tts_sum_rows(self, sh, logic):
+        return [self._tts_sum_number(p) for p in self._tts_sum_row_parts(sh, logic)]
+
+    def _tts_sum_dir(self, key):
+        lm = re.search(r'_(ru|kz|kk)$', key)
+        lg = ('KZ' if lm.group(1) in ('kz', 'kk') else 'RU') if lm else 'RU'
+        return os.path.join(self._tts()["work_dir"] or '', f"Запись_суммы_{lg}")
 
     def tts_sum_logic(self, logic):
         st = self._tts()
@@ -2846,6 +2953,43 @@ class TtsFlowMixin(EditBasicsMixin):
     # поправку — ярусы между собой звучат как записаны.
     TIER_JOIN_MS = 1500
 
+    @staticmethod
+    def _k_weight(x, rate):
+        """K-фильтр (как в LUFS): полка +4 дБ выше 1,5 кГц и срез ниже 38 Гц.
+        Для замера громкости хватает АЧХ — применяем её в спектре (быстро)."""
+        import math
+        n = len(x)
+        f = np.fft.rfftfreq(n, 1 / rate)
+        z = np.exp(-1j * 2 * np.pi * f / rate)
+
+        def resp(b, a):
+            return np.abs((b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z))
+        w0 = 2 * math.pi * 1500 / rate
+        A, c = 10 ** (4 / 40), math.cos(w0)
+        sa = 2 * math.sqrt(A) * math.sin(w0) / (2 / math.sqrt(2))
+        h = resp((A * ((A + 1) + (A - 1) * c + sa), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - sa)),
+                 ((A + 1) - (A - 1) * c + sa, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - sa))
+        w0 = 2 * math.pi * 38 / rate
+        al, c = math.sin(w0) / (2 * 0.5), math.cos(w0)
+        h = h * resp(((1 + c) / 2, -(1 + c), (1 + c) / 2), (1 + al, -2 * c, 1 - al))
+        return np.fft.irfft(np.fft.rfft(x) * h, n)
+
+    @classmethod
+    def _loudness(cls, seg):
+        """Громкость голоса на слух, дБ (LUFS-подобно); None — тишина."""
+        seg = seg.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        x = np.frombuffer(seg.raw_data, dtype='<i2').astype(np.float64) / 32768
+        if len(x) < 1600:
+            return None
+        y = cls._k_weight(x, 16000)
+        blk, hop = 1600, 400                                        # окна 100 мс, шаг 25 мс
+        ms = np.array([np.mean(y[k:k + blk] ** 2) for k in range(0, len(y) - blk + 1, hop)])
+        ms = ms[ms > 10 ** ((-70 + 0.691) / 10)]
+        if not len(ms):
+            return None
+        ms = ms[ms > np.mean(ms) * 10 ** (-10 / 10)]                # без пауз и хвостов
+        return round(-0.691 + 10 * np.log10(np.mean(ms)), 1) if len(ms) else None
+
     def _tts_join_loud(self, path, tail):
         """Громкость голоса у стыка: последние (tail) / первые полторы секунды речи."""
         cache = self.__dict__.setdefault('_tts_lvl_cache', {})
@@ -3083,7 +3227,7 @@ class TtsFlowMixin(EditBasicsMixin):
                     "pre": c.get("pre", 0), "post": c.get("post", 0), "tempo": c.get("tempo", 1.0), "gain": c.get("gain", 0.0),
                     "exists": not self._tts_tier_missing(unit.get("sheet"), path) and path not in mine,
                     "mine": path in mine, "write": bool(write.get(str(k))), "shared": not self._tts_tier_own(unit, x),
-                    "lang": x.get("lang"), "sheet": unit.get("sheet"), "cat": x.get("cat")}
+                    "lang": x.get("lang")}
             if item["exists"] and not item["write"]:      # в сборке — готовый файл, как он есть
                 try:
                     r, ln = self._tts_file_rms(path)
@@ -3096,7 +3240,7 @@ class TtsFlowMixin(EditBasicsMixin):
         for key, c in zip(("start", "end"), self._tts_tier_ctx(unit)):
             if c:
                 r, ln = self._tts_file_rms(c[0], self.TIER_CTX_MS, tail=c[1])
-                ctx[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r), "path": c[0]}
+                ctx[key] = {"name": c[2], "len": ln, "peaks": self._tts_peaks(r)}
         ch, cpos, cn = self._tts_tier_chain(unit)
         phrase = None
         if ch:
@@ -3507,11 +3651,12 @@ class TtsFlowMixin(EditBasicsMixin):
         if not ctx:
             return {"error": "Эта переменная не стоит ни в одной фразе таблицы."}
         if ctx.get("custom"):
-            a_path, b_path = ctx["start_path"], ctx["end_path"]
+            a_path, b_path, a_name = ctx["start_path"], ctx["end_path"], ctx["start_name"]
             if not a_path:
                 return {"error": "Файл начала фразы не выбран или пропал — выберите его (чип «Начало и конец»)."}
         else:
             a, b = st["units"][ctx["start"]], (st["units"][ctx["end"]] if ctx["end"] is not None else None)
+            a_name = a["name"]
             if not ctx["start_saved"]:
                 return {"error": f"Начало фразы «{a['name']}» ещё не сохранено — запишите его в «Фразах»."}
             a_path = self._tts_target(a)
@@ -3594,10 +3739,7 @@ class TtsFlowMixin(EditBasicsMixin):
         else:
             texts.pop(key, None)
         self._tts_save()
-        self.__dict__['_tts_claims_cache'] = {}
-        self._tts_ensure_value_units()                 # тексты строк и значений в Студии обновляются сразу
-        return {"text": self._tts_value_text(sheet, cat, value)[0], "state": self.tts_state(),
-                "prompt": self.tts_prompt_info() if hasattr(self, 'tts_prompt_info') else None}
+        return {"text": self._tts_value_text(sheet, cat, value)[0]}
 
     def tts_var_play(self, sheet, cat, value):
         path = self._tts_value_file(sheet, cat, value)

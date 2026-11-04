@@ -1,8 +1,8 @@
 <!doctype html><html><head><meta charset="utf-8"><title>mock synth</title><style>.panel{display:none}.panel.active{display:block}</style></head><body>
 <main><nav><button type="button" onclick="tab(0)">Голоса</button><button type="button" onclick="tab(1)">Клон</button></nav>
 <section class="panel" id="p0"><form onsubmit="return false">
- <label>Голос <select id="preset-voice"><option>Голос 1</option><option>Голос 2</option><option>Голос 3</option><option>Голос 4</option><option>Голос 5</option><option>Голос 6</option><option>Голос 7</option><option>Голос 8</option></select></label>
- <label>Язык <select id="preset-lang"><option>ru</option><option>kz</option><option>tr</option></select></label>
+ <label>Голос <select id="preset-voice"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></label>
+ <label>Язык <select id="preset-lang"><option>ru</option><option>kz</option></select></label>
  <label>Текст <textarea></textarea></label>
  <button type="button" onclick="go()">Синтезировать</button></form><div id="out"></div></section>
 <section class="panel active" id="p1"><form onsubmit="return false">

@@ -1,3 +1,40 @@
+// Единая замена смайликов иконками (спрайт <symbol> лежит в index.html):
+// возвращает <svg class="icon"><use .../></svg> по имени иконки.
+function iconHTML(name) {
+    return `<svg class="icon"><use href="#icon-${name}"></use></svg>`;
+}
+
+// Многие тексты алертов/тостов приходят из бэкенда с эмодзи-префиксом
+// (например "✅ Готово"). Вместо правки полусотни строк в Python — одно
+// место, где эмодзи в начале строки распознаётся, убирается из текста,
+// а на его месте показывается иконка + цветовой тон (ошибка/успех/т.д.).
+const EMOJI_ICON_MAP = {
+    '❌': { icon: 'x-circle', tone: 'error' },
+    '⚠️': { icon: 'alert-triangle', tone: 'warning' },
+    '⚠': { icon: 'alert-triangle', tone: 'warning' },
+    '✅': { icon: 'check-circle', tone: 'success' },
+    '🎉': { icon: 'check-circle', tone: 'success' },
+    '🔄': { icon: 'refresh-cw', tone: 'info' },
+    '🔁': { icon: 'refresh-cw', tone: 'info' },
+    '✂️': { icon: 'scissors', tone: 'info' },
+    '✂': { icon: 'scissors', tone: 'info' },
+    '🔗': { icon: 'link-2', tone: 'info' },
+    '💾': { icon: 'save', tone: 'info' },
+    '⚡': { icon: 'zap', tone: 'info' },
+    '📁': { icon: 'folder', tone: 'info' },
+    '📂': { icon: 'folder', tone: 'info' },
+    '🎙️': { icon: 'mic', tone: 'info' },
+    '🎙': { icon: 'mic', tone: 'info' },
+    '🎚️': { icon: 'sliders', tone: 'info' },
+    '🎚': { icon: 'sliders', tone: 'info' },
+    '🎧': { icon: 'headphones', tone: 'info' },
+};
+function extractLeadingIcon(text) {
+    let m = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2139}])️?\s*/u.exec(text || '');
+    if (!m) return { icon: 'alert-circle', tone: 'info', text: text || '' };
+    let mapped = EMOJI_ICON_MAP[m[0].trim()] || EMOJI_ICON_MAP[m[1]] || { icon: 'alert-circle', tone: 'info' };
+    return { icon: mapped.icon, tone: mapped.tone, text: (text || '').slice(m[0].length) };
+}
 
 let isProcessing = false;
         let currentState = null;
@@ -10,11 +47,132 @@ let isProcessing = false;
             sumPlaybackTimers = [];
         }
 
+        // Значения по умолчанию — используются кнопкой «Сбросить»
+        const CUT_DEFAULTS = { pause: 500, sens: -35, pad: 250 };
+
+        function pauseWord(v)  { return v < 400 ? "Короткая" : (v > 900 ? "Длинная" : "Нормальная"); }
+        function sensWord(v)   { return v > -30 ? "Высокая" : (v < -45 ? "Строгая" : "Оптимальная"); }
+        function padWord(v)    { return v < 150 ? "Маленький" : (v > 300 ? "Большой" : "Безопасный"); }
+
+        function updateSettingsText() {
+            let p = parseInt(document.getElementById('inpPause').value);
+            document.getElementById('valPause').innerText = `${pauseWord(p)} · ${p} мс`;
+
+            let s = parseInt(document.getElementById('inpSens').value);
+            document.getElementById('valSens').innerText = `${sensWord(s)} · ${s} дБ`;
+
+            let pad = parseInt(document.getElementById('inpPad').value);
+            document.getElementById('valPad').innerText = `${padWord(pad)} · ${pad} мс`;
+
+            // Свёрнутые настройки в меню: коротко, что сейчас стоит.
+            let sum = document.getElementById('cutSummary');
+            if (sum) sum.innerText = `${p} мс · ${String(s).replace('-', '−')} дБ · ${pad} мс`;
+        }
+
         function openMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'flex'; }
         function closeMenuHelp() { document.getElementById('menuHelpOverlay').style.display = 'none'; }
 
+        // ===== РУЧНОЙ ВВОД НАСТРОЕК НАРЕЗКИ =====
+
+        function openManualSettings() {
+            document.getElementById('manPause').value = document.getElementById('inpPause').value;
+            document.getElementById('manSens').value  = document.getElementById('inpSens').value;
+            document.getElementById('manPad').value   = document.getElementById('inpPad').value;
+            updateManualHints();
+            document.getElementById('manualOverlay').style.display = 'flex';
+            setTimeout(() => document.getElementById('manPause').focus(), 50);
+        }
+
+        function closeManualSettings() {
+            document.getElementById('manualOverlay').style.display = 'none';
+        }
+
+        function resetManualSettings() {
+            document.getElementById('manPause').value = CUT_DEFAULTS.pause;
+            document.getElementById('manSens').value  = CUT_DEFAULTS.sens;
+            document.getElementById('manPad').value   = CUT_DEFAULTS.pad;
+            updateManualHints();
+        }
+
+        // Ограничиваем значение допустимыми рамками ползунка
+        function clampToInput(sliderId, raw, fallback) {
+            let slider = document.getElementById(sliderId);
+            let v = parseInt(raw);
+            if (isNaN(v)) return fallback;
+            return Math.min(parseInt(slider.max), Math.max(parseInt(slider.min), v));
+        }
+
+        // Живые подсказки: объясняют простым языком, что даст введённое число
+        function updateManualHints() {
+            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
+            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
+            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
+
+            let hP = document.getElementById('hintPause');
+            hP.classList.toggle('is-warn', p < 200 || p > 1500);
+            hP.innerHTML = `Разрез произойдёт только там, где тишина длится дольше <b>${(p / 1000).toFixed(2)} сек</b>. `
+                + (p < 200
+                    ? 'Очень мало: программа разрежет даже короткие вдохи, дублей получится много и они будут рваными.'
+                    : p > 1500
+                        ? 'Очень много: короткие паузы между фразами программа пропустит, несколько фраз слипнутся в один дубль.'
+                        : 'Обычная речевая пауза между фразами — хороший баланс.');
+
+            let hS = document.getElementById('hintSens');
+            hS.classList.toggle('is-warn', sn > -25 || sn < -55);
+            hS.innerHTML = `Тишиной считается всё, что тише <b>${sn} дБ</b>. `
+                + (sn > -25
+                    ? 'Порог высокий: программа примет за тишину даже негромкую речь и может срезать начало слова.'
+                    : sn < -55
+                        ? 'Порог строгий: нужна почти стерильная тишина. При фоновом шуме разрезов почти не будет.'
+                        : 'Подходит для обычной студийной записи с лёгким фоновым шумом.');
+
+            let hPad = document.getElementById('hintPad');
+            hPad.classList.toggle('is-warn', pad < 80 || pad > 600);
+            hPad.innerHTML = `К каждому дублю добавится <b>${pad} мс</b> звука с обеих сторон. `
+                + (pad < 80
+                    ? 'Запас маленький: есть риск отрезать первый и последний звук слова.'
+                    : pad > 600
+                        ? 'Запас большой: в дубли попадут куски соседних фраз, придётся дочищать вручную.'
+                        : 'Слово гарантированно не обрежется, лишнего почти не попадёт.');
+        }
+
+        function applyManualSettings() {
+            let p   = clampToInput('inpPause', document.getElementById('manPause').value, CUT_DEFAULTS.pause);
+            let sn  = clampToInput('inpSens',  document.getElementById('manSens').value,  CUT_DEFAULTS.sens);
+            let pad = clampToInput('inpPad',   document.getElementById('manPad').value,   CUT_DEFAULTS.pad);
+
+            document.getElementById('inpPause').value = p;
+            document.getElementById('inpSens').value  = sn;
+            document.getElementById('inpPad').value   = pad;
+
+            updateSettingsText();
+            closeManualSettings();
+            showToast(`Настройки применены: ${p} мс · ${sn} дБ · ${pad} мс`);
+        }
+
         // Пояснения по кнопкам «?»
         const SETTING_HELP = {
+            pause: {
+                title: 'Длина паузы для разреза',
+                body: 'Программа слушает запись и ищет места, где вы молчите. Этот параметр говорит, '
+                    + 'насколько долгим должно быть молчание, чтобы считать его концом фразы.<br><br>'
+                    + '<b>Бытовой пример:</b> представьте, что вы читаете вслух список. Между словами внутри '
+                    + 'предложения вы делаете короткие паузы, а между пунктами списка — длинные. '
+                    + 'Здесь вы задаёте, какую паузу считать «между пунктами».<br><br>'
+                    + '<b>Меньше число</b> — больше дублей, режет мелко.<br>'
+                    + '<b>Больше число</b> — меньше дублей, несколько фраз могут слипнуться.'
+            },
+            sens: {
+                title: 'Чувствительность к тихим звукам',
+                body: 'Абсолютной тишины в записи не бывает — всегда есть шум микрофона, дыхание, гул комнаты. '
+                    + 'Этот параметр задаёт громкость, ниже которой звук считается тишиной. '
+                    + 'Измеряется в децибелах, и число всегда отрицательное: чем оно меньше, тем тише.<br><br>'
+                    + '<b>Бытовой пример:</b> это как порог слышимости. Поставьте −20 дБ — программа «глуховата» '
+                    + 'и примет за тишину даже негромкую речь. Поставьте −60 дБ — у неё идеальный слух, '
+                    + 'и любой шорох она посчитает звуком.<br><br>'
+                    + '<b>Ближе к −20</b> — режет охотнее, но может отхватить начало слова.<br>'
+                    + '<b>Ближе к −60</b> — осторожнее, но при шумном фоне разрезов почти не будет.'
+            },
             header: {
                 title: 'Строка с заголовками',
                 body: 'Номер строки, в которой написаны названия колонок — например «51-100 миллионов» '
@@ -24,6 +182,15 @@ let isProcessing = false;
                     + 'строки — так устроен простой формат «текст в первом столбце, имя файла во втором».<br><br>'
                     + 'Обычно программа определяет это сама, менять вручную нужно редко — например, '
                     + 'если сверху есть лишняя строка с датой или заметкой.'
+            },
+            pad: {
+                title: 'Запас звука по краям',
+                body: 'Найдя границу фразы, программа отступает немного назад и немного вперёд, '
+                    + 'и только потом режет. Этот отступ и есть запас.<br><br>'
+                    + '<b>Бытовой пример:</b> как поля на листе бумаги. Режете точно по буквам — рискуете '
+                    + 'срезать край. Оставляете поля — текст цел.<br><br>'
+                    + '<b>Меньше число</b> — дубли плотные, но можно потерять первый или последний звук.<br>'
+                    + '<b>Больше число</b> — слово точно целое, но в дубль попадёт кусок соседней фразы.'
             }
         };
 
@@ -34,6 +201,7 @@ let isProcessing = false;
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            updateSettingsText();
             loadRecentProjects();
             // Заставки нет: меню показываем сразу, не дожидаясь Python, — одним
             // проявлением. «Продолжить проект?» спросим, когда мост будет готов.
@@ -125,16 +293,360 @@ let isProcessing = false;
         const isShown = id => { let el = document.getElementById(id); return !!el && el.style.display !== 'none'; };
         let stageAnimating = false;
 
+        // Прямоугольник самого текста (без отступов кнопки) — для «перелёта» логотипа.
+        function textRect(el) {
+            let r = document.createRange();
+            r.selectNodeContents(el);
+            return r.getBoundingClientRect();
+        }
 
         const wait = ms => new Promise(r => setTimeout(r, ms));
 
+        // Подпись по буквам и кнопка «втягиваются» в логотип заставки;
+        // логотип при этом коротко «заряжается» светом. Промис — когда всё вошло.
+        function absorbIntoLogo(splash, tagline, btn, logo, layer, line) {
+            let jobs = [];
+            let cx = logo.left + logo.width / 2, cy = logo.top + logo.height * .62;
+            if (line) {
+                // Линия стягивается к центру, светлеет и уходит вверх в буквы.
+                let r = line.getBoundingClientRect();
+                let dx = cx - (r.left + r.width / 2), dy = cy - r.top;
+                line.style.transformOrigin = '50% 50%';
+                jobs.push(line.animate([
+                    { transform: 'translate(0,0) scaleX(1)', opacity: 1, background: 'rgba(38,43,52,1)' },
+                    { transform: 'translate(0,0) scaleX(.35)', opacity: 1, background: 'rgba(110,170,255,1)', offset: .45 },
+                    { transform: `translate(${dx}px, ${dy}px) scaleX(.02)`, opacity: 0, background: 'rgba(150,195,255,1)' }
+                ], { duration: 460, delay: 120, easing: 'cubic-bezier(.55,0,.6,.3)', fill: 'forwards' }).finished
+                    .then(() => line.remove()));
+            }
+            if (tagline && tagline.firstChild) {
+                let text = tagline.textContent, node = tagline.firstChild;
+                let chars = [];
+                for (let i = 0; i < text.length; i++) {
+                    if (!text[i].trim()) continue;
+                    let r = document.createRange();
+                    r.setStart(node, i); r.setEnd(node, i + 1);
+                    chars.push({ ch: text[i], rect: r.getBoundingClientRect() });
+                }
+                let cs = getComputedStyle(tagline);
+                tagline.style.visibility = 'hidden';
+                let n = chars.length;
+                chars.forEach((c, i) => {
+                    let el = document.createElement('span');
+                    el.className = 'fx-char';
+                    el.textContent = c.ch;
+                    Object.assign(el.style, { left: c.rect.left + 'px', top: c.rect.top + 'px', fontSize: cs.fontSize, color: cs.color, lineHeight: c.rect.height + 'px' });
+                    layer.appendChild(el);
+                    // Каждая буква — в свою точку внутри логотипа; уходят от краёв к центру.
+                    let tx = cx + (i / Math.max(1, n - 1) - .5) * logo.width * .55 - (c.rect.left + c.rect.width / 2);
+                    let ty = cy - (c.rect.top + c.rect.height / 2);
+                    let order = Math.abs(i - (n - 1) / 2) / ((n - 1) / 2 || 1);
+                    jobs.push(el.animate([
+                        { transform: 'translate(0,0) scale(1)', opacity: 1 },
+                        { transform: `translate(${tx * .35}px, ${ty * .2 + 6}px) scale(.9)`, opacity: 1, offset: .35 },
+                        { transform: `translate(${tx}px, ${ty}px) scale(.15)`, opacity: 0 }
+                    ], { duration: 420, delay: (1 - order) * 140, easing: 'cubic-bezier(.55,0,.75,.2)', fill: 'forwards' })
+                        .finished.then(() => el.remove()));
+                });
+            }
+            if (btn) {
+                let r = btn.getBoundingClientRect();
+                let dy = cy - (r.top + r.height / 2), dx = cx - (r.left + r.width / 2);
+                btn.style.transformOrigin = '50% 50%';
+                jobs.push(btn.animate([
+                    { transform: 'translate(0,0) scale(1,1)', opacity: 1, filter: 'brightness(1)' },
+                    { transform: 'translate(0,0) scale(.92,.12)', opacity: 1, filter: 'brightness(1.8)', offset: .4 },
+                    { transform: `translate(${dx}px, ${dy}px) scale(.06,.04)`, opacity: 0, filter: 'brightness(2)' }
+                ], { duration: 460, delay: 90, easing: 'cubic-bezier(.55,0,.6,.3)', fill: 'forwards' }).finished);
+            }
+            // Логотип «заряжается», впитывая подпись и кнопку.
+            let mark = splash.querySelector('.splash-mark');
+            mark.animate([
+                { textShadow: '0 0 0 rgba(120,175,255,0)' },
+                { textShadow: '0 0 26px rgba(120,175,255,.55)', offset: .8 },
+                { textShadow: '0 0 18px rgba(120,175,255,.35)' }
+            ], { duration: 560, easing: 'ease-in', fill: 'forwards' });
+            return Promise.all(jobs).catch(() => {});
+        }
 
+        // Прямоугольник элемента в КОНЕЧНОМ положении: анимации предков
+        // (меню ещё «въезжает») на миг проматываем в конец и возвращаем.
+        function finalRect(el, measure) {
+            let anims = [];
+            for (let n = el; n && n.getAnimations; n = n.parentElement) {
+                n.getAnimations().forEach(an => anims.push([an, an.currentTime]));
+            }
+            anims.forEach(([an]) => { let t = an.effect && an.effect.getComputedTiming(); if (t) an.currentTime = t.endTime; });
+            let r = measure(el);
+            anims.forEach(([an, t]) => { an.currentTime = t; });
+            return r;
+        }
 
+        // Буквы логотипа с их прямоугольниками: каждая полетит отдельно.
+        function logoLetters(markEl) {
+            let out = [];
+            markEl.childNodes.forEach(node => {
+                let accent = node.nodeType === 1;
+                let text = node.textContent;
+                let textNode = accent ? node.firstChild : node;
+                for (let i = 0; i < text.length; i++) {
+                    let r = document.createRange();
+                    r.setStart(textNode, i); r.setEnd(textNode, i + 1);
+                    out.push({ ch: text[i], accent, rect: r.getBoundingClientRect() });
+                }
+            });
+            return out;
+        }
 
+        // Заставка → меню. Хореография:
+        //  1) подпись, кнопка и список уходят;
+        //  2) линия под подписью растягивается в нижнюю границу шапки;
+        //  3) буквы GVox по одной перелетают по дуге в шапку (с размытием в движении);
+        //  4) логотип вспыхивает при посадке, проявляется шапка, карточки встают лесенкой.
+        async function animateSplashToMenu() {
+            stageAnimating = true;
+            let splash = document.getElementById('stage0-splash');
+            let mark = splash.querySelector('.splash-mark');
+            let tagline = splash.querySelector('.entry__tagline');
+            let startBtn = splash.querySelector('.entry__start');
 
+            // Исходные позиции — пока заставка ещё нетронута.
+            let from = logoLetters(mark);
+            let wordA = textRect(mark);
+            let fontSize = parseFloat(getComputedStyle(mark).fontSize);
+            let lineA = tagline ? tagline.getBoundingClientRect() : null;
 
+            let layer = document.createElement('div');
+            layer.className = 'fx-layer';
+            document.body.appendChild(layer);
+            let jobs = [];
 
+            // Линия-разделитель отделяется от подписи и ждёт своего полёта.
+            let line = null;
+            if (lineA) {
+                line = document.createElement('div');
+                line.className = 'fx-line is-resting';
+                Object.assign(line.style, { left: lineA.left + 'px', top: (lineA.bottom - 1) + 'px', width: lineA.width + 'px' });
+                layer.appendChild(line);
+            }
 
+            // Подпись и кнопка «втягиваются» в логотип.
+            let absorb = absorbIntoLogo(splash, tagline, startBtn, wordA, layer, line);
+            splash.classList.add('is-leaving');
+            await absorb;
+
+            let menu = document.getElementById('stage1-loading');
+            menu.classList.add('menu-entering');
+            showMenuNow();
+            menu.classList.add('menu-line-pending');
+            splash.classList.remove('is-leaving');
+            splash.getAnimations({ subtree: true }).forEach(an => an.cancel());
+            if (tagline) tagline.style.visibility = '';
+
+            let target = menu.querySelector('.setup-brand__mark');
+            let header = menu.querySelector('.setup-header');
+            let wordB = finalRect(target, textRect);
+            let headB = finalRect(header, el => el.getBoundingClientRect());
+            let k = wordB.height / wordA.height;
+            target.style.visibility = 'hidden';
+
+            // Сначала «Vox» по дуге собирается в шапке; «G» ждёт на месте.
+            let gJob = null, gOrigin = null;
+            const place = L => ({
+                tx: wordB.left + (L.rect.left - wordA.left) * k - L.rect.left,
+                ty: wordB.top + (L.rect.top - wordA.top) * k - L.rect.top
+            });
+            const spawn = L => {
+                let el = document.createElement('span');
+                el.className = 'fx-letter' + (L.accent ? ' is-accent' : '');
+                el.textContent = L.ch;
+                Object.assign(el.style, { left: L.rect.left + 'px', top: L.rect.top + 'px', fontSize: fontSize + 'px', lineHeight: L.rect.height + 'px' });
+                layer.appendChild(el);
+                return el;
+            };
+            let vox = from.filter(L => L.accent), g = from.filter(L => !L.accent);
+            vox.forEach((L, i) => {
+                let el = spawn(L), { tx, ty } = place(L);
+                let lift = 34 + i * 3;
+                jobs.push(el.animate([
+                    { transform: 'translate(0,0) scale(1)', filter: 'blur(0)', offset: 0 },
+                    { transform: `translate(${tx * .18}px, ${ty * .1 - lift}px) scale(${1 - (1 - k) * .25})`, filter: 'blur(.6px)', offset: .28 },
+                    { transform: `translate(${tx * .78}px, ${ty * .82}px) scale(${k + (1 - k) * .12})`, filter: 'blur(1.4px)', offset: .72 },
+                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, filter: 'blur(0)', offset: 1 }
+                ], { duration: 820, delay: 40 + i * 50, easing: 'cubic-bezier(.65,0,.2,1)', fill: 'forwards' }).finished);
+            });
+            // «G» — рогатка: пока «Vox» летит, она натягивается назад (от цели),
+            // копит свечение и дрожит от напряжения — и выстреливает в шапку.
+            // Её посадка запускает волну.
+            g.forEach(L => {
+                let el = spawn(L), { tx, ty } = place(L);
+                el.classList.add('is-g');
+                gOrigin = { x: L.rect.left + tx + L.rect.width * k / 2, y: L.rect.top + ty + L.rect.height * k / 2 };
+                let n = Math.hypot(tx, ty) || 1, ux = tx / n, uy = ty / n;
+                const back = d => `translate(${-ux * d}px, ${-uy * d}px)`;
+                const glow = a => `0 0 ${8 + a * 26}px rgba(120,175,255,${(.15 + a * .6).toFixed(2)})`;
+                gJob = el.animate([
+                    { transform: 'translate(0,0) scale(1)', textShadow: glow(0), filter: 'blur(0)', easing: 'cubic-bezier(.4,0,.6,1)' },
+                    { transform: `${back(34)} scale(1.07, .95)`, textShadow: glow(.8), offset: .6, easing: 'linear' },
+                    { transform: `translate(${-ux * 35 + 1.6}px, ${-uy * 35 - 1.2}px) scale(1.08, .94)`, textShadow: glow(.9), offset: .64, easing: 'linear' },
+                    { transform: `translate(${-ux * 36 - 1.6}px, ${-uy * 36 + 1.2}px) scale(1.08, .94)`, textShadow: glow(.95), offset: .68, easing: 'linear' },
+                    { transform: `${back(38)} scale(1.09, .93)`, textShadow: glow(1), filter: 'blur(0)', offset: .72, easing: 'cubic-bezier(.9,0,.35,1)' },
+                    { transform: `translate(${tx + ux * 6}px, ${ty + uy * 6}px) scale(${k * 1.06}, ${k * .96})`, textShadow: glow(.6), filter: 'blur(2.5px)', offset: .93, easing: 'cubic-bezier(.2,.8,.3,1)' },
+                    { transform: `translate(${tx}px, ${ty}px) scale(${k})`, textShadow: glow(0), filter: 'blur(0)' }
+                ], { duration: 1320, delay: 0, fill: 'forwards' }).finished;
+                jobs.push(gJob);
+                // Волна стартует ровно в момент касания (93% полёта «G»), не дожидаясь усадки.
+                setTimeout(() => {
+                    revealMenuFromLogo(menu, gOrigin);
+                    drawHeaderLine(menu, headB, gOrigin.x);
+                }, Math.round(1320 * .93));
+            });
+
+            await Promise.all(jobs).catch(() => {});
+            target.style.visibility = '';
+            target.classList.add('is-landing');
+            layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished
+                .catch(() => {}).then(() => layer.remove());
+            if (!gOrigin) {
+                let lr = target.getBoundingClientRect();
+                revealMenuFromLogo(menu, { x: lr.left + lr.width / 2, y: lr.top + lr.height / 2 });
+            }
+            setTimeout(() => target.classList.remove('is-landing'), 1400);
+            stageAnimating = false;
+        }
+
+        // Посадка логотипа «включает» меню: от логотипа расходится световая
+        // волна, и каждый элемент проявляется, когда она до него доходит —
+        // ближние раньше, дальние позже, чуть «вытягиваясь» со стороны логотипа.
+        function revealMenuFromLogo(menu, origin) {
+            let ox = origin.x, oy = origin.y;
+            let items = Array.from(menu.querySelectorAll(
+                '.setup-brand__sub, .setup-header__right, .section-label, .rise'))
+                .filter(el => el.offsetParent !== null);
+            let R = Math.hypot(Math.max(ox, innerWidth - ox), Math.max(oy, innerHeight - oy));
+            const WAVE_MS = 1100;  // волна быстро стартует и замедляется к краям (easeOutCubic)
+            // Момент, когда кольцо (easeOutCubic) доходит до расстояния d.
+            const reach = d => WAVE_MS * (1 - Math.cbrt(1 - Math.min(1, d / R)));
+
+            // Вспышка и два кольца (яркое ведущее + мягкое следом) рисуются на
+            // одном холсте покадрово: никаких огромных слоёв с размытыми тенями,
+            // которые подвешивали первый кадр волны.
+            drawWaveCanvas(ox, oy, R, WAVE_MS);
+
+            // Каждый элемент включается, когда его касается кольцо: с пружинкой
+            // и короткой вспышкой рамки. fill: backwards держит их скрытыми до очереди.
+            items.forEach(el => {
+                let r = el.getBoundingClientRect();
+                let cx = Math.max(r.left, Math.min(ox, r.right));
+                let cy = Math.max(r.top, Math.min(oy, r.bottom));
+                let dx = cx - ox, dy = cy - oy;
+                let n = Math.hypot(dx, dy) || 1;
+                let delay = reach(n);
+                el.animate([
+                    { opacity: 0, transform: `translate(${-dx / n * 22}px, ${-dy / n * 22}px) scale(.94)` },
+                    { opacity: 1, transform: `translate(${dx / n * 2}px, ${dy / n * 2}px) scale(1.012)`, offset: .62 },
+                    { opacity: 1, transform: 'none' }
+                ], { duration: 520, delay, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
+                if (el.matches('.option-card, .menu-row, .menu-tool, .menu-cut')) traceBorder(el, ox, oy, delay);
+            });
+            menu.classList.add('menu-fx');
+            menu.classList.remove('menu-entering');
+        }
+
+        // Граница шапки прорисовывается, когда «G» встала на место: линия
+        // растёт от «G» вправо, по ней бежит яркая «головка».
+        function drawHeaderLine(menu, headB, fromX) {
+            let y = headB.bottom - 1;
+            let x0 = Math.max(headB.left, Math.min(fromX, headB.right));
+            let left = document.createElement('div'), right = document.createElement('div');
+            let head = document.createElement('div');
+            left.className = right.className = 'fx-line fx-line--draw';
+            head.className = 'fx-head';
+            // Левый короткий кусок (до края шапки) и правый — от «G» до правого края.
+            Object.assign(left.style, { left: headB.left + 'px', top: y + 'px', width: (x0 - headB.left) + 'px', transformOrigin: '100% 50%' });
+            Object.assign(right.style, { left: x0 + 'px', top: y + 'px', width: (headB.right - x0) + 'px' });
+            Object.assign(head.style, { left: x0 + 'px', top: y + 'px' });
+            document.body.append(left, right, head);
+            const D = 820, E = 'cubic-bezier(.5,0,.2,1)';
+            left.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 260, easing: 'ease-out', fill: 'both' });
+            right.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: D, easing: E, fill: 'both' });
+            head.animate([
+                { transform: 'translate(-50%,-50%) translateX(0)', opacity: 1 },
+                { opacity: 1, offset: .85 },
+                { transform: `translate(-50%,-50%) translateX(${headB.right - x0}px)`, opacity: 0 }
+            ], { duration: D, easing: E, fill: 'both' });
+            // Нарисованная линия гаснет — под ней проявляется настоящая граница шапки.
+            setTimeout(() => menu.classList.remove('menu-line-pending'), D);
+            [left, right, head].forEach(el => el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, delay: D, fill: 'forwards' })
+                .finished.catch(() => {}).then(() => el.remove()));
+        }
+
+        // Волна на холсте: вспышка в точке «G» и два кольца с мягким свечением
+        // (свечение — несколько широких полупрозрачных обводок, без shadowBlur).
+        function drawWaveCanvas(ox, oy, R, waveMs) {
+            let dpr = Math.min(2, window.devicePixelRatio || 1);
+            let cv = document.createElement('canvas');
+            cv.className = 'fx-canvas';
+            cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+            document.body.appendChild(cv);
+            let ctx = cv.getContext('2d');
+            ctx.scale(dpr, dpr);
+            const easeOut = t => 1 - Math.pow(1 - t, 3);
+            const rings = [
+                { delay: 0, dur: waveMs, alpha: 1, width: 2 },
+                { delay: 110, dur: waveMs * 1.25, alpha: .45, width: 1.2 }
+            ];
+            const total = Math.max(...rings.map(r => r.delay + r.dur));
+            let t0 = performance.now();
+            const frame = now => {
+                let t = now - t0;
+                ctx.clearRect(0, 0, innerWidth, innerHeight);
+                // Вспышка
+                if (t < 420) {
+                    let p = t / 420, rr = 14 + 100 * easeOut(p);
+                    let g = ctx.createRadialGradient(ox, oy, 0, ox, oy, rr);
+                    g.addColorStop(0, `rgba(170,205,255,${.75 * (1 - p)})`);
+                    g.addColorStop(.4, `rgba(77,149,234,${.28 * (1 - p)})`);
+                    g.addColorStop(1, 'rgba(77,149,234,0)');
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(ox, oy, rr, 0, Math.PI * 2); ctx.fill();
+                }
+                rings.forEach(w => {
+                    let p = (t - w.delay) / w.dur;
+                    if (p <= 0 || p >= 1) return;
+                    let rad = R * 1.05 * easeOut(p);
+                    let a = w.alpha * (p < .7 ? 1 : 1 - (p - .7) / .3);
+                    ctx.beginPath(); ctx.arc(ox, oy, rad, 0, Math.PI * 2);
+                    [[16, .05], [9, .09], [4, .18]].forEach(([lw, k]) => {
+                        ctx.strokeStyle = `rgba(77,149,234,${a * k})`; ctx.lineWidth = lw; ctx.stroke();
+                    });
+                    ctx.strokeStyle = `rgba(140,190,255,${a * .9})`; ctx.lineWidth = w.width; ctx.stroke();
+                });
+                if (t < total) requestAnimationFrame(frame); else cv.remove();
+            };
+            requestAnimationFrame(frame);
+        }
+
+        // «Активация» карточки: от точки, где её коснулась волна, по рамке в обе
+        // стороны бегут две полоски света, встречаются напротив — и вся рамка
+        // коротко вспыхивает.
+        function traceBorder(card, ox, oy, delay) {
+            let r = card.getBoundingClientRect();
+            let deg = Math.atan2(ox - (r.left + r.width / 2), -(oy - (r.top + r.height / 2))) * 180 / Math.PI;
+            // Элемент подсветки создаём ровно в момент касания — не все сразу.
+            setTimeout(() => {
+                let tr = document.createElement('span');
+                tr.className = 'fx-trace';
+                tr.style.setProperty('--fx-start', deg + 'deg');
+                card.appendChild(tr);
+                tr.animate([
+                    { '--fx-p': '0deg', opacity: 1 },
+                    { '--fx-p': '180deg', opacity: 1, offset: .72 },
+                    { '--fx-p': '180deg', opacity: 0 }
+                ], { duration: 820, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'both' })
+                    .finished.catch(() => {}).then(() => tr.remove());
+            }, delay);
+        }
 
         // Запоминаем, что рабочий экран уже открывался: тогда из меню
         // можно вернуться к работе одной кнопкой, ничего не загружая заново.
@@ -162,6 +674,11 @@ let isProcessing = false;
         // ===== НЕДАВНИЕ ПРОЕКТЫ =====
         let recentProjectsCache = [];
 
+        function escapeHtml(s) {
+            let d = document.createElement('div');
+            d.innerText = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
 
         function formatRecentTime(ts) {
             if (!ts) return '';
@@ -335,12 +852,19 @@ let isProcessing = false;
         // в том же кольце его пункты, в центре — «назад». Пункты нажимают
         // прежние (скрытые) кнопки меню: вся логика, статусы и «×» — те же.
         const RADIAL_CATS = [
-            { key: 'studio', title: 'Студия записи', icon: 'mic', desc: 'Запись по таблице с суфлёром, распознавание и сверка, сборка эталонов', run: () => openTts() },
+            { key: 'new', title: 'Новый проект', icon: 'plus-circle', desc: 'Студия записи, текст из Excel, нарезка сырого WAV, готовые чанки' },
             { key: 'vars', title: 'Переменные', icon: 'tenge', desc: 'Пакетная сборка сумм, готовая папка с переменными, конструктор', cls: 'var' },
-            { key: 'tools', title: 'Утилиты', icon: 'zap', desc: 'Аудит проекта, PowerPoint, конвертер, клон, синтез по таблице', cls: 'tool' },
+            { key: 'tools', title: 'Утилиты', icon: 'zap', desc: 'Аудит проекта, названия по Excel, PowerPoint, конвертер, клон, очистка названий', cls: 'tool' },
             { key: 'recent', title: 'Недавние', icon: 'calendar', desc: 'Открыть один из последних проектов', cls: 'good' },
         ];
         const RADIAL_ITEMS = {
+            new: [
+                { title: 'Студия записи', icon: 'mic', src: '#btnTts' },
+                { title: 'Загрузить текст', icon: 'file-text', src: '#btnLoadExcel', clear: 'excel' },
+                { title: 'Резать сырой WAV', icon: 'sliders', src: '#btnLoadAudio', clear: 'project' },
+                { title: 'Настройки нарезки', icon: 'scissors', act: 'cut' },
+                { title: 'Открыть готовые чанки', icon: 'folder', src: '#btnLoadFolder', clear: 'project' },
+            ],
             vars: [
                 { title: 'Пакетная сборка', icon: 'refresh-cw', src: '.menu-row--var', cls: 'var' },
                 { title: 'Готовая папка', icon: 'folder', src: '.menu-row--good', cls: 'good' },
@@ -350,7 +874,7 @@ let isProcessing = false;
             ],
         };
         const RADIAL_CAT_KEY = 'gvox_radial_cat';
-        let radial = { open: true, cat: null, items: [], inited: false };
+        let radial = { open: true, cat: null, items: [], cutOpen: false, inited: false };
         function radialSaveCat() { try { localStorage.setItem(RADIAL_CAT_KEY, radial.cat || ''); } catch (e) {} }
         function radialLoadCat() {
             let c = null;
@@ -371,13 +895,14 @@ let isProcessing = false;
         }
         function radialList() {
             if (!radial.open) return [];
-            if (!radial.cat) return RADIAL_CATS.filter(c => c.key !== 'recent' || (recentProjectsCache || []).length).map(c => ({ ...c, isCat: !c.run }));
+            if (!radial.cat) return RADIAL_CATS.filter(c => c.key !== 'recent' || (recentProjectsCache || []).length).map(c => ({ ...c, isCat: true }));
             if (radial.cat === 'tools') return radialToolItems();
             if (radial.cat === 'recent') return radialRecentItems();
             return (RADIAL_ITEMS[radial.cat] || []).map(it => ({ ...it, node: it.src ? document.querySelector('.menu-grid ' + it.src) : null }));
         }
         function radialDesc(it) {
             if (it.desc) return it.desc;
+            if (it.act === 'cut') return `Сейчас: ${(radialEl('cutSummary') || {}).textContent || ''}. Обычно подбираются сами под запись`;
             let n = it.node;
             if (!n) return '';
             let d = n.querySelector('.option-desc, .menu-row__desc');
@@ -396,13 +921,17 @@ let isProcessing = false;
             return `<div class="radial__info-desc">${radial.cat ? 'Выберите действие' : 'Выберите раздел'}${n ? ` · клавиши <kbd>1</kbd>–<kbd>${n}</kbd>` : ''} · <kbd>Esc</kbd> — ${radial.cat ? 'назад' : 'свернуть'}</div>`;
         }
         function radialSetInfo(it) { radialEl('radialInfo').innerHTML = radialInfoHTML(it); }
-        // Под кольцом: параметры пакетной сборки, «очистить недавние».
+        // Под кольцом: параметры пакетной сборки, настройки нарезки, «очистить недавние».
         function radialExtraRender() {
             let ex = radialEl('radialExtra');
             let opts = document.querySelector('.menu-row__opts');
             let home = document.querySelector('.menu-grid .menu-row--var');
+            let cut = document.querySelector('details.menu-cut');
+            let col = document.querySelector('.menu-grid .setup-col');
             if (radial.open && radial.cat === 'vars' && opts) { if (opts.parentNode !== ex) ex.appendChild(opts); }
             else if (opts && home && opts.parentNode !== home) home.insertBefore(opts, home.querySelector('.menu-row__go'));
+            if (radial.open && radial.cat === 'new' && radial.cutOpen && cut) { if (cut.parentNode !== ex) { ex.appendChild(cut); cut.open = true; } }
+            else if (cut && col && cut.parentNode !== col) col.insertBefore(cut, radialEl('btnLoadFolder'));
             let rc = radialEl('radialRecentClear');
             if (radial.open && radial.cat === 'recent') {
                 if (!rc) ex.insertAdjacentHTML('beforeend', `<button type="button" class="radial__link" id="radialRecentClear" onclick="radialRecentClear()" title="Убрать все проекты из списка. Сами папки и файлы не удаляются">Очистить список</button>`);
@@ -456,6 +985,8 @@ let isProcessing = false;
                     b.onmouseenter = b.onfocus = () => { radialSetInfo(it); hot(true); };
                     b.onmouseleave = b.onblur = () => { radialSetInfo(null); hot(false); };
                     b.onclick = e => {
+                        let c = e.target.closest('[data-clear]');
+                        if (c) { e.stopPropagation(); clearLoaded(e, c.dataset.clear); setTimeout(() => radialRender(false), 200); return; }
                         b.classList.remove('is-press'); void b.offsetWidth; b.classList.add('is-press');
                         radialRun(it);
                     };
@@ -501,6 +1032,12 @@ let isProcessing = false;
         }
         // Статус на разделе — видно, не заходя внутрь
         function radialBadge(key) {
+            if (key === 'new') {
+                let on = ['#btnLoadExcel', '#btnLoadAudio', '#btnLoadFolder'].map(q => document.querySelector('.menu-grid ' + q)).filter(n => n && n.classList.contains('loaded'));
+                if (!on.length) return '';
+                let what = on.map(n => (n.querySelector('.option-desc') || {}).textContent || '').filter(Boolean).join(' · ');
+                return `<span class="radial__badge is-ok" title="Загружено: ${escapeHtml(what)}">✓${on.length > 1 ? on.length : ''}</span>`;
+            }
             if (key === 'recent') {
                 let n = (recentProjectsCache || []).length;
                 return n ? `<span class="radial__badge" title="Недавних проектов: ${n}">${n}</span>` : '';
@@ -509,7 +1046,8 @@ let isProcessing = false;
         }
         function radialRun(it) {
             if (!it) return;
-            if (it.isCat) { radialRipple(); radial.cat = it.key; radialSaveCat(); radialRender(true); return; }
+            if (it.isCat) { radialRipple(); radial.cat = it.key; radial.cutOpen = false; radialSaveCat(); radialRender(true); return; }
+            if (it.act === 'cut') { radial.cutOpen = !radial.cutOpen; radialExtraRender(); return; }
             document.body.dataset.mode = radial.cat || 'new';
             if (it.run) { it.run(); return; }
             if (it.node) setTimeout(() => { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }, 160);
@@ -519,6 +1057,7 @@ let isProcessing = false;
             if (!radial.open) radial.open = true;
             else if (radial.cat) radial.cat = null;
             else radial.open = false;
+            radial.cutOpen = false;
             radialSaveCat();
             radialRender(true);
         }
@@ -567,7 +1106,7 @@ let isProcessing = false;
             let grid = document.querySelector('.menu-grid'), t = null;
             // Перенос опций/настроек нарезки между меню и кольцом (radialExtraRender) — не изменение
             // статуса: без этого кольцо перерисовывалось бы посреди анимации и пункты прыгали.
-            const own = n => n.nodeType === 1 && n.matches && n.matches('.menu-row__opts');
+            const own = n => n.nodeType === 1 && n.matches && n.matches('.menu-row__opts, details.menu-cut');
             const refresh = () => {
                 let wait = (radial.animUntil || 0) - performance.now();
                 if (wait > 0) { t = setTimeout(refresh, wait + 20); return; }
@@ -630,7 +1169,7 @@ let isProcessing = false;
 
         // «Прожектор» в меню: карточка под курсором знает, где мышь (--mx/--my).
         (function initMenuSpotlight() {
-            const SEL = '.option-card, .menu-row, .menu-tool, .menu-recent__item';
+            const SEL = '.option-card, .menu-row, .menu-tool, .menu-recent__item, .menu-cut';
             let stage = document.getElementById('stage1-loading');
             if (!stage) return;
             let raf = 0, last = null;
@@ -661,6 +1200,27 @@ let isProcessing = false;
             }, { passive: true });
         })();
 
+        // Плавное раскрытие «Настроек нарезки» (у <details> анимации нет).
+        function toggleMenuCut(e) {
+            let det = e.currentTarget.parentElement;
+            let body = document.getElementById('menuCutBody');
+            if (!body || !body.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            e.preventDefault();
+            if (det.dataset.anim) return;
+            det.dataset.anim = '1';
+            const done = () => { delete det.dataset.anim; body.style.overflow = ''; };
+            body.style.overflow = 'hidden';
+            if (!det.open) {
+                det.open = true;
+                let h = body.scrollHeight;
+                body.animate([{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }],
+                             { duration: 260, easing: 'cubic-bezier(.2,.7,.3,1)' }).onfinish = done;
+            } else {
+                let h = body.scrollHeight;
+                body.animate([{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }],
+                             { duration: 200, easing: 'ease-in' }).onfinish = () => { det.open = false; done(); };
+            }
+        }
 
         function showWorkspace() {
             workspaceReady = true;
@@ -676,6 +1236,13 @@ let isProcessing = false;
             showStage(lastWork.stage);
         }
 
+        // Подсказка в шапке экрана подготовки
+        function setSetupStatus(text, ready) {
+            let el = document.getElementById('setupStatus');
+            if (!el) return;
+            el.innerText = text;
+            el.classList.toggle('setup-status--ready', !!ready);
+        }
 
         function resetSilence() { document.getElementById('addSilence').checked = false; }
 
@@ -831,10 +1398,46 @@ let isProcessing = false;
             if (state.has_audio) { showWorkspace(); playAudio(); }
         }
 
-        // Таблица загружена (для «Готовой папки» и аудита).
+        // Подсветка карточки «Загрузить текст (Excel)».
+        // Раньше этот код был продублирован в двух местах и мог разойтись.
         let excelIsLoaded = false;
         function markExcelLoaded(fileName) {
             excelIsLoaded = true;
+            let btnExcel = document.getElementById('btnLoadExcel');
+            if (!btnExcel) return;
+
+            btnExcel.classList.add('loaded');
+            let descExcel = document.getElementById('descExcel');
+            if (descExcel) descExcel.innerHTML = `<b>${fileName}</b>`;
+
+            setSetupStatus('Шаг 2 · Таблица подключена — выберите аудио или режим', true);
+        }
+
+        // «×» на загруженной карточке: сбросить и загрузить заново.
+        async function clearLoaded(e, what) {
+            e.stopPropagation(); e.preventDefault();
+            let label = what === 'excel' ? 'таблицу с текстом' : 'проект (нарезку и чанки)';
+            let ok = await showBeautifulConfirm(`ℹ️ <b>Сбросить ${label}?</b><br><br>`
+                + (what === 'excel' ? 'Фразы из таблицы будут выгружены — можно загрузить другую.'
+                                    : 'Проект закроется (файлы на диске не трогаются, прогресс сохранён) — можно нарезать или открыть заново.'),
+                'Сбросить', 'Отмена');
+            if (!ok) return;
+            try { await pywebview.api.clear_loaded(what); } catch (_) {}
+            if (what === 'excel') {
+                excelIsLoaded = false;
+                document.getElementById('btnLoadExcel').classList.remove('loaded');
+                document.getElementById('descExcel').innerText = 'Таблица не выбрана';
+            } else {
+                ['btnLoadAudio', 'btnLoadFolder'].forEach(id => document.getElementById(id).classList.remove('loaded'));
+                document.getElementById('descAudio').innerText = 'Новый проект';
+                document.getElementById('descFolder').innerText = 'Продолжить работу';
+                workspaceReady = false;
+                let br = document.getElementById('btnResume');
+                if (br) br.style.display = 'none';
+            }
+            setSetupStatus(excelIsLoaded ? 'Шаг 2 · Таблица подключена — выберите аудио или режим'
+                                         : 'Шаг 1 · Подключите таблицу с текстом', excelIsLoaded);
+            showToast(what === 'excel' ? 'Таблица сброшена' : 'Проект сброшен');
         }
 
         // ===== ЧТЕНИЕ ТАБЛИЦЫ: ВЫБОР КОЛОНОК =====
@@ -1032,7 +1635,200 @@ let isProcessing = false;
             }
         }
 
+        // ===== АВТОПОДБОР НАСТРОЕК НАРЕЗКИ =====
+
+        let tuneData = null;       // результат замеров по выбранному файлу
+        let tunePredictTimer = null;
+
+        async function loadAudio() {
+            // Шаг 1 — выбор файла (Python открывает системное окно)
+            let picked = await pywebview.api.pick_raw_audio();
+            if (!picked || picked.error === 'cancel') return;
+            if (picked.error) { showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked.error}`); return; }
+
+            // Шаг 2 — замеры. Могут занять пару секунд, показываем прогресс
+            updateProgress(30, `Анализ записи: ${picked.name}`);
+            let res;
+            try {
+                res = await pywebview.api.analyze_picked_audio();
+            } catch (e) {
+                document.getElementById('progressContainer').style.display = 'none';
+                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
+                return;
+            }
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
+                return;
+            }
+
+            openAutoTune(res);
+        }
+
+        function openAutoTune(res) {
+            tuneData = res;
+
+            let mins = Math.floor(res.duration_sec / 60);
+            let secs = Math.round(res.duration_sec % 60);
+            document.getElementById('tuneFile').innerHTML =
+                `<b>${res.name}</b> · ${mins} мин ${secs} сек`;
+
+            document.getElementById('tuneNoise').innerText  = `${res.noise_db} дБ`;
+            document.getElementById('tuneSpeech').innerText = `${res.speech_db} дБ`;
+            document.getElementById('tuneSpread').innerText = `${res.spread} дБ`;
+
+            let spreadNote = document.getElementById('tuneSpreadNote');
+            if (res.spread < 10) {
+                spreadNote.innerText = 'Мало: фон почти такой же громкий, как речь. Нарезка будет неточной.';
+                spreadNote.className = 'measure-card__note is-warn';
+            } else if (res.spread < 20) {
+                spreadNote.innerText = 'Небольшой запас — возможны ошибки на тихих словах.';
+                spreadNote.className = 'measure-card__note';
+            } else {
+                spreadNote.innerText = 'Хороший запас, речь чётко отделена от фона.';
+                spreadNote.className = 'measure-card__note is-good';
+            }
+
+            document.getElementById('tuneVerdict').innerHTML = res.target_phrases
+                ? `В таблице Excel <b>${res.target_phrases}</b> фраз — настройки подобраны так, чтобы кусков получилось примерно столько же.`
+                : `Таблица Excel не загружена, поэтому подобрано «на глаз» по громкости записи. Загрузите Excel — и подбор станет точнее.`;
+
+            restoreTuneSuggestion();
+
+            // Быстрые варианты: та же чувствительность, разная длина паузы
+            let presets = (res.variants || []).map(v =>
+                `<button class="preset-chip" onclick="applyTunePreset(${v.pause})">${v.pause} мс<small>≈ ${v.chunks} кусков</small></button>`
+            ).join('');
+            document.getElementById('tunePresets').innerHTML = presets;
+
+            document.getElementById('autoTuneOverlay').style.display = 'flex';
+        }
+
+        function closeAutoTune() {
+            document.getElementById('autoTuneOverlay').style.display = 'none';
+        }
+
+        function restoreTuneSuggestion() {
+            if (!tuneData) return;
+            document.getElementById('tunePause').value = tuneData.suggested.pause;
+            document.getElementById('tuneSens').value  = tuneData.suggested.sens;
+            document.getElementById('tunePad').value   = tuneData.suggested.pad;
+            renderTuneResult(tuneData.predicted_chunks);
+        }
+
+        function applyTunePreset(pause) {
+            document.getElementById('tunePause').value = pause;
+            runTunePredict();
+        }
+
+        // Пересчитываем не на каждое нажатие клавиши, а когда человек перестал печатать
+        function scheduleTunePredict() {
+            clearTimeout(tunePredictTimer);
+            document.getElementById('tuneResult').className = 'tune-result is-busy';
+            document.getElementById('tuneResult').innerHTML = 'Пересчитываю…';
+            tunePredictTimer = setTimeout(runTunePredict, 400);
+        }
+
+        async function runTunePredict() {
+            clearTimeout(tunePredictTimer);
+            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
+            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
+
+            let res = await pywebview.api.predict_cut(pause, sens);
+            renderTuneResult(res ? res.chunks : null);
+        }
+
+        function renderTuneResult(chunks) {
+            let el = document.getElementById('tuneResult');
+            if (chunks === null || chunks === undefined) {
+                el.className = 'tune-result';
+                el.innerHTML = 'Не удалось посчитать. Попробуйте выбрать файл заново.';
+                return;
+            }
+
+            let target = tuneData ? tuneData.target_phrases : 0;
+            let note = '';
+            let cls = 'tune-result is-good';
+
+            if (chunks <= 1) {
+                cls = 'tune-result is-bad';
+                note = 'Вся запись останется одним куском. Увеличьте чувствительность — например, до '
+                     + `${Math.min(-10, parseInt(document.getElementById('tuneSens').value) + 4)} дБ.`;
+            } else if (target && chunks < target * 0.6) {
+                cls = 'tune-result is-warn';
+                note = `Это заметно меньше, чем ${target} фраз в таблице. Уменьшите паузу или поднимите чувствительность.`;
+            } else if (target && chunks > target * 1.6) {
+                cls = 'tune-result is-warn';
+                note = `Это заметно больше, чем ${target} фраз в таблице — фразы дробятся на части. Увеличьте паузу.`;
+            } else if (target) {
+                note = `В таблице ${target} фраз — цифры сходятся.`;
+            } else {
+                note = 'Проверьте на слух после нарезки: слова не должны обрываться.';
+            }
+
+            el.className = cls;
+            el.innerHTML = `<span class="tune-result__num">≈ ${chunks}</span>`
+                         + `<span class="tune-result__text"><b>кусков получится</b><br>${note}</span>`;
+        }
+
+        async function startCut() {
+            let pause = clampToInput('inpPause', document.getElementById('tunePause').value, CUT_DEFAULTS.pause);
+            let sens  = clampToInput('inpSens',  document.getElementById('tuneSens').value,  CUT_DEFAULTS.sens);
+            let pad   = clampToInput('inpPad',   document.getElementById('tunePad').value,   CUT_DEFAULTS.pad);
+
+            // Держим ползунки на экране подготовки в согласии с тем, чем резали
+            document.getElementById('inpPause').value = pause;
+            document.getElementById('inpSens').value  = sens;
+            document.getElementById('inpPad').value   = pad;
+            updateSettingsText();
+
+            closeAutoTune();
+            updateProgress(0, 'Нарезка...');
+            let state = await pywebview.api.load_raw_audio(pause, sens, pad);
+            document.getElementById('progressContainer').style.display = 'none';
+
+            // Чанки нарезаны — это фундамент в любом случае. Дальше решает
+            // пользователь, а не программа: обычный режим или каскад переменных.
+            if (state && state.await_mode_choice) {
+                document.getElementById('modeChoiceOverlay').style.display = 'flex';
+                return;
+            }
+
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+            maybeNudgeExcelAfterCut();
+        }
+
+        async function chooseCutMode(mode) {
+            document.getElementById('modeChoiceOverlay').style.display = 'none';
+            updateProgress(0, mode === 'premade' ? 'Готовим каскад переменных...' : 'Открываем Audacity...');
+            document.getElementById('progressContainer').style.display = 'block';
+
+            let state = await pywebview.api.choose_mode_after_cut(mode);
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (mode === 'premade') {
+                nudgeExcelAfterCut = false;
+                document.getElementById('onlyStartCheck').checked = false;
+                handlePremadeResult(state);
+                return;
+            }
+
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+            maybeNudgeExcelAfterCut();
+        }
+
         // ===== «ГОТОВЫЕ ПЕРЕМЕННЫЕ»: НЕ ХВАТАЕТ start/end =====
+        // Единая точка разбора ответа для обоих мест, откуда грузится
+        // «Готовая папка» (обычная кнопка и режим сразу после нарезки) —
+        // чтобы поведение не расходилось между ними.
         let pendingMissing = [];
 
         function closeStartEndMissing() {
@@ -1391,6 +2187,20 @@ let isProcessing = false;
             showConnSuggest(state.connector_suggestions, 'workspace');
         }
 
+        // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ОТКРЫТЬ ГОТОВЫЕ ЧАНКИ" ---
+        async function loadFolder() {
+            updateProgress(0, 'Загрузка папки...');
+            document.getElementById('progressContainer').style.display = 'block';
+            let state = await pywebview.api.load_chunks_folder();
+            document.getElementById('progressContainer').style.display = 'none';
+            if (state && state.error) {
+                if (state.error !== "cancel") showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            if (state.has_audio) { showWorkspace(); playAudio(); }
+        }
+
         // --- ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ КНОПКИ "ГОТОВАЯ ПАПКА С ПЕРЕМЕННЫМИ" ---
         async function continueInitVarBatchPremade(hwnd) {
             let confirmed = await showBeautifulAlert("📂 <b>Готовая папка (Шаг 1 из 1):</b><br><br>Выберите <b>КОРНЕВУЮ ПАПКУ</b> с переменными.<br><br><span style='font-size:12px;color:var(--text-dim)'>В ней должны лежать файлы <b>start.wav</b> и <b>end.wav</b>, а также подпапки с суммами.</span>");
@@ -1417,6 +2227,13 @@ let isProcessing = false;
             if (state) updateUI(state);
 
             document.getElementById('progressContainer').style.display = 'none';
+            isProcessing = false;
+        }
+
+        async function stripFilenames() {
+            if (isProcessing) return;
+            isProcessing = true;
+            await pywebview.api.strip_words_from_filenames();
             isProcessing = false;
         }
 
@@ -1496,7 +2313,38 @@ let isProcessing = false;
         // === Режим «Суммы»: ручная разметка ярусов на обычной нарезке ===
         let sumModeActive = false;
 
+        async function toggleSumMode(checked) {
+            sumModeActive = checked;
+            // Снимаем фокус с галочки, иначе горячие клавиши (C, Z, A/D)
+            // считаются набором текста в поле и просто игнорируются.
+            let box = document.getElementById('sumModeCheck');
+            if (box) box.blur();
+            let sumState = await pywebview.api.toggle_sum_mode(checked);
+            renderSumPanel(sumState);
+            // Раньше экран переключался только при следующей навигации по
+            // дублям — галочка визуально «не срабатывала» сразу.
+            applySumModeLayout();
+            if (sumModeActive) {
+                await attachEmbeddedAudacity(true);
+            } else {
+                await detachEmbeddedAudacity();
+            }
+        }
 
+        async function setSumLogic(stage2) {
+            let sumState = await pywebview.api.toggle_sum_stage2(stage2);
+            renderSumPanel(sumState);
+            applySumModeLayout();
+
+            if (sumModeActive) {
+                // Пробуем сразу занять освободившееся место окном Audacity.
+                // Если он ещё не запущен — просто оставляем пустую рамку,
+                // окно встанет туда само после первой отправки (C).
+                await attachEmbeddedAudacity(true);
+            } else {
+                await detachEmbeddedAudacity();
+            }
+        }
 
         // В режиме «Суммы» на экране остаётся только то, что нужно для работы:
         // счётчики, подсказка про папку и три кнопки. Всё лишнее (монтажный
@@ -2984,6 +3832,15 @@ let isProcessing = false;
                 sumStage2IsPlaying = false;
             }
         }
+        async function sumStage2Stop() {
+            clearTimeout(sumStage2PlayTimeout);
+            sumStage2IsPlaying = false;
+            await pywebview.api.stop_audio();
+        }
+        async function sumStage2TogglePlay() {
+            if (sumStage2IsPlaying) await sumStage2Stop();
+            else await sumStage2Play();
+        }
 
         async function sumStage2SendToAudacity() {
             let btn = document.querySelector('#sumActionsPanel .btn-tile--primary');
@@ -3036,8 +3893,57 @@ let isProcessing = false;
             updateUI(state);
         }
 
+        // Клик по счётчикам «Суммы»: подробная карточка — сколько сохранено
+        // и осталось по каждому ярусу, и на каком числе юзер остановился
+        // в последний раз (чтобы не гадать, что уже сделано).
+        function showSumStatsModal() {
+            if (!lastSumState || !lastSumState.stats) return;
+            let rows = lastSumState.stats.map(s => {
+                let capText = s.cap ? `${s.done} из ${s.cap}` : `${s.done}`;
+                let remainingText = (s.remaining !== null && s.remaining !== undefined)
+                    ? `осталось ${s.remaining}` : '';
+                let lastText = s.last ? `последний: <b>${escapeHtml(s.last)}</b>` : 'ещё нет сохранённых';
+                return `<div class="sum-stats-row">
+                    <div class="sum-stats-tier">${escapeHtml(s.tier)} <span class="sum-stats-dir">(${escapeHtml(s.dir)})</span></div>
+                    <div class="sum-stats-nums">${capText}${remainingText ? ' · ' + remainingText : ''}</div>
+                    <div class="sum-stats-last">${lastText}</div>
+                </div>`;
+            }).join('');
+            showBeautifulAlert(`<div class="sum-stats-modal"><h4>Статистика по ярусам</h4>${rows}</div>`);
+        }
 
+        async function sumSendToAudacity() {
+            // Если Audacity закрыт, программа сама его запускает и ждёт
+            // ответа — это может занять до 20-30 секунд на холодном старте,
+            // а без индикатора кажется, что кнопка просто не работает.
+            let btn = document.querySelector('#sumManualActions .btn-tile--primary');
+            let origHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Открываю Audacity...'; }
 
+            let state;
+            try {
+                state = await pywebview.api.sum_send_to_audacity();
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+            }
+
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+            // Теперь Audacity точно запущен — сажаем его окно в отведённую рамку
+            if (sumModeActive && !audacityEmbedded) await attachEmbeddedAudacity(true);
+        }
+
+        async function sumManualSave() {
+            let state = await pywebview.api.sum_manual_save(document.getElementById('addSilence').checked);
+            if (state && state.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            updateUI(state);
+        }
 
         // Одна кнопка вместо «Остаток»/«Склеить» — бэкенд сам решает, какую
         // из двух логик применить, по тому, открыт ли сейчас дубль в
@@ -3438,9 +4344,27 @@ let isProcessing = false;
 
         // НОВОВВЕДЕНИЕ: Логика двойного нажатия для W (Good)
         let lastWTime = 0;
+        function triggerGoodDoubleTap() {
+            let now = new Date().getTime();
+            if (now - lastWTime < 400) { // 400 миллисекунд на двойной клик
+                processAction('good');
+                lastWTime = 0;
+            } else {
+                lastWTime = now;
+            }
+        }
 
         // НОВОВВЕДЕНИЕ: Логика двойного нажатия для R (Переменные)
         let lastRTime = 0;
+        function triggerVarDoubleTap() {
+            let now = new Date().getTime();
+            if (now - lastRTime < 400) {
+                processAction('variable');
+                lastRTime = 0;
+            } else {
+                lastRTime = now;
+            }
+        }
 
         function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
@@ -3636,6 +4560,12 @@ let isProcessing = false;
                 if(state.stats.excel_name) {
                     markExcelLoaded(state.stats.excel_name);
                 }
+                if(state.stats.project_name) {
+                    document.getElementById('btnLoadFolder').classList.add('loaded');
+                    document.getElementById('descFolder').innerText = state.stats.project_name;
+                    document.getElementById('btnLoadAudio').classList.add('loaded');
+                    document.getElementById('descAudio').innerText = state.stats.project_name;
+                }
             }
             // === АКТИВНАЯ ВКЛАДКА ===
             // Сравниваем с меткой data-mode: раньше сверяли по надписи на кнопке,
@@ -3830,7 +4760,13 @@ let isProcessing = false;
                 if (e.code === 'KeyZ') { e.preventDefault(); auditEdUndo(); return; }
                 if (e.code === 'KeyS') { e.preventDefault(); auditEdSave(); return; }
             }
-            if (isShown('stage5-listen') && listenCtrlKey(e)) return;          // Ctrl+S / Ctrl+Z в прослушке
+            if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyS' || e.code === 'KeyZ') && isShown('stage5-listen')
+                && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
+                && document.getElementById('customAlertOverlay').style.display !== 'flex') {
+                e.preventDefault();
+                if (e.code === 'KeyS') listenSave(true); else listenEdUndo();
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && ['KeyD', 'KeyC', 'KeyV'].includes(e.code) && ttsEd
                 && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'
                 && document.getElementById('stage4-tts').classList.contains('show-assembly')) {
@@ -3886,7 +4822,20 @@ let isProcessing = false;
                 return;
             }
 
-            if (uiAlertKey(e)) return;                          // открыт вопрос / сообщение
+            let alertOverlay = document.getElementById('customAlertOverlay');
+            if (alertOverlay && alertOverlay.style.display === 'flex') {
+                if (e.code === 'Enter' || e.code === 'Space') {
+                    e.preventDefault();
+                    closeCustomAlert(true);
+                } else if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeCustomAlert(false);
+                } else {
+                    let alt = document.getElementById('customAlertAlt');
+                    if (alt && alt.style.display !== 'none' && e.code === alt.dataset.key) { e.preventDefault(); closeCustomAlert('alt'); }
+                }
+                return;
+            }
 
             let helpOverlay = document.getElementById('menuHelpOverlay');
             if (helpOverlay && helpOverlay.style.display === 'flex') {
@@ -3904,9 +4853,33 @@ let isProcessing = false;
                 return;
             }
 
-            // Выбор start/end и ожидание меток —
+            // Окно автоподбора: Escape закрывает, печатать цифры не мешаем
+            let tuneOverlay = document.getElementById('autoTuneOverlay');
+            if (tuneOverlay && tuneOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeAutoTune();
+                }
+                return;
+            }
+
+            // Окно ручной настройки: Escape закрывает, остальные клавиши не мешаем
+            let manualOverlay = document.getElementById('manualOverlay');
+            if (manualOverlay && manualOverlay.style.display === 'flex') {
+                if (e.code === 'Escape') {
+                    e.preventDefault();
+                    closeManualSettings();
+                }
+                return;
+            }
+
+            // Выбор режима после нарезки, выбор start/end и ожидание меток —
             // везде нужен явный клик, без горячих клавиш, чтобы не было
             // случайного выхода куда-то на полпути.
+            let modeChoiceOverlay = document.getElementById('modeChoiceOverlay');
+            if (modeChoiceOverlay && modeChoiceOverlay.style.display === 'flex') {
+                return;
+            }
             let startEndMissingOverlay = document.getElementById('startEndMissingOverlay');
             if (startEndMissingOverlay && startEndMissingOverlay.style.display === 'flex') {
                 if (e.code === 'Escape') { e.preventDefault(); closeStartEndMissing(); }
@@ -4048,6 +5021,71 @@ let isProcessing = false;
             }
         };
 
+        // НОВОВВЕДЕНИЕ: Поддержка ожидания клика "ОК" в красивом алерте
+        window.customAlertCallback = null;
+
+        function showBeautifulAlert(message) {
+            return new Promise((resolve) => {
+                let el = document.getElementById('customAlertText');
+                if (el) {
+                    let { icon, tone, text } = extractLeadingIcon(message);
+                    let iconEl = document.getElementById('customAlertIcon');
+                    if (iconEl) {
+                        iconEl.innerHTML = iconHTML(icon);
+                        iconEl.className = 'custom-alert-icon icon-tone--' + tone;
+                    }
+                    // Используем HTML для форматирования текста (жирный шрифт, переносы)
+                    el.innerHTML = `<div class="alert-body">${text}</div>`;
+                    document.getElementById('customAlertOverlay').style.display = 'flex';
+                    window.customAlertCallback = resolve;
+                } else {
+                    resolve(true);
+                }
+            });
+        }
+
+        // Вопрос с двумя кнопками в том же окне: resolve(true) — «ok»,
+        // resolve(false) — «cancel», крестик или Escape.
+        // Три варианта: → 'ok' (Enter), 'alt' (клавиша altKey), false (Esc / крестик).
+        async function showBeautifulChoice(message, okText, altText, altKey, cancelText = 'Отмена') {
+            let alt = document.getElementById('customAlertAlt');
+            alt.innerHTML = `${escapeHtml(altText)} <kbd>${altKey}</kbd>`;
+            alt.dataset.key = 'Key' + altKey.toUpperCase();
+            alt.style.display = '';
+            document.querySelector('#customAlertOverlay .custom-alert-box').classList.add('custom-alert-box--wide');
+            let r = await showBeautifulConfirm(message, okText, cancelText);
+            return r === 'alt' ? 'alt' : (r ? 'ok' : false);
+        }
+
+        function showBeautifulConfirm(message, okText = 'ОК', cancelText = 'Отмена') {
+            let ok = document.getElementById('customAlertOk');
+            let cancel = document.getElementById('customAlertCancel');
+            ok.innerHTML = `${escapeHtml(okText)} <kbd>Enter</kbd>`;
+            cancel.innerHTML = `${escapeHtml(cancelText)} <kbd>Esc</kbd>`;
+            cancel.style.display = '';
+            return showBeautifulAlert(message);
+        }
+
+        // confirmed=true — закрыли по «ОК»/Enter/Space (действие после алерта
+        // продолжается); confirmed=false — закрыли крестиком/Escape (это
+        // отмена, вызвавший код должен остановиться, а не продолжать как
+        // будто нажали «ОК»).
+        function closeCustomAlert(confirmed = true) {
+            document.getElementById('customAlertOverlay').style.display = 'none';
+            // Окно снова обычное «сообщение с ОК» для следующего раза.
+            let cancel = document.getElementById('customAlertCancel');
+            if (cancel) cancel.style.display = 'none';
+            let alt = document.getElementById('customAlertAlt');
+            if (alt) alt.style.display = 'none';
+            document.querySelector('#customAlertOverlay .custom-alert-box').classList.remove('custom-alert-box--wide');
+            let ok = document.getElementById('customAlertOk');
+            if (ok) ok.innerHTML = 'ОК <kbd>Enter</kbd>';
+            // Если кто-то ждет ответа от алерта - даем сигнал идти дальше
+            if (window.customAlertCallback) {
+                window.customAlertCallback(confirmed);
+                window.customAlertCallback = null;
+            }
+        }
 
         // Клик по названию или тексту фразы (data-copy) — в буфер. Выделение мышью работает как обычно.
         function copyAttr(v) { return ` data-copy="${escapeHtml(String(v || ''))}"`; }
@@ -4072,6 +5110,14 @@ let isProcessing = false;
             showToast("Скопировано: " + text);
         }
 
+        function showToast(msg, duration) {
+            let { icon, text } = extractLeadingIcon(msg);
+            let toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.innerHTML = `${iconHTML(icon)}<span>${escapeHtml(text)}</span>`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), duration || 2200);
+        }
 
         // === Конвертер MP4 -> MP3/WAV ===
         // ----- Подготовка к клону -----
@@ -4161,96 +5207,6 @@ let isProcessing = false;
             } finally { btn.innerText = 'Нарезать в финальную папку'; cloneRefresh(); }
         }
 
-        // ----- Синтез по таблице: Excel → каждое значение готовым голосом, по одному, с паузами -----
-        let bsSt = null;
-        async function openBsynth() {
-            document.getElementById('bsynthOverlay').style.display = 'flex';
-            bsynthEvent(await pywebview.api.bsynth_state());
-        }
-        function closeBsynth() { document.getElementById('bsynthOverlay').style.display = 'none'; }
-        async function bsynthPick() {
-            let r = await pywebview.api.bsynth_pick_excel();
-            if (!r) return;
-            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
-            bsynthEvent(r);
-        }
-        const bsDur = s => s >= 3600 ? `${Math.floor(s / 3600)} ч ${Math.round(s % 3600 / 60)} мин` : s >= 60 ? `${Math.floor(s / 60)} мин ${Math.round(s % 60)} с` : `${s} с`;
-        function bsynthEvent(s) {
-            if (!s) return;
-            let first = !bsSt;
-            bsSt = s;
-            let opt = (sel, list, cur) => {
-                let el = document.getElementById(sel);
-                if (!el.options.length) el.innerHTML = list.map(o => `<option value="${o.index}">${escapeHtml(o.label)}</option>`).join('');
-                if (first) el.value = cur;
-            };
-            opt('bsynthVoice', s.voices, s.defaults.voice);
-            opt('bsynthLang', s.langs, s.defaults.lang);
-            if (first) document.getElementById('bsynthDelay').value = s.defaults.delay;
-            document.getElementById('bsynthFile').innerText = s.path
-                ? `${s.path.split(/[\\/]/).pop()} · лист «${s.sheet}» · строк: ${s.total_rows} · столбцы: ${s.cols.join(', ')}`
-                : 'Первая строка — заголовки столбцов: <firstname>, <surname>…';
-            document.getElementById('bsynthPreview').innerHTML = s.path && s.preview.length
-                ? `<table><tr>${s.cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr>${s.preview.map(r => `<tr>${r.map(v => `<td>${escapeHtml(v)}</td>`).join('')}</tr>`).join('')}</table>` : '';
-            document.getElementById('btnBsynthStart').disabled = !s.path || s.run;
-            document.getElementById('btnBsynthStart').style.display = s.run ? 'none' : '';
-            document.getElementById('btnBsynthPick').disabled = s.run;
-            document.getElementById('bsynthRun').style.display = s.total ? '' : 'none';
-            if (!s.total) return;
-            let pct = Math.round(100 * s.done / s.total);
-            document.getElementById('bsynthBar').style.width = pct + '%';
-            document.getElementById('bsynthCount').innerText = `${s.done} из ${s.total} · ${pct}%` + (s.errors ? ` · ошибок ${s.errors}` : '')
-                + (s.skipped ? ` · уже были: ${s.skipped}` : '');
-            document.getElementById('bsynthEta').innerText = s.run ? (s.pause ? 'на паузе' : s.eta_s != null ? `осталось ~${bsDur(s.eta_s)}` : 'считаю время…')
-                : (s.left ? 'остановлено' : 'готово');
-            let c = s.current;
-            document.getElementById('bsynthNow').innerHTML = c && s.run
-                ? `<span class="bsynth-spin"></span> Сейчас: строка ${c.row} · ${escapeHtml(c.col)} · <b>${escapeHtml(c.text || c.value)}</b>${s.voice_name ? ` <span class="tts-dim">— голос ${escapeHtml(s.voice_name)}</span>` : ''}`
-                : s.run && !s.pause ? '<span class="tts-dim">Пауза перед следующим запросом — бережём сервис…</span>' : '';
-            // по столбцам: строк → файлов; повторы и пустые — почему файлов меньше строк
-            let lack = (s.report || []).reduce((n, r) => n + Math.max(0, r.files - r.have), 0);
-            document.getElementById('bsynthReport').innerHTML = (s.report || []).map(r => {
-                let why = [r.repeat_n ? `повторов ${r.repeat_n} — копии в папке повторов` : '', r.empty ? `пустых ячеек ${r.empty}` : ''].filter(Boolean).join(', ');
-                return `<details class="bsynth-col"><summary><b>${escapeHtml(r.col)}</b> — строк ${r.rows} → файлов ${r.files}`
-                    + `${why ? ` <span class="tts-dim">(${why})</span>` : ''} · в папке ${r.have}${r.have < r.files ? ` <span class="clone-bad">· не хватает ${r.files - r.have}</span>` : ''}</summary>`
-                    + (r.repeats.length ? `<div class="bsynth-reps">Повторы — копией в ${r.dup_dirs.map(d => '«' + escapeHtml(d) + '»').join(', ')}: ${r.repeats.map(x => `<span>${escapeHtml(x.value)} <i>строки ${x.rows.join(', ')}</i></span>`).join('')}</div>` : '<div class="bsynth-reps tts-dim">Повторов нет</div>')
-                    + `</details>`;
-            }).join('');
-            if (!s.run && !s.left && lack) document.getElementById('bsynthEta').innerText = `не хватает файлов: ${lack}`;
-            document.getElementById('bsynthMsg').innerText = s.msg || '';
-            document.getElementById('bsynthRecent').innerHTML = s.recent.slice().reverse().map(it =>
-                `<div class="${it.status === 'error' ? 'clone-bad' : ''}">${it.status === 'error' ? '✕' : '✓'} ${it.row} · ${escapeHtml(it.col)} · ${escapeHtml(it.text || it.value)}${it.status === 'error' ? ' — ' + escapeHtml(it.error) : ''}</div>`).join('');
-            let pb = document.getElementById('btnBsynthPause');
-            pb.style.display = s.run ? '' : 'none'; pb.innerText = s.pause ? 'Продолжить' : 'Пауза';
-            document.getElementById('btnBsynthStop').style.display = s.run ? '' : 'none';
-            document.getElementById('btnBsynthRetry').style.display = !s.run && s.errors ? '' : 'none';
-        }
-        // Сколько строк — спрашиваем перед стартом.
-        async function bsynthStart() {
-            let s = bsSt;
-            if (!s || !s.path) return;
-            let n = s.total_rows, cols = s.cols.length;
-            document.querySelector('#customAlertOverlay .custom-alert-box').classList.add('custom-alert-box--wide');
-            let ok = await showBeautifulConfirm(`<b>Сколько строк синтезировать?</b><br><br>`
-                + `В таблице ${n} строк, в строке ${cols} ${cols === 1 ? 'значение' : 'значения'}. Порядок — строка за строкой, слева направо; готовые файлы пропускаются.`
-                + `<div class="bsynth-ask"><label>С строки<input type="number" id="bsFrom" min="1" max="${n}" value="1"></label>`
-                + `<label>Сколько строк<input type="number" id="bsCount" min="1" max="${n}" value="${n}"></label></div>`, 'Начать', 'Отмена');
-            if (!ok) return;
-            let from = Math.max(1, Math.min(n, +document.getElementById('bsFrom').value || 1));
-            let cnt = Math.max(1, Math.min(n - from + 1, +document.getElementById('bsCount').value || n));
-            let r = await pywebview.api.bsynth_start(from, cnt, +document.getElementById('bsynthDelay').value || 4,
-                +document.getElementById('bsynthVoice').value, +document.getElementById('bsynthLang').value);
-            if (r && r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
-            bsynthEvent(r);
-        }
-        async function bsynthPause() { bsynthEvent(await pywebview.api.bsynth_pause(!(bsSt && bsSt.pause))); }
-        async function bsynthStop() { bsynthEvent(await pywebview.api.bsynth_stop()); }
-        async function bsynthRetry() {
-            let r = await pywebview.api.bsynth_retry_failed();
-            if (r && r.error) { showToast(r.error); return; }
-            bsynthEvent(r);
-        }
-
         function openConverter() {
             document.getElementById('convertSourceLabel').innerText = 'Файлы не выбраны';
             document.getElementById('convertOutputLabel').innerText = 'Папка не выбрана';
@@ -4277,6 +5233,7 @@ let isProcessing = false;
             label.innerText = (result && result.path) ? result.path : 'Папка не выбрана';
         }
 
+        let lastConvertedFiles = [];
 
         async function runConversion() {
             let btn = document.getElementById('btnRunConvert');
@@ -4296,12 +5253,103 @@ let isProcessing = false;
                     msg += `<br><br>Не удалось (${result.errors.length}):<br>` + result.errors.map(escapeHtml).join('<br>');
                 }
 
+                lastConvertedFiles = result.output_files || [];
                 closeConverter();
-                showBeautifulAlert(msg);
+
+                if (lastConvertedFiles.length) {
+                    document.getElementById('postConvertText').innerHTML = msg;
+                    document.getElementById('postConvertOverlay').style.display = 'flex';
+                } else {
+                    showBeautifulAlert(msg);
+                }
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Конвертировать';
             }
+        }
+
+        // === «Сопоставить названия по Excel»: короткое имя файла (da_1_1)
+        // ищем как конец полного из Excel (gizat_ru_da_1_1), переименовываем
+        // и раскладываем по языкам ru/kz/Прочее ===
+        function openRenameMatch() {
+            document.getElementById('renameMatchFolderLabel').innerText = 'Папка не выбрана';
+            document.getElementById('renameMatchExcelLabel').innerText = 'Файл не выбран';
+            document.getElementById('renameMatchResult').style.display = 'none';
+            document.getElementById('renameMatchLangRu').checked = false;
+            document.getElementById('renameMatchLangKz').checked = false;
+            document.getElementById('renameMatchOverlay').style.display = 'flex';
+        }
+
+        function closeRenameMatch() {
+            document.getElementById('renameMatchOverlay').style.display = 'none';
+        }
+
+        async function pickRenameMatchFolder() {
+            let result = await pywebview.api.rename_match_pick_folder();
+            let label = document.getElementById('renameMatchFolderLabel');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Папка не выбрана';
+                return;
+            }
+            label.innerText = `${result.folder} — файлов: ${result.count}`;
+        }
+
+        async function pickRenameMatchExcel() {
+            let result = await pywebview.api.rename_match_pick_excel();
+            let label = document.getElementById('renameMatchExcelLabel');
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') label.innerText = (result && result.error) || 'Файл не выбран';
+                return;
+            }
+            label.innerText = `${result.file} — названий: ${result.count}`;
+        }
+
+        async function runRenameMatch() {
+            let btn = document.getElementById('btnRunRenameMatch');
+            let langs = [];
+            if (document.getElementById('renameMatchLangRu').checked) langs.push('ru');
+            if (document.getElementById('renameMatchLangKz').checked) langs.push('kz');
+
+            btn.disabled = true;
+            btn.innerText = 'Сопоставляю...';
+            let result;
+            try {
+                result = await pywebview.api.rename_match_run(langs);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Сопоставить и разложить';
+            }
+
+            if (!result || result.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                return;
+            }
+
+            let parts = [`${iconHTML('check-circle')} Переименовано и разложено: <b>${result.renamed_count}</b>`];
+            if (result.unmatched_count) {
+                parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Не нашлось пары в Excel (${result.unmatched_count}):<br>` +
+                    result.unmatched.map(u => `${escapeHtml(u.file)} — ${escapeHtml(u.detail)}`).join('<br>') + `</div>`);
+            }
+            if (result.ambiguous_count) {
+                parts.push(`<div style="margin-top:10px">${iconHTML('alert-triangle')} Неоднозначно, оставлено как есть (${result.ambiguous_count}):<br>` +
+                    result.ambiguous.map(a => `${escapeHtml(a.file)} — ${escapeHtml(a.reason)}`).join('<br>') + `</div>`);
+            }
+            parts.push(`<button class="custom-alert-btn" style="margin-top:14px; width:100%;" onclick="exportRenameMatchReport()">${iconHTML('file-text')} Экспортировать полный отчёт в Excel</button>`);
+
+            let box = document.getElementById('renameMatchResult');
+            box.innerHTML = parts.join('');
+            box.style.display = 'block';
+        }
+
+        async function exportRenameMatchReport() {
+            let result = await pywebview.api.rename_match_export_report();
+            if (!result || result.error) {
+                if (!result || result.error !== 'cancel') {
+                    showBeautifulAlert(`<b>Ошибка</b><br><br>${(result && result.error) || 'Неизвестная ошибка'}`);
+                }
+                return;
+            }
+            showToast(`Отчёт сохранён: ${result.path}`);
         }
 
         // === «Таблица → PowerPoint»: построчный экспорт Excel в слайды ===
@@ -4442,6 +5490,59 @@ let isProcessing = false;
             box.innerHTML = `${iconHTML('check-circle')} Готово — слайдов: <b>${result.slides}</b><br>${escapeHtml(result.path)}`;
             box.style.display = 'block';
             showToast(`Презентация сохранена: ${result.path}`);
+        }
+
+        // --- Ненавязчивая подсказка "что дальше" после конвертации ---
+        function closePostConvert() {
+            document.getElementById('postConvertOverlay').style.display = 'none';
+        }
+
+        async function startCutFromConverted() {
+            let path = lastConvertedFiles[0];
+            closePostConvert();
+            if (!path) return;
+
+            let picked = await pywebview.api.select_raw_audio_path(path);
+            if (!picked || picked.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${picked ? picked.error : 'Файл не найден'}`);
+                return;
+            }
+
+            showMenu();
+            updateProgress(30, `Анализ записи: ${picked.name}`);
+            let res;
+            try {
+                res = await pywebview.api.analyze_picked_audio();
+            } catch (e) {
+                document.getElementById('progressContainer').style.display = 'none';
+                showBeautifulAlert(`❌ <b>Не удалось проанализировать запись</b><br><br>${e}`);
+                return;
+            }
+            document.getElementById('progressContainer').style.display = 'none';
+
+            if (!res || res.error) {
+                showBeautifulAlert(`❌ <b>Ошибка</b><br><br>${String(res && res.error || 'Пустой ответ').replace(/\n/g, '<br>')}`);
+                return;
+            }
+
+            nudgeExcelAfterCut = true;
+            openAutoTune(res);
+        }
+
+        // --- Ненавязчивая подсказка загрузить Excel после нарезки ---
+        // Срабатывает только для нарезки, начатой из конвертера, и только
+        // один раз — чтобы не надоедать при обычной работе.
+        let nudgeExcelAfterCut = false;
+
+        function closePostCutExcel() {
+            document.getElementById('postCutExcelOverlay').style.display = 'none';
+        }
+
+        function maybeNudgeExcelAfterCut() {
+            if (!nudgeExcelAfterCut) return;
+            nudgeExcelAfterCut = false;
+            if (excelIsLoaded) return;
+            document.getElementById('postCutExcelOverlay').style.display = 'flex';
         }
 
         // === НОВОВВЕДЕНИЕ: Логика системы поиска ===
@@ -5032,25 +6133,8 @@ let isProcessing = false;
             document.getElementById('auditEdCanvas').onmousedown = auditEdDown;
             auditEdRender();
         }
-        // Правка любой записи по пути (например, начало / конец из «Фразы_Переменные» прямо из «Сборки»)
-        async function auditEdOpenPath(path, after) {
-            await pywebview.api.audit_play_stop();
-            let r = await pywebview.api.audit_edit_load(path);
-            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-            aEd = { ...r, k: -1, sel: null, cur: 0, head: null, hist: [], saved: JSON.stringify(r.ranges) };
-            aEdAfter = after || null;
-            document.getElementById('auditEdTitle').textContent = 'Правка записи — ' + r.name;
-            document.getElementById('auditEdOverlay').style.display = 'flex';
-            document.getElementById('auditEdCanvas').onmousedown = auditEdDown;
-            auditEdRender();
-        }
-        async function ttsCtxEdit(path) {
-            await ttsStopPlay();
-            await auditEdOpenPath(path, () => { let t = ttsCurTake(); if (t) ttsTiersLoad(t.i); });
-        }
         const aEdLen = () => aEd.ranges.reduce((s, [a, b]) => s + b - a, 0);
         const aEdDirty = () => aEd && JSON.stringify(aEd.ranges) !== aEd.saved;
-        let aEdAfter = null;                        // что сделать после закрытия правки (например, перечитать «Сборку»)
         async function auditEdClose(force) {
             if (!aEd) return;
             if (!force && aEdDirty() && !(await showBeautifulConfirm('Правка не сохранена. Закрыть без сохранения?', 'Закрыть', 'Остаться'))) return;
@@ -5058,7 +6142,6 @@ let isProcessing = false;
             pywebview.api.audit_play_stop();
             document.getElementById('auditEdOverlay').style.display = 'none';
             aEd = null;
-            if (aEdAfter) { let f = aEdAfter; aEdAfter = null; f(); }
         }
         function auditEdDraw() {
             let cv = document.getElementById('auditEdCanvas'), dpr = window.devicePixelRatio || 1;
@@ -5477,6 +6560,18 @@ let isProcessing = false;
             document.getElementById('constructorEndOverlay').style.display = 'flex';
         }
 
+        async function openConstructorFromSumMode() {
+            // Режим «Суммы» уже знает папку, старт и энд — конструктору не
+            // нужно спрашивать их заново диалогами, как при заходе из
+            // главного меню.
+            let state = await pywebview.api.constructor_open_from_sum_mode();
+            if (state && state.error) {
+                showBeautifulAlert(`<b>Ошибка</b><br><br>${state.error}`);
+                return;
+            }
+            constructorState = state;
+            openConstructorScreen();
+        }
 
         async function constructorPickEnd() {
             document.getElementById('constructorEndOverlay').style.display = 'none';
@@ -6134,6 +7229,7 @@ let isProcessing = false;
             ttsRenderRail();
             ttsRenderCurrent();
             ttsRenderAssembly();
+            ttsCutChipUpdate();
             ttsShowMarksPending(tts.marks_pending);
             // Audacity встроен — текущий дубль сам уезжает туда.
             let cur = ttsCurTake();
@@ -6349,7 +7445,7 @@ let isProcessing = false;
         const ttsTierLangs = () => ttsTR && ttsTR.bil ? [...new Set(ttsTR.tiers.map(t => t.lang).filter(Boolean))] : [null];
         function ttsTiersLayout(lang) {
             let r = ttsTR, x = 0, out = [];
-            if (r.ctx.start) { out.push({ ctx: 'start', x, w: r.ctx.start.len, peaks: r.ctx.start.peaks, name: r.ctx.start.name, path: r.ctx.start.path }); x += r.ctx.start.len; }
+            if (r.ctx.start) { out.push({ ctx: 'start', x, w: r.ctx.start.len, peaks: r.ctx.start.peaks, name: r.ctx.start.name }); x += r.ctx.start.len; }
             r.tiers.filter(t => !lang || t.lang === lang).forEach(t => {
                 let fixed = t.exists && !t.write && t.file_len;
                 let pre = fixed ? 0 : t.pre;
@@ -6358,7 +7454,7 @@ let isProcessing = false;
                 out.push({ k: t.k, x: x + pre, w, peaks: fixed ? t.file_peaks : t.peaks, fixed, pre, post, t });
                 x += pre + w + post;
             });
-            if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name, path: r.ctx.end.path }); x += r.ctx.end.len; }
+            if (r.ctx.end) { out.push({ ctx: 'end', x, w: r.ctx.end.len, peaks: r.ctx.end.peaks, name: r.ctx.end.name }); x += r.ctx.end.len; }
             return { clips: out, total: x };
         }
         function ttsDrawPeaks(cv, peaks) {
@@ -6387,8 +7483,7 @@ let isProcessing = false;
                     <i class="tts-tiers__edge is-r" onpointerdown="ttsTierEdge(event, ${t.k}, 'b')"></i></div>`).join('');
             let clipsHTML = (lay, row) => lay.clips.map((c, n) => c.ctx
                 ? `<div class="tts-tiers__clip is-ctx" style="left:${pct(c.x)};width:${pct(c.w)}" title="${c.ctx === 'start' ? 'Конец начала фразы' : 'Начало продолжения'} «${escapeHtml(c.name)}»">
-                     <canvas data-row="${row}" data-n="${n}"></canvas><span>${c.ctx === 'start' ? '… ' + escapeHtml(c.name) : escapeHtml(c.name) + ' …'}</span>
-                     ${c.path ? `<button type="button" class="tts-tiers__ctxedit" data-path="${escapeHtml(c.path)}" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation(); ttsCtxEdit(this.dataset.path)" title="Править эту запись из «Фразы_Переменные» — подрезать начало и конец (исходник — в «_до_правок»)">&#9998;</button>` : ''}</div>`
+                     <canvas data-row="${row}" data-n="${n}"></canvas><span>${c.ctx === 'start' ? '… ' + escapeHtml(c.name) : escapeHtml(c.name) + ' …'}</span></div>`
                 : `${c.pre ? `<div class="tts-tiers__gap" style="left:${pct(c.x - c.pre)};width:${pct(c.pre)}">${c.pre}</div>` : ''}
                    <div class="tts-tiers__clip ${c.fixed ? 'is-fixed' : ''}" style="left:${pct(c.x)};width:${pct(c.w)}"
                      ${c.fixed ? `onpointerdown="event.stopPropagation(); ttsTierPlay(${c.k})" title="${escapeHtml(c.t.label)} ${escapeHtml(c.t.value)} — уже готов, берётся как есть"`
@@ -6397,7 +7492,7 @@ let isProcessing = false;
                    ${c.post ? `<div class="tts-tiers__gap" style="left:${pct(c.x + c.w)};width:${pct(c.post)}">${c.post}</div>` : ''}`).join('');
             let chips = r.tiers.map(x => `<div class="tts-tiers__chip ${(x.exists || x.shared) && !x.write ? 'is-skip' : ''}">
                     <button type="button" class="tts-tiers__play" onclick="ttsTierPlay(${x.k})" title="Послушать ярус">&#9654;</button>
-                    <span class="tts-tiers__lbl" title="Текст значения (как оно читается) — нажмите, чтобы изменить">${lg(x)}<b onclick="ttsTierEditText(${x.k}, this)">${escapeHtml(x.text || x.value)}</b><button type="button" class="tts-tiers__edit" onclick="ttsTierEditText(${x.k}, this.previousElementSibling)" title="Изменить текст значения">&#9998;</button></span>
+                    <span class="tts-tiers__lbl">${lg(x)}<b>${escapeHtml(x.text || x.value)}</b></span>
                     <span class="tts-tiers__txt">${escapeHtml(x.label)} · ${escapeHtml(x.value)}</span>
                     ${x.exists && !x.write ? '' : `<span class="tts-tiers__knob" title="Темп яруса (без смены высоты голоса)">темп
                         <button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', -0.03)">&minus;</button><b>${Math.round(x.tempo * 100)}%</b><button type="button" onclick="ttsTierKnob(${x.k}, 'tempo', 0.03)">+</button></span>
@@ -6599,26 +7694,6 @@ let isProcessing = false;
             ttsTiersRender();
             await ttsTiersSend();
             ttsTierPlay(k);
-        }
-        // Изменить саму фразу значения (текст, как оно читается): «Audi Q4» → «Ауди кью четыре». Enter — сохранить, Esc — отмена.
-        function ttsTierEditText(k, el) {
-            let x = ttsTR && ttsTR.tiers[k];
-            if (!x || el.querySelector && el.querySelector('input')) return;
-            let old = x.text || x.value;
-            el.innerHTML = `<input class="tts-tiers__input" value="${escapeHtml(old)}" onclick="event.stopPropagation()">`;
-            let inp = el.firstElementChild, done = false;
-            inp.focus(); inp.select();
-            let finish = async save => {
-                if (done) return; done = true;
-                let v = inp.value.trim();
-                if (!save || !v || v === old) { el.innerText = old; return; }
-                let r = await pywebview.api.tts_var_set_text(x.sheet, x.cat, x.value, v);
-                if (r && r.state) { tts = r.state; ttsRender(); if (r.prompt) ttsRenderPrompt(r.prompt); }
-                let t = ttsCurTake(); if (t) await ttsTiersLoad(t.i);
-                showToast(`Текст значения «${x.value}»: ${r && r.text || v}`, 2500);
-            };
-            inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); finish(false); } };
-            inp.onblur = () => finish(true);
         }
         // «Два языка» в одной записи: дубль строки — два куска, RU и KZ, границы вручную.
         async function ttsTakeBil(on) {
@@ -7500,7 +8575,9 @@ let isProcessing = false;
                     } else ttsShowAssembly(false);
                 }
                 else if (ttsTierBackHere(t) && !ttsRec.on) await ttsTierReturn(`Фраза сохранена — обратно к строке ${ttsTierBack.name}`);
+                else if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i);
                 else if (ttsCurTake() && !ttsCurTake().unit_saved) ttsTogglePlay();
+                ttsCutChipUpdate();
             } finally { ttsApproving = false; }
         }
 
@@ -7582,6 +8659,7 @@ let isProcessing = false;
             ttsRender();
             ttsLoadPrompt();
             showToast(`Удалён: ${res.deleted} — Ctrl+Z вернёт`);
+            if (ttsCutMode && !ttsRec.on) ttsCutNext(t.i - 1);
         }
         async function ttsUndoDelete() {
             await ttsStopPlay();
@@ -8223,7 +9301,7 @@ let isProcessing = false;
                 tts = res.state; ttsRender();
                 showToast(res.restored);
             }
-            await pywebview.api.tts_live_fast(ttsFastOn());
+            await pywebview.api.tts_live_fast(ttsFastOn() || ttsFlowActive());
             ttsFastRender();
             ttsLiveSt.micOff = document.getElementById('stage4-tts').classList.contains('show-assembly');
             if (ttsLiveSt.micOff) pywebview.api.tts_live_mic(false);
@@ -8514,7 +9592,7 @@ let isProcessing = false;
                 let other = (pr.modes || []).filter(m => m.key !== (pr.mode || 'phrases'));
                 text.innerHTML = pr.sum_logic ? 'Суммы прочитаны — обе логики 🎉' : vals ? 'Все строки прочитаны 🎉' : 'Все фразы прочитаны 🎉';
                 // переключатель режимов (и логик сумм) — и здесь
-                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)} ${pr.total} из ${pr.total}</span>`;
+                meta.innerHTML = `<span>${ttsModesHTML(pr)}${ttsSumLogicHTML(pr)}${ttsTierRedoHTML(pr)}${ttsFlowHTML()} ${pr.total} из ${pr.total}</span>`;
                 next.innerHTML = other.length
                     ? `Дальше: ${other.map(m => `<button type="button" class="tts-reuse-chip is-on" onclick="ttsPromptModeSet('${m.key}')">${escapeHtml(m.label)} →</button>`).join(' ')}
                        <span class="tts-dim">· или сдавайте дубли: клик по карточке внизу — сборка, Enter — сохранить</span>`
@@ -8564,6 +9642,7 @@ let isProcessing = false;
             }
             if (pr.sum_logic) modes += ttsSumLogicHTML(pr);
             modes += ttsTierRedoHTML(pr);
+            modes += ttsFlowHTML();
             if (pr.tier_tpl) modes += pr.tier_tpl.from
                 ? ` <button type="button" class="tts-reuse-chip ${pr.tier_tpl.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!pr.tier_tpl.auto})" title="Шаблон ярусов — строка ${escapeHtml(pr.tier_tpl.from)}. Включено — записанная строка сохраняется сама, без «Сборки»">по шаблону сразу${pr.tier_tpl.auto ? ' ✓' : ''}</button>`
                 : ` <span class="tts-dim" title="Сохраните первую строку в «Сборке» — её тайминг станет шаблоном для остальных">шаблон — после первой строки</span>`;
@@ -8620,6 +9699,15 @@ let isProcessing = false;
             ttsLoadPrompt();
             if (error) { showBeautifulAlert('⚠️ Запись остановилась с ошибкой:<br><br>' + escapeHtml(error)); return; }
             showToast('Запись сохранена в папку «Записи»');
+            let cut = ttsCutList().length;
+            if (ttsFlowActive() && cut) {
+                // Поток: прочитали — теперь спокойно срезаем, строка за строкой.
+                showBeautifulAlert(`✂️ <b>Записано строк: ${cut}</b><br><br>Теперь срезка: каждая строка откроется в «Сборке»,
+                    поправьте границы ярусов и нажмите <b>Enter</b> — сохранится и откроется следующая. Esc — прервать,
+                    продолжить потом — «✂ Срезка» в суфлёре.<br><br>
+                    <button type="button" class="custom-alert-btn" onclick="closeCustomAlert(); ttsCutStart()">Начать срезку</button>`);
+                return;
+            }
             ttsShowRedo(true);
         }
 
@@ -8896,8 +9984,68 @@ let isProcessing = false;
             ttsAutoAsmRender();
             showToast(on ? 'Записали фразу — сразу открою «Сборку» для проверки' : 'Сборка — только по кнопке');
         }
+        // ----- «Поток»: суммы/даты читаются подряд, без «Сборки» и ожидания распознавания;
+        // срезка потом — «✂ Срезка N»: строка за строкой в обычной «Сборке», Enter — сохранить и дальше. -----
+        function ttsFlowOn() {
+            try { return localStorage.getItem('gvox_tts_flow') !== '0'; } catch (e) { return true; }
+        }
+        const ttsValueMode = () => !!tts && (tts.prompt_mode || 'phrases') !== 'phrases';
+        const ttsFlowActive = () => ttsFlowOn() && ttsValueMode();
+        async function ttsFlowToggle() {
+            let on = !ttsFlowOn();
+            try { localStorage.setItem('gvox_tts_flow', on ? '1' : '0'); } catch (e) {}
+            if (ttsRec.on) await pywebview.api.tts_live_fast(ttsFastOn() || ttsFlowActive());
+            ttsPromptKey = null; ttsLoadPrompt();
+            showToast(on ? 'Поток: читайте строки подряд — «Сборка» не откроется. Срезка потом: «✂ Срезка»'
+                         : 'Поток выключен: после каждой строки — «Сборка»', 4500);
+        }
+        // Дубли строк сумм/дат, ещё не сохранённые эталонами, — по порядку записи.
+        function ttsCutList() {
+            if (!tts) return [];
+            return tts.takes.filter(t => t.unit !== null && !t.approved && !t.rejected
+                && tts.units[t.unit] && tts.units[t.unit].tiers).map(t => t.i);
+        }
+        function ttsFlowHTML() {
+            if (!ttsValueMode()) return '';
+            let n = ttsCutList().length;
+            return ` <button type="button" class="tts-reuse-chip ${ttsFlowOn() ? 'is-on' : ''}" onclick="ttsFlowToggle()"
+                    title="${ttsFlowOn() ? 'Включено: читаете строки подряд, суфлёр сразу дальше, «Сборка» не открывается. Клик — выключить' : 'Включить: читать строки подряд без «Сборки», срезать потом'}">&#9654;&#9654; поток${ttsFlowOn() ? ' ✓' : ''}</button>`
+                + `<button type="button" class="tts-reuse-chip ${n ? 'is-on tts-cut-chip' : ''}" id="ttsCutChip" onclick="ttsCutStart()" ${n ? '' : 'disabled'}
+                    title="Срезать записанные строки по очереди: «Сборка» → границы ярусов → Enter сохраняет и открывает следующую. Esc — прервать">&#9986; Срезка ${n}</button>`;
+        }
+        function ttsCutChipUpdate() {
+            let b = document.getElementById('ttsCutChip');
+            if (!b) return;
+            let n = ttsCutList().length;
+            b.innerHTML = `&#9986; Срезка ${n}`;
+            b.disabled = !n;
+            b.classList.toggle('is-on', !!n); b.classList.toggle('tts-cut-chip', !!n);
+        }
+        let ttsCutMode = false;
+        async function ttsCutStart() {
+            if (ttsRec.on) { showToast('Сначала остановите запись (R) — срезка после чтения'); return; }
+            ttsCutMode = true;
+            ttsCutNext(-1);
+        }
+        function ttsCutNext(after) {
+            let list = ttsCutList();
+            if (!ttsCutMode) return;
+            if (!list.length) {
+                ttsCutMode = false;
+                ttsShowAssembly(false);
+                showToast('Срезка закончена — все записанные строки сохранены', 4000);
+                ttsLoadPrompt();
+                return;
+            }
+            let k = list.find(i => i > after);
+            tts.index = k === undefined ? list[0] : k;
+            ttsRenderRail(); ttsRenderCurrent(); ttsShowAssembly(true); ttsTogglePlay();
+            showToast(`Срезка: осталось строк ${list.length} · Enter — сохранить и дальше, Del — удалить`, 2500);
+        }
+
         function ttsAutoAsm(added) {
             if (!(added > 0) || !ttsRec.on || !ttsAutoAsmOn() || !tts || !tts.takes.length) return;
+            if (ttsFlowActive()) { ttsCutChipUpdate(); return; }      // поток: срезка потом
             if (ttsPttDown) { ttsAutoAsmPending = added; return; }     // сейчас пишут — откроем, когда отпустят
             let fresh = tts.takes.slice(-added).map(t => t.file);
             if (document.getElementById('stage4-tts').classList.contains('show-assembly') && ttsAsmAuto) {
@@ -9038,6 +10186,12 @@ let isProcessing = false;
             if (!r) return;
             tts = r.state; ttsRender(); ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
+        }
+        async function ttsSumsOpen() {
+            let pr = await pywebview.api.tts_prompt_info();
+            if (!pr || !pr.sum_folder) return;
+            if (ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            startPremadeSumMode(pr.sum_folder);
         }
 
         // Что читать: фразы таблицы или значения листа переменных по порядку строк.
@@ -9180,7 +10334,7 @@ let isProcessing = false;
                 let t = ttsCurTake();                   // «из записанного» — куски сразу в Audacity
                 if (t && t.reuse && ttsAudacitySent !== t.i) ttsSendToAudacity(true);
             }
-            else { ttsAsmAuto = false; ttsAsmQueue = []; }
+            else { ttsAsmAuto = false; ttsAsmQueue = []; ttsCutMode = false; }
             // Сборка открыта — микрофон выключен: не шумит при прослушивании.
             if (ttsRec.on && ttsLiveSt.micOff !== open) {
                 ttsLiveSt.micOff = open;

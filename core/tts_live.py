@@ -19,7 +19,8 @@ import webview
 from pydub import AudioSegment
 
 from core.auto_check import _lat_to_cyr, _norm, _ratio
-from core.tts_flow import FIND_SCORE, LEAD_S, TTS_CHUNKS_DIR, TTS_VALUES_DIR, align_stream, end_word_ok, var_label
+from core.tts_flow import FIND_SCORE, LEAD_S, TTS_CHUNKS_DIR, TTS_DONE_DIR, TTS_VALUES_DIR, align_stream, end_word_ok, var_label
+from utils.wav_io import wav_concat
 
 LIVE_RATE = 16000          # копия для распознавания
 LIVE_SILENCE_MS = 700      # пауза, после которой сказанное считается готовым
@@ -1310,6 +1311,77 @@ class TtsLiveMixin:
         rms = np.sqrt((x ** 2).mean(axis=1)) / 32768.0
         return 20 * np.log10(np.maximum(rms, 1e-6))
 
+    def _tts_live_cut(self, rec, done_ms, total_ms):
+        """Где уже можно резать: середина последней паузы ≥ LIVE_SILENCE_MS
+        (или начало паузы, которая идёт прямо сейчас). None — ещё рано."""
+        if total_ms - done_ms < LIVE_MIN_REGION_MS:
+            return None
+        seg = rec.ana_segment(done_ms, total_ms)
+        lv = self._tts_live_levels(seg)
+        if not len(lv):
+            return None
+        hist = self._tts_live_levels(rec.ana_segment(max(0, total_ms - 60000), total_ms))
+        floor = float(np.percentile(hist, 10)) if len(hist) else -70.0
+        thr = floor + LIVE_NOISE_ABOVE_DB
+        if len(hist) >= 150:                                   # хотя бы 3 с истории
+            voice = float(np.percentile(hist, 95))
+            if voice - floor > LIVE_VOICE_SPREAD_DB:
+                thr = max(thr, voice - LIVE_VOICE_DROP_DB)     # чужие голоса вдалеке — это «тишина»
+        quiet = lv < thr
+        # «Слышу речь»: в ещё не разобранном куске есть голос.
+        live = getattr(self, '_tts_live', None)
+        if live is not None:
+            live["hearing"] = bool((~quiet).any())
+        if not (~quiet).any():
+            # Одна тишина — разбирать нечего, но и копить незачем.
+            return total_ms - 300 if total_ms - done_ms > 3000 else None
+        # Короткая реплика (обычно команда) — не ждём длинной паузы.
+        voiced_ms = int((~quiet).sum()) * LIVE_FRAME_MS
+        need = (LIVE_SHORT_SILENCE_MS if voiced_ms <= LIVE_SHORT_SPEECH_MS else LIVE_SILENCE_MS) // LIVE_FRAME_MS
+        best, run = None, 0
+        for k, q in enumerate(quiet):
+            run = run + 1 if q else 0
+            if run >= need:
+                start = k - run + 1
+                best = start + min(run, need) // 2          # не середина длинной тишины — недалеко от речи
+        if best is not None and (~quiet[:best]).any():
+            return done_ms + best * LIVE_FRAME_MS
+        if total_ms - done_ms > LIVE_FORCE_MS:
+            tail = lv[-500:]
+            return done_ms + (len(lv) - len(tail) + int(np.argmin(tail))) * LIVE_FRAME_MS
+        return None
+
+    def _tts_live_region(self, rec, a_ms, b_ms, final=False):
+        """Разбор куска записи [a_ms, b_ms). Возвращает, с какого места
+        разбирать дальше (начало недочитанной фразы — если её ещё дочитывают)."""
+        st = self._tts()
+        live = self._tts_live
+        a_ms = max(a_ms, live.get("mute_until", 0))      # пока звучало прослушивание (P) — не слушаем
+        if b_ms <= a_ms:
+            return b_ms
+        seg = rec.ana_segment(a_ms, b_ms)
+        if not len(seg):
+            return b_ms
+        samples = np.frombuffer(seg.raw_data, '<i2').astype(np.float32) / 32768.0
+        lg = self._tts_pos_lang()
+        words = self._tts_transcribe_pack(self._tts_live_model(lg), [{"index": 0, "audio": samples, "ms": len(seg)}],
+                                          'kk' if lg == 'kz' else 'ru', live=True)[0]
+        words = spell_digits(words, lg)
+        text = ''.join(w[0] for w in words).strip()
+        if not words or self._asr_is_noise(text):
+            live["waiting"] = False
+            return b_ms
+        off = a_ms / 1000.0
+        stream = [(w, off + s_, off + e, 0) for w, s_, e in words]
+        state = self._tts_live_words(rec, seg, a_ms, stream, 0, len(stream), final=final)
+        if state == "partial":
+            live["waiting"] = True
+            return max(a_ms, int(stream[0][1] * 1000) - 150)          # ждём, пока дочитают
+        live["waiting"] = False
+        if state == "none":
+            # Отклик: сказанное не стало фразой таблицы.
+            self._tts_push({"stage": "live_miss", "heard": text, "paused": False})
+        return b_ms
 
     def _tts_live_words(self, rec, seg, a_ms, stream, i0, j0, final, pos=None, move=True):
         """Слова stream[i0:j0] — текущая фраза суфлёра? → 'captured' |
@@ -1591,3 +1663,20 @@ class TtsLiveMixin:
         live["mute_until"] = rec.ana_ms + len(out) + 400
         return None
 
+    @staticmethod
+    def _tts_spans_with_rest(stream, spans):
+        used = set()
+        for i, j, _ in spans:
+            used.update(range(i, j))
+        x, out = 0, list(spans)
+        while x < len(stream):
+            if x in used:
+                x += 1
+                continue
+            y = x
+            while y < len(stream) and y not in used:
+                y += 1
+            if y - x >= 4:
+                out.append((x, y, {"unit": None, "score": 0.0, "status": "none"}))
+            x = y
+        return sorted(out, key=lambda sp: sp[0])

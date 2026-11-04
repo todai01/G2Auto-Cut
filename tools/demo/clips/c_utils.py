@@ -1,7 +1,7 @@
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from harness import *
-import subprocess
+import openpyxl, subprocess
 import numpy as np
 from core.clone_prep import _mono
 UD = os.path.join(VID, 'Утилиты'); shutil.rmtree(UD, ignore_errors=True); os.makedirs(UD)
@@ -17,6 +17,28 @@ def menu_tool(r, name, dialog=None):
     if dialog is not None:
         DIALOG.append(dialog)
     r.click(f'.radial__item.is-in:not(.is-out):has-text("{name}")', after=1200)
+
+# ---------- Названия по Excel ----------
+if want('rename_match'):
+    fd = os.path.join(UD, 'Короткие_имена'); os.makedirs(fd)
+    shorts = ['da_1_1', 'da_1_2', 'opl_2_1', 'opl_2_2', 'nap_3_1', 'test_9']
+    for s_ in shorts: write(os.path.join(fd, s_ + '.wav'), speech('проверка связи', decl=1))
+    xl = os.path.join(UD, 'Полные_названия.xlsx'); wb = openpyxl.Workbook(); ws = wb.active
+    for n in ['dostavka_ru_da_1_1', 'dostavka_ru_da_1_2', 'dostavka_kz_opl_2_1', 'dostavka_kz_opl_2_2', 'dostavka_ru_nap_3_1']: ws.append([n])
+    wb.save(xl)
+    with Rec('rename_match', a) as r:
+        r.top = 'top'
+        menu_tool(r, 'Названия')
+        r.cap('<b>Названия по Excel</b>: короткие имена файлов → полные «боевые» названия', 2400)
+        DIALOG.append([fd]); r.click('button:has-text("Выбрать папку")', after=1300)
+        r.cap('Папка с файлами вроде <b>da_1_1.wav</b>', 1600)
+        DIALOG.append([xl]); r.click('#renameMatchOverlay button:has-text("Выбрать файл")', after=1300)
+        r.cap('Excel со списком полных названий — <b>dostavka_ru_da_1_1</b>…', 2000)
+        r.move('#renameMatchOverlay .opt-chip', 600)
+        r.cap('«Искать только» ru / kz — если одно короткое имя есть в обоих языках', 2400)
+        r.click('#btnRunRenameMatch', after=1800)
+        r.cap('Файлы переименованы и разложены по папкам <b>ru</b> / <b>kz</b>. Без пары — список, их не трогаю', 3600)
+        r.cap('')
 
 # ---------- PowerPoint ----------
 if want('pptx'):
@@ -81,4 +103,18 @@ if want('clone'):
         r.click('#cloneOverlay button:has-text("Файлы клонов")', after=1200)
         r.click('#btnCloneCut', after=3000)
         r.cap('Клоны разрезаны обратно на файлы с теми же именами — по папке на голос', 3000)
+        r.cap('')
+
+# ---------- Очистить названия ----------
+if want('strip'):
+    sd = os.path.join(UD, 'Суммы_с_словами'); os.makedirs(sd)
+    for n in ['1 миллион', '2 миллиона', '5 миллионов', '20 тысяч', '300 тенге']:
+        write(os.path.join(sd, n + '.wav'), speech(n, decl=1))
+    with Rec('strip', a) as r:
+        r.top = 'top'
+        r.top = 'top'
+        r.cap('', 0)
+        menu_tool(r, 'Очистить', dialog=[sd])
+        r.cap('<b>Очистить названия</b>: «5 миллионов.wav» → «5.wav». Выберите папку — подпапки тоже', 2600)
+        r.cap('Готово: остались только цифры. Одинаковые получат _1, _2', 3000)
         r.cap('')

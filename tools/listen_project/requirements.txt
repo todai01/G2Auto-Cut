@@ -1,7 +1,0 @@
-# Модули «Прослушки»: pip install -r requirements.txt
-pywebview
-pydub
-numpy
-openpyxl
-playwright
-audioop-lts; python_version >= "3.13"
