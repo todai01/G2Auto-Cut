@@ -90,6 +90,7 @@ function listenRender(light) {
         + '<span class="listen-arrow">→</span>' + part('var', 'имя', r && r.name, !!(r && r.path))
         + '<span class="listen-arrow">→</span>' + part('end', 'конец', LS.end, !!LS.end_path);
     listenRenderSynth();
+    listenAsmEnsure();
 }
 function listenRenderList() {
     if (!LS) return;
@@ -144,7 +145,7 @@ async function listenGo(k) {
     if (!LS || k === LS.pos) return;
     if (!(await listenLeave())) return;
     listenStopHead();
-    LS.pos = k; lTarget = 'var';
+    LS.pos = k; lTarget = 'var'; lAsm = {};
     listenRender(true);                                  // имя — крупно сразу, не дожидаясь звука
     let tok = ++lPlayTok;
     let r = await pywebview.api.listen_go(k);
@@ -197,7 +198,7 @@ async function listenLoadEditor() {
 function listenSetEditor(r, path) {
     if (!path) { lEd = null; lEl('listenEd').classList.add('is-empty'); listenEdRender(); return; }
     if (!r || r.error) { lEd = null; showToast(r && r.error || 'Не открылась запись'); listenEdRender(); return; }
-    lEl('listenEd').classList.remove('is-empty');
+    lEl('listenEd').classList.remove('is-empty'); lAsm = {};
     lEd = { ...r, target: lTarget, sel: null, cur: 0, head: null, hist: [], reveal: lRevealNext ? performance.now() : null };
     lRevealNext = false;
     lEd.saved = listenSnap();
@@ -301,6 +302,7 @@ function listenEdWipe(g, w, h, front, color) {
     }
 }
 function listenEdDraw() {
+    listenAsmDraw();
     let cv = lEl('listenEdCanvas'), dpr = window.devicePixelRatio || 1;
     let w = cv.clientWidth, h = cv.clientHeight;
     if (!w) return;
@@ -494,7 +496,7 @@ async function listenSave(next) {
     }
     let r = await pywebview.api.listen_edit_save(lEd.path, lEd.ranges, lEd.gain, lEd.tempo, lEd.target === 'var');
     if (!r || r.error) { showToast(r && r.error || 'Не сохранилось'); return false; }
-    lEd.saved = listenSnap(); lEd.has_backup = true; lEd.auto = null; lEd.hist = [];
+    lEd.saved = listenSnap(); lEd.has_backup = true; lEd.auto = null; lEd.hist = []; lAsm = {};
     if (r.state) { let pos = LS.pos; LS = r.state; LS.pos = pos; }
     if (lEd.target === 'var') { lLastSaved = { pos: LS.pos, path: lEd.path }; listenMarkList(); listenRenderList(); }
     showToast(r.tpl_new ? `Сохранено: ${lEd.name} · стала шаблоном срезки для остальных` : `Сохранено: ${lEd.name}${go ? ' → дальше · Ctrl+Z — отменить' : ''}`);
@@ -508,7 +510,7 @@ async function listenUnsave(pos) {
     if (!row || !row.path) return;
     let r = await pywebview.api.listen_edit_restore(row.path);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-    let keep = LS.pos; LS = r.state; LS.pos = keep;
+    let keep = LS.pos; LS = r.state; LS.pos = keep; lAsm = {};
     if (lLastSaved && lLastSaved.pos === pos) lLastSaved = null;
     listenRender();
     if (pos === LS.pos && lTarget === 'var') await listenLoadEditor();
@@ -525,7 +527,7 @@ async function listenRestore() {
     if (!(await showBeautifulConfirm(`Вернуть исходную запись «${escapeHtml(lEd.name)}»? Все правки пропадут.`, 'Вернуть', 'Отмена'))) return;
     let r = await pywebview.api.listen_edit_restore(lEd.path);
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
-    LS = r.state;
+    LS = r.state; lAsm = {};
     lEd = { ...lEd, ...r, sel: null, cur: 0, hist: [] }; lEd.saved = listenSnap();
     listenRender(); listenEdRender();
     showToast('Исходная запись возвращена');
@@ -874,3 +876,74 @@ function listenKey(e) {
     else if (e.code === 'Digit3') listenTarget('end');
 }
 window.addEventListener('resize', () => { if (isShown('stage5-listen')) listenEdDraw(); });
+
+// ----- «Сборка»: вся цепочка волнами — начало → имя → конец, как слышно в фразе -----
+// Клик по куску — править его (ниже, в редакторе). Имя — с текущей правкой, живьём.
+let lAsm = {}, lAsmBusy = false, lAsmHit = [];
+const lAsmParts = () => ['start', 'var', 'end'].map(t => ({ t, path: t === 'start' ? LS.start_path : t === 'end' ? LS.end_path : (lRow() || {}).path }));
+async function listenAsmEnsure() {
+    if (!LS || lAsmBusy) { listenAsmDraw(); return; }
+    let need = lAsmParts().filter(p => p.path && !(lEd && lEd.target === p.t && lEd.path === p.path) && !lAsm[p.path]);
+    if (!need.length) { listenAsmDraw(); return; }
+    lAsmBusy = true;
+    try {
+        for (let p of need) {
+            let r = await pywebview.api.listen_edit_load(p.path);
+            if (r && !r.error) lAsm[p.path] = r;
+        }
+    } finally { lAsmBusy = false; }
+    listenAsmDraw();
+}
+// Звучащий кусок: куски, что оставили; «кратко» — только конец начала / начало продолжения
+function lAsmSeg(p) {
+    let d = lEd && lEd.target === p.t && lEd.path === p.path ? lEd : lAsm[p.path];
+    if (!p.path || !d) return { t: p.t, miss: !p.path, ms: 0, peaks: [] };
+    let bucket = d.bucket, peaks = [], ranges = d.ranges || [[0, d.dur]];
+    let g = p.t === 'var' ? Math.pow(10, (d.gain || 0) / 20) : 1;
+    ranges.forEach(([a, b]) => { for (let t = a; t < b; t += bucket) peaks.push(Math.min(1, (d.peaks[Math.floor(t / bucket)] || 0) * g)); });
+    let keep = Math.round(LS.ctx_ms / bucket);
+    if (LS.short && p.t === 'start') peaks = peaks.slice(-keep);
+    if (LS.short && p.t === 'end') peaks = peaks.slice(0, keep);
+    let tempo = p.t === 'var' ? (d.tempo || 1) : 1;
+    return { t: p.t, peaks, bucket, ms: peaks.length * bucket / tempo, name: d.name };
+}
+function listenAsmDraw() {
+    let cv = lEl('listenAsmCanvas');
+    if (!cv || !LS) return;
+    let dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (!w) return;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    let css = getComputedStyle(document.documentElement), mono = css.getPropertyValue('--font-mono').trim() || 'monospace';
+    let col = { start: css.getPropertyValue('--accent-info').trim() || '#2bc0cf', var: css.getPropertyValue('--accent-var').trim() || '#eeac3e',
+                end: css.getPropertyValue('--accent-good').trim() || '#2fbf7d' };
+    let label = { start: 'НАЧАЛО', var: 'ИМЯ', end: 'КОНЕЦ' };
+    let segs = lAsmParts().map(lAsmSeg), gap = 6, W = w - gap * 2;
+    let total = segs.reduce((a, x) => a + Math.max(x.ms, 400), 0) || 1;
+    let x0 = 0; lAsmHit = [];
+    segs.forEach(sg => {
+        let sw = Math.max(46, W * Math.max(sg.ms, 400) / total), c = col[sg.t], on = lTarget === sg.t;
+        lAsmHit.push({ t: sg.t, x0, x1: x0 + sw, ok: !sg.miss });
+        g.fillStyle = on ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.025)'; g.fillRect(x0, 0, sw, h);
+        g.strokeStyle = on ? c : 'rgba(255,255,255,.1)'; g.lineWidth = on ? 1.5 : 1; g.strokeRect(x0 + .5, .5, sw - 1, h - 1);
+        let mid = (h + 12) / 2, n = sg.peaks.length;
+        if (n) {
+            let bw = sw / n;
+            g.fillStyle = on ? c : c + '99';
+            for (let i = 0; i < n; i++) {
+                let y = Math.max(1, sg.peaks[i] * (h - 22) / 2);
+                g.fillRect(x0 + i * bw, mid - y, Math.max(1, bw - (bw > 3 ? 1 : 0)), y * 2);
+            }
+        } else if (sg.miss) { g.fillStyle = 'rgba(255,255,255,.25)'; g.font = '11px ' + mono; g.fillText('нет записи', x0 + 10, mid + 4); }
+        g.font = '10px ' + mono; g.textBaseline = 'top'; g.fillStyle = on ? c : 'rgba(255,255,255,.4)';
+        g.fillText(label[sg.t] + (sg.ms ? '  ' + (sg.ms / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' с' : ''), x0 + 7, 4);
+        x0 += sw + gap;
+    });
+}
+document.addEventListener('DOMContentLoaded', () => {
+    let cv = lEl('listenAsmCanvas');
+    if (!cv) return;
+    let at = e => { let x = e.clientX - cv.getBoundingClientRect().left; return lAsmHit.find(z => x >= z.x0 && x < z.x1); };
+    cv.onclick = e => { let hit = at(e); if (hit && hit.ok) listenTarget(hit.t); };
+    cv.onmousemove = e => { let hit = at(e); cv.style.cursor = hit && hit.ok ? 'pointer' : 'default'; };
+});

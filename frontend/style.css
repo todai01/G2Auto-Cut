@@ -4002,3 +4002,6 @@ body[data-mode="vars"] .custom-alert-overlay .custom-alert-btn:not(.btn-secondar
     color: #111; background: var(--accent-var); margin-right: 3px; }
 .tts-tiers__reg.is-kz{ border-color: var(--accent-info); background: rgba(43,192,207,.12); }
 .tts-tiers__lang.is-kz{ background: var(--accent-info); }
+
+/* Прослушка: цепочка волнами */
+.listen-asm{ display: block; width: 100%; height: 86px; background: var(--screen); border-radius: var(--radius-md); }
