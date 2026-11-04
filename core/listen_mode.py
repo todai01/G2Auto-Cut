@@ -89,7 +89,28 @@ def listen_lang_of(path, base):
     for d in parts:
         if d.lower() in LISTEN_LANG_DIRS:
             return LISTEN_LANG_DIRS[d.lower()]
+    for d in parts:                                      # «Фразы_kz», «kz_начало» — язык словом в имени папки
+        langs = {LISTEN_LANG_DIRS[t] for t in re.split(r'[\W_]+', d.lower()) if t in LISTEN_LANG_DIRS}
+        if len(langs) == 1:
+            return langs.pop()
     return None
+
+
+def listen_lang_root(path):
+    """Выбрали саму папку языка (…/raw_var/ru) — берём родителя, если рядом есть и другой язык:
+    тогда тумблер RU / KZ находит и kz."""
+    path = os.path.normpath(path)
+    lang = LISTEN_LANG_DIRS.get(os.path.basename(path).lower())
+    parent = os.path.dirname(path)
+    if lang and parent and os.path.isdir(parent):
+        try:
+            sib = [d for d in os.listdir(parent) if os.path.isdir(os.path.join(parent, d))
+                   and LISTEN_LANG_DIRS.get(d.lower()) not in (None, lang)]
+        except OSError:
+            sib = []
+        if sib:
+            return parent
+    return path
 
 
 class ListenMixin:
@@ -112,8 +133,9 @@ class ListenMixin:
         index, lang_dirs = {}, {}
         for root, dirs, files in os.walk(ls["folder"] or ''):
             dirs[:] = [d for d in dirs if d not in LISTEN_SKIP_DIRS]
-            if os.path.basename(root).lower() in LISTEN_LANG_DIRS:
-                lang_dirs.setdefault(LISTEN_LANG_DIRS[os.path.basename(root).lower()], root)
+            lg = listen_lang_of(os.path.join(root, '_'), ls["folder"])
+            if lg and lg not in lang_dirs and LISTEN_LANG_DIRS.get(os.path.basename(root).lower(), lg) == lg:
+                lang_dirs[lg] = root
             for f in sorted(files):
                 if f.lower().endswith(LISTEN_EXTS):
                     index.setdefault(listen_norm(f), []).append(os.path.join(root, f))
@@ -142,7 +164,7 @@ class ListenMixin:
         if not picked:
             return {"error": "cancel"}
         ls = self._ls()
-        ls["folder"] = picked if isinstance(picked, str) else picked[0]
+        ls["folder"] = listen_lang_root(picked if isinstance(picked, str) else picked[0])
         ls["tpl"], ls["flags"] = None, set()
         try:
             with open(os.path.join(ls["folder"], LISTEN_TPL_FILE), 'r', encoding='utf-8') as f:
@@ -166,7 +188,7 @@ class ListenMixin:
         if not picked:
             return {"error": "cancel"}
         ls = self._ls()
-        base = picked if isinstance(picked, str) else picked[0]
+        base = listen_lang_root(picked if isinstance(picked, str) else picked[0])
         items = []
         for root, dirs, files in os.walk(base):
             dirs[:] = sorted(d for d in dirs if d not in LISTEN_SKIP_DIRS)
@@ -219,40 +241,80 @@ class ListenMixin:
             return {"error": "cancel"}
         path = picked if isinstance(picked, str) else picked[0]
         try:
-            names, col = self._listen_read_table(path)
+            by_lang, col = self._listen_read_table(path)
         except Exception as e:
             return {"error": f"Не удалось прочитать таблицу: {e}"}
-        if not names:
+        if not by_lang or not by_lang.get("ru"):
             return {"error": "В таблице не нашлось названий."}
         ls = self._ls()
-        ls["table"] = path
-        ls["rows"] = [{"name": n, "path": None, "dups": 0} for n in names]
+        ls["table"], ls["table_names"] = path, by_lang
+        ls["rows"] = [{"name": n, "path": None, "dups": 0} for n in by_lang[ls["lang"]]]
         ls["pos"] = 0
         ls["synth"] = {}
         self._listen_match()
         return {**self.listen_state(), "column": col}
 
+    @staticmethod
+    def _listen_col_lang(head, vals):
+        """Язык колонки: по шапке (<kz_late>, «KZ», «рус»…), иначе по тексту (казахские буквы — kz)."""
+        for tok in re.split(r'[\W_]+', (head or '').lower()):
+            if tok in LISTEN_LANG_DIRS:
+                return LISTEN_LANG_DIRS[tok]
+        vals = [v for v in vals if v]
+        if not vals:
+            return None
+        kz = sum(1 for v in vals if re.search(r'[әғқңөұүһі]', v.lower()))
+        if kz >= max(1, len(vals) * 0.3):
+            return 'kz'
+        ru = sum(1 for v in vals if re.search(r'[а-яё]', v.lower()))
+        return 'ru' if ru >= len(vals) * 0.5 else None
+
     def _listen_read_table(self, path):
-        """Названия из таблицы: колонка, где больше всего совпадений с папкой
-        (если папки ещё нет — первая заполненная). Шапку («Имя», «<name>») пропускаем."""
+        """Названия из таблицы: колонка, где больше всего совпадений с папкой (если папки ещё нет —
+        первая заполненная); шапку («Имя», «<name>») пропускаем. Есть колонки на двух языках
+        (бір рет / одно опоздание) — запоминаем обе: тумблер RU / KZ показывает свою.
+        Возвращает ({"ru": [...], "kz": [...]}, подпись колонки)."""
         import openpyxl
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         index = self._ls()["index"]
-        best = None
+        cands = []
         for ws in wb.worksheets:
-            cols = {}
-            for row in ws.iter_rows(values_only=True):
-                for c, v in enumerate(row):
-                    if v is not None and str(v).strip():
-                        cols.setdefault(c, []).append(str(v).strip())
-            for c, vals in cols.items():
-                if vals and (vals[0].lower().strip('<> ') in LISTEN_HEADER_WORDS or re.fullmatch(r'<.*>', vals[0])):
-                    vals = vals[1:]
+            grid = [list(r) for r in ws.iter_rows(values_only=True)]
+            ncol = max((len(r) for r in grid), default=0)
+            for c in range(ncol):
+                col = {i: str(r[c]).strip() for i, r in enumerate(grid)
+                       if c < len(r) and r[c] is not None and str(r[c]).strip()}
+                if not col:
+                    continue
+                first = min(col)
+                head = None
+                h = col[first]
+                if h.lower().strip('<> ') in LISTEN_HEADER_WORDS or re.fullmatch(r'<.*>', h) \
+                        or h.lower().strip('<> ') in LISTEN_LANG_DIRS:
+                    head = col.pop(first)
+                if not col:
+                    continue
+                vals = list(col.values())
                 score = (sum(1 for v in vals if any(k in index for k in listen_keys(v))), len(vals))
-                if vals and (best is None or score > best[0]):
-                    best = (score, vals, f"{ws.title} · колонка {chr(65 + c) if c < 26 else c + 1}")
+                cands.append({"sheet": ws.title, "c": c, "col": col, "score": score,
+                              "lang": self._listen_col_lang(head, vals),
+                              "label": f"{ws.title} · колонка {chr(65 + c) if c < 26 else c + 1}"})
         wb.close()
-        return (best[1], best[2]) if best else ([], None)
+        if not cands:
+            return {}, None
+        best = max(cands, key=lambda x: x["score"])
+        same = [x for x in cands if x["sheet"] == best["sheet"]]
+        rows = sorted(best["col"])
+        out = {}
+        for lang in ('ru', 'kz'):
+            if best["lang"] in (lang, None) and not any(x["lang"] == lang and x["score"] > best["score"] for x in same):
+                own = best if best["lang"] == lang else None
+            else:
+                own = None
+            own = own or max((x for x in same if x["lang"] == lang), key=lambda x: x["score"], default=None) or best
+            out[lang] = [own["col"].get(i) or best["col"][i] for i in rows]
+        labels = sorted({x["label"] for x in (best, *[x for x in same if x["lang"] in ('ru', 'kz')])})
+        return out, ' / '.join(labels) if len(labels) > 1 else best["label"]
 
     # ---------------- кэш: декодированный звук и волны (ключ — путь + время + размер) ----------------
     def _listen_cache_get(self, kind, key, make):
@@ -394,6 +456,10 @@ class ListenMixin:
             ls["pos"] = max(0, min(int(pos), len(ls["rows"]) - 1))
         if lang in ('ru', 'kz') and lang != ls["lang"]:
             ls["lang"] = lang
+            names = (ls.get("table_names") or {}).get(lang)
+            if names and len(names) == len(ls["rows"]):          # названия — из колонки этого языка
+                for r, n in zip(ls["rows"], names):
+                    r["name"] = n
             self._listen_apply_pick()
             self._listen_match()
         if short is not None:
@@ -836,6 +902,58 @@ class ListenMixin:
         ls["synth"].pop(k, None)
         self._listen_scan()
         return {"ok": True, "path": path, "state": self.listen_state()}
+
+    # ---------------- запись не того названия: поменять местами ----------------
+    def _listen_sidecars(self, path):
+        """Файл записи и всё, что к нему привязано: исходник в «_до_правок», правка, метка «сохранено»."""
+        b = self._audit_backup(path)
+        stem, ext = os.path.splitext(b)
+        return [path, b, b + '.json', self._listen_meta(path), f"{stem}_до_синтеза{ext}"]
+
+    def listen_swap(self, k, other):
+        """Запись строки k на самом деле — другая марка / имя (строка other): записи меняются
+        местами (файлы переименовываются вместе с исходниками и правками). У other записи нет —
+        запись строки k уходит под её название, у k записи не остаётся."""
+        ls = self._ls()
+        k, other = int(k), int(other)
+        if not (0 <= k < len(ls["rows"]) and 0 <= other < len(ls["rows"])) or k == other:
+            return {"error": "Выберите другую строку."}
+        a, b = ls["rows"][k], ls["rows"][other]
+        if not a["path"] and not b["path"]:
+            return {"error": "У обеих строк нет записи."}
+        self.player.stop()
+        lang_dir = ls["lang_dirs"].get(ls["lang"]) if ls["lang_dirs"] else None
+
+        def target(row, like):
+            d = os.path.dirname(like) if like else (lang_dir or ls["folder"])
+            ext = os.path.splitext(like)[1] if like else '.wav'
+            return os.path.join(d, (listen_stem(row["name"]) or 'запись') + ext)
+        pa, pb = a["path"], b["path"]
+        moves = []                                              # (откуда, куда) — по всем привязанным файлам
+        if pa and pb:
+            tmp = pa + '.swap'
+            moves += list(zip(self._listen_sidecars(pa), self._listen_sidecars(tmp)))
+            moves += list(zip(self._listen_sidecars(pb), self._listen_sidecars(pa)))
+            moves += list(zip(self._listen_sidecars(tmp), self._listen_sidecars(pb)))
+        else:
+            src = pa or pb
+            dst = target(b if pa else a, src)
+            if os.path.exists(dst):
+                return {"error": f"Файл «{os.path.basename(dst)}» уже есть — сначала разберитесь с ним."}
+            moves += list(zip(self._listen_sidecars(src), self._listen_sidecars(dst)))
+        try:
+            for src, dst in moves:
+                if os.path.exists(src):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    os.replace(src, dst)
+        except OSError as e:
+            return {"error": f"Не удалось переименовать: {e}"}
+        cache = getattr(self, '_listen_cache', None)
+        if cache is not None:
+            with self._listen_cache_lock:
+                cache.clear()
+        self._listen_scan()
+        return {"ok": True, "a": a["name"], "b": b["name"], "state": self.listen_state()}
 
     def listen_synth_drop(self, k):
         s = self._ls()["synth"].pop(int(k), None)

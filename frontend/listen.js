@@ -83,6 +83,7 @@ function listenRender(light) {
     lEl('listenFile').innerHTML = !r ? '' : r.path
         ? `${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
         : 'записи с таким именем в папке нет — синтез (R)';
+    if (r) lEl('listenFile').innerHTML += ` · <button type="button" class="lp-link" onclick="listenSwap()" title="В записи звучит другое название (марка перепутана) — поменять записи местами с нужной строкой">⇄ не та запись</button>`;
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
             <i>${label}</i><b>${escapeHtml(name || '—')}</b>${ok ? '<span>✎</span>' : ''}</button>`;
@@ -956,3 +957,30 @@ document.addEventListener('DOMContentLoaded', () => {
     cv.onclick = e => { let hit = at(e); if (hit && hit.ok) listenTarget(hit.t); };
     cv.onmousemove = e => { let hit = at(e); cv.style.cursor = hit && hit.ok ? 'pointer' : 'default'; };
 });
+
+
+// ----- «Не та запись»: в файле звучит другое название — меняем записи двух строк местами -----
+async function listenSwap() {
+    let r = lRow();
+    if (!r) return;
+    if (!(await listenLeave())) return;
+    let opts = LS.rows.map((x, i) => i === LS.pos ? '' : `<option value="${escapeHtml(x.name)}">`).join('');
+    setTimeout(() => { let el = lEl('listenSwapTo'); if (el) el.focus(); }, 80);
+    let ok = await showBeautifulConfirm(`<b>«${escapeHtml(r.name)}» — не та запись?</b><br><br>Какое название на самом деле звучит в записи?
+        Записи двух строк поменяются местами (файлы переименуются вместе с правками).<br><br>
+        <input id="listenSwapTo" class="lp-search" list="listenSwapList" placeholder="Начните вводить название" style="width:100%"
+            onkeydown="event.stopPropagation(); if (event.key === 'Enter') { event.preventDefault(); closeCustomAlert(true); } else if (event.key === 'Escape') closeCustomAlert(false);">
+        <datalist id="listenSwapList">${opts}</datalist>`, 'Поменять', 'Отмена');
+    let v = ok && (lEl('listenSwapTo') || {}).value;
+    if (!v) return;
+    let q = v.trim().toLowerCase();
+    let k = LS.rows.findIndex((x, i) => i !== LS.pos && x.name.toLowerCase() === q);
+    if (k < 0) k = LS.rows.findIndex((x, i) => i !== LS.pos && x.name.toLowerCase().includes(q));
+    if (k < 0) { showToast(`Строки «${v}» в таблице нет`); return; }
+    listenStopHead(); pywebview.api.listen_stop();
+    let res = await pywebview.api.listen_swap(LS.pos, k);
+    if (!res || res.error) { showBeautifulAlert('⚠️ ' + escapeHtml(res && res.error || 'Не получилось')); return; }
+    let pos = LS.pos; LS = res.state; LS.pos = pos; lAsm = {};
+    listenRender(); await listenLoadEditor();
+    showToast(`Записи «${res.a}» и «${res.b}» поменялись местами`, 4000);
+}
