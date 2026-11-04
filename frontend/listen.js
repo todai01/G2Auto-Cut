@@ -71,6 +71,7 @@ function listenRender(light) {
     lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, LS.lang.toUpperCase(),
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
+    lEl('listenNorm').checked = LS.norm !== false;
     lEl('listenCtx').value = String(LS.ctx_ms);
     if (light) listenMarkList(); else listenRenderList();
     let r = lRow();
@@ -163,6 +164,14 @@ async function listenTarget(t) {
     lTarget = t;
     listenRender();
     listenLoadEditor();
+}
+// Громкость имён — по фразам «Фразы_Переменные»: вкл. — «Авто» и первая срезка подбирают дБ под них
+async function listenSetNorm(on) {
+    let pos = LS.pos;
+    LS = await pywebview.api.listen_set(null, null, null, null, on); LS.pos = pos;
+    listenRender(true);
+    if (lEd && lEd.target === 'var' && (!listenDirty() || lEd.auto)) await listenAuto();
+    showToast(on ? 'Громкость имён — по громкости фраз' : 'Громкость имён — как в записи');
 }
 async function listenSetShort(on) { LS = await pywebview.api.listen_set(null, null, on); listenRender(); }
 async function listenSetCtx(ms) {

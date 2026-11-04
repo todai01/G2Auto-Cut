@@ -102,7 +102,7 @@ class ListenMixin:
         ls = getattr(self, '_listen', None)
         if ls is None:
             ls = self._listen = {"folder": None, "index": {}, "start": None, "end": None, "table": None,
-                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "synth": {},
+                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "norm": True, "synth": {},
                                  "phr_folder": None, "phrases": [], "pick": {"ru": {}, "kz": {}}, "lang_dirs": {}}
         return ls
 
@@ -375,7 +375,7 @@ class ListenMixin:
             "folder": ls["folder"], "folder_name": nm(ls["folder"]), "files": sum(len(v) for v in ls["index"].values()),
             "start": nm(ls["start"]), "end": nm(ls["end"]), "start_path": ls["start"], "end_path": ls["end"],
             "table": nm(ls["table"]), "pos": min(ls["pos"], max(0, len(rows) - 1)), "lang": ls["lang"],
-            "short": ls["short"], "ctx_ms": ls.get("ctx_ms") or self.LISTEN_CTX_MS,
+            "short": ls["short"], "norm": ls.get("norm", True), "ctx_ms": ls.get("ctx_ms") or self.LISTEN_CTX_MS,
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None,
@@ -384,8 +384,10 @@ class ListenMixin:
             "found": sum(1 for r in rows if r["path"]),
         }
 
-    def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None):
+    def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None, norm=None):
         ls = self._ls()
+        if norm is not None:
+            ls["norm"] = bool(norm)
         if ctx_ms:
             ls["ctx_ms"] = max(500, min(5000, int(ctx_ms)))
         if pos is not None and ls["rows"]:
@@ -447,8 +449,14 @@ class ListenMixin:
         tail = tpl["tail"] if tpl else self.LISTEN_TAIL_MS
         a, b = max(0, v0 - lead), min(dur, v1 + tail)
         gain, tempo = 0.0, 1.0
+        ref = self._listen_ref_loud() if ls.get("norm", True) else None
         if tpl:
             tempo = float(tpl.get("tempo", 1.0))
+        if ref is not None:                                    # громкость — по фразам (начало / конец), а не по шаблону
+            loud = self._loudness(self._listen_seg(self._audit_src(path))[a:b])
+            if loud is not None:
+                gain = float(max(-15, min(15, round(ref - loud))))
+        elif tpl:
             if tpl.get("loud") is not None:
                 loud = self._loudness(self._listen_seg(self._audit_src(path))[a:b])
                 if loud is not None:
@@ -456,6 +464,29 @@ class ListenMixin:
         return {"ranges": [[int(a), int(b)]], "gain": gain, "tempo": tempo, "by_tpl": tpl["from"] if tpl else None,
                 "breath": info.get("breath", 0), "noise": info.get("noise", 0),
                 "cut": int(a + max(0, dur - b))}
+
+    def _listen_ref_loud(self):
+        """Громкость фраз из «Фразы_Переменные» (начало и конец, их голос — без пауз): к ней выравниваются имена."""
+        ls = self._ls()
+        vals = []
+        for p in (ls.get("start"), ls.get("end")):
+            if not p or not os.path.exists(p):
+                continue
+            key = self._listen_stamp(p)
+            hit = (ls.setdefault("ref_cache", {})).get(p)
+            if hit and hit[0] == key:
+                if hit[1] is not None:
+                    vals.append(hit[1])
+                continue
+            try:
+                v0, v1, _ = self._listen_voice(p)
+                loud = self._loudness(self._listen_seg(self._audit_src(p))[v0:v1])
+            except Exception:
+                loud = None
+            ls["ref_cache"][p] = (key, loud)
+            if loud is not None:
+                vals.append(loud)
+        return round(sum(vals) / len(vals), 1) if vals else None
 
     def listen_tpl_set(self, path, ranges, gain=0.0, tempo=1.0, name=None):
         """«Шаблон из этой записи»: сколько тишины до / после голоса, громкость,

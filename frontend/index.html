@@ -1454,6 +1454,7 @@
                         <span class="lp-top__spacer"></span>
                         <div class="listen-opts">
                             <span class="listen-lang listen-lang--sm" id="listenLangTop" title="Язык: пара начало / конец, записи из ru / kz и синтез"></span>
+                            <label class="listen-opt" title="Громкость имени сама подбирается под громкость начала и конца фразы (Фразы_Переменные)"><input type="checkbox" id="listenNorm" onchange="listenSetNorm(this.checked)"> громкость по фразам</label>
                             <label class="listen-opt" title="Звучит только конец начала и начало продолжения"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
                             <select class="listen-ctx" id="listenCtx" onchange="listenSetCtx(this.value)" title="Сколько конца начала и начала продолжения звучит рядом с переменной">
                                 <option value="500">0,5 с</option><option value="1000">1 с</option><option value="1500">1,5 с</option><option value="2500">2,5 с</option></select>
@@ -1684,6 +1685,6 @@
 
     <script src="script.js?v=19"></script>
     <script src="tutorial.js?v=16"></script>
-    <script src="listen.js?v=23"></script>
+    <script src="listen.js?v=24"></script>
 </body>
 </html>
