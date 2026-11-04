@@ -1531,6 +1531,7 @@
                 <button class="btn-ghost" onclick="ttsResetProject()" title="Закрыть текущий проект студии (он сохранён на диске) и начать новый — без перезапуска программы">Новый проект</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadExcel()" title="Таблица с фразами (лист с колонкой &lt;phrase&gt;) и листами переменных">Таблица</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsImportExisting()" title="Папка с уже записанным: найду там фразы и значения по таблице (все листы, все вложенные папки) и положу копии на свои места в проекте — суфлёр будет считать их записанными">Готовые записи</button>
+                <button class="btn-ghost btn-ghost--info" onclick="ttsImportVars()" title="Папка с готовыми значениями переменных (файл на значение, внутри могут быть ru и kz): положу в «Значения» и выведу строки на ленту — править вместе с началом и концом фразы">Папка переменных</button>
                 <button class="btn-ghost btn-ghost--rec" id="ttsRecBtn" onclick="ttsToggleRec()" title="Записывать с микрофона: готовые фразы появляются на ленте прямо во время записи">● Записывать <kbd>R</kbd></button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsLoadRecording()" title="Готовый сырой WAV: нарежу на дубли и сверю каждый с таблицей">Из файла</button>
                 <button class="btn-ghost btn-ghost--info" onclick="ttsOpenUnits()">Все фразы <kbd>F</kbd></button>
@@ -1680,7 +1681,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=18"></script>
+    <script src="script.js?v=19"></script>
     <script src="tutorial.js?v=16"></script>
     <script src="listen.js?v=22"></script>
 </body>

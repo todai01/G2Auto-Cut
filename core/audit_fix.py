@@ -220,6 +220,135 @@ class AuditFixMixin:
                 "extra": len(res.get("extra") or []), "missing": left,
                 "state": self.tts_state(), "prompt": self.tts_prompt_info()}
 
+    # ---------------- Студия: «Папка переменных» ----------------
+    VARS_AUDIO = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
+    VARS_GAP_MS = 400
+
+    def tts_import_vars(self):
+        """Папка с готовыми (нарезанными) значениями переменных — файл на значение, имя = значение;
+        внутри могут лежать подпапки ru и kz. Копии — на свои места в «Значения», а строки таблицы,
+        у которых нашлись все значения, — на ленту дублями: «Сборка» покажет их с началом и концом
+        фразы, края правятся, Enter сохраняет поверх."""
+        from core.tts_flow import TTS_CHUNKS_DIR, clean_name
+        st = self._tts()
+        wd = st.get("work_dir")
+        if not wd or not os.path.isdir(wd):
+            return {"error": "Сначала откройте проект Студии (папку проекта)."}
+        if not st.get("var_sheets"):
+            return {"error": "В таблице нет листа переменных."}
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER, directory=st.get("import_dir") or '')
+        if not picked:
+            return {"error": "cancel"}
+        src = picked if isinstance(picked, str) else picked[0]
+        self._tts_ensure_value_units()
+
+        norm = lambda text: re.sub(r'[\s_]+', ' ', clean_name(text)).casefold().strip()
+        lang_of = lambda part: {'ru': 'ru', 'kz': 'kz', 'kk': 'kz'}.get(part.casefold())
+        files = {None: {}, 'ru': {}, 'kz': {}}
+        total = 0
+        base_lang = lang_of(os.path.basename(os.path.normpath(src)))
+        for root, dirs, names in os.walk(src):
+            dirs[:] = [d for d in dirs if not d.startswith('_') and 'trash' not in d.lower()]
+            lang = base_lang
+            for part in os.path.relpath(root, src).split(os.sep):
+                lang = lang_of(part) or lang
+            for f in sorted(names):
+                stem, ext = os.path.splitext(f)
+                if ext.lower() in self.VARS_AUDIO:
+                    total += 1
+                    files[lang].setdefault(norm(stem), os.path.join(root, f))
+
+        def tier_lang(u, x):
+            m = re.search(r'_(ru|kz|kk)$', x["cat"]) or re.search(r'_(ru|kz|kk)$', u.get("sheet") or '')
+            return lang_of(m.group(1)) if m else None
+
+        copied = kept = 0
+        failed, used = [], set()
+
+        def put(path, dst):
+            nonlocal copied, kept
+            if os.path.exists(dst):
+                kept += 1
+                return
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(path, dst)
+                copied += 1
+            except OSError as e:
+                failed.append(f"{os.path.basename(path)}: {e}")
+
+        have = {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
+        plans = []
+        for u in self._tts_row_units():
+            if str(u.get("cat", '')).startswith('sum_l') or u["kind"] != "value":
+                continue
+            plain, bil = [], []
+            for x in u["tiers"]:
+                n, L = norm(x["value"]), tier_lang(u, x)
+                p = (files[L].get(n) if L else None) or files[None].get(n)
+                b = (files['ru'].get(n), files['kz'].get(n)) if not L else (None, None)
+                dst = self._tts_value_file(u["sheet"], x["cat"], x["value"])
+                if p:
+                    put(p, dst)
+                    used.add(p)
+                for lg, f in zip(('ru', 'kz'), b):
+                    if f:
+                        put(f, self._tts_lang_path(dst, lg))
+                        used.add(f)
+                plain.append(p)
+                bil.append(b)
+            if u["id"] in have:
+                continue
+            if all(plain):
+                plans.append((u, False, plain))
+            elif all(b[0] and b[1] for b in bil):
+                plans.append((u, True, [f for b in bil for f in b]))
+
+        n = max([t.get("chunk", 0) for t in st["takes"]] + [0])
+        added = 0
+        os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
+        for u, is_bil, paths in plans:
+            try:
+                segs = [AudioSegment.from_file(p) for p in paths]
+                rate = segs[0].frame_rate
+                audio = AudioSegment.silent(300, frame_rate=rate)
+                gap = AudioSegment.silent(self.VARS_GAP_MS, frame_rate=rate)
+                spans = []
+                for sg in segs:
+                    a = len(audio)
+                    audio += sg.set_frame_rate(rate).set_channels(1).set_sample_width(2)
+                    spans.append((a, len(audio)))
+                    audio += gap
+                audio += AudioSegment.silent(200, frame_rate=rate)
+                n += 1
+                rel = os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav")
+                audio.export(os.path.join(wd, rel), format="wav")
+            except Exception as e:
+                failed.append(f"{u['name']}: {e}")
+                continue
+            take = {"file": rel, "start_ms": 0, "ms": len(audio), "orig": [0, len(audio)], "raw": os.path.join(wd, rel),
+                    "heard": "(из папки)", "listened": False, "chunk": n, "unit": u["id"], "score": 1.0, "status": "manual"}
+            if is_bil:
+                take["bil"] = True
+            st["takes"].append(take)
+            try:
+                _rms, length = self._tts_take_frames(take)
+            except Exception:
+                length = len(audio)
+            take["tier_len"] = length
+            take["tier_clips"] = [{"a": int(a), "b": int(b), "pre": 0, "post": 0, "tempo": 1.0, "gain": 0.0} for a, b in spans]
+            take["tier_write"] = {str(k): True for k in range(len(spans))}
+            added += 1
+        if added:
+            st["index"] = len(st["takes"]) - added
+        st["import_dir"] = src
+        self.__dict__.pop('_tts_claims_cache', None)
+        self._tts_prompt_fix()
+        self._tts_save()
+        matched = len(used)
+        return {"src": src, "found": total, "matched": matched, "extra": total - matched, "copied": copied, "kept": kept,
+                "rows": added, "failed": failed[:10], "state": self.tts_state(), "prompt": self.tts_prompt_info()}
+
     READY_DIR = 'Готовые'           # внутри «Записи»: исходники готовых файлов для ленты
 
     def tts_ready_to_rail(self, kinds=('piece',)):

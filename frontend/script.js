@@ -6965,7 +6965,6 @@ let isProcessing = false;
                 if (!st) return;
             }
             openTtsScreen(st);
-            if (st.vars_only || (st.analysis && st.analysis.vars_only)) await ttsVarCtxMaybeAsk();
             if (!st.has_takes && !(st.vars_only || (st.analysis && st.analysis.vars_only))) {
                 let how = await showBeautifulChoice(`<b>Таблица загружена</b><br><br>${st.stats.units - st.stats.pieces} обычных фраз и `
                     + `${st.stats.pieces} кусочков фраз с переменными (${st.stats.chains} фраз).<br><br>`
@@ -7019,7 +7018,7 @@ let isProcessing = false;
         }
 
         // Лист переменных читается внутри фразы: начало звучит перед значением, конец — после.
-        // Нет такой фразы в таблице — спрашиваем два аудиофайла.
+        // Нет такой фразы в таблице — два аудиофайла выбирают сами («начало и конец ✎»), сами не спрашиваем.
         async function ttsVarCtxAsk(sheet, force) {
             let info = await pywebview.api.tts_var_ctx_info(sheet);
             if (!force && info && (info.asked || info.custom || info.chain)) return;
@@ -7039,10 +7038,6 @@ let isProcessing = false;
             ttsPromptKey = null;
             ttsLoadPrompt();
             if (cur && cur.custom) showToast(`Начало${cur.end ? ' и конец' : ''} фразы выбраны — «▶ Начало» и «В фразе» играют с ними`, 4000);
-        }
-        async function ttsVarCtxMaybeAsk() {
-            let pr = await pywebview.api.tts_prompt_info();
-            if (pr && pr.mode && pr.mode !== 'phrases') await ttsVarCtxAsk(pr.mode, false);
         }
 
         function ttsChooseSheet(sheets) {
@@ -7127,12 +7122,26 @@ let isProcessing = false;
                 + `<br><br><span class="tts-dim" style="word-break:break-all">${escapeHtml(r.src)}</span>`);
         }
 
+        async function ttsImportVars() {
+            if (ttsRec && ttsRec.on) { showToast('Сначала остановите запись (R)'); return; }
+            let r = await pywebview.api.tts_import_vars();
+            if (!r || r.error) { if (r && r.error !== 'cancel') showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
+            if (r.state) { tts = r.state; ttsRender(); }
+            ttsPromptKey = null;
+            if (r.prompt) ttsRenderPrompt(r.prompt); else ttsLoadPrompt();
+            let lines = [`Файлов в папке: ${r.found}, подошло к таблице: <b>${r.matched}</b>`, `Добавлено в «Значения»: <b>${r.copied}</b>`];
+            if (r.kept) lines.push(`в проекте уже есть свой файл (не перезаписан): ${r.kept}`);
+            if (r.extra > 0) lines.push(`не нашлось в таблице: ${r.extra}`);
+            lines.push(`строк на ленте для правки: <b>${r.rows}</b>`);
+            if (r.failed.length) lines.push(`ошибки: ${r.failed.map(escapeHtml).join('<br>')}`);
+            showBeautifulAlert(`✅ <b>Папка переменных загружена</b><br><br>${lines.join('<br>')}<br><br>Откройте строку в «Сборке»: значение стоит между началом и концом фразы — подрежьте края и нажмите Enter.`);
+        }
+
         async function ttsLoadExcel() {
             let st = await ttsPickExcelFlow();
             if (st) {
                 tts = st; ttsRender(); ttsPromptKey = null;
                 if (st.prompt0) ttsRenderPrompt(st.prompt0, 'next'); else ttsLoadPrompt();
-                if (st.vars_only) ttsVarCtxMaybeAsk();
             }
         }
 
@@ -10202,7 +10211,6 @@ let isProcessing = false;
             ttsRender();
             ttsPromptKey = null;
             if (r.prompt) ttsRenderPrompt(r.prompt, 'next');
-            if (mode !== 'phrases') ttsVarCtxMaybeAsk();
             showToast(mode === 'phrases' ? 'Читаем фразы таблицы'
                 : r.prompt && r.prompt.sum_logic ? 'Читаем суммы строками — Enter в «Сборке» сохранит ярусы сразу эталонами в «Значения/sum_…»'
                 : 'Читаем строки таблицы — Enter в «Сборке» сохранит каждое значение эталоном в «Значения»', 5000);
