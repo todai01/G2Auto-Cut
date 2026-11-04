@@ -219,6 +219,12 @@ class ListenMixin:
             ls["pick"][lang][which] = path
         else:
             ls["pick"][lang].pop(which, None)
+        if path:                                               # то же по имени в папке другого языка — сразу (если там ещё не выбрано)
+            other = 'kz' if lang == 'ru' else 'ru'
+            me = next((x for x in ls["phrases"] if x["path"] == path), None)
+            twin = next((x for x in ls["phrases"] if me and x["lang"] == other and listen_norm(x["name"]) == listen_norm(me["name"])), None)
+            if twin and which not in ls["pick"][other] and ls["pick"][other].get("start" if which == "end" else "end") != twin["path"]:
+                ls["pick"][other][which] = twin["path"]
         self._listen_apply_pick()
         return self.listen_state()
 
