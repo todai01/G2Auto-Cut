@@ -38,6 +38,48 @@ def listen_norm(name):
     return re.sub(r'[\W_]+', '', s.lower().replace('ё', 'е'))
 
 
+_NUM_WORDS = {}
+for _n, _ws in enumerate((
+        'ноль нуль нөл', 'один одна одно одну бір', 'два две екі', 'три үш', 'четыре төрт', 'пять бес', 'шесть алты', 'семь жеті',
+        'восемь сегіз', 'девять тоғыз', 'десять он', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать',
+        'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать')):
+    _NUM_WORDS.update({w: _n for w in _ws.split()})
+for _n, _ws in zip(range(20, 100, 10), ('двадцать жиырма', 'тридцать отыз', 'сорок қырық', 'пятьдесят елу', 'шестьдесят алпыс',
+                                        'семьдесят жетпіс', 'восемьдесят сексен', 'девяносто тоқсан')):
+    _NUM_WORDS.update({w: _n for w in _ws.split()})
+_NUM_WORDS.update({'сто': 100, 'двести': 200, 'триста': 300, 'четыреста': 400, 'пятьсот': 500, 'шестьсот': 600,
+                   'семьсот': 700, 'восемьсот': 800, 'девятьсот': 900})
+_NUM_THOUSAND = {'тысяча', 'тысячи', 'тысяч', 'тысячу', 'мың'}
+
+
+def listen_num(name):
+    """Число в названии: «одно опоздание» → 1, «двадцать два опоздания» → 22, «бір кешігу» → 1, «3 опоздания» → 3.
+    Остальные слова пропускаем. Чисел нет — None."""
+    total = cur = 0
+    found = False
+    for tok in re.findall(r'\w+', str(name or '').lower().replace('ё', 'е')):
+        if tok.isdigit():
+            cur, found = cur + int(tok), True
+        elif tok in _NUM_WORDS:
+            cur, found = cur + _NUM_WORDS[tok], True
+        elif tok == 'жүз':
+            cur, found = (cur or 1) * 100, True
+        elif tok in _NUM_THOUSAND:
+            total, cur, found = total + (cur or 1) * 1000, 0, True
+    return str(total + cur) if found else None
+
+
+def listen_keys(name):
+    """Ключи поиска записи: имя как есть, затем число из названия («одно опоздание» → «1»)."""
+    n = listen_num(name)
+    return [listen_norm(name)] + ([n] if n else [])
+
+
+def listen_stem(name):
+    """Имя файла для строки: число, если оно есть в названии, иначе само название."""
+    return listen_num(name) or re.sub(r'[\\/:*?"<>|]+', '_', str(name or '')).strip()
+
+
 def listen_lang_of(path, base):
     """Язык по подпапке внутри base: …/ru/… → ru, …/kz/… → kz; иначе None."""
     try:
@@ -78,12 +120,21 @@ class ListenMixin:
         ls["index"], ls["lang_dirs"] = index, lang_dirs
         self._listen_match()
 
+    def _listen_hits(self, name, lang=None):
+        """Записи строки: по имени, нет — по числу из названия. Папка разделена на ru / kz — только свой язык."""
+        ls = self._ls()
+        for key in listen_keys(name):
+            hits = ls["index"].get(key, [])
+            if lang:
+                hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (lang, None)]
+            if hits:
+                return hits
+        return []
+
     def _listen_match(self):
         ls = self._ls()
         for r in ls["rows"]:
-            hits = ls["index"].get(listen_norm(r["name"]), [])
-            if ls["lang_dirs"]:                                # папка разделена на ru / kz — только свой язык
-                hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (ls["lang"], None)]
+            hits = self._listen_hits(r["name"], ls["lang"] if ls["lang_dirs"] else None)
             r["path"], r["dups"] = (hits[0] if hits else None), max(0, len(hits) - 1)
 
     def listen_pick_folder(self):
@@ -197,7 +248,7 @@ class ListenMixin:
             for c, vals in cols.items():
                 if vals and (vals[0].lower().strip('<> ') in LISTEN_HEADER_WORDS or re.fullmatch(r'<.*>', vals[0])):
                     vals = vals[1:]
-                score = (sum(1 for v in vals if listen_norm(v) in index), len(vals))
+                score = (sum(1 for v in vals if any(k in index for k in listen_keys(v))), len(vals))
                 if vals and (best is None or score > best[0]):
                     best = (score, vals, f"{ws.title} · колонка {chr(65 + c) if c < 26 else c + 1}")
         wb.close()
@@ -561,9 +612,7 @@ class ListenMixin:
         for lang in langs:
             tag = f" ({lang})" if lang else ''
             for r in ls["rows"]:
-                hits = ls["index"].get(listen_norm(r["name"]), [])
-                if lang:
-                    hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (lang, None)]
+                hits = self._listen_hits(r["name"], lang)
                 rows.append((r["name"] + tag, listen_norm(r["name"]), hits[0] if hits else None))
         for name, key, p in rows:
             if not p:
@@ -661,7 +710,7 @@ class ListenMixin:
         row = ls["rows"][k]
         out_dir = os.path.join(ls["folder"] or tempfile.gettempdir(), LISTEN_SYNTH_DIR)
         os.makedirs(out_dir, exist_ok=True)
-        safe = re.sub(r'[\\/:*?"<>|]+', '_', row["name"]).strip() or f'строка_{k + 1}'
+        safe = listen_stem(row["name"]) or f'строка_{k + 1}'
         dst = os.path.join(out_dir, f"{safe}.wav")
         ls["synth"][k] = {"status": "busy", "file": dst, "text": text, "lang": lang}
 
@@ -732,7 +781,7 @@ class ListenMixin:
         row = ls["rows"][k]
         path = row["path"]
         if not path:
-            safe = re.sub(r'[\\/:*?"<>|]+', '_', row["name"]).strip() or f'строка_{k + 1}'
+            safe = listen_stem(row["name"]) or f'строка_{k + 1}'
             path = os.path.join(ls["lang_dirs"].get(s.get("lang") or ls["lang"]) or ls["folder"] or os.path.dirname(s["file"]),
                                 f"{safe}.wav")
         else:
