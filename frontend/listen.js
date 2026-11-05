@@ -69,7 +69,7 @@ async function listenPick(what) {
 function listenRender(light) {
     if (!LS) return;
     lEl('listenLangTop').innerHTML = listenLangBtns();
-    lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, LS.lang.toUpperCase(),
+    lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, listenLangName(LS.lang),
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
     lEl('listenNorm').checked = LS.norm !== false;
@@ -118,6 +118,7 @@ function listenStatusRender() {
     el.className = 'lp-status ' + c; el.innerText = t;
 }
 function listenStatRender() {
+    listenTotalsSoon();
     let n = LS.rows.length, done = LS.rows.filter(r => r.path && r.done).length;
     let fl0 = LS.rows.filter(r => r.flag).length;
     lEl('listenProgNum').innerText = `${done} / ${LS.found}`;
@@ -733,9 +734,9 @@ function listenRenderSynth() {
     let box = lEl('listenSynth'), r = lRow();
     if (!r) { box.innerHTML = ''; return; }
     let st = r.synth;
-    let keep = lEl('listenSynthText'), txt = keep && keep.dataset.k === String(LS.pos) ? keep.value : r.name;
-    box.innerHTML = `<span class="listen-synth__label">Синтез ${LS.lang.toUpperCase()}</span>
-        <input class="listen-synth__text" id="listenSynthText" data-k="${LS.pos}" value="${escapeHtml(txt)}" title="Текст для синтеза — можно поправить (ударение, написание)">
+    let keep = lEl('listenSynthText'), sk = `${LS.lang}:${r.base}`, txt = keep && keep.dataset.k === sk ? keep.value : r.name;
+    box.innerHTML = `<span class="listen-synth__label">Синтез ${listenLangName(LS.lang === 'uni' ? 'ru' : LS.lang)}</span>
+        <input class="listen-synth__text" id="listenSynthText" data-k="${sk}" value="${escapeHtml(txt)}" title="Текст для синтеза — можно поправить (ударение, написание)">
         <button class="listen-synth__go" onclick="listenSynthQuick()" ${st === 'busy' ? 'disabled' : ''} title="Синтез сразу встанет на дорожку вместо записи (прежняя — в «_до_правок»)">${st === 'busy' ? 'Синтезирую…' : 'Синтезировать <kbd>R</kbd>'}</button>
         ${st === 'ready' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthPlay()">&#9654; в фразе</button>
             <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
@@ -744,8 +745,9 @@ function listenRenderSynth() {
         <button class="btn-ghost btn-ghost--compact" onclick="listenVoicePick()" title="Голос синтеза: готовый голос сервиса или по образцу — запись на экране">голос: ${escapeHtml(LS.voice ? LS.voice.label : 'не выбран')} ✎</button>`;
     listenStatusRender(); listenEdRender();
 }
-const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
-    `<button type="button" class="${cur === l ? 'is-on' : ''}" onclick="${fn}('${l}')">${l.toUpperCase()}</button>`).join('');
+const listenLangName = l => l === 'uni' ? 'УНИВ' : l.toUpperCase();
+const listenLangBtns = (cur = LS.lang, fn = 'listenLang', langs = LS.split ? ['ru', 'kz', 'uni'] : ['ru', 'kz']) => langs.map(l =>
+    `<button type="button" class="${cur === l ? 'is-on' : ''}" onclick="${fn}('${l}')" ${l === 'uni' ? 'title="Универсалы — марки без цифр: одна запись на оба языка"' : ''}>${listenLangName(l)}</button>`).join('');
 // Язык — для всего: пара начало / конец, записи из ru / kz (если папка разделена) и синтез
 async function listenLang(l) {
     if (!LS || l === LS.lang) return;
@@ -773,7 +775,7 @@ async function listenPhrases() {
 }
 function listenPhrOpen() {
     return new Promise(done => {
-        lPhr = { lang: LS.lang, done };
+        lPhr = { lang: LS.lang === 'uni' ? 'ru' : LS.lang, done };
         lEl('listenPhrFilter').value = '';
         lEl('listenPhrOverlay').style.display = 'flex';
         listenPhrRender();
@@ -803,7 +805,7 @@ function listenPhrRender() {
     let pick = LS.pick[lPhr.lang] || {}, q = lEl('listenPhrFilter').value.trim().toLowerCase();
     let split = LS.phrases.some(p => p.lang);
     lEl('listenPhrFolder').innerText = `папка «${LS.phr_folder_name}» · сменить`;
-    lEl('listenPhrLang').innerHTML = listenLangBtns(lPhr.lang, 'listenPhrLang');
+    lEl('listenPhrLang').innerHTML = listenLangBtns(lPhr.lang, 'listenPhrLang', ['ru', 'kz']);
     let nm = p => p ? escapeHtml((LS.phrases.find(x => x.path === p) || {}).rel || p) : '—';
     lEl('listenPhrSel').innerHTML = `<span>${lPhr.lang.toUpperCase()} · начало: <b>${nm(pick.start)}</b></span><span>конец: <b>${nm(pick.end)}</b></span>`;
     let rows = LS.phrases.map((p, k) => ({ p, k })).filter(({ p }) => (!split || !p.lang || p.lang === lPhr.lang)
@@ -860,7 +862,7 @@ async function listenSynthQuick() {
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     let pos = LS.pos; LS = r.state; LS.pos = pos;
     listenMarkList(); listenRenderSynth();
-    showToast(`Синтез «${row.name}» (${LS.lang.toUpperCase()}) — встанет на дорожку сам, можно листать дальше`);
+    showToast(`Синтез «${row.name}» (${listenLangName(LS.lang === 'uni' ? 'ru' : LS.lang)}) — встанет на дорожку сам, можно листать дальше`);
 }
 async function listenSynthPlay() {
     listenStopHead();
@@ -910,7 +912,7 @@ function listenKey(e) {
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
     if (e.code === 'KeyP') { e.preventDefault(); listenPlayOnly(); return; }
     if (e.code === 'KeyM') { e.preventDefault(); listenSwap(); return; }
-    if (e.code === 'KeyL') { e.preventDefault(); listenLang(LS.lang === 'ru' ? 'kz' : 'ru'); return; }
+    if (e.code === 'KeyL') { e.preventDefault(); listenLang(({ ru: 'kz', kz: LS.split ? 'uni' : 'ru', uni: 'ru' })[LS.lang]); return; }
     if (e.code === 'ArrowDown' || e.code === 'KeyS') { e.preventDefault(); listenStep(1); return; }
     if (e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); listenStep(-1); return; }
     if (e.code === 'KeyX' || e.code === 'Delete') { e.preventDefault(); listenEdCut(); return; }
@@ -1088,14 +1090,33 @@ function listenOvRender() {
     let rows = d.rows.filter(r => (lOv.tab === 'all' || !r[lOv.tab].file)
         && (!q || r.ru.name.toLowerCase().includes(q) || r.kz.name.toLowerCase().includes(q)));
     lEl('listenOvTable').innerHTML = `<thead><tr><th>№</th><th>Название RU</th><th>RU</th><th>Название KZ</th><th>KZ</th></tr></thead><tbody>`
-        + rows.map(r => `<tr class="${r.k === d.pos ? 'is-cur' : ''}" onclick="listenOvGo(${r.k})"><td>${r.k + 1}</td><td>${escapeHtml(r.ru.name)}</td>${cell(r.ru)}<td>${escapeHtml(r.kz.name)}</td>${cell(r.kz)}</tr>`).join('')
+        + rows.map(r => `<tr class="${r.k === d.pos ? 'is-cur' : ''}" onclick="listenOvGo(${r.k}, '${r.kind}')"><td>${r.k + 1}</td><td>${escapeHtml(r.ru.name)}</td>${cell(r.ru)}<td>${escapeHtml(r.kz.name)}</td>${cell(r.kz)}</tr>`).join('')
         + `</tbody>`;
 }
-async function listenOvGo(k) {
+async function listenOvGo(k, kind) {
     listenOvClose();
-    await listenGo(k);
+    if (LS.split) {                                       // строка может быть в другом виде (универсал / язык)
+        if (kind === 'uni' && LS.lang !== 'uni') await listenLang('uni');
+        else if (kind !== 'uni' && LS.lang === 'uni') await listenLang('ru');
+    }
+    let i = LS.rows.findIndex(x => x.base === k);
+    if (i >= 0) await listenGo(i);
 }
 document.addEventListener('keydown', e => {
     if (lOv && e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); listenOvClose(); }
     else if (lOv && e.target.tagName !== 'INPUT') e.stopImmediatePropagation();
 }, true);
+
+
+// ----- общий счётчик по всей таблице: проверено / строк — RU, KZ, универсалы и вместе -----
+let lTotT = null;
+function listenTotalsSoon() { clearTimeout(lTotT); lTotT = setTimeout(listenTotals, 350); }
+async function listenTotals() {
+    let el = lEl('listenTotals');
+    if (!el || !LS || !LS.rows.length) { if (el) el.innerHTML = ''; return; }
+    let t = await pywebview.api.listen_totals();
+    if (!t) return;
+    let part = (k, label) => `<span class="${LS.lang === k ? 'is-on' : ''}" title="${label}: проверено / строк (записей найдено ${t[k][1]})">${label} <b>${t[k][0]}/${t[k][2]}</b></span>`;
+    el.innerHTML = `<div class="lp-totals__all">Всего <b>${t.all[0]} / ${t.all[2]}</b> <small>записей найдено ${t.all[1]}</small></div>`
+        + `<div class="lp-totals__parts">${part('ru', 'RU')}${part('kz', 'KZ')}${LS.split ? part('uni', 'УНИВ') : ''}</div>`;
+}

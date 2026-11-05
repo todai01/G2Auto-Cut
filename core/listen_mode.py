@@ -170,11 +170,70 @@ class ListenMixin:
                 return hits
         return []
 
-    def _listen_match(self):
+    def _listen_base(self):
+        """Таблица целиком: [(название RU, название KZ)] — общий порядок строк."""
+        names = self._ls().get("table_names") or {}
+        ru = names.get("ru") or []
+        kz = names.get("kz") or ru
+        return [(ru[k], kz[k] if k < len(kz) else ru[k]) for k in range(len(ru))]
+
+    def _listen_kind(self, ru, kz):
+        """'uni' — универсал: в названии нет цифр и записей в папках ru / kz нет (лежит в общей или её нет совсем);
+        'lang' — своя у каждого языка. Папка не разделена на ru / kz — делить не на что (всё 'lang')."""
         ls = self._ls()
-        for r in ls["rows"]:
-            hits = self._listen_hits(r["name"], ls["lang"] if ls["lang_dirs"] else None)
-            r["path"], r["dups"] = (hits[0] if hits else None), max(0, len(hits) - 1)
+        if not ls["lang_dirs"]:
+            return 'lang'
+        if any(re.search(r'\d', x) or listen_num(x) for x in (ru, kz)):
+            return 'lang'
+        for x in (ru, kz):
+            for key in listen_keys(x):
+                if any(listen_lang_of(h, ls["folder"]) in ('ru', 'kz') for h in ls["index"].get(key, [])):
+                    return 'lang'
+        return 'uni'
+
+    def _listen_match(self):
+        """Строки текущего вида (RU / KZ — без универсалов, УНИВ — только они) и их записи.
+        Текущая строка (по номеру в таблице) остаётся, если есть в новом виде — название при смене языка не теряется."""
+        ls = self._ls()
+        base = self._listen_base()
+        if not base:
+            return
+        old = ls["rows"]
+        cur = old[ls["pos"]].get("base") if old and 0 <= ls["pos"] < len(old) else None
+        old_synth = {r.get("base"): ls["synth"][i] for i, r in enumerate(old) if i in ls["synth"]}
+        lang, split = ls["lang"], bool(ls["lang_dirs"])
+        kinds = ls["kinds"] = [self._listen_kind(ru, kz) for ru, kz in base]
+        rows, synth = [], {}
+        for k, (ru, kz) in enumerate(base):
+            if split and (kinds[k] == 'uni') != (lang == 'uni'):
+                continue
+            name = kz if lang == 'kz' else ru
+            hits = self._listen_hits(name, lang if split and lang != 'uni' else None)
+            if k in old_synth:
+                synth[len(rows)] = old_synth[k]
+            rows.append({"name": name, "path": hits[0] if hits else None, "dups": max(0, len(hits) - 1), "base": k})
+        ls["rows"], ls["synth"] = rows, synth
+        ls["pos"] = next((i for i, r in enumerate(rows) if r["base"] == cur), min(ls["pos"], max(0, len(rows) - 1)))
+
+    def listen_totals(self):
+        """Счётчик по всей таблице: проверено / строк — по RU, KZ, универсалам и вместе."""
+        ls = self._ls()
+        base, split = self._listen_base(), bool(ls["lang_dirs"])
+        kinds = ls.get("kinds") or ['lang'] * len(base)
+        out = {"ru": [0, 0, 0], "kz": [0, 0, 0], "uni": [0, 0, 0]}       # проверено, найдено, строк
+        for k, (ru, kz) in enumerate(base):
+            views = ('uni',) if kinds[k] == 'uni' and split else ('ru', 'kz')
+            for v in views:
+                hits = self._listen_hits(kz if v == 'kz' else ru, v if split and v != 'uni' else None)
+                p = hits[0] if hits else None
+                o = out[v]
+                o[2] += 1
+                if p:
+                    o[1] += 1
+                    if os.path.exists(self._listen_meta(p)):
+                        o[0] += 1
+        out["all"] = [sum(out[v][i] for v in ('ru', 'kz', 'uni')) for i in range(3)]
+        return out
 
     def listen_pick_folder(self):
         picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
@@ -226,7 +285,7 @@ class ListenMixin:
     def listen_set_phrase(self, which, path, lang=None):
         """Отметить кусочек как начало / конец (path=None — снять) для языка lang."""
         ls = self._ls()
-        lang = lang if lang in ('ru', 'kz') else ls["lang"]
+        lang = lang if lang in ('ru', 'kz') else ('ru' if ls["lang"] == 'uni' else ls["lang"])
         if which not in ('start', 'end'):
             return {"error": "Не то поле."}
         if path:
@@ -254,7 +313,7 @@ class ListenMixin:
 
     def _listen_apply_pick(self):
         ls = self._ls()
-        cur = ls["pick"].get(ls["lang"], {})
+        cur = ls["pick"].get('ru' if ls["lang"] == 'uni' else ls["lang"], {})
         ls["start"], ls["end"] = cur.get("start"), cur.get("end")
 
     def listen_pick_table(self):
@@ -271,9 +330,7 @@ class ListenMixin:
             return {"error": "В таблице не нашлось названий."}
         ls = self._ls()
         ls["table"], ls["table_names"] = path, by_lang
-        ls["rows"] = [{"name": n, "path": None, "dups": 0} for n in by_lang[ls["lang"]]]
-        ls["pos"] = 0
-        ls["synth"] = {}
+        ls["rows"], ls["pos"], ls["synth"] = [], 0, {}
         self._listen_match()
         return {**self.listen_state(), "column": col}
 
@@ -424,7 +481,7 @@ class ListenMixin:
     def _listen_row(self, k):
         ls = self._ls()
         r = ls["rows"][k]
-        return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
+        return {"name": r["name"], "base": r.get("base", k), "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
                 "dir": os.path.relpath(os.path.dirname(r["path"]), ls["folder"]).replace(os.sep, '/')
                 if r["path"] and ls["folder"] and os.path.dirname(r["path"]) != os.path.normpath(ls["folder"]) else None,
                 "uni": bool(r["path"]) and bool(ls["lang_dirs"]) and listen_lang_of(r["path"], ls["folder"]) is None,
@@ -482,12 +539,10 @@ class ListenMixin:
             ls["ctx_ms"] = max(500, min(5000, int(ctx_ms)))
         if pos is not None and ls["rows"]:
             ls["pos"] = max(0, min(int(pos), len(ls["rows"]) - 1))
-        if lang in ('ru', 'kz') and lang != ls["lang"]:
+        if lang in ('ru', 'kz', 'uni') and lang != ls["lang"]:
+            if lang == 'uni' and not ls["lang_dirs"]:
+                return self.listen_state()
             ls["lang"] = lang
-            names = (ls.get("table_names") or {}).get(lang)
-            if names and len(names) == len(ls["rows"]):          # названия — из колонки этого языка
-                for r, n in zip(ls["rows"], names):
-                    r["name"] = n
             self._listen_apply_pick()
             self._listen_match()
         if short is not None:
@@ -736,9 +791,10 @@ class ListenMixin:
         rows = []
         for lang in langs:
             tag = f" ({lang})" if lang else ''
-            for r in ls["rows"]:
-                hits = self._listen_hits(r["name"], lang)
-                rows.append((r["name"] + tag, listen_norm(r["name"]), hits[0] if hits else None))
+            for ru, kz in self._listen_base():
+                nm = kz if lang == 'kz' else ru
+                hits = self._listen_hits(nm, lang)
+                rows.append((nm + tag, listen_norm(nm), hits[0] if hits else None))
         for name, key, p in rows:
             if not p:
                 missing.append(name)
@@ -887,7 +943,7 @@ class ListenMixin:
         k, text = int(k), str(text or '').strip()
         if not text:
             return {"error": "Пустой текст."}
-        lang = lang if lang in ('ru', 'kz') else ls["lang"]
+        lang = lang if lang in ('ru', 'kz') else ('ru' if ls["lang"] == 'uni' else ls["lang"])
         row = ls["rows"][k]
         out_dir = os.path.join(ls["folder"] or tempfile.gettempdir(), LISTEN_SYNTH_DIR)
         os.makedirs(out_dir, exist_ok=True)
@@ -1140,13 +1196,12 @@ class ListenMixin:
     def listen_overview(self):
         """Таблица целиком: у каждой строки — есть ли запись в RU и в KZ, из какой папки (универсал — общая)."""
         ls = self._ls()
-        names = ls.get("table_names") or {}
         split = bool(ls["lang_dirs"])
+        kinds = ls.get("kinds") or []
         rows = []
-        for k, r in enumerate(ls["rows"]):
-            row = {"k": k, "flag": listen_norm(r["name"]) in (ls.get("flags") or ())}
-            for lang in ('ru', 'kz'):
-                nm = (names.get(lang) or [])[k] if k < len(names.get(lang) or []) else r["name"]
+        for k, (ru, kz) in enumerate(self._listen_base()):
+            row = {"k": k, "kind": kinds[k] if k < len(kinds) else 'lang', "flag": listen_norm(ru) in (ls.get("flags") or ())}
+            for lang, nm in (('ru', ru), ('kz', kz)):
                 hits = self._listen_hits(nm, lang if split else None)
                 p = hits[0] if hits else None
                 row[lang] = {"name": nm, "file": os.path.basename(p) if p else None,
@@ -1155,7 +1210,8 @@ class ListenMixin:
                              "uni": bool(p) and split and listen_lang_of(p, ls["folder"]) is None,
                              "done": bool(p) and os.path.exists(self._listen_meta(p))}
             rows.append(row)
-        return {"rows": rows, "pos": ls["pos"], "split": split,
+        cur = ls["rows"][ls["pos"]].get("base") if ls["rows"] and 0 <= ls["pos"] < len(ls["rows"]) else None
+        return {"rows": rows, "pos": cur, "split": split,
                 "miss_ru": sum(1 for x in rows if not x["ru"]["file"]), "miss_kz": sum(1 for x in rows if not x["kz"]["file"])}
 
     # ---------------- Audacity: туда и обратно ----------------
