@@ -69,15 +69,21 @@ def listen_num(name):
     return str(total + cur) if found else None
 
 
+def listen_num_name(name):
+    """Число вместо названия — только для названий без латиницы («одно опоздание», «бір рет»):
+    у марок («AUDI 80», «BMW X5») цифры — часть названия, файл называется как марка."""
+    return None if re.search(r'[A-Za-z]', str(name or '')) else listen_num(name)
+
+
 def listen_keys(name):
     """Ключи поиска записи: имя как есть, затем число из названия («одно опоздание» → «1»)."""
-    n = listen_num(name)
+    n = listen_num_name(name)
     return [listen_norm(name)] + ([n] if n else [])
 
 
 def listen_stem(name):
     """Имя файла для строки: число, если оно есть в названии, иначе само название."""
-    return listen_num(name) or re.sub(r'[\\/:*?"<>|]+', '_', str(name or '')).strip()
+    return listen_num_name(name) or re.sub(r'[\\/:*?"<>|]+', '_', str(name or '')).strip()
 
 
 def listen_lang_of(path, base):
@@ -89,23 +95,32 @@ def listen_lang_of(path, base):
     for d in parts:
         if d.lower() in LISTEN_LANG_DIRS:
             return LISTEN_LANG_DIRS[d.lower()]
-    for d in parts:                                      # «Фразы_kz», «kz_начало» — язык словом в имени папки
-        langs = {LISTEN_LANG_DIRS[t] for t in re.split(r'[\W_]+', d.lower()) if t in LISTEN_LANG_DIRS}
-        if len(langs) == 1:
-            return langs.pop()
+    for d in parts:                                      # «ru_mark», «Фразы_kz» — язык словом в имени папки
+        lg = listen_dir_lang(d)
+        if lg:
+            return lg
     return None
+
+
+def listen_dir_lang(name):
+    """Язык папки по имени: «ru», «kz», «ru_mark», «Фразы_kz»; «uni_mark» и прочие — None (общая для обоих)."""
+    n = str(name or '').lower()
+    if n in LISTEN_LANG_DIRS:
+        return LISTEN_LANG_DIRS[n]
+    langs = {LISTEN_LANG_DIRS[t] for t in re.split(r'[\W_]+', n) if t in LISTEN_LANG_DIRS}
+    return langs.pop() if len(langs) == 1 else None
 
 
 def listen_lang_root(path):
     """Выбрали саму папку языка (…/raw_var/ru) — берём родителя, если рядом есть и другой язык:
     тогда тумблер RU / KZ находит и kz."""
     path = os.path.normpath(path)
-    lang = LISTEN_LANG_DIRS.get(os.path.basename(path).lower())
+    lang = listen_dir_lang(os.path.basename(path))
     parent = os.path.dirname(path)
     if lang and parent and os.path.isdir(parent):
         try:
             sib = [d for d in os.listdir(parent) if os.path.isdir(os.path.join(parent, d))
-                   and LISTEN_LANG_DIRS.get(d.lower()) not in (None, lang)]
+                   and listen_dir_lang(d) not in (None, lang)]
         except OSError:
             sib = []
         if sib:
@@ -149,6 +164,7 @@ class ListenMixin:
             hits = ls["index"].get(key, [])
             if lang:
                 hits = [h for h in hits if listen_lang_of(h, ls["folder"]) in (lang, None)]
+                hits.sort(key=lambda h: listen_lang_of(h, ls["folder"]) != lang)   # своя папка языка — раньше общей
             if hits:
                 return hits
         return []
@@ -408,6 +424,8 @@ class ListenMixin:
         ls = self._ls()
         r = ls["rows"][k]
         return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
+                "dir": os.path.relpath(os.path.dirname(r["path"]), ls["folder"]).replace(os.sep, '/')
+                if r["path"] and ls["folder"] and os.path.dirname(r["path"]) != os.path.normpath(ls["folder"]) else None,
                 "dups": r["dups"], "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
                 "done": bool(r["path"]) and os.path.exists(self._listen_meta(r["path"])),     # прошла через «Сохранить»
                 "flag": listen_norm(r["name"]) in (ls.get("flags") or ()),                    # «исправить потом»
@@ -928,25 +946,26 @@ class ListenMixin:
         if not a["path"] and not b["path"]:
             return {"error": "У обеих строк нет записи."}
         self.player.stop()
-        lang_dir = ls["lang_dirs"].get(ls["lang"]) if ls["lang_dirs"] else None
 
-        def target(row, like):
-            d = os.path.dirname(like) if like else (lang_dir or ls["folder"])
-            ext = os.path.splitext(like)[1] if like else '.wav'
-            return os.path.join(d, (listen_stem(row["name"]) or 'запись') + ext)
-        pa, pb = a["path"], b["path"]
-        moves = []                                              # (откуда, куда) — по всем привязанным файлам
-        if pa and pb:
-            tmp = pa + '.swap'
-            moves += list(zip(self._listen_sidecars(pa), self._listen_sidecars(tmp)))
-            moves += list(zip(self._listen_sidecars(pb), self._listen_sidecars(pa)))
-            moves += list(zip(self._listen_sidecars(tmp), self._listen_sidecars(pb)))
-        else:
-            src = pa or pb
-            dst = target(b if pa else a, src)
-            if os.path.exists(dst):
-                return {"error": f"Файл «{os.path.basename(dst)}» уже есть — сначала разберитесь с ним."}
-            moves += list(zip(self._listen_sidecars(src), self._listen_sidecars(dst)))
+        def renamed(path, row):                                 # тот же файл, та же папка — имя другой строки
+            return os.path.join(os.path.dirname(path), (listen_stem(row["name"]) or 'запись') + os.path.splitext(path)[1])
+        plan = {}                                               # откуда → куда (файл записи)
+        if a["path"]:
+            plan[a["path"]] = renamed(a["path"], b)
+        if b["path"]:
+            plan[b["path"]] = renamed(b["path"], a)
+        norm = lambda p: os.path.normcase(os.path.abspath(p))
+        srcs = {norm(p) for p in plan}
+        for src, dst in plan.items():
+            if os.path.exists(dst) and norm(dst) not in srcs:
+                return {"error": f"В папке «{os.path.basename(os.path.dirname(dst))}» уже есть «{os.path.basename(dst)}» — "
+                                 f"сначала разберитесь с ним."}
+        moves = []                                              # через временные имена: A→tmp, B→A, tmp→B
+        temps = {src: src + '.swap' for src in plan}
+        for src in plan:
+            moves += list(zip(self._listen_sidecars(src), self._listen_sidecars(temps[src])))
+        for src, dst in plan.items():
+            moves += list(zip(self._listen_sidecars(temps[src]), self._listen_sidecars(dst)))
         try:
             for src, dst in moves:
                 if os.path.exists(src):

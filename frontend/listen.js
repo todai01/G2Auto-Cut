@@ -81,7 +81,7 @@ function listenRender(light) {
     lEl('listenName').classList.toggle('is-miss', !!r && !r.path);
     listenStatusRender();
     lEl('listenFile').innerHTML = !r ? '' : r.path
-        ? `${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
+        ? `${r.dir ? `<span class="listen-dir">${escapeHtml(r.dir)}/</span>` : ''}${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
         : 'записи с таким именем в папке нет — синтез (R)';
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
@@ -739,6 +739,7 @@ async function listenLang(l) {
     LS = await pywebview.api.listen_set(null, l);
     listenRender();
     await listenLoadEditor();
+    if (lRow() && lRow().path) listenPlayChain();       // та же строка — сразу слышно на другом языке
 }
 
 // ----- начало и конец: кусочки из «Фразы_Переменные» (ru / kz) -----
@@ -872,6 +873,7 @@ function listenKey(e) {
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
     if (e.code === 'KeyP') { e.preventDefault(); listenPlayOnly(); return; }
     if (e.code === 'KeyM') { e.preventDefault(); listenSwap(); return; }
+    if (e.code === 'KeyL') { e.preventDefault(); listenLang(LS.lang === 'ru' ? 'kz' : 'ru'); return; }
     if (e.code === 'ArrowDown' || e.code === 'KeyS') { e.preventDefault(); listenStep(1); return; }
     if (e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); listenStep(-1); return; }
     if (e.code === 'KeyX' || e.code === 'Delete') { e.preventDefault(); listenEdCut(); return; }
