@@ -18,7 +18,7 @@ import webview
 from pydub import AudioSegment
 
 from core.voice_trim import voice_span
-from core.tts_synth import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_LANG_INDEX
+from core.tts_synth import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_SEL, SYNTH_LANG_INDEX
 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
@@ -426,6 +426,7 @@ class ListenMixin:
         return {"name": r["name"], "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
                 "dir": os.path.relpath(os.path.dirname(r["path"]), ls["folder"]).replace(os.sep, '/')
                 if r["path"] and ls["folder"] and os.path.dirname(r["path"]) != os.path.normpath(ls["folder"]) else None,
+                "uni": bool(r["path"]) and bool(ls["lang_dirs"]) and listen_lang_of(r["path"], ls["folder"]) is None,
                 "dups": r["dups"], "edited": bool(r["path"]) and os.path.exists(self._audit_backup(r["path"])),
                 "done": bool(r["path"]) and os.path.exists(self._listen_meta(r["path"])),     # прошла через «Сохранить»
                 "flag": listen_norm(r["name"]) in (ls.get("flags") or ()),                    # «исправить потом»
@@ -464,7 +465,7 @@ class ListenMixin:
             "short": ls["short"], "norm": ls.get("norm", True), "ctx_ms": ls.get("ctx_ms") or self.LISTEN_CTX_MS,
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
-            "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None,
+            "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None, "voice": ls.get("voice"),
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
@@ -818,7 +819,63 @@ class ListenMixin:
         except Exception:
             pass
 
-    def listen_synth(self, k, text, lang=None, take=False):
+    @staticmethod
+    def _listen_tab(page, tab):
+        """Вкладка сервиса: 'preset' — готовые голоса (#preset-voice), 'clone' — по образцу (эталон + его текст)."""
+        if tab == 'preset':
+            active = 'section.panel.active ' + SYNTH_PRESET_SEL["voice"]
+            if not page.locator(active).count():
+                page.click(SYNTH_PRESET_SEL["tab"])
+                page.wait_for_selector(active, state="visible", timeout=10000)
+        else:
+            page.click(SYNTH_SEL["clone_tab"])
+            page.wait_for_selector(SYNTH_SEL["etalon_file"], state="attached", timeout=10000)
+        page.wait_for_timeout(250)
+
+    # ---- с каким голосом: список — с самого сервиса, или образец — запись на экране ----
+    def listen_voices(self, refresh=False):
+        """Голоса сервиса: имена из списка #preset-voice (открывается браузер, несколько секунд)."""
+        ls = self._ls()
+        voices, err = None if refresh else self.__dict__.get('_listen_voices'), None
+        if voices is None:
+            done, box = threading.Event(), {}
+
+            def job(worker):
+                try:
+                    page = worker.page_ready()
+                    self._listen_tab(page, 'preset')
+                    page.wait_for_selector(SYNTH_PRESET_SEL["voice"] + ' > option', state='attached', timeout=20000)
+                    for _ in range(40):                  # список догружается: сначала там «…»
+                        names = page.eval_on_selector_all(SYNTH_PRESET_SEL["voice"] + ' > option',
+                                                          'os => os.map(o => (o.textContent || "").trim())')
+                        if [n for n in names if n and n != '…']:
+                            break
+                        page.wait_for_timeout(250)
+                    box["v"] = page.eval_on_selector_all(SYNTH_PRESET_SEL["voice"] + ' > option',
+                                                         'os => os.map(o => (o.textContent || o.value || "").trim())')
+                except Exception as e:
+                    box["e"] = str(e)
+                finally:
+                    done.set()
+            self._listen_worker().add(job, front=True)
+            done.wait(60)
+            names = [n for n in box.get("v") or [] if n and n != '…']
+            if names:
+                voices = self._listen_voices = [{"index": i, "label": n} for i, n in enumerate(names)]
+            else:
+                err = box.get("e") or "сервис не ответил"
+                voices = []
+        return {"voices": voices, "voice": ls.get("voice"), "error": err}
+
+    def listen_set_voice(self, index, label=None):
+        """index ≥ 0 — готовый голос сервиса; -1 — по образцу: запись на экране + её название как текст образца."""
+        ls = self._ls()
+        index = int(index)
+        ls["voice"] = {"index": -1, "label": "по образцу — запись на экране"} if index < 0 else \
+            {"index": index, "label": str(label or f"голос {index + 1}")}
+        return self.listen_state()
+
+    def listen_synth(self, k, text, lang=None, take=False, ref=None):
         """Синтез строки k в фоне. take — готовый сразу поставить вместо записи
         (на дорожку: правка и прослушка — уже по нему)."""
         ls = self._ls()
@@ -833,21 +890,44 @@ class ListenMixin:
         os.makedirs(out_dir, exist_ok=True)
         safe = listen_stem(row["name"]) or f'строка_{k + 1}'
         dst = os.path.join(out_dir, f"{safe}.wav")
+        v = ls.get("voice") or {"index": SYNTH_PRESET_SEL["voice_index"], "label": None}
+        etalon = None
+        if v["index"] < 0:                                  # образец — то, что сейчас на экране (с правкой)
+            ref = ref or ({"path": row["path"]} if row["path"] else None)
+            if not ref or not ref.get("path") or not os.path.exists(ref["path"]):
+                return {"error": "Для синтеза по образцу нужна запись на экране — у этой строки её нет. Выберите голос сервиса."}
+            etalon = os.path.join(tempfile.gettempdir(), f"gvox_listen_ref_{k}.wav")
+            try:
+                self._listen_render(ref["path"], ref.get("ranges"), float(ref.get("gain") or 0), float(ref.get("tempo") or 1)).export(etalon, format="wav")
+            except Exception as e:
+                return {"error": f"Образец не собрался: {e}"}
+        etalon_text = row["name"]
         ls["synth"][k] = {"status": "busy", "file": dst, "text": text, "lang": lang}
 
         def job(worker):
             try:
                 page = worker.page_ready()
-                sel = SYNTH_PRESET_SEL
-                voice = lambda: preset_pick(page, sel["voice"], sel["voice_index"])
-                # Сервис сбрасывает голос (после «Синтезировать», при догрузке списка) —
-                # голос и язык выставляем перед каждым синтезом с проверкой, голос — ещё раз
-                # сразу после нажатия, и только потом скачиваем.
-                page.fill(sel["text"], text)
-                preset_pick(page, sel["lang"], SYNTH_LANG_INDEX.get(lang, 0))
-                vname = voice()
                 raw = os.path.splitext(dst)[0] + '.download'
-                synth_collect(page, sel["submit"], raw, after_click=voice)
+                if etalon:                                  # по образцу: эталон + его текст + что сказать
+                    sel = SYNTH_SEL
+                    self._listen_tab(page, 'clone')
+                    page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
+                    page.set_input_files(sel["etalon_file"], etalon)
+                    page.fill(sel["etalon_text"], etalon_text)
+                    page.fill(sel["text"], text)
+                    vname = "по образцу"
+                    synth_collect(page, sel["submit"], raw)
+                else:
+                    sel = SYNTH_PRESET_SEL
+                    self._listen_tab(page, 'preset')
+                    voice = lambda: preset_pick(page, sel["voice"], v["index"])
+                    # Сервис сбрасывает голос (после «Синтезировать», при догрузке списка) —
+                    # голос и язык выставляем перед каждым синтезом с проверкой, голос — ещё раз
+                    # сразу после нажатия, и только потом скачиваем.
+                    page.fill(sel["text"], text)
+                    preset_pick(page, sel["lang"], SYNTH_LANG_INDEX.get(lang, 0))
+                    vname = voice()
+                    synth_collect(page, sel["submit"], raw, after_click=voice)
                 try:
                     clean_wav(raw, dst)
                 finally:
@@ -979,6 +1059,72 @@ class ListenMixin:
                 cache.clear()
         self._listen_scan()
         return {"ok": True, "a": a["name"], "b": b["name"], "state": self.listen_state()}
+
+    # ---------------- универсалы: марки без цифр — в общую папку для обоих языков ----------------
+    @staticmethod
+    def _listen_uni_name(lang_dir_name):
+        """ru_mark → uni_mark, ru → uni, Марки_ru → Марки_uni."""
+        parts = re.split(r'([\W_]+)', lang_dir_name)
+        out = ['uni' if p.lower() in LISTEN_LANG_DIRS else p for p in parts]
+        name = ''.join(out)
+        return name if name != lang_dir_name else lang_dir_name + '_uni'
+
+    def _listen_uni_plan(self):
+        ls = self._ls()
+        src = (ls.get("lang_dirs") or {}).get('ru')
+        if not ls["folder"] or not src:
+            return None, "Нужна папка с подпапками ru и kz (например, ru_mark и kz_mark)."
+        dst_dir = os.path.join(os.path.dirname(src), self._listen_uni_name(os.path.basename(src)))
+        kz = (ls.get("lang_dirs") or {}).get('kz')
+        moves, skip, twins = [], [], 0
+        for f in sorted(os.listdir(src)):
+            p = os.path.join(src, f)
+            stem, ext = os.path.splitext(f)
+            if not os.path.isfile(p) or ext.lower() not in LISTEN_EXTS or re.search(r'\d', stem):
+                continue
+            d = os.path.join(dst_dir, f)
+            if os.path.exists(d):
+                skip.append(f)
+                continue
+            moves.append((p, d))
+            if kz and os.path.exists(os.path.join(kz, f)):
+                twins += 1
+        return {"src": src, "dst": dst_dir, "moves": moves, "skip": skip, "twins": twins}, None
+
+    def listen_uni_info(self):
+        """Сколько записей без цифр («универсалы») лежит в папке ru и куда они уйдут."""
+        plan, err = self._listen_uni_plan()
+        if err:
+            return {"error": err}
+        rel = lambda p: os.path.relpath(p, self._ls()["folder"]).replace(os.sep, '/')
+        return {"n": len(plan["moves"]), "src": rel(plan["src"]), "dst": rel(plan["dst"]),
+                "examples": [os.path.splitext(os.path.basename(a))[0] for a, _ in plan["moves"][:8]],
+                "skip": len(plan["skip"]), "twins": plan["twins"]}
+
+    def listen_uni_move(self):
+        """Перенести универсалы из ru в общую папку (uni_mark) — вместе с «_до_правок» и правками.
+        Общая папка звучит и в RU, и в KZ (если в kz нет своей записи с тем же именем)."""
+        plan, err = self._listen_uni_plan()
+        if err:
+            return {"error": err}
+        self.player.stop()
+        moved, failed = 0, []
+        for a, b in plan["moves"]:
+            try:
+                for x, y in zip(self._listen_sidecars(a), self._listen_sidecars(b)):
+                    if os.path.exists(x):
+                        os.makedirs(os.path.dirname(y), exist_ok=True)
+                        os.replace(x, y)
+                moved += 1
+            except OSError as e:
+                failed.append(f"{os.path.basename(a)}: {e}")
+        cache = getattr(self, '_listen_cache', None)
+        if cache is not None:
+            with self._listen_cache_lock:
+                cache.clear()
+        self._listen_scan()
+        return {"moved": moved, "failed": failed[:10], "skip": len(plan["skip"]),
+                "dst": os.path.basename(plan["dst"]), "state": self.listen_state()}
 
     def listen_synth_drop(self, k):
         s = self._ls()["synth"].pop(int(k), None)

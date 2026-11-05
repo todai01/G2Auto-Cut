@@ -81,7 +81,7 @@ function listenRender(light) {
     lEl('listenName').classList.toggle('is-miss', !!r && !r.path);
     listenStatusRender();
     lEl('listenFile').innerHTML = !r ? '' : r.path
-        ? `${r.dir ? `<span class="listen-dir">${escapeHtml(r.dir)}/</span>` : ''}${escapeHtml(r.file)}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
+        ? `${r.dir ? `<span class="listen-dir">${escapeHtml(r.dir)}/</span>` : ''}${escapeHtml(r.file)}${r.uni ? ' · <span class="listen-uni">универсал — RU и KZ</span>' : ''}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
         : 'записи с таким именем в папке нет — синтез (R)';
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
@@ -726,7 +726,8 @@ function listenRenderSynth() {
         ${st === 'ready' ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthPlay()">&#9654; в фразе</button>
             <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
             <button class="btn-ghost btn-ghost--compact" onclick="listenSynthDrop()">Отклонить</button>` : ''}
-        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}`;
+        ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}
+        <button class="btn-ghost btn-ghost--compact" onclick="listenVoicePick()" title="Голос синтеза: готовый голос сервиса или по образцу — запись на экране">голос: ${escapeHtml(LS.voice ? LS.voice.label : 'не выбран')} ✎</button>`;
     listenStatusRender(); listenEdRender();
 }
 const listenLangBtns = (cur = LS.lang, fn = 'listenLang') => ['ru', 'kz'].map(l =>
@@ -807,8 +808,29 @@ document.addEventListener('keydown', e => {
     if (e.code === 'Escape' || (e.code === 'Enter' && e.target.tagName !== 'BUTTON')) { e.preventDefault(); listenPhrClose(); }
     if (e.target.tagName !== 'INPUT') e.stopImmediatePropagation();
 }, true);
+// Голос синтеза: «по образцу» (запись на экране, текст образца — название строки) или голос из списка сервиса
+async function listenVoicePick() {
+    showToast('Получаю список голосов с сервиса…', 3000);
+    let r = await pywebview.api.listen_voices(false);
+    let cur = LS.voice ? LS.voice.index : -1;
+    let item = (i, label, desc) => `<label class="listen-voice__row"><input type="radio" name="listenVoice" value="${i}" ${i === cur ? 'checked' : ''}>
+        <span><b>${escapeHtml(label)}</b>${desc ? `<small>${escapeHtml(desc)}</small>` : ''}</span></label>`;
+    let html = `<b>Голос синтеза</b><br><br><div class="listen-voice">`
+        + item(-1, 'По образцу — запись на экране', 'голос и интонация — из текущей записи (с правкой), текст образца — название строки')
+        + (r && r.voices || []).map(v => item(v.index, v.label)).join('')
+        + `</div>` + (r && r.error ? `<br><span class="listen-warn">Список голосов не получен: ${escapeHtml(r.error)}</span>` : '');
+    if (!(await showBeautifulConfirm(html, 'Выбрать', 'Отмена'))) return false;
+    let el = document.querySelector('input[name="listenVoice"]:checked');
+    if (!el) return false;
+    let i = +el.value, v = (r && r.voices || []).find(x => x.index === i);
+    let pos = LS.pos; LS = await pywebview.api.listen_set_voice(i, v ? v.label : null); LS.pos = pos;
+    listenRenderSynth();
+    return true;
+}
+async function listenVoiceReady() { return !!LS.voice || await listenVoicePick(); }
 async function listenSynth() {
-    let r = await pywebview.api.listen_synth(LS.pos, lEl('listenSynthText').value, LS.lang);
+    if (!(await listenVoiceReady())) return;
+    let r = await pywebview.api.listen_synth(LS.pos, lEl('listenSynthText').value, LS.lang, false, listenPart('var'));
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     LS = r.state; listenRenderList(); listenRenderSynth();
     showToast('Синтез запущен — можно слушать другие строки');
@@ -818,8 +840,9 @@ async function listenSynthQuick() {
     let row = lRow();
     if (!row) return;
     if (row.synth === 'busy') { showToast('Синтез уже идёт'); return; }
+    if (!(await listenVoiceReady())) return;
     let inp = lEl('listenSynthText'), text = inp && inp.value.trim() ? inp.value.trim() : row.name;
-    let r = await pywebview.api.listen_synth(LS.pos, text, LS.lang, true);
+    let r = await pywebview.api.listen_synth(LS.pos, text, LS.lang, true, listenPart('var'));
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     let pos = LS.pos; LS = r.state; LS.pos = pos;
     listenMarkList(); listenRenderSynth();
@@ -985,4 +1008,26 @@ async function listenSwap() {
     let pos = LS.pos; LS = res.state; LS.pos = pos; lAsm = {};
     listenRender(); await listenLoadEditor();
     showToast(`Записи «${res.a}» и «${res.b}» поменялись местами`, 4000);
+}
+
+
+// ----- универсалы: марки без цифр — из папки ru в общую (uni_mark), она звучит и в RU, и в KZ -----
+async function listenUni() {
+    if (!LS) return;
+    let info = await pywebview.api.listen_uni_info();
+    if (!info || info.error) { showBeautifulAlert('ℹ️ ' + escapeHtml(info && info.error || 'Не получилось')); return; }
+    if (!info.n) { showToast(`В «${info.src}» нет записей без цифр${info.skip ? ` (уже в «${info.dst}»: ${info.skip})` : ''}`, 4000); return; }
+    if (!(await listenLeave())) return;
+    let ok = await showBeautifulConfirm(`<b>Универсалы — в отдельную папку</b><br><br>Записей без цифр в «${escapeHtml(info.src)}»: <b>${info.n}</b>
+        (${info.examples.map(escapeHtml).join(', ')}${info.n > info.examples.length ? '…' : ''}).<br>
+        Перенесу в «<b>${escapeHtml(info.dst)}</b>» — вместе с правками. Эта папка звучит и в RU, и в KZ.`
+        + (info.twins ? `<br><br><span class="tts-dim">В папке kz с такими же именами: ${info.twins} — их не трогаю (в KZ звучат они).</span>` : '')
+        + (info.skip ? `<br><span class="tts-dim">Уже есть в «${escapeHtml(info.dst)}», пропущу: ${info.skip}</span>` : ''), 'Перенести', 'Отмена');
+    if (!ok) return;
+    listenStopHead(); pywebview.api.listen_stop();
+    let r = await pywebview.api.listen_uni_move();
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+    let pos = LS.pos; LS = r.state; LS.pos = pos; lAsm = {};
+    listenRender(); await listenLoadEditor();
+    showToast(`Перенесено в «${r.dst}»: ${r.moved}` + (r.failed.length ? ` · ошибки: ${r.failed.length}` : ''), 4500);
 }

@@ -762,9 +762,10 @@ class ProjectMixin:
                 g["found"] += 1
                 g["_dirs"].append(os.path.dirname(hits[0][0]))
                 files.append({"filename": os.path.basename(hits[0][0]), "path": hits[0][0], "text": text, "group": gid, "rel": rel})
-                if len(strict) > 1 and not pair:
+                same = self._audit_same_lang([p for p, _ in strict], scan_dir) if not pair else []
+                if same:
                     g["duplicates"] += 1
-                    duplicates_list.append({"filename": name, "count": len(strict), "paths": [p for p, _ in strict], "group": gid})
+                    duplicates_list.append({"filename": name, "count": len(same), "paths": same, "group": gid})
             else:
                 g["missing"] += 1
                 missing_list.append({"index": row if isinstance(row, int) else k + 1, "filename": os.path.basename(rel),
@@ -910,6 +911,22 @@ class ProjectMixin:
                     return False
         return True
 
+    @staticmethod
+    def _audit_same_lang(paths, base):
+        """Дубли — только в папках одного языка: «ru_mark/AUDI 80.wav» и «kz_mark/AUDI 80.wav» —
+        одна марка на двух языках, не дубль. Возвращает самую большую группу одного языка (≥ 2) или []."""
+        from core.listen_mode import listen_dir_lang
+        groups = {}
+        for p in paths:
+            try:
+                parts = os.path.relpath(os.path.dirname(p), base).split(os.sep)
+            except ValueError:
+                parts = []
+            lang = next((lg for lg in (listen_dir_lang(d) for d in reversed(parts) if d not in ('.', '..')) if lg), None)
+            groups.setdefault(lang, []).append(p)
+        best = max(groups.values(), key=len) if groups else []
+        return best if len(best) > 1 else []
+
     def _audit_run(self, scan_dir, parts, mode):
         found_files, all_disk_files = self._audit_scan_folder(scan_dir)
         entries = [(f_low, pth) for f_low, paths in found_files.items() for pth in paths]
@@ -943,8 +960,8 @@ class ProjectMixin:
                     files.append({"i": i, "filename": os.path.basename(found_files[exp][0]),
                                   "path": found_files[exp][0], "text": p.get("text", ""), "group": gid})
             for exp, gid in want.items():                       # дубли — только среди нужных названий
-                paths = found_files.get(exp) or []
-                if len(paths) > 1:
+                paths = self._audit_same_lang(found_files.get(exp) or [], scan_dir)
+                if paths:
                     duplicates_list.append({"filename": exp, "count": len(paths), "paths": paths, "group": gid})
                     by_lang[gid]["dups"] += 1
             for lang in ('ru', 'kz', 'other'):
@@ -984,7 +1001,8 @@ class ProjectMixin:
                     missing_list.append({"index": i + 1, "filename": f"{name_base}.wav", "text": value, "group": gid})
             dups = 0
             for f_low, paths in scoped.items():
-                if len(paths) > 1 and re.sub(r'\.(wav|mp3)$', '', f_low) in names:
+                paths = self._audit_same_lang(paths, scan_dir)
+                if paths and re.sub(r'\.(wav|mp3)$', '', f_low) in names:
                     dups += 1
                     duplicates_list.append({"filename": f_low, "count": len(paths), "paths": paths, "group": gid})
             add_group(gid, section, self._category_label(cat), len(values), found_n, miss_n, dups)
