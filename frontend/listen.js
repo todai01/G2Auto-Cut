@@ -20,6 +20,7 @@ async function listenStart() {
     if (!r || r.error === 'cancel') return;
     if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
     LS = r;
+    try { if (localStorage.getItem('gvox_listen_auto') === '0') LS = await pywebview.api.listen_set(null, null, null, null, null, false); } catch (e) {}
     ok = await showBeautifulAlert(`<b>Шаг 2 из 3</b><br><br>Найдено записей: <b>${r.files}</b>.<br><br>Теперь папка с кусочками фраз — <b>«Фразы_Переменные»</b> `
         + '(внутри — <b>ru</b> и <b>kz</b>). В ней отметите, какой кусок — начало, а какой — конец.');
     if (!ok) return;
@@ -72,6 +73,7 @@ function listenRender(light) {
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
     lEl('listenNorm').checked = LS.norm !== false;
+    lEl('listenAutoOn').checked = LS.auto_on !== false;
     lEl('listenCtx').value = String(LS.ctx_ms);
     if (light) listenMarkList(); else listenRenderList();
     let r = lRow();
@@ -164,6 +166,16 @@ async function listenTarget(t) {
     lTarget = t;
     listenRender();
     listenLoadEditor();
+}
+// Автонастройка (срезка по голосу, громкость) при открытии записи: выключили — запись как есть, «Авто» (A) — по нажатию
+async function listenSetAutoOn(on) {
+    let pos = LS.pos;
+    LS = await pywebview.api.listen_set(null, null, null, null, null, on); LS.pos = pos;
+    try { localStorage.setItem('gvox_listen_auto', on ? '1' : '0'); } catch (e) {}
+    listenRender(true);
+    showToast(on ? 'Автонастройка включена: новые записи срезаются по голосу и выравниваются по громкости'
+                 : 'Автонастройка выключена: записи звучат как есть. «Авто» (A) — применить к этой', 5000);
+    await listenLoadEditor();
 }
 // Громкость имён — по фразам «Фразы_Переменные»: вкл. — «Авто» и первая срезка подбирают дБ под них
 async function listenSetNorm(on) {
@@ -268,6 +280,8 @@ function listenEdRender() {
         <span class="lp-group" title="Темп (без смены высоты)"><span>темп</span><button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
         ${lEd.target === 'var' ? `<span class="lp-group"><button onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
         <button onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : 'Шаблона нет — первая сохранённая станет им. '}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button></span>` : ''}
+        ${`<span class="lp-group"><button onclick="listenToAudacity()" title="Запись на экране (с правкой) — в Audacity, чистый проект">В Audacity</button>
+        <button onclick="listenFromAudacity()" title="Забрать из Audacity то, что на дорожках, в эту запись (прежняя — в «_до_правок»)">Из Audacity</button></span>`}
         <span class="tts-ed__spacer"></span>
         <span class="lp-len">${(len / 1000).toFixed(2)} с${sel ? ` · выделено ${sel} мс` : ''}</span>
         ${lEd.target === 'var' && lRow() && lRow().done ? '<button class="lp-link" onclick="listenUnsave(LS.pos)" title="Запись — как до сохранения: подправить и сохранить заново (Ctrl+Z сразу после сохранения)">Отменить сохранение</button>'
@@ -1031,3 +1045,57 @@ async function listenUni() {
     listenRender(); await listenLoadEditor();
     showToast(`Перенесено в «${r.dst}»: ${r.moved}` + (r.failed.length ? ` · ошибки: ${r.failed.length}` : ''), 4500);
 }
+
+
+// ----- Audacity: туда и обратно -----
+async function listenToAudacity() {
+    if (!lEd) return;
+    let r = await pywebview.api.listen_to_audacity({ path: lEd.path, ranges: lEd.ranges, gain: lEd.gain, tempo: lEd.tempo });
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+    showToast('Запись в Audacity — правьте там, потом «Из Audacity»', 4500);
+}
+async function listenFromAudacity() {
+    if (!lEd) return;
+    if (!(await showBeautifulConfirm(`Забрать из Audacity в «${escapeHtml(lEd.name)}»?<br><br>Прежняя запись останется в «_до_правок» (…_до_audacity).`, 'Забрать', 'Отмена'))) return;
+    let path = lEd.path, tgt = lTarget;
+    listenStopHead(); pywebview.api.listen_stop();
+    let r = await pywebview.api.listen_from_audacity(path);
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+    let pos = LS.pos; LS = r.state; LS.pos = pos; lAsm = {};
+    lTarget = tgt; listenRender(true); await listenLoadEditor();
+    showToast(`Из Audacity: ${(r.ms / 1000).toFixed(2)} с — теперь это исходник записи`, 4500);
+}
+
+// ----- «Что где есть»: вся таблица с разметкой RU / KZ -----
+let lOv = null;                   // {data, tab}
+async function listenOvOpen() {
+    if (!LS || !LS.rows.length) { showToast('Сначала загрузите таблицу'); return; }
+    lOv = { data: await pywebview.api.listen_overview(), tab: 'all' };
+    lEl('listenOvFilter').value = '';
+    lEl('listenOvOverlay').style.display = 'flex';
+    listenOvRender();
+}
+function listenOvClose() { lEl('listenOvOverlay').style.display = 'none'; lOv = null; }
+function listenOvTab(t) { lOv.tab = t; listenOvRender(); }
+function listenOvRender() {
+    if (!lOv) return;
+    let d = lOv.data, q = lEl('listenOvFilter').value.trim().toLowerCase();
+    let tab = (k, label, n) => `<button type="button" class="${lOv.tab === k ? 'is-on' : ''}" onclick="listenOvTab('${k}')">${label}${n != null ? ` <b>${n}</b>` : ''}</button>`;
+    lEl('listenOvTabs').innerHTML = tab('all', 'Все', d.rows.length) + tab('ru', 'Нет RU', d.miss_ru) + tab('kz', 'Нет KZ', d.miss_kz);
+    let cell = c => c.file
+        ? `<td class="is-ok" title="${escapeHtml((c.dir ? c.dir + '/' : '') + c.file)}">${c.uni ? '<span class="listen-uni">универсал</span>' : '✓'}${c.done ? ' <i>проверена</i>' : ''}<small>${escapeHtml(c.dir || '')}</small></td>`
+        : '<td class="is-miss">нет</td>';
+    let rows = d.rows.filter(r => (lOv.tab === 'all' || !r[lOv.tab].file)
+        && (!q || r.ru.name.toLowerCase().includes(q) || r.kz.name.toLowerCase().includes(q)));
+    lEl('listenOvTable').innerHTML = `<thead><tr><th>№</th><th>Название RU</th><th>RU</th><th>Название KZ</th><th>KZ</th></tr></thead><tbody>`
+        + rows.map(r => `<tr class="${r.k === d.pos ? 'is-cur' : ''}" onclick="listenOvGo(${r.k})"><td>${r.k + 1}</td><td>${escapeHtml(r.ru.name)}</td>${cell(r.ru)}<td>${escapeHtml(r.kz.name)}</td>${cell(r.kz)}</tr>`).join('')
+        + `</tbody>`;
+}
+async function listenOvGo(k) {
+    listenOvClose();
+    await listenGo(k);
+}
+document.addEventListener('keydown', e => {
+    if (lOv && e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); listenOvClose(); }
+    else if (lOv && e.target.tagName !== 'INPUT') e.stopImmediatePropagation();
+}, true);

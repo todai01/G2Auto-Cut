@@ -1423,6 +1423,7 @@
                 <button class="btn-ghost btn-ghost--info" onclick="listenPick('folder')" title="Папка с записями переменных">Папка</button>
                 <button class="btn-ghost btn-ghost--info" onclick="listenPhrases()" title="Начало и конец фразы — из папки кусочков (Фразы_Переменные)">Начало / конец</button>
                 <button class="btn-ghost btn-ghost--info" onclick="listenPick('table')" title="Таблица с названиями переменных">Таблица</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenOvOpen()" title="Вся таблица: у какой строки есть запись в RU и в KZ, а где её нет">Обзор</button>
                 <button class="btn-ghost btn-ghost--info" onclick="listenUni()" title="Марки без цифр (универсалы) — из папки ru в общую uni_mark: звучит и в RU, и в KZ">Универсалы</button>
                 <button class="btn-ghost btn-ghost--good" onclick="listenExport()" title="Собрать папку для сдачи: только готовые аудио, без служебных файлов">Финальная папка</button>
                 <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial('listen')" title="Обучение: ролик про прослушку">?</button>
@@ -1455,6 +1456,7 @@
                         <span class="lp-top__spacer"></span>
                         <div class="listen-opts">
                             <span class="listen-lang listen-lang--sm" id="listenLangTop" title="Язык (L): пара начало / конец, записи из ru / kz и синтез — строка та же"></span>
+                            <label class="listen-opt" title="Автонастройка записи при открытии: срезка по голосу и громкость. Выключено — запись как есть; нужную настройку включите кнопкой «Авто» (A)"><input type="checkbox" id="listenAutoOn" onchange="listenSetAutoOn(this.checked)"> автонастройка</label>
                             <label class="listen-opt" title="Громкость имени сама подбирается под громкость начала и конца фразы (Фразы_Переменные)"><input type="checkbox" id="listenNorm" onchange="listenSetNorm(this.checked)"> громкость по фразам</label>
                             <label class="listen-opt" title="Звучит только конец начала и начало продолжения"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
                             <select class="listen-ctx" id="listenCtx" onchange="listenSetCtx(this.value)" title="Сколько конца начала и начала продолжения звучит рядом с переменной">
@@ -1656,6 +1658,20 @@
         </div>
     </div>
 
+    <div id="listenOvOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box tts-list-box listen-ov">
+            <div class="modal-head">
+                <h3 class="modal-title">Что где есть</h3>
+                <button class="modal-close" onclick="listenOvClose()" title="Закрыть (Esc)">&times;</button>
+            </div>
+            <div class="listen-phr__bar">
+                <span class="listen-ov__tabs" id="listenOvTabs"></span>
+                <input type="text" class="tts-list-search" id="listenOvFilter" placeholder="Поиск по названию…" oninput="listenOvRender()">
+            </div>
+            <div class="listen-ov__scroll"><table class="listen-ov__table" id="listenOvTable"></table></div>
+        </div>
+    </div>
+
     <div id="listenPhrOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box tts-list-box listen-phr">
             <div class="modal-head">
@@ -1687,6 +1703,6 @@
 
     <script src="script.js?v=19"></script>
     <script src="tutorial.js?v=16"></script>
-    <script src="listen.js?v=28"></script>
+    <script src="listen.js?v=29"></script>
 </body>
 </html>

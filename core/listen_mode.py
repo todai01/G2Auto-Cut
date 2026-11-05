@@ -12,6 +12,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from collections import OrderedDict
 
 import webview
@@ -138,7 +139,7 @@ class ListenMixin:
         ls = getattr(self, '_listen', None)
         if ls is None:
             ls = self._listen = {"folder": None, "index": {}, "start": None, "end": None, "table": None,
-                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "norm": True, "synth": {},
+                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "norm": True, "auto_on": True, "synth": {},
                                  "phr_folder": None, "phrases": [], "pick": {"ru": {}, "kz": {}}, "lang_dirs": {}}
         return ls
 
@@ -147,7 +148,7 @@ class ListenMixin:
         ls = self._ls()
         index, lang_dirs = {}, {}
         for root, dirs, files in os.walk(ls["folder"] or ''):
-            dirs[:] = [d for d in dirs if d not in LISTEN_SKIP_DIRS]
+            dirs[:] = [d for d in dirs if d not in LISTEN_SKIP_DIRS and not d.startswith('_дубли')]
             lg = listen_lang_of(os.path.join(root, '_'), ls["folder"])
             if lg and lg not in lang_dirs and LISTEN_LANG_DIRS.get(os.path.basename(root).lower(), lg) == lg:
                 lang_dirs[lg] = root
@@ -462,7 +463,7 @@ class ListenMixin:
             "folder": ls["folder"], "folder_name": nm(ls["folder"]), "files": sum(len(v) for v in ls["index"].values()),
             "start": nm(ls["start"]), "end": nm(ls["end"]), "start_path": ls["start"], "end_path": ls["end"],
             "table": nm(ls["table"]), "pos": min(ls["pos"], max(0, len(rows) - 1)), "lang": ls["lang"],
-            "short": ls["short"], "norm": ls.get("norm", True), "ctx_ms": ls.get("ctx_ms") or self.LISTEN_CTX_MS,
+            "short": ls["short"], "norm": ls.get("norm", True), "auto_on": ls.get("auto_on", True), "ctx_ms": ls.get("ctx_ms") or self.LISTEN_CTX_MS,
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None, "voice": ls.get("voice"),
@@ -471,8 +472,10 @@ class ListenMixin:
             "found": sum(1 for r in rows if r["path"]),
         }
 
-    def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None, norm=None):
+    def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None, norm=None, auto_on=None):
         ls = self._ls()
+        if auto_on is not None:
+            ls["auto_on"] = bool(auto_on)
         if norm is not None:
             ls["norm"] = bool(norm)
         if ctx_ms:
@@ -514,7 +517,7 @@ class ListenMixin:
                 r.update(ranges=m["ranges"], gain=float(m.get("gain", 0)), tempo=float(m.get("tempo", 1)), edited=True)
         except (OSError, ValueError, TypeError):
             pass
-        if not r["edited"]:                                  # ещё не правили — предложить срезку
+        if not r["edited"] and self._ls().get("auto_on", True):     # ещё не правили — срезка по голосу (если авто включено)
             try:
                 r["auto"] = self.listen_auto(path)
             except Exception:
@@ -1012,7 +1015,7 @@ class ListenMixin:
         """Файл записи и всё, что к нему привязано: исходник в «_до_правок», правка, метка «сохранено»."""
         b = self._audit_backup(path)
         stem, ext = os.path.splitext(b)
-        return [path, b, b + '.json', self._listen_meta(path), f"{stem}_до_синтеза{ext}"]
+        return [path, b, b + '.json', self._listen_meta(path), f"{stem}_до_синтеза{ext}", f"{stem}_до_audacity{ext}"]
 
     def listen_swap(self, k, other):
         """Запись строки k на самом деле — другая марка / имя (строка other): записи меняются
@@ -1071,45 +1074,52 @@ class ListenMixin:
 
     def _listen_uni_plan(self):
         ls = self._ls()
-        src = (ls.get("lang_dirs") or {}).get('ru')
-        if not ls["folder"] or not src:
+        dirs = ls.get("lang_dirs") or {}
+        if not ls["folder"] or not dirs:
             return None, "Нужна папка с подпапками ru и kz (например, ru_mark и kz_mark)."
-        dst_dir = os.path.join(os.path.dirname(src), self._listen_uni_name(os.path.basename(src)))
-        kz = (ls.get("lang_dirs") or {}).get('kz')
-        moves, skip, twins = [], [], 0
-        for f in sorted(os.listdir(src)):
-            p = os.path.join(src, f)
-            stem, ext = os.path.splitext(f)
-            if not os.path.isfile(p) or ext.lower() not in LISTEN_EXTS or re.search(r'\d', stem):
+        first = dirs.get('ru') or dirs.get('kz')
+        dst_dir = os.path.join(os.path.dirname(first), self._listen_uni_name(os.path.basename(first)))
+        moves, taken = [], {}                                   # taken: имя → кто уже идёт в общую папку
+        skip = 0
+        for lang in ('ru', 'kz'):
+            src = dirs.get(lang)
+            if not src or os.path.normpath(src) == os.path.normpath(dst_dir):
                 continue
-            d = os.path.join(dst_dir, f)
-            if os.path.exists(d):
-                skip.append(f)
-                continue
-            moves.append((p, d))
-            if kz and os.path.exists(os.path.join(kz, f)):
-                twins += 1
-        return {"src": src, "dst": dst_dir, "moves": moves, "skip": skip, "twins": twins}, None
+            for f in sorted(os.listdir(src)):
+                p = os.path.join(src, f)
+                stem, ext = os.path.splitext(f)
+                if not os.path.isfile(p) or ext.lower() not in LISTEN_EXTS or re.search(r'\d', stem):
+                    continue
+                key = f.lower()
+                if os.path.exists(os.path.join(dst_dir, f)) or key in taken:
+                    # уже есть общая запись с таким именем: эта (другого языка) уходит в «_дубли_<язык>» — не пропадает
+                    moves.append((p, os.path.join(dst_dir, f'_дубли_{lang}', f), lang, True))
+                    skip += 1
+                else:
+                    taken[key] = lang
+                    moves.append((p, os.path.join(dst_dir, f), lang, False))
+        return {"dirs": dirs, "dst": dst_dir, "moves": moves, "dups": skip}, None
 
     def listen_uni_info(self):
-        """Сколько записей без цифр («универсалы») лежит в папке ru и куда они уйдут."""
+        """Сколько записей без цифр («универсалы») лежит в папках ru и kz и куда они уйдут."""
         plan, err = self._listen_uni_plan()
         if err:
             return {"error": err}
         rel = lambda p: os.path.relpath(p, self._ls()["folder"]).replace(os.sep, '/')
-        return {"n": len(plan["moves"]), "src": rel(plan["src"]), "dst": rel(plan["dst"]),
-                "examples": [os.path.splitext(os.path.basename(a))[0] for a, _ in plan["moves"][:8]],
-                "skip": len(plan["skip"]), "twins": plan["twins"]}
+        by = lambda lg: [m for m in plan["moves"] if m[2] == lg]
+        return {"n": len(plan["moves"]), "ru": len(by('ru')), "kz": len(by('kz')), "dst": rel(plan["dst"]),
+                "src": ' и '.join(rel(d) for d in plan["dirs"].values()),
+                "examples": [os.path.splitext(os.path.basename(m[0]))[0] for m in plan["moves"][:8]], "dups": plan["dups"]}
 
     def listen_uni_move(self):
-        """Перенести универсалы из ru в общую папку (uni_mark) — вместе с «_до_правок» и правками.
-        Общая папка звучит и в RU, и в KZ (если в kz нет своей записи с тем же именем)."""
+        """Перенести универсалы из ru и kz в общую папку (uni_mark) — вместе с «_до_правок» и правками;
+        в исходной папке их не остаётся. Одно имя в обеих — в общую идёт ru, kz-копия уходит в «_дубли_kz»."""
         plan, err = self._listen_uni_plan()
         if err:
             return {"error": err}
         self.player.stop()
         moved, failed = 0, []
-        for a, b in plan["moves"]:
+        for a, b, _lang, _dup in plan["moves"]:
             try:
                 for x, y in zip(self._listen_sidecars(a), self._listen_sidecars(b)):
                     if os.path.exists(x):
@@ -1123,8 +1133,105 @@ class ListenMixin:
             with self._listen_cache_lock:
                 cache.clear()
         self._listen_scan()
-        return {"moved": moved, "failed": failed[:10], "skip": len(plan["skip"]),
+        return {"moved": moved, "failed": failed[:10], "dups": plan["dups"],
                 "dst": os.path.basename(plan["dst"]), "state": self.listen_state()}
+
+    # ---------------- общая таблица: что где есть ----------------
+    def listen_overview(self):
+        """Таблица целиком: у каждой строки — есть ли запись в RU и в KZ, из какой папки (универсал — общая)."""
+        ls = self._ls()
+        names = ls.get("table_names") or {}
+        split = bool(ls["lang_dirs"])
+        rows = []
+        for k, r in enumerate(ls["rows"]):
+            row = {"k": k, "flag": listen_norm(r["name"]) in (ls.get("flags") or ())}
+            for lang in ('ru', 'kz'):
+                nm = (names.get(lang) or [])[k] if k < len(names.get(lang) or []) else r["name"]
+                hits = self._listen_hits(nm, lang if split else None)
+                p = hits[0] if hits else None
+                row[lang] = {"name": nm, "file": os.path.basename(p) if p else None,
+                             "dir": os.path.relpath(os.path.dirname(p), ls["folder"]).replace(os.sep, '/')
+                             if p and os.path.normpath(os.path.dirname(p)) != os.path.normpath(ls["folder"]) else None,
+                             "uni": bool(p) and split and listen_lang_of(p, ls["folder"]) is None,
+                             "done": bool(p) and os.path.exists(self._listen_meta(p))}
+            rows.append(row)
+        return {"rows": rows, "pos": ls["pos"], "split": split,
+                "miss_ru": sum(1 for x in rows if not x["ru"]["file"]), "miss_kz": sum(1 for x in rows if not x["kz"]["file"])}
+
+    # ---------------- Audacity: туда и обратно ----------------
+    def listen_to_audacity(self, part):
+        """Запись на экране (с текущей правкой) — в Audacity: чистый проект, одна дорожка."""
+        path = (part or {}).get("path")
+        if not path or not os.path.exists(path):
+            return {"error": "Нет записи на экране — отправлять нечего."}
+        if not self._ensure_audacity_ready():
+            return {"error": "Audacity не отвечает. Откройте его вручную и нажмите ещё раз."}
+        self.player.stop()
+        try:
+            seg = self._listen_render(path, part.get("ranges"), part.get("gain") or 0, part.get("tempo") or 1)
+            tmp = os.path.join(tempfile.gettempdir(), f"gvox_listen_to_aud_{os.getpid()}.wav")
+            seg.export(tmp, format='wav')
+        except Exception as e:
+            return {"error": f"Не получилось подготовить звук: {e}"}
+        a = self.audacity
+        a.send_command('SelectAll:')
+        a.send_command('RemoveTracks:')
+        a.send_command(f'Import2: Filename="{tmp}"'.replace('\\', '/'))
+        a.send_command('SelectAll:')
+        a.send_command('ZoomSel:')
+        a.send_command('SelectNone:')
+        self._listen_aud = path
+        return {"ok": True}
+
+    def listen_from_audacity(self, path):
+        """Забрать правку из Audacity (всё, что на дорожках) в файл записи. Прежняя запись — в
+        «_до_правок/<имя>_до_audacity», новая становится исходником для дальнейшей правки."""
+        if not path or getattr(self, '_listen_aud', None) != path:
+            return {"error": "В Audacity сейчас другая запись — сначала отправьте эту."}
+        if not os.path.exists(path):
+            return {"error": "Файл не найден."}
+        tmp = os.path.join(tempfile.gettempdir(), f"gvox_listen_from_aud_{os.getpid()}.wav").replace('\\', '/')
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        a = self.audacity
+        a.send_command('SelectAll:')
+        a.send_command(f'Export2: Filename="{tmp}" NumChannels=1')
+        for _ in range(30):
+            if os.path.exists(tmp) and os.path.getsize(tmp) > 44:
+                break
+            time.sleep(0.1)
+        else:
+            return {"error": "Audacity не сохранил файл — он открыт и отвечает?"}
+        time.sleep(0.2)
+        self.player.stop()
+        try:
+            seg = AudioSegment.from_file(tmp)
+            src0 = AudioSegment.from_file(self._audit_src(path))
+            backup = self._audit_backup(path)
+            stem, ext = os.path.splitext(backup)
+            keep = f"{stem}_до_audacity{ext}"
+            os.makedirs(os.path.dirname(backup), exist_ok=True)
+            if os.path.exists(backup):
+                os.replace(backup, keep)
+            else:
+                shutil.copy2(path, keep)
+            fmt = os.path.splitext(path)[1].lstrip('.').lower() or 'wav'
+            out = seg.set_frame_rate(src0.frame_rate).set_channels(src0.channels).set_sample_width(src0.sample_width)
+            out.export(path, format='mp4' if fmt == 'm4a' else fmt)
+            for meta in (self._listen_meta(path), backup + '.json'):
+                try:
+                    os.remove(meta)
+                except OSError:
+                    pass
+        except PermissionError:
+            return {"error": "Файл занят (открыт в другой программе) — закройте и повторите."}
+        except Exception as e:
+            return {"error": f"Не удалось сохранить: {e}"}
+        cache = getattr(self, '_listen_cache', None)
+        if cache is not None:
+            with self._listen_cache_lock:
+                cache.clear()
+        return {"ok": True, "ms": len(seg), "state": self.listen_state()}
 
     def listen_synth_drop(self, k):
         s = self._ls()["synth"].pop(int(k), None)
