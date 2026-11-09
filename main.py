@@ -45,6 +45,7 @@ from core.tts_synth import TtsSynthMixin
 from core.clone_prep import ClonePrepMixin
 from core.audit_fix import AuditFixMixin
 from core.listen_mode import ListenMixin
+from core.batch_synth import BatchSynthMixin
 from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
@@ -58,7 +59,7 @@ from utils.ffmpeg_setup import ensure_ffmpeg
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin, ClonePrepMixin, AuditFixMixin, ListenMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin, ClonePrepMixin, AuditFixMixin, ListenMixin, BatchSynthMixin):
     def __init__(self):
         super().__init__()
 

@@ -854,7 +854,7 @@ let isProcessing = false;
         const RADIAL_CATS = [
             { key: 'new', title: 'Новый проект', icon: 'plus-circle', desc: 'Студия записи, текст из Excel, нарезка сырого WAV, готовые чанки' },
             { key: 'vars', title: 'Переменные', icon: 'tenge', desc: 'Пакетная сборка сумм, готовая папка с переменными, конструктор', cls: 'var' },
-            { key: 'tools', title: 'Утилиты', icon: 'zap', desc: 'Аудит проекта, названия по Excel, PowerPoint, конвертер, клон, очистка названий', cls: 'tool' },
+            { key: 'tools', title: 'Утилиты', icon: 'zap', desc: 'Аудит проекта, названия по Excel, PowerPoint, конвертер, клон, синтез по таблице, очистка названий', cls: 'tool' },
             { key: 'recent', title: 'Недавние', icon: 'calendar', desc: 'Открыть один из последних проектов', cls: 'good' },
         ];
         const RADIAL_ITEMS = {
@@ -5205,6 +5205,96 @@ let isProcessing = false;
                             ? `<div class="clone-bad">${[...v.warnings, ...v.cats.flatMap(c => c.warnings.map(w => cloneCatName(c.lang) + ': ' + w))].map(escapeHtml).join('<br>')}</div>` : '')
                         + '</div>').join('');
             } finally { btn.innerText = 'Нарезать в финальную папку'; cloneRefresh(); }
+        }
+
+        // ----- Синтез по таблице: Excel → каждое значение готовым голосом, по одному, с паузами -----
+        let bsSt = null;
+        async function openBsynth() {
+            document.getElementById('bsynthOverlay').style.display = 'flex';
+            bsynthEvent(await pywebview.api.bsynth_state());
+        }
+        function closeBsynth() { document.getElementById('bsynthOverlay').style.display = 'none'; }
+        async function bsynthPick() {
+            let r = await pywebview.api.bsynth_pick_excel();
+            if (!r) return;
+            if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            bsynthEvent(r);
+        }
+        const bsDur = s => s >= 3600 ? `${Math.floor(s / 3600)} ч ${Math.round(s % 3600 / 60)} мин` : s >= 60 ? `${Math.floor(s / 60)} мин ${Math.round(s % 60)} с` : `${s} с`;
+        function bsynthEvent(s) {
+            if (!s) return;
+            let first = !bsSt;
+            bsSt = s;
+            let opt = (sel, list, cur) => {
+                let el = document.getElementById(sel);
+                if (!el.options.length) el.innerHTML = list.map(o => `<option value="${o.index}">${escapeHtml(o.label)}</option>`).join('');
+                if (first) el.value = cur;
+            };
+            opt('bsynthVoice', s.voices, s.defaults.voice);
+            opt('bsynthLang', s.langs, s.defaults.lang);
+            if (first) document.getElementById('bsynthDelay').value = s.defaults.delay;
+            document.getElementById('bsynthFile').innerText = s.path
+                ? `${s.path.split(/[\\/]/).pop()} · лист «${s.sheet}» · строк: ${s.total_rows} · столбцы: ${s.cols.join(', ')}`
+                : 'Первая строка — заголовки столбцов: <firstname>, <surname>…';
+            document.getElementById('bsynthPreview').innerHTML = s.path && s.preview.length
+                ? `<table><tr>${s.cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr>${s.preview.map(r => `<tr>${r.map(v => `<td>${escapeHtml(v)}</td>`).join('')}</tr>`).join('')}</table>` : '';
+            document.getElementById('btnBsynthStart').disabled = !s.path || s.run;
+            document.getElementById('btnBsynthStart').style.display = s.run ? 'none' : '';
+            document.getElementById('btnBsynthPick').disabled = s.run;
+            document.getElementById('bsynthRun').style.display = s.total ? '' : 'none';
+            if (!s.total) return;
+            let pct = Math.round(100 * s.done / s.total);
+            document.getElementById('bsynthBar').style.width = pct + '%';
+            document.getElementById('bsynthCount').innerText = `${s.done} из ${s.total} · ${pct}%` + (s.errors ? ` · ошибок ${s.errors}` : '')
+                + (s.skipped ? ` · уже были: ${s.skipped}` : '');
+            document.getElementById('bsynthEta').innerText = s.run ? (s.pause ? 'на паузе' : s.eta_s != null ? `осталось ~${bsDur(s.eta_s)}` : 'считаю время…')
+                : (s.left ? 'остановлено' : 'готово');
+            let c = s.current;
+            document.getElementById('bsynthNow').innerHTML = c && s.run
+                ? `<span class="bsynth-spin"></span> Сейчас: строка ${c.row} · ${escapeHtml(c.col)} · <b>${escapeHtml(c.text || c.value)}</b>${s.voice_name ? ` <span class="tts-dim">— голос ${escapeHtml(s.voice_name)}</span>` : ''}`
+                : s.run && !s.pause ? '<span class="tts-dim">Пауза перед следующим запросом — бережём сервис…</span>' : '';
+            // по столбцам: строк → файлов; повторы и пустые — почему файлов меньше строк
+            let lack = (s.report || []).reduce((n, r) => n + Math.max(0, r.files - r.have), 0);
+            document.getElementById('bsynthReport').innerHTML = (s.report || []).map(r => {
+                let why = [r.repeat_n ? `повторов ${r.repeat_n} — копии в папке повторов` : '', r.empty ? `пустых ячеек ${r.empty}` : ''].filter(Boolean).join(', ');
+                return `<details class="bsynth-col"><summary><b>${escapeHtml(r.col)}</b> — строк ${r.rows} → файлов ${r.files}`
+                    + `${why ? ` <span class="tts-dim">(${why})</span>` : ''} · в папке ${r.have}${r.have < r.files ? ` <span class="clone-bad">· не хватает ${r.files - r.have}</span>` : ''}</summary>`
+                    + (r.repeats.length ? `<div class="bsynth-reps">Повторы — копией в ${r.dup_dirs.map(d => '«' + escapeHtml(d) + '»').join(', ')}: ${r.repeats.map(x => `<span>${escapeHtml(x.value)} <i>строки ${x.rows.join(', ')}</i></span>`).join('')}</div>` : '<div class="bsynth-reps tts-dim">Повторов нет</div>')
+                    + `</details>`;
+            }).join('');
+            if (!s.run && !s.left && lack) document.getElementById('bsynthEta').innerText = `не хватает файлов: ${lack}`;
+            document.getElementById('bsynthMsg').innerText = s.msg || '';
+            document.getElementById('bsynthRecent').innerHTML = s.recent.slice().reverse().map(it =>
+                `<div class="${it.status === 'error' ? 'clone-bad' : ''}">${it.status === 'error' ? '✕' : '✓'} ${it.row} · ${escapeHtml(it.col)} · ${escapeHtml(it.text || it.value)}${it.status === 'error' ? ' — ' + escapeHtml(it.error) : ''}</div>`).join('');
+            let pb = document.getElementById('btnBsynthPause');
+            pb.style.display = s.run ? '' : 'none'; pb.innerText = s.pause ? 'Продолжить' : 'Пауза';
+            document.getElementById('btnBsynthStop').style.display = s.run ? '' : 'none';
+            document.getElementById('btnBsynthRetry').style.display = !s.run && s.errors ? '' : 'none';
+        }
+        // Сколько строк — спрашиваем перед стартом.
+        async function bsynthStart() {
+            let s = bsSt;
+            if (!s || !s.path) return;
+            let n = s.total_rows, cols = s.cols.length;
+            document.querySelector('#customAlertOverlay .custom-alert-box').classList.add('custom-alert-box--wide');
+            let ok = await showBeautifulConfirm(`<b>Сколько строк синтезировать?</b><br><br>`
+                + `В таблице ${n} строк, в строке ${cols} ${cols === 1 ? 'значение' : 'значения'}. Порядок — строка за строкой, слева направо; готовые файлы пропускаются.`
+                + `<div class="bsynth-ask"><label>С строки<input type="number" id="bsFrom" min="1" max="${n}" value="1"></label>`
+                + `<label>Сколько строк<input type="number" id="bsCount" min="1" max="${n}" value="${n}"></label></div>`, 'Начать', 'Отмена');
+            if (!ok) return;
+            let from = Math.max(1, Math.min(n, +document.getElementById('bsFrom').value || 1));
+            let cnt = Math.max(1, Math.min(n - from + 1, +document.getElementById('bsCount').value || n));
+            let r = await pywebview.api.bsynth_start(from, cnt, +document.getElementById('bsynthDelay').value || 4,
+                +document.getElementById('bsynthVoice').value, +document.getElementById('bsynthLang').value);
+            if (r && r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            bsynthEvent(r);
+        }
+        async function bsynthPause() { bsynthEvent(await pywebview.api.bsynth_pause(!(bsSt && bsSt.pause))); }
+        async function bsynthStop() { bsynthEvent(await pywebview.api.bsynth_stop()); }
+        async function bsynthRetry() {
+            let r = await pywebview.api.bsynth_retry_failed();
+            if (r && r.error) { showToast(r.error); return; }
+            bsynthEvent(r);
         }
 
         function openConverter() {
