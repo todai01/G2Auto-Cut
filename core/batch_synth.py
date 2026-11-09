@@ -123,8 +123,9 @@ class BatchSynthMixin:
         return os.path.join(bs["out_dir"], self._bs_col_dir(col), f"{clean_name(value) or 'пусто'}.wav")
 
     # ---- очередь ----
-    def bsynth_start(self, start_row=1, count=None, delay_s=BSYNTH_DELAY_S, voice=BSYNTH_VOICE, lang=BSYNTH_LANG):
-        """Синтезировать строки start_row … start_row+count-1 (с 1, как в таблице без шапки)."""
+    def bsynth_start(self, start_row=1, count=None, delay_s=BSYNTH_DELAY_S, voice=BSYNTH_VOICE, lang=BSYNTH_LANG, dups_on=True):
+        """Синтезировать строки start_row … start_row+count-1 (с 1, как в таблице без шапки).
+        dups_on — повтор значения в столбце копировать в «<столбец>_повторы»; выключено — только один файл на значение."""
         bs = self._bs()
         if bs["run"]:
             return {"error": "Синтез уже идёт."}
@@ -154,7 +155,7 @@ class BatchSynthMixin:
                 seen[key] = items[-1]
         if not items:
             return {"error": "В выбранных строках нет значений."}
-        bs["report"], bs["dups"] = list(rep.values()), dups
+        bs["report"], bs["dups"], bs["dups_on"] = list(rep.values()), (dups if dups_on else []), bool(dups_on)
         self._bs_copy_dups()                               # уже синтезированные — повторы сразу
         bs.update(items=items, pos=0, run=True, pause=False, stop=False, msg='', started=time.time(), spent=0.0,
                   n_synth=0, delay=max(1.0, float(delay_s or BSYNTH_DELAY_S)), voice=int(voice), lang=int(lang))

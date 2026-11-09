@@ -5233,6 +5233,7 @@ let isProcessing = false;
             opt('bsynthVoice', s.voices, s.defaults.voice);
             opt('bsynthLang', s.langs, s.defaults.lang);
             if (first) document.getElementById('bsynthDelay').value = s.defaults.delay;
+            if (first) try { document.getElementById('bsynthDups').checked = localStorage.getItem('gvox_bsynth_dups') !== '0'; } catch (e) {}
             document.getElementById('bsynthFile').innerText = s.path
                 ? `${s.path.split(/[\\/]/).pop()} · лист «${s.sheet}» · строк: ${s.total_rows} · столбцы: ${s.cols.join(', ')}`
                 : 'Первая строка — заголовки столбцов: <firstname>, <surname>…';
@@ -5285,7 +5286,8 @@ let isProcessing = false;
             let from = Math.max(1, Math.min(n, +document.getElementById('bsFrom').value || 1));
             let cnt = Math.max(1, Math.min(n - from + 1, +document.getElementById('bsCount').value || n));
             let r = await pywebview.api.bsynth_start(from, cnt, +document.getElementById('bsynthDelay').value || 4,
-                +document.getElementById('bsynthVoice').value, +document.getElementById('bsynthLang').value);
+                +document.getElementById('bsynthVoice').value, +document.getElementById('bsynthLang').value,
+                document.getElementById('bsynthDups').checked);
             if (r && r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             bsynthEvent(r);
         }

@@ -449,6 +449,7 @@
                     <label>Голос <select id="bsynthVoice" class="bsynth-sel"></select></label>
                     <label>Язык <select id="bsynthLang" class="bsynth-sel"></select></label>
                     <label>Пауза между запросами <input type="number" id="bsynthDelay" class="clone-count" min="1" max="60" value="4"> с</label>
+                    <label title="Одно и то же значение в столбце встречается снова — копия файла в «&lt;столбец&gt;_повторы» (третий раз — «_повторы_2»…). Выключено — один файл на значение, без копий"><input type="checkbox" id="bsynthDups" checked onchange="try { localStorage.setItem('gvox_bsynth_dups', this.checked ? '1' : '0') } catch (e) {}"> учитывать повторы</label>
                 </div>
                 <button class="splash-btn" style="width:100%;" id="btnBsynthStart" onclick="bsynthStart()" disabled>Синтезировать…</button>
             </div>
@@ -1743,7 +1744,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=21"></script>
+    <script src="script.js?v=22"></script>
     <script src="tutorial.js?v=16"></script>
     <script src="listen.js?v=30"></script>
 </body>
