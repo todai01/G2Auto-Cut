@@ -7363,12 +7363,12 @@ let isProcessing = false;
                 return;
             }
             rail.innerHTML = tts.takes.map(t => `
-                <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'piece' ? 'is-chain' : ''}"
+                <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'piece' ? 'is-chain' : ''} ${t.raw_var && !t.raw_var_rail ? 'is-rawvar' : ''}"
                         data-i="${t.i}" onclick="ttsRailClick(${t.i})" draggable="true"
-                        ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title=""${escapeHtml(t.heard || 'тишина / шум')}">
+                        ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title="${escapeHtml((t.name ? t.name + ' — ' : '') + (t.heard || 'тишина / шум'))}${t.raw_var ? ' · в «Переменных»: ' + escapeHtml(t.raw_var) : ''}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
-                    <span class="tts-take__meta">${t.ready ? 'готовый' : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
+                    <span class="tts-take__meta">${t.raw_var && !t.raw_var_rail ? '<span class="tts-take__rv" title="Перенесён в «Переменные» (Фразы_Переменные/' + escapeHtml(t.raw_var) + ')">→ Перем.</span> ' : ''}${t.ready ? 'готовый' : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
                 </button>`).join('');
             // Готовые фразы с переменными, которых нет на ленте, — добавить для правки.
             let offRail = ttsRec.on ? 0 : tts.units.filter(u => u.kind === 'piece' && u.saved && !(u.takes || []).length).length;
@@ -8723,7 +8723,7 @@ let isProcessing = false;
             let card = document.getElementById('ttsVarCard');
             card.classList.remove('is-bump'); void card.offsetWidth; card.classList.add('is-bump');
             let keep = tts.index; tts = r; tts.index = keep; ttsRender();
-            showToast(`Сохранено сырым: ${r.dir}/${r.raw_var} — откройте папку в «Прослушке» («Начало / конец»)`, 6000);
+            showToast(`Дубль отмечен «→ Перем.»: ${r.dir}/${r.raw_var}. Кнопка «Переменные» — сборка сырых`, 6000);
         }
 
         // Фраза с переменной «падает» с ленты в карточку «Переменные».
@@ -8821,6 +8821,8 @@ let isProcessing = false;
         async function ttsOpenVars() {
             if (!tts || !tts.loaded) return;
             ttsVars = await pywebview.api.tts_vars_state();
+            if ((ttsVars.raw || []).length) ttsVarsTab = 'raw';                       // есть сырые — сразу они
+            else if (ttsVarsTab === 'raw') ttsVarsTab = 'chains';
             document.getElementById('ttsVarsOverlay').style.display = 'flex';
             ttsRenderVars();
             ttsLoadChainInfo();
@@ -9154,13 +9156,14 @@ let isProcessing = false;
         }
 
         function ttsRenderVars() {
-            let tabs = [['chains', `Фразы · ${ttsVars.chains.length}`]].concat(ttsVars.sheets.map(sh => {
+            let tabs = [['raw', `Сырые · ${(ttsVars.raw || []).length}`], ['chains', `Фразы · ${ttsVars.chains.length}`]].concat(ttsVars.sheets.map(sh => {
                 let ready = sh.categories.reduce((a, c) => a + c.ready, 0), all = sh.categories.reduce((a, c) => a + c.values.length, 0);
                 return [sh.key, `${sh.label} · ${ready}/${all}`];
             })).concat([['synth', ttsSynth ? `Синтез сумм · ${ttsSynth.approved}/${ttsSynth.items.length}` : 'Синтез сумм']]);
             document.getElementById('ttsVarsTabs').innerHTML = tabs.map(([k, l]) =>
                 `<button type="button" class="chip ${k === ttsVarsTab ? 'chip-mode--active' : ''}" onclick="ttsVarsSetTab('${k}')">${escapeHtml(l)}</button>`).join('');
             let body = document.getElementById('ttsVarsBody');
+            if (ttsVarsTab === 'raw') { body.innerHTML = ttsVarsRawHTML(); return; }
             if (ttsVarsTab === 'chains') { body.innerHTML = ttsVarsChainsHTML(); return; }
             if (ttsVarsTab === 'synth') {
                 if (!ttsSynth) { body.innerHTML = '<div class="tts-dim tts-list__empty">Загружаю…</div>'; ttsSynthLoad(); return; }
@@ -9173,6 +9176,29 @@ let isProcessing = false;
             let sh = ttsVars.sheets.find(x => x.key === ttsVarsTab);
             if (!sh) { ttsVarsTab = 'chains'; ttsRenderVars(); return; }
             body.innerHTML = ttsVarsSheetHTML(sh);
+        }
+
+        // «Сырые»: файлы из «Фразы_Переменные», которые перенесли с ленты и ещё не сделали кусочками фраз
+        function ttsVarsRawHTML() {
+            let raw = ttsVars.raw || [];
+            if (!raw.length) return `<div class="tts-dim tts-list__empty">Сырых нет. Перетащите дубль с ленты на карточку «Переменные» — он сохранится в «Фразы_Переменные», и здесь его можно будет собрать.</div>`;
+            return `<div class="tts-dim" style="margin-bottom:8px">Сырые файлы в «Фразы_Переменные»: послушайте, а «В сборку» — подрезать, назвать и сохранить.</div>` + raw.map(r => `
+                <div class="tts-vraw">
+                    <button class="btn-ghost btn-ghost--compact" onclick="pywebview.api.tts_raw_var_play(${JSON.stringify(r.file).replace(/"/g, '&quot;')})" title="Слушать">&#9654;</button>
+                    <span class="tts-vraw__name" title="${escapeHtml(r.file)}">${escapeHtml(r.name)}</span>
+                    <span class="tts-dim">${(r.ms / 1000).toFixed(2)} с</span>
+                    <span class="tts-ed__spacer"></span>
+                    <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="ttsRawVarToRail(${JSON.stringify(r.file).replace(/"/g, '&quot;')})">${r.on_rail ? 'на ленте — открыть' : 'В сборку'}</button>
+                </div>`).join('');
+        }
+        async function ttsRawVarToRail(file) {
+            let r = await pywebview.api.tts_raw_var_to_rail(file);
+            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+            let idx = r.index;
+            tts = r; ttsCloseVars(); ttsRender();
+            await ttsSelect(idx);
+            ttsShowAssembly(true);
+            showToast('Сырой файл на ленте — подрежьте, дайте название (F) и сохраните (Enter)', 5000);
         }
 
         function ttsVarsChainsHTML() {

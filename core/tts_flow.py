@@ -3753,7 +3753,62 @@ class TtsFlowMixin:
                            "parts": [{"id": u["id"], "name": u["name"], "role": u["role"], "text": u["text"],
                                       "var_after": u.get("var_after"), "var_before": u.get("var_before"),
                                       "saved": has_dir and os.path.exists(self._tts_target(u))} for u in parts]})
-        return {"sheets": sheets, "chains": chains, "has_project": has_dir}
+        return {"sheets": sheets, "chains": chains, "has_project": has_dir, "raw": self._tts_raw_vars_list()}
+
+    # ---- сырые файлы в «Фразы_Переменные»: то, что перетащили с ленты в «Переменные» и ещё не стало кусочком фразы ----
+    def _tts_raw_vars_list(self):
+        st = self._tts()
+        wd = st.get("work_dir")
+        d = os.path.join(wd, TTS_VAR_DIR) if wd else None
+        if not d or not os.path.isdir(d):
+            return []
+        mine = {os.path.normcase(os.path.abspath(self._tts_target(u))) for u in st["units"] if u["kind"] == "piece"}
+        rail = {t.get("raw_var") for t in st["takes"] if t.get("raw_var_rail")}
+        out = []
+        for f in sorted(os.listdir(d)):
+            p = os.path.join(d, f)
+            if not os.path.isfile(p) or not f.lower().endswith(('.wav', '.mp3', '.ogg', '.flac', '.m4a')):
+                continue
+            if os.path.normcase(os.path.abspath(p)) in mine:
+                continue
+            try:
+                ms = len(AudioSegment.from_file(p))
+            except Exception:
+                ms = 0
+            out.append({"file": f, "name": os.path.splitext(f)[0], "ms": ms, "on_rail": f in rail})
+        return out
+
+    def tts_raw_var_play(self, file):
+        wd = self._tts().get("work_dir")
+        p = os.path.join(wd or '', TTS_VAR_DIR, os.path.basename(str(file)))
+        if not wd or not os.path.exists(p):
+            return {"playing": False}
+        self.player.play(p)
+        return {"playing": True, "duration": len(AudioSegment.from_file(p)) / 1000.0}
+
+    def tts_raw_var_to_rail(self, file):
+        """Сырой файл из «Фразы_Переменные» — дублем на ленту: в «Сборке» его подрезают, дают название (F) и сохраняют (Enter)."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        src = os.path.join(wd or '', TTS_VAR_DIR, os.path.basename(str(file)))
+        if not wd or not os.path.exists(src):
+            return {"error": "Файл не найден."}
+        done = next((k for k, t in enumerate(st["takes"]) if t.get("raw_var") == os.path.basename(src) and t.get("raw_var_rail")), None)
+        if done is not None:
+            st["index"] = done
+            return {**self.tts_state(), "index": done}
+        n = max([t.get("chunk", 0) for t in st["takes"]] + [0]) + 1
+        os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
+        rel = os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav")
+        shutil.copy2(src, os.path.join(wd, rel))
+        ms = len(AudioSegment.from_file(src))
+        st["takes"].append({"file": rel, "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": src, "heard": '', "listened": False,
+                            "chunk": n, "unit": None, "score": 0.0, "status": "manual",
+                            "raw_var": os.path.basename(src), "raw_var_rail": True})
+        st["index"] = len(st["takes"]) - 1
+        self._tts_save()
+        return {**self.tts_state(), "index": st["index"]}
+
 
     def tts_var_set_text(self, sheet, cat, value, text):
         st = self._tts()
