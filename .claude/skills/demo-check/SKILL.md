@@ -11,7 +11,7 @@ Windows, pywebview, Audacity и микрофона здесь нет. `tools/dem
 
 ## 1. Синтаксис — всегда
 ```bash
-node --check frontend/script.js && node --check frontend/tutorial.js
+for f in frontend/js/*.js frontend/*.js; do node --check $f || exit 1; done
 python -m py_compile main.py core/*.py
 ```
 

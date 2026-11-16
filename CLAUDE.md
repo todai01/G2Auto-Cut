@@ -12,7 +12,7 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   просьбе: `git archive --format=zip --prefix=G2Auto-Cut/ -o <scratchpad>/G2Auto-Cut.zip HEAD`.
   Готовая последовательность — скил `/ship`.
 - **JS-файлы (`frontend/*.js`) пользователь не может скачать по отдельности — отправлять их всегда одним zip** (пути внутри как в проекте,
-  `zip <scratchpad>/js.zip frontend/script.js …`); остальные изменённые файлы — как обычно, отдельно.
+  `zip <scratchpad>/js.zip frontend/js/*.js frontend/listen.js …`); остальные изменённые файлы — как обычно, отдельно.
 - Честно говорить, что проверено: песочница / демо-проект / браузер — не то же самое, что
   Windows + pywebview + Audacity + микрофон. Так и писать.
 - Не придумывать новую механику там, где есть рабочая: запись — только через суфлёр Студии.
@@ -24,7 +24,12 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 
 - `main.py` — класс `Api` из миксинов `core/*` (все методы доступны JS как `pywebview.api.<имя>`).
   Каждый вызов из JS идёт в своём потоке → общее состояние меняется из нескольких потоков.
-- `frontend/index.html`, `script.js` (~10 тыс. строк), `style.css`, `tutorial.js` (+ `tutorial/*.webm`).
+- `frontend/index.html`, `style.css`, `tutorial.js` (+ `tutorial/*.webm`), `listen.js`. Бывший `script.js` разбит на модули
+  `frontend/js/01_base.js … 10_studio_live.js` — обычные скрипты (не ES-модули) с общей глобальной областью, грузятся по порядку
+  номеров: 01 база и диалоги-хелперы, 02 экраны / меню / недавние, 03 экран дублей и таблица, 04 режим «Суммы» и редактор
+  тайминга, 05 действия экрана дублей и окна-сообщения, 06 утилиты (конвертер, клон, синтез по таблице, PPTX), 07 поиск и аудит,
+  08 конструктор, 09 Студия (проект, Сборка, дорожки, переменные), 10 Студия (запись, суфлёр, клавиши). Код, который выполняется
+  сразу при загрузке (не внутри функции), может звать только то, что объявлено в этом же или более раннем файле.
   Python → JS: `webview.windows[0].evaluate_js(...)`, в Студии — `_tts_push(payload)` → `ttsProgress(p)`.
 - Студия записи: `core/tts_flow.py` (состояние, дубли, ярусы, сборка, кэши),
   `core/tts_live.py` (запись, суфлёр, распознавание), `core/tts_synth.py` (синтез).
@@ -108,5 +113,5 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 Windows здесь нет, поэтому проверяем на демо-проекте (`tools/demo/`, скил `/demo-check`):
 - логика — Python: `from demo_env import build` → настоящий `Api` на демо-таблице;
 - интерфейс — `python tools/demo/check.py studio|menu|constructor|audit` (скриншот + ошибки JS);
-- синтаксис — `node --check frontend/script.js`, `python -m py_compile …`.
+- синтаксис — `for f in frontend/js/*.js frontend/*.js; do node --check $f; done`, `python -m py_compile …`.
 Ролики обучения после изменения интерфейса — скил `/tutorial-video`.
