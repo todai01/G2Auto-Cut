@@ -28,6 +28,9 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   Оформление — `frontend/ios.css` (грузится после `style.css`): тёмная тема в стиле iOS — цвета-токены, заливки кнопок вместо рамок,
   окна с размытием, шапка Студии как панель навигации (перестановка через CSS `order`, разметка та же). Новые стили — туда;
   отключить слой — убрать `<link … ios.css>` в `index.html`. Отступ `body` 18+26 px → высоты экранов `calc(100vh - 44px)`.
+  Главное меню — списком (`HOME_LIST = true` в `script.js`: `homeInit` / `homeRender`, стили `.home*` в `ios.css`): разделы — карточки,
+  пункты — строки; данные и действия прежние (`RADIAL_CATS`, `RADIAL_ITEMS`, `radialRun` нажимает скрытые кнопки `.menu-grid`).
+  Кольцо осталось в коде: `HOME_LIST = false` возвращает его.
   Python → JS: `webview.windows[0].evaluate_js(...)`, в Студии — `_tts_push(payload)` → `ttsProgress(p)`.
 - Студия записи: `core/tts_flow.py` (состояние, дубли, ярусы, сборка, кэши),
   `core/tts_live.py` (запись, суфлёр, распознавание), `core/tts_synth.py` (синтез).

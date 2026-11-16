@@ -928,6 +928,7 @@ let isProcessing = false;
             let home = document.querySelector('.menu-grid .menu-row--var');
             let cut = document.querySelector('details.menu-cut');
             let col = document.querySelector('.menu-grid .setup-col');
+            if (HOME_LIST) { homeExtraRender(opts, cut, col); return; }
             if (radial.open && radial.cat === 'vars' && opts) { if (opts.parentNode !== ex) ex.appendChild(opts); }
             else if (opts && home && opts.parentNode !== home) home.insertBefore(opts, home.querySelector('.menu-row__go'));
             if (radial.open && radial.cat === 'new' && radial.cutOpen && cut) { if (cut.parentNode !== ex) { ex.appendChild(cut); cut.open = true; } }
@@ -946,6 +947,7 @@ let isProcessing = false;
         function radialRender(animate) {
             let ring = radialEl('radialRing');
             if (!ring) return;
+            if (HOME_LIST) { homeRender(); return; }
             let root = radialEl('radial');
             if (animate) radial.animUntil = performance.now() + 1400;     // пока летят пункты — статус не перерисовываем
             if (!animate) {               // обновление статуса (✓, ×, недавние) — без пружины и прорисовки лучей
@@ -1052,6 +1054,73 @@ let isProcessing = false;
             if (it.run) { it.run(); return; }
             if (it.node) setTimeout(() => { it.node.click(); setTimeout(() => { if (isShown('stage1-loading')) radialRender(false); }, 400); }, 160);
         }
+        // ===== Главное меню списком (вместо кольца): разделы — карточки, пункты — строки, всё видно сразу. =====
+        // Данные и действия — те же (RADIAL_CATS, RADIAL_ITEMS, radialRun): строки нажимают прежние скрытые кнопки меню.
+        const HOME_LIST = true;
+        function homeInit() {
+            let root = radialEl('radial');
+            root.classList.add('is-home');
+            root.insertAdjacentHTML('afterbegin', `<div class="home" id="home">
+                <div class="home__head"><span class="home__logo">G<span>Vox</span></span><span class="home__step" id="homeStep"></span></div>
+                <div class="home__grid">${RADIAL_CATS.map(c => `<section class="home__group home__group--${c.key}" data-cat="${c.key}">
+                    <h3 class="home__title">${escapeHtml(c.title)}<span class="home__title-side" data-side="${c.key}"></span></h3>
+                    <div class="home__rows" data-rows="${c.key}"></div><div class="home__slot" data-slot="${c.key}"></div></section>`).join('')}</div></div>`);
+            let cont = radialEl('radialContinue');
+            if (cont) root.querySelector('.home__head').after(cont);
+            root.querySelector('.home__grid').addEventListener('click', e => {
+                let c = e.target.closest('[data-clear]');
+                if (c) { e.stopPropagation(); clearLoaded(e, c.dataset.clear); setTimeout(homeRender, 200); return; }
+                let row = e.target.closest('.home__row');
+                if (!row) return;
+                let it = (radial.homeItems[row.dataset.cat] || [])[+row.dataset.k];
+                if (!it) return;
+                radial.cat = row.dataset.cat; radial.open = true;
+                if (it.act === 'cut') { radial.cutOpen = !radial.cutOpen; homeRender(); return; }
+                radialRun(it);
+            });
+        }
+        function homeItems(cat) {
+            if (cat === 'tools') return radialToolItems();
+            if (cat === 'recent') return radialRecentItems();
+            return (RADIAL_ITEMS[cat] || []).map(it => ({ ...it, node: it.src ? document.querySelector('.menu-grid ' + it.src) : null }));
+        }
+        function homeRender() {
+            let root = radialEl('home');
+            if (!root) return;
+            radial.homeItems = {};
+            radialEl('homeStep').textContent = (radialEl('setupStatus') || {}).textContent || '';
+            RADIAL_CATS.forEach(c => {
+                let list = radial.homeItems[c.key] = homeItems(c.key);
+                let sec = root.querySelector(`.home__group[data-cat="${c.key}"]`);
+                sec.style.display = c.key === 'recent' && !list.length ? 'none' : '';
+                let html = list.map((it, k) => {
+                    let loaded = it.node && it.node.classList.contains('loaded');
+                    let on = it.act === 'cut' && radial.cutOpen;
+                    return `<button type="button" class="home__row ${loaded ? 'is-loaded' : ''} ${on ? 'is-on' : ''}" data-cat="${c.key}" data-k="${k}" title="${escapeHtml(radialDesc(it))}">
+                        <span class="home__icon">${iconHTML(it.icon)}</span>
+                        <span class="home__text"><span class="home__name">${escapeHtml(it.title)}</span><span class="home__desc">${escapeHtml(radialDesc(it))}</span></span>
+                        ${loaded ? `<span class="home__ok">✓</span>` : ''}
+                        ${loaded && it.clear ? `<span class="home__clear" role="button" title="Сбросить, чтобы загрузить заново" data-clear="${it.clear}">&times;</span>` : `<span class="home__go">›</span>`}
+                    </button>`;
+                }).join('');
+                let rows = root.querySelector(`[data-rows="${c.key}"]`);
+                if (rows.innerHTML !== html) rows.innerHTML = html;
+            });
+            let side = root.querySelector('[data-side="recent"]');
+            if (side && !side.firstChild) side.innerHTML = `<button type="button" class="home__link" id="radialRecentClear" onclick="radialRecentClear()" title="Убрать все проекты из списка. Сами папки и файлы не удаляются">Очистить</button>`;
+            radialContinueRender();
+            radialExtraRender();
+        }
+        // Параметры пакетной сборки — в карточке «Переменные», настройки нарезки — в «Новый проект» (по строке «Настройки нарезки»).
+        function homeExtraRender(opts, cut, col) {
+            let root = radialEl('home');
+            if (!root) return;
+            let sv = root.querySelector('[data-slot="vars"]'), sn = root.querySelector('[data-slot="new"]');
+            if (opts && sv && opts.parentNode !== sv) sv.appendChild(opts);
+            if (radial.cutOpen && cut && sn) { if (cut.parentNode !== sn) { sn.appendChild(cut); cut.open = true; } }
+            else if (cut && col && cut.parentNode !== col) col.insertBefore(cut, radialEl('btnLoadFolder'));
+        }
+
         function radialHubClick() {
             radialRipple();
             if (!radial.open) radial.open = true;
@@ -1065,9 +1134,9 @@ let isProcessing = false;
             if (!isShown('stage1-loading') || !radialEl('radial')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
             if ([...document.querySelectorAll('.custom-alert-overlay')].some(o => o.style.display === 'flex')) return;
-            if (e.code === 'Escape' && radial.open) { e.preventDefault(); radialHubClick(); return; }
+            if (!HOME_LIST && e.code === 'Escape' && radial.open) { e.preventDefault(); radialHubClick(); return; }
             let m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
-            if (m && radial.open && radial.items[+m[1] - 1]) { e.preventDefault(); radialRun(radial.items[+m[1] - 1]); return; }
+            if (!HOME_LIST && m && radial.open && radial.items[+m[1] - 1]) { e.preventDefault(); radialRun(radial.items[+m[1] - 1]); return; }
             if ((e.code === 'Enter' || e.code === 'NumpadEnter') && (recentProjectsCache || []).length
                 && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('button, a, details'))) {
                 e.preventDefault(); radialContinue();
@@ -1119,6 +1188,7 @@ let isProcessing = false;
                 .observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true, characterData: true });
             radial.cat = radialLoadCat();
             if (radial.cat === 'recent' && !(recentProjectsCache || []).length) radial.cat = null;
+            if (HOME_LIST) homeInit();
             radialRender(false);
         }
         // Фон меню: мягкие цветные пятна, сетка точек и «звуковая дорожка».
