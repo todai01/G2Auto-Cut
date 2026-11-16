@@ -2860,7 +2860,7 @@ class TtsFlowMixin:
     @staticmethod
     def _file_sig(path):
         s = os.stat(path)
-        return (os.path.abspath(path), s.st_mtime_ns, s.st_size)
+        return (os.path.abspath(path), s.st_mtime_ns, s.st_size, s.st_ino, s.st_ctime_ns)
 
     def _tts_cached(self, key, make):
         """LRU в памяти: make() — только если такого ещё не считали."""
@@ -3775,8 +3775,51 @@ class TtsFlowMixin:
                 ms = len(AudioSegment.from_file(p))
             except Exception:
                 ms = 0
-            out.append({"file": f, "name": os.path.splitext(f)[0], "ms": ms, "on_rail": f in rail})
+            marks = st.get("raw_marks") or {}
+            out.append({"file": f, "name": os.path.splitext(f)[0], "ms": ms, "on_rail": f in rail,
+                        "mark": next((w for w in ('start', 'end') if marks.get(w) == f), None)})
         return out
+
+    def tts_raw_mark(self, file, which):
+        """Отметить сырой файл как начало ('start') или конец ('end') фразы; повторно — снять."""
+        st = self._tts()
+        marks = st.setdefault("raw_marks", {})
+        file = os.path.basename(str(file))
+        if which not in ('start', 'end'):
+            return {"error": "Не то поле."}
+        if marks.get(which) == file:
+            marks.pop(which)
+        else:
+            for w in ('start', 'end'):
+                if marks.get(w) == file:
+                    marks.pop(w)
+            marks[which] = file
+        self._tts_save()
+        return {"raw": self._tts_raw_vars_list(), "marks": marks}
+
+    def tts_raw_assembly(self, pick=False):
+        """«Сборка переменной»: начало + значение + конец. Значения — папка с записями переменной
+        (спрашиваем один раз); дальше — экран «Прослушки» с этой парой."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        marks = st.get("raw_marks") or {}
+        d = os.path.join(wd or '', TTS_VAR_DIR)
+        start = os.path.join(d, marks["start"]) if marks.get("start") else None
+        end = os.path.join(d, marks["end"]) if marks.get("end") else None
+        if not wd or not start or not os.path.exists(start):
+            return {"error": "Отметьте начальную фразу («Начало»)."}
+        if end and not os.path.exists(end):
+            end = None
+        folder = st.get("raw_var_folder")
+        if pick or not folder or not os.path.isdir(folder):
+            if not pick:
+                return {"need_folder": True}
+            picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER, directory=folder or wd)
+            if not picked:
+                return {"error": "cancel"}
+            folder = st["raw_var_folder"] = picked if isinstance(picked, str) else picked[0]
+            self._tts_save()
+        return self.listen_setup_assembly(d, start, end, folder)
 
     def tts_raw_var_play(self, file):
         wd = self._tts().get("work_dir")

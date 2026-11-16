@@ -170,6 +170,26 @@ class ListenMixin:
                 return hits
         return []
 
+    def listen_setup_assembly(self, phr_dir, start, end, folder):
+        """«Сборка переменной» из Студии: начало и конец — отмеченные файлы из «Фразы_Переменные»,
+        записи значений — выбранная папка; строки — файлы этой папки (таблицу можно загрузить потом)."""
+        r = self._listen_load_phrases(phr_dir)
+        if r.get("error"):
+            return r
+        ls = self._ls()
+        for lang in ('ru', 'kz'):                          # пара одна на оба языка
+            ls["pick"][lang] = {k: v for k, v in (("start", start), ("end", end)) if v}
+        self._listen_apply_pick()
+        self._listen_set_folder(folder)
+        if not ls["index"]:
+            return {"error": "В папке переменных нет аудиофайлов (.wav, .mp3…)."}
+        natural = lambda x: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', x)]
+        names = sorted({os.path.splitext(os.path.basename(p))[0] for paths in ls["index"].values() for p in paths}, key=natural)
+        ls["table"], ls["table_names"] = None, {"ru": names, "kz": names}
+        ls["rows"], ls["pos"], ls["synth"] = [], 0, {}
+        self._listen_match()
+        return self.listen_state()
+
     def _listen_base(self):
         """Таблица целиком: [(название RU, название KZ)] — общий порядок строк."""
         names = self._ls().get("table_names") or {}
@@ -239,8 +259,15 @@ class ListenMixin:
         picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not picked:
             return {"error": "cancel"}
+        self._listen_set_folder(picked if isinstance(picked, str) else picked[0])
         ls = self._ls()
-        ls["folder"] = listen_lang_root(picked if isinstance(picked, str) else picked[0])
+        if not ls["index"]:
+            return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
+        return self.listen_state()
+
+    def _listen_set_folder(self, path):
+        ls = self._ls()
+        ls["folder"] = listen_lang_root(path)
         ls["tpl"], ls["flags"] = None, set()
         try:
             with open(os.path.join(ls["folder"], LISTEN_TPL_FILE), 'r', encoding='utf-8') as f:
@@ -253,9 +280,6 @@ class ListenMixin:
         except (OSError, ValueError, TypeError):
             pass
         self._listen_scan()
-        if not ls["index"]:
-            return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
-        return self.listen_state()
 
     # Начало и конец — из папки кусочков («Фразы_Переменные», внутри ru / kz):
     # пара своя для каждого языка, тумблер RU / KZ переключает и её.
@@ -263,8 +287,12 @@ class ListenMixin:
         picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
         if not picked:
             return {"error": "cancel"}
+        r = self._listen_load_phrases(picked if isinstance(picked, str) else picked[0])
+        return r if r.get("error") else self.listen_state()
+
+    def _listen_load_phrases(self, path):
         ls = self._ls()
-        base = listen_lang_root(picked if isinstance(picked, str) else picked[0])
+        base = listen_lang_root(path)
         items = []
         for root, dirs, files in os.walk(base):
             dirs[:] = sorted(d for d in dirs if d not in LISTEN_SKIP_DIRS)
@@ -280,7 +308,7 @@ class ListenMixin:
         for lang in ls["pick"]:
             ls["pick"][lang] = {w: v for w, v in ls["pick"][lang].items() if v in keep}
         self._listen_apply_pick()
-        return self.listen_state()
+        return {"ok": True}
 
     def listen_set_phrase(self, which, path, lang=None):
         """Отметить кусочек как начало / конец (path=None — снять) для языка lang."""
@@ -420,7 +448,7 @@ class ListenMixin:
         for p in paths:
             try:
                 st = os.stat(p)
-                out.append((p, st.st_mtime_ns, st.st_size))
+                out.append((p, st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns))
             except (OSError, TypeError):
                 out.append((p, None, None))
         return tuple(out)

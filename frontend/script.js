@@ -9182,14 +9182,43 @@ let isProcessing = false;
         function ttsVarsRawHTML() {
             let raw = ttsVars.raw || [];
             if (!raw.length) return `<div class="tts-dim tts-list__empty">Сырых нет. Перетащите дубль с ленты на карточку «Переменные» — он сохранится в «Фразы_Переменные», и здесь его можно будет собрать.</div>`;
-            return `<div class="tts-dim" style="margin-bottom:8px">Сырые файлы в «Фразы_Переменные»: послушайте, а «В сборку» — подрезать, назвать и сохранить.</div>` + raw.map(r => `
-                <div class="tts-vraw">
-                    <button class="btn-ghost btn-ghost--compact" onclick="pywebview.api.tts_raw_var_play(${JSON.stringify(r.file).replace(/"/g, '&quot;')})" title="Слушать">&#9654;</button>
+            let q = f => JSON.stringify(f).replace(/"/g, '&quot;');
+            let st = raw.find(r => r.mark === 'start'), en = raw.find(r => r.mark === 'end');
+            return `<div class="tts-vraw__bar">
+                    <span>Начало: <b>${st ? escapeHtml(st.name) : '—'}</b> · конец: <b>${en ? escapeHtml(en.name) : '—'}</b></span>
+                    <span class="tts-ed__spacer"></span>
+                    <button class="btn-ghost btn-ghost--compact" onclick="ttsRawAssembly(true)" title="Выбрать другую папку с записями переменной">папка переменных…</button>
+                    <button class="custom-alert-btn" onclick="ttsRawAssembly(false)" ${st ? '' : 'disabled'} title="Начало → переменная → конец: слушать, подрезать каждую часть, сохранять">Сборка переменной →</button>
+                </div>
+                <div class="tts-dim" style="margin:6px 0 8px">Отметьте, какой файл — начальная фраза, а какой — конечная. Потом «Сборка переменной».</div>` + raw.map(r => `
+                <div class="tts-vraw ${r.mark ? 'is-' + r.mark : ''}">
+                    <button class="btn-ghost btn-ghost--compact" onclick="pywebview.api.tts_raw_var_play(${q(r.file)})" title="Слушать">&#9654;</button>
                     <span class="tts-vraw__name" title="${escapeHtml(r.file)}">${escapeHtml(r.name)}</span>
                     <span class="tts-dim">${(r.ms / 1000).toFixed(2)} с</span>
                     <span class="tts-ed__spacer"></span>
+                    <button class="btn-ghost btn-ghost--compact ${r.mark === 'start' ? 'is-on' : ''}" onclick="ttsRawMark(${q(r.file)}, 'start')">Начало</button>
+                    <button class="btn-ghost btn-ghost--compact ${r.mark === 'end' ? 'is-on' : ''}" onclick="ttsRawMark(${q(r.file)}, 'end')">Конец</button>
                     <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="ttsRawVarToRail(${JSON.stringify(r.file).replace(/"/g, '&quot;')})">${r.on_rail ? 'на ленте — открыть' : 'В сборку'}</button>
                 </div>`).join('');
+        }
+        async function ttsRawMark(file, which) {
+            let r = await pywebview.api.tts_raw_mark(file, which);
+            if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
+            ttsVars.raw = r.raw; ttsRenderVars();
+        }
+        // «Сборка переменной»: начало + значение + конец — экран «Прослушки» с этой парой
+        async function ttsRawAssembly(pick) {
+            let r = await pywebview.api.tts_raw_assembly(!!pick);
+            if (r && r.need_folder) {
+                if (!(await showBeautifulConfirm('<b>Загрузите переменные</b><br><br>Выберите папку с записями переменной — файл на значение '
+                    + '(можно с подпапками ru и kz). Сборка: начальная фраза → переменная → конечная фраза.', 'Выбрать папку', 'Отмена'))) return;
+                r = await pywebview.api.tts_raw_assembly(true);
+            }
+            if (!r || r.error) { if (r && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            ttsCloseVars();
+            LS = r;
+            listenOpen();
+            showToast(`Сборка переменной: ${r.rows.length} значений · начало «${r.start || '—'}», конец «${r.end || '—'}»`, 5000);
         }
         async function ttsRawVarToRail(file) {
             let r = await pywebview.api.tts_raw_var_to_rail(file);

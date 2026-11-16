@@ -93,6 +93,7 @@ function listenRender(light) {
         + '<span class="listen-arrow">→</span>' + part('var', 'имя', r && r.name, !!(r && r.path))
         + '<span class="listen-arrow">→</span>' + part('end', 'конец', LS.end, !!LS.end_path);
     listenRenderSynth();
+    if (!light) lAsm = {};                               // волны начала / конца / имени — заново с диска: всегда как звучит
     listenAsmEnsure();
 }
 function listenRenderList() {
@@ -220,7 +221,7 @@ async function listenLoadEditor() {
 function listenSetEditor(r, path) {
     if (!path) { lEd = null; lEl('listenEd').classList.add('is-empty'); listenEdRender(); return; }
     if (!r || r.error) { lEd = null; showToast(r && r.error || 'Не открылась запись'); listenEdRender(); return; }
-    lEl('listenEd').classList.remove('is-empty'); lAsm = {};
+    lEl('listenEd').classList.remove('is-empty'); lAsm = {}; setTimeout(listenAsmEnsure, 0);
     lEd = { ...r, target: lTarget, sel: null, cur: 0, head: null, hist: [], reveal: lRevealNext ? performance.now() : null };
     lRevealNext = false;
     lEd.saved = listenSnap();
@@ -896,7 +897,8 @@ function listenEvent(p) {
                 if (p.ok && p.taken && !lAuto) {                     // мы на этом имени — сразу на дорожку и слушать
                     lTarget = 'var'; lRevealNext = true; listenRender(true);
                     listenLoadEditor().then(() => { listenStopHead(); pywebview.api.listen_stop(); listenPlayChain(); });
-                } else listenRenderSynth();
+                } else if (p.ok && p.taken) { lAsm = {}; listenLoadEditor(); }   // файл заменён — волна тоже новая
+                else listenRenderSynth();
             }
         }
     }
@@ -932,15 +934,21 @@ window.addEventListener('resize', () => { if (isShown('stage5-listen')) listenEd
 // Клик по куску — править его (ниже, в редакторе). Имя — с текущей правкой, живьём.
 let lAsm = {}, lAsmBusy = false, lAsmHit = [];
 const lAsmParts = () => ['start', 'var', 'end'].map(t => ({ t, path: t === 'start' ? LS.start_path : t === 'end' ? LS.end_path : (lRow() || {}).path }));
+let lAsmAgain = false;
 async function listenAsmEnsure() {
-    if (!LS || lAsmBusy) { listenAsmDraw(); return; }
-    let need = lAsmParts().filter(p => p.path && !(lEd && lEd.target === p.t && lEd.path === p.path) && !lAsm[p.path]);
-    if (!need.length) { listenAsmDraw(); return; }
+    if (!LS) return;
+    if (lAsmBusy) { lAsmAgain = true; listenAsmDraw(); return; }     // идёт загрузка — после неё проверим ещё раз
     lAsmBusy = true;
     try {
-        for (let p of need) {
-            let r = await pywebview.api.listen_edit_load(p.path);
-            if (r && !r.error) lAsm[p.path] = r;
+        for (let round = 0; round < 4; round++) {
+            lAsmAgain = false;
+            let need = lAsmParts().filter(p => p.path && !(lEd && lEd.target === p.t && lEd.path === p.path) && !lAsm[p.path]);
+            if (!need.length && !lAsmAgain) break;
+            for (let p of need) {
+                let r = await pywebview.api.listen_edit_load(p.path);
+                if (r && !r.error) lAsm[p.path] = r;
+            }
+            if (!lAsmAgain) break;
         }
     } finally { lAsmBusy = false; }
     listenAsmDraw();
