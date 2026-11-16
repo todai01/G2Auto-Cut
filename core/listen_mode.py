@@ -777,11 +777,9 @@ class ListenMixin:
                 shutil.copy2(path, backup)
             seg = self._listen_render(path, ranges, gain, tempo, src=backup)
             fmt = os.path.splitext(path)[1].lstrip('.').lower() or 'wav'
-            tmp = os.path.join(tempfile.gettempdir(), f"gvox_listen_save_{os.getpid()}.{fmt}")
             src0 = AudioSegment.from_file(backup)                 # формат — как у исходника
-            seg.set_frame_rate(src0.frame_rate).set_channels(src0.channels).set_sample_width(src0.sample_width) \
-               .export(tmp, format='mp4' if fmt == 'm4a' else fmt)
-            shutil.move(tmp, path)
+            out = seg.set_frame_rate(src0.frame_rate).set_channels(src0.channels).set_sample_width(src0.sample_width)
+            self._listen_put_audio(path, lambda t: out.export(t, format='mp4' if fmt == 'm4a' else fmt))
             with open(self._listen_meta(path), 'w', encoding='utf-8') as f:
                 json.dump({"ranges": [[int(a), int(b)] for a, b in ranges], "gain": float(gain), "tempo": float(tempo)}, f)
         except PermissionError:
@@ -1073,18 +1071,10 @@ class ListenMixin:
             path = os.path.join(ls["lang_dirs"].get(s.get("lang") or ls["lang"]) or ls["folder"] or os.path.dirname(s["file"]),
                                 f"{safe}.wav")
         else:
-            backup = self._audit_backup(path)
-            stem, ext = os.path.splitext(backup)
-            keep = f"{stem}_до_синтеза{ext}"
-            os.makedirs(os.path.dirname(backup), exist_ok=True)
-            if os.path.exists(backup):                         # самый первый исходник — его и храним
-                os.replace(backup, keep)
-            elif os.path.exists(path):
-                shutil.copy2(path, keep)
-        if os.path.splitext(path)[1].lower() == '.wav':
-            shutil.copyfile(s["file"], path)                   # время файла — новое: кэш звука / волны обновится
-        else:
-            AudioSegment.from_file(s["file"]).export(path, format=os.path.splitext(path)[1].lstrip('.').lower())
+            self._listen_keep_original(path, 'до_синтеза')     # самый первый исходник — его и храним
+        ext = os.path.splitext(path)[1].lower()
+        self._listen_put_audio(path, (lambda tmp: shutil.copyfile(s["file"], tmp)) if ext == '.wav' else
+                               (lambda tmp: AudioSegment.from_file(s["file"]).export(tmp, format=ext.lstrip('.'))))
         for meta in (self._listen_meta(path), self._audit_backup(path) + '.json'):
             try:
                 os.remove(meta)
@@ -1093,6 +1083,75 @@ class ListenMixin:
         ls["synth"].pop(k, None)
         self._listen_scan()
         return {"ok": True, "path": path, "state": self.listen_state()}
+
+    # ---------------- безопасные операции с файлами ----------------
+    @staticmethod
+    def _listen_move_batch(moves):
+        """Переместить файлы [(откуда, куда)] по порядку; нет исходника — шаг пропускается.
+        Заранее проверяем, что ни один файл не будет перезаписан (если только его место не освободит
+        более ранний шаг этой же пачки). Сбой посередине — всё сделанное возвращается назад.
+        Возвращает None или текст ошибки (ничего не тронуто)."""
+        norm = lambda p: os.path.normcase(os.path.abspath(p))
+        taken, freed, plan = set(), set(), []
+        here = lambda p: norm(p) in taken or (os.path.exists(p) and norm(p) not in freed)
+        for src, dst in moves:
+            if not here(src):
+                continue
+            if here(dst):
+                return f"«{os.path.basename(dst)}» уже есть в «{os.path.basename(os.path.dirname(dst))}» — его не перезаписываю."
+            plan.append((src, dst))
+            freed.add(norm(src)); taken.discard(norm(src))
+            taken.add(norm(dst)); freed.discard(norm(dst))
+        done = []
+        try:
+            for src, dst in plan:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                os.replace(src, dst)
+                done.append((src, dst))
+        except OSError as e:
+            for src, dst in reversed(done):                     # откат — как было до операции
+                try:
+                    os.replace(dst, src)
+                except OSError:
+                    pass
+            return f"Не удалось переместить «{os.path.basename(src)}»: {e}. Всё возвращено как было."
+        return None
+
+    def _listen_put_audio(self, path, write):
+        """Записать звук на место path без риска битого файла: сначала во временный файл рядом
+        (в «_до_правок», его не сканируют), потом одной заменой. write(tmp) — пишет звук в tmp."""
+        tmp_dir = os.path.dirname(self._audit_backup(path))
+        os.makedirs(tmp_dir, exist_ok=True)
+        stem, ext = os.path.splitext(os.path.basename(path))
+        tmp = os.path.join(tmp_dir, f".tmp_{stem}_{os.getpid()}{ext}")
+        try:
+            write(tmp)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+    def _listen_keep_original(self, path, tag):
+        """Перед заменой записи: самый первый исходник — в «_до_правок/<имя>_<tag>», если его там ещё нет
+        (повторная замена не затирает оригинал; следующие — «_<tag>_2», «_3»…). Ничего не удаляется."""
+        backup = self._audit_backup(path)
+        stem, ext = os.path.splitext(backup)
+        keep = f"{stem}_{tag}{ext}"
+        os.makedirs(os.path.dirname(backup), exist_ok=True)
+        if os.path.exists(keep):                                  # оригинал уже сохранён раньше — его не трогаем,
+            if os.path.exists(backup):                            # промежуточный исходник — рядом с номером, не удаляем
+                n = 2
+                while os.path.exists(f"{stem}_{tag}_{n}{ext}"):
+                    n += 1
+                os.replace(backup, f"{stem}_{tag}_{n}{ext}")
+        elif os.path.exists(backup):
+            os.replace(backup, keep)
+        elif os.path.exists(path):
+            shutil.copy2(path, keep)
+        return keep
 
     # ---------------- запись не того названия: поменять местами ----------------
     def _listen_sidecars(self, path):
@@ -1133,13 +1192,9 @@ class ListenMixin:
             moves += list(zip(self._listen_sidecars(src), self._listen_sidecars(temps[src])))
         for src, dst in plan.items():
             moves += list(zip(self._listen_sidecars(temps[src]), self._listen_sidecars(dst)))
-        try:
-            for src, dst in moves:
-                if os.path.exists(src):
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    os.replace(src, dst)
-        except OSError as e:
-            return {"error": f"Не удалось переименовать: {e}"}
+        err = self._listen_move_batch(moves)                   # всё или ничего; чужие файлы не перезаписываются
+        if err:
+            return {"error": err}
         cache = getattr(self, '_listen_cache', None)
         if cache is not None:
             with self._listen_cache_lock:
@@ -1204,14 +1259,11 @@ class ListenMixin:
         self.player.stop()
         moved, failed = 0, []
         for a, b, _lang, _dup in plan["moves"]:
-            try:
-                for x, y in zip(self._listen_sidecars(a), self._listen_sidecars(b)):
-                    if os.path.exists(x):
-                        os.makedirs(os.path.dirname(y), exist_ok=True)
-                        os.replace(x, y)
+            err = self._listen_move_batch(list(zip(self._listen_sidecars(a), self._listen_sidecars(b))))
+            if err:
+                failed.append(f"{os.path.basename(a)}: {err}")
+            else:
                 moved += 1
-            except OSError as e:
-                failed.append(f"{os.path.basename(a)}: {e}")
         cache = getattr(self, '_listen_cache', None)
         if cache is not None:
             with self._listen_cache_lock:
@@ -1292,16 +1344,10 @@ class ListenMixin:
             seg = AudioSegment.from_file(tmp)
             src0 = AudioSegment.from_file(self._audit_src(path))
             backup = self._audit_backup(path)
-            stem, ext = os.path.splitext(backup)
-            keep = f"{stem}_до_audacity{ext}"
-            os.makedirs(os.path.dirname(backup), exist_ok=True)
-            if os.path.exists(backup):
-                os.replace(backup, keep)
-            else:
-                shutil.copy2(path, keep)
             fmt = os.path.splitext(path)[1].lstrip('.').lower() or 'wav'
             out = seg.set_frame_rate(src0.frame_rate).set_channels(src0.channels).set_sample_width(src0.sample_width)
-            out.export(path, format='mp4' if fmt == 'm4a' else fmt)
+            self._listen_keep_original(path, 'до_audacity')
+            self._listen_put_audio(path, lambda t: out.export(t, format='mp4' if fmt == 'm4a' else fmt))
             for meta in (self._listen_meta(path), backup + '.json'):
                 try:
                     os.remove(meta)

@@ -114,4 +114,7 @@ Windows здесь нет, поэтому проверяем на демо-пр�
 - логика — Python: `from demo_env import build` → настоящий `Api` на демо-таблице;
 - интерфейс — `python tools/demo/check.py studio|menu|constructor|audit` (скриншот + ошибки JS);
 - синтаксис — `for f in frontend/js/*.js frontend/*.js; do node --check $f; done`, `python -m py_compile …`.
+- автотесты — `python -m pytest -q` (`tests/`: названия и числа, операции с файлами Прослушки — обмен, универсалы,
+  синтез / Audacity поверх записи, откат при сбое; сырые переменные Студии; аудит по языкам). Данные — во временной папке.
+  В GitHub Actions — `tests.yml` на каждый пуш. Новая операция с файлами — сразу тест «ничего не пропало и не перезаписано».
 Ролики обучения после изменения интерфейса — скил `/tutorial-video`.
