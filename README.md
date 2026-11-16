@@ -21,7 +21,7 @@
     (`ToSrvPipe` / `FromSrvPipe`);
   - `audio_player.py` — воспроизведение через `winsound`;
   - `file_utils.py` — пути и длительность WAV.
-- `frontend/` — интерфейс (`index.html`, `js/*.js` — модули интерфейса по порядку, `listen.js`, `style.css`). JS вызывает Python
+- `frontend/` — интерфейс (`index.html`, `script.js`, `style.css`). JS вызывает Python
   через `pywebview.api.*` и перерисовывает экран по состоянию из `get_ui_state()`.
 
 ## Рабочие папки проекта
