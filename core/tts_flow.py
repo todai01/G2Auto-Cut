@@ -1654,6 +1654,32 @@ class TtsFlowMixin:
         return {**self.tts_state(), "saved_kind": unit["kind"], "saved_name": unit["name"], "twins": twins,
                 "tiers_saved": tiers_out}
 
+    def tts_take_to_raw_vars(self, i):
+        """Дубль с ленты — «сырым» в папку «Фразы_Переменные» проекта (без привязки к фразе и вопросов).
+        Имя — название фразы дубля, если она выбрана, иначе «дубль_NNNN»; занято — «_2», «_3»…
+        Дубль остаётся на ленте как был. Потом папку открывают в «Прослушке» («Начало / конец»)."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        if not wd:
+            return {"error": "Сначала откройте проект Студии."}
+        if not (0 <= i < len(st["takes"])):
+            return {"error": "Нет такого дубля."}
+        t = st["takes"][i]
+        src = os.path.join(wd, t["file"])
+        if not os.path.exists(src):
+            return {"error": f"Файл дубля не найден: {t['file']}"}
+        base = clean_name(st["units"][t["unit"]]["name"]) if t.get("unit") is not None and t["unit"] < len(st["units"]) else ''
+        base = base or f"дубль_{t.get('chunk', i + 1):04d}"
+        d = os.path.join(wd, TTS_VAR_DIR)
+        os.makedirs(d, exist_ok=True)
+        dst, n = os.path.join(d, base + '.wav'), 2
+        while os.path.exists(dst):
+            dst, n = os.path.join(d, f"{base}_{n}.wav"), n + 1
+        self._tts_render_final(src, dst, *self._tts_sound(t))
+        t["raw_var"] = os.path.basename(dst)
+        self._tts_save()
+        return {**self.tts_state(), "raw_var": os.path.basename(dst), "dir": TTS_VAR_DIR}
+
     def tts_reject(self, i):
         """Прежняя «Плохой дубль» — теперь удаление (Ctrl+Z возвращает)."""
         return self.tts_take_delete(i)

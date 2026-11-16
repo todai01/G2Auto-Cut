@@ -8710,12 +8710,20 @@ let isProcessing = false;
             let i = ttsDragIdx;
             ttsTakeDragEnd();
             if (i === null || !tts.takes[i]) return;
-            if (i !== tts.index) await ttsSelect(i);
-            ttsShowAssembly(true);
             let u = ttsUnit(tts.takes[i].unit);
-            if (u && u.kind === 'piece') { ttsApprove(); return; }
-            // Не кусочек переменной — спросить, к какому кусочку относится.
-            ttsOpenUnits('assign-var');
+            if (u && u.kind === 'piece') {
+                if (i !== tts.index) await ttsSelect(i);
+                ttsShowAssembly(true);
+                ttsApprove();
+                return;
+            }
+            // Не привязан к кусочку фразы — сохраняем сырым в «Фразы_Переменные», ничего не спрашивая.
+            let r = await pywebview.api.tts_take_to_raw_vars(i);
+            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+            let card = document.getElementById('ttsVarCard');
+            card.classList.remove('is-bump'); void card.offsetWidth; card.classList.add('is-bump');
+            let keep = tts.index; tts = r; tts.index = keep; ttsRender();
+            showToast(`Сохранено сырым: ${r.dir}/${r.raw_var} — откройте папку в «Прослушке» («Начало / конец»)`, 6000);
         }
 
         // Фраза с переменной «падает» с ленты в карточку «Переменные».
