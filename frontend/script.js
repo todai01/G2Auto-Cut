@@ -7365,7 +7365,7 @@ let isProcessing = false;
             rail.innerHTML = tts.takes.map(t => `
                 <button type="button" class="tts-take ${ttsTakeClass(t)} ${t.i === tts.index ? 'is-current' : ''} ${t.kind === 'piece' ? 'is-chain' : ''} ${t.raw_var && !t.raw_var_rail ? 'is-rawvar' : ''}"
                         data-i="${t.i}" onclick="ttsRailClick(${t.i})" draggable="true"
-                        ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" title="${escapeHtml((t.name ? t.name + ' — ' : '') + (t.heard || 'тишина / шум'))}${t.raw_var ? ' · в «Переменных»: ' + escapeHtml(t.raw_var) : ''}">
+                        ondragstart="ttsTakeDragStart(event, ${t.i})" ondragend="ttsTakeDragEnd()" data-tip="${escapeHtml(t.name || '—')}" data-tip2="${escapeHtml((t.heard || 'тишина / шум') + (t.raw_var && !t.raw_var_rail ? ' · в «Переменных»: ' + t.raw_var : ''))}">
                     <span class="tts-take__num">${String(t.chunk || t.i + 1).padStart(3, '0')}${t.split ? '<span class="tts-take__cut">✂</span>' : ''}</span>
                     <span class="tts-take__name">${t.name ? escapeHtml(t.name) : '—'}</span>
                     <span class="tts-take__meta">${t.raw_var && !t.raw_var_rail ? '<span class="tts-take__rv" title="Перенесён в «Переменные» (Фразы_Переменные/' + escapeHtml(t.raw_var) + ')">→ Перем.</span> ' : ''}${t.ready ? 'готовый' : t.status === 'manual' && t.unit !== null ? 'вручную' : (t.unit !== null ? Math.round(t.score * 100) + '%' : '')}${t.take_total > 1 ? ` · ${t.take_no}/${t.take_total}` : ''}</span>
@@ -10477,3 +10477,25 @@ let isProcessing = false;
             }
             else if (ttsPlayingIdx >= 0) ttsStopPlay().then(() => { ttsRenderRail(); ttsRenderCurrent(); });
         }
+
+
+// Всплывающее полное название над дублем на ленте (в ленте оно обрезается)
+(function ttsRailTip() {
+    let tip = null, cur = null;
+    const hide = () => { cur = null; if (tip) tip.classList.remove('is-on'); };
+    document.addEventListener('mouseover', e => {
+        let el = e.target.closest && e.target.closest('#ttsRail .tts-take[data-tip]');
+        if (!el) { if (cur) hide(); return; }
+        if (el === cur) return;
+        cur = el;
+        if (!tip) { tip = document.createElement('div'); tip.className = 'tts-tip'; document.body.appendChild(tip); }
+        tip.innerHTML = `${escapeHtml(el.dataset.tip)}${el.dataset.tip2 ? `<small>${escapeHtml(el.dataset.tip2)}</small>` : ''}`;
+        let r = el.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+        tip.style.left = Math.max(6, Math.min(innerWidth - tw - 6, r.left + r.width / 2 - tw / 2)) + 'px';
+        tip.style.top = Math.max(6, r.top - th - 8) + 'px';
+        tip.classList.add('is-on');
+    });
+    document.addEventListener('mouseleave', hide, true);
+    document.addEventListener('dragstart', hide, true);
+    document.addEventListener('scroll', hide, true);
+})();
