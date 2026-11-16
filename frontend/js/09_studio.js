@@ -12,7 +12,12 @@
         let ttsListMode = 'all';
 
         async function openTts() {
-            let st = await pywebview.api.tts_state();
+            // Ответа нет 10 с — сказать об этом, а не молчать (запрос мог зависнуть в Python).
+            let slow = setTimeout(() => showToast('Студия не отвечает 10 с — подождите или перезапустите программу'), 10000);
+            let st;
+            try { st = await pywebview.api.tts_state(); }
+            catch (e) { gvoxShowError('Студия: tts_state', e); return; }
+            finally { clearTimeout(slow); }
             if (!st || !st.loaded) {
                 let how = await showBeautifulChoice('<b>Студия записи</b><br><br>Загрузите таблицу: лист фраз с колонками '
                     + '<code>&lt;phrase&gt;</code>, <code>&lt;name_phrase&gt;</code>, флаги <code>&lt;start&gt;</code> / '

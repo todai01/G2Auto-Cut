@@ -75,3 +75,11 @@ def test_audit_dups_same_language_only(tmp_path):
     assert sorted(P._audit_same_lang([ru, kz, ru2], base)) == sorted([ru, ru2])
     u1, u2 = os.path.join(base, 'a', 'x.wav'), os.path.join(base, 'b', 'x.wav')
     assert sorted(P._audit_same_lang([u1, u2], base)) == sorted([u1, u2])
+
+
+def test_tts_state_empty_and_loaded(api, studio):
+    s = api.tts_state()                                                   # программа только запущена
+    assert s["loaded"] is False and s["takes"] == []
+    a, st, U, wd = studio
+    s = a.tts_state()
+    assert s["loaded"] and s["has_takes"] and s["stats"]["units"] > 0

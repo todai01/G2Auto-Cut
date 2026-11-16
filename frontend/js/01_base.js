@@ -1,3 +1,25 @@
+// Любая необработанная ошибка JS или отказ вызова Python — окном с текстом, а не тишиной.
+(function gvoxErrors() {
+    let last = '', at = 0;
+    const show = (where, err) => {
+        let msg = (err && (err.message || err.reason || err)) || 'неизвестная ошибка';
+        if (typeof msg !== 'string') { try { msg = JSON.stringify(msg); } catch (e) { msg = String(msg); } }
+        let stack = err && err.stack ? String(err.stack).split('\n').slice(0, 4).join('\n') : '';
+        let key = where + msg;
+        if (key === last && Date.now() - at < 3000) return;          // одна и та же ошибка — один раз
+        last = key; at = Date.now();
+        console.error('[GVox]', where, msg, stack);
+        let esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+        let html = `⚠️ <b>Ошибка программы</b> (${esc(where)})<br><br><code style="white-space:pre-wrap;user-select:text">${esc(msg)}${stack ? '\n\n' + esc(stack) : ''}</code>`
+            + `<br><br>Сделайте скриншот этого окна — по нему видно, что исправить.`;
+        try { if (typeof showBeautifulAlert === 'function') { showBeautifulAlert(html); return; } } catch (e) {}
+        alert(`Ошибка программы (${where}):\n${msg}`);
+    };
+    window.gvoxShowError = show;
+    window.addEventListener('error', e => show('JS', e.error || e.message));
+    window.addEventListener('unhandledrejection', e => show('вызов', e.reason));
+})();
+
 // Единая замена смайликов иконками (спрайт <symbol> лежит в index.html):
 // возвращает <svg class="icon"><use .../></svg> по имени иконки.
 function iconHTML(name) {
