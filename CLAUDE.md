@@ -25,6 +25,9 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 - `main.py` — класс `Api` из миксинов `core/*` (все методы доступны JS как `pywebview.api.<имя>`).
   Каждый вызов из JS идёт в своём потоке → общее состояние меняется из нескольких потоков.
 - `frontend/index.html`, `script.js` (~10 тыс. строк, один файл), `style.css`, `tutorial.js` (+ `tutorial/*.webm`), `listen.js`.
+  Оформление — `frontend/ios.css` (грузится после `style.css`): тёмная тема в стиле iOS — цвета-токены, заливки кнопок вместо рамок,
+  окна с размытием, шапка Студии как панель навигации (перестановка через CSS `order`, разметка та же). Новые стили — туда;
+  отключить слой — убрать `<link … ios.css>` в `index.html`. Отступ `body` 18+26 px → высоты экранов `calc(100vh - 44px)`.
   Python → JS: `webview.windows[0].evaluate_js(...)`, в Студии — `_tts_push(payload)` → `ttsProgress(p)`.
 - Студия записи: `core/tts_flow.py` (состояние, дубли, ярусы, сборка, кэши),
   `core/tts_live.py` (запись, суфлёр, распознавание), `core/tts_synth.py` (синтез).

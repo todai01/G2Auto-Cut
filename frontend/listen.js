@@ -333,7 +333,7 @@ function listenEdDraw() {
     if (!w) return;
     if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
-    let css = getComputedStyle(document.documentElement), varColor = css.getPropertyValue('--accent-var').trim() || '#eeac3e';
+    let css = getComputedStyle(document.documentElement), varColor = css.getPropertyValue('--accent-var').trim() || '#ff9f0a';
     if (listenSynthBusy()) {
         let now = performance.now();
         if (!lSkel || lSkel.k !== LS.pos) lSkel = { k: LS.pos, t0: now };
@@ -365,8 +365,8 @@ function listenEdDraw() {
     g.fillStyle = 'rgba(0,0,0,.38)';                                                       // срезанное по краям — в тень
     g.fillRect(0, 0, x(a0), H); g.fillRect(x(b1), 0, w - x(b1), H);
     lEd.ranges.slice(1).forEach(([a], i) => {                                             // вырезанное в середине
-        let b = lEd.ranges[i][1]; g.fillStyle = 'rgba(239,91,80,.16)'; g.fillRect(x(b), 0, x(a) - x(b), H);
-        g.fillStyle = 'rgba(239,91,80,.85)'; g.fillRect(x(b), 0, Math.max(2, x(a) - x(b)), 2);
+        let b = lEd.ranges[i][1]; g.fillStyle = 'rgba(255, 69, 58,.16)'; g.fillRect(x(b), 0, x(a) - x(b), H);
+        g.fillStyle = 'rgba(255, 69, 58,.85)'; g.fillRect(x(b), 0, Math.max(2, x(a) - x(b)), 2);
     });
     if (lEd.sel) {
         let s0 = x(lEd.sel.a), s1 = x(lEd.sel.b);
@@ -381,7 +381,7 @@ function listenEdDraw() {
     });
     g.fillStyle = 'rgba(90,150,255,.9)'; g.fillRect(x(lEd.cur) - 0.5, 0, 1, H);
     if (lEd.head !== null) {
-        let gc = css.getPropertyValue('--accent-good').trim() || '#2fbf7d';
+        let gc = css.getPropertyValue('--accent-good').trim() || '#30d158';
         g.save(); g.shadowColor = gc; g.shadowBlur = 8; g.fillStyle = gc; g.fillRect(x(lEd.head) - 1, 0, 2, H); g.restore();
     }
     // шкала времени
@@ -974,8 +974,8 @@ function listenAsmDraw() {
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     let g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     let css = getComputedStyle(document.documentElement), mono = css.getPropertyValue('--font-mono').trim() || 'monospace';
-    let col = { start: css.getPropertyValue('--accent-info').trim() || '#2bc0cf', var: css.getPropertyValue('--accent-var').trim() || '#eeac3e',
-                end: css.getPropertyValue('--accent-good').trim() || '#2fbf7d' };
+    let col = { start: css.getPropertyValue('--accent-info').trim() || '#40c8e0', var: css.getPropertyValue('--accent-var').trim() || '#ff9f0a',
+                end: css.getPropertyValue('--accent-good').trim() || '#30d158' };
     let label = { start: 'НАЧАЛО', var: 'ИМЯ', end: 'КОНЕЦ' };
     let segs = lAsmParts().map(lAsmSeg), gap = 6, W = w - gap * 2;
     let total = segs.reduce((a, x) => a + Math.max(x.ms, 400), 0) || 1;

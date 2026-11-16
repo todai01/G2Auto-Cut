@@ -1,0 +1,235 @@
+/* ===== GVox — оформление в стиле iOS (тёмная тема) =====
+   Слой поверх style.css: цвета, шрифт, скругления, материалы, плотность.
+   Раскладку экранов не трогает. Отключить целиком — убрать строку <link … ios.css> в index.html. */
+
+:root{
+    /* системные цвета iOS (dark) */
+    --bg: #000000;
+    --panel: #1c1c1e;
+    --panel-raised: #2c2c2e;
+    --screen: #0d0d0f;
+    --border: #38383a;
+    --border-soft: #2a2a2d;
+
+    --text: #f5f5f7;
+    --text-dim: #a1a1a8;
+    --text-faint: #6a6a70;
+
+    --accent-primary: #0a84ff;
+    --accent-good: #30d158;
+    --accent-trash: #ff453a;
+    --accent-var: #ff9f0a;
+    --accent-mode: #7d7aff;
+    --accent-info: #40c8e0;
+
+    --tint-primary: rgba(10, 132, 255, 0.14);
+    --tint-good:    rgba(48, 209, 88, 0.14);
+    --tint-trash:   rgba(255, 69, 58, 0.14);
+    --tint-var:     rgba(255, 159, 10, 0.14);
+    --tint-mode:    rgba(125, 122, 255, 0.14);
+    --tint-info:    rgba(64, 200, 224, 0.14);
+
+    --fill: rgba(120, 120, 128, 0.24);            /* заливка кнопок и полей */
+    --fill-hi: rgba(120, 120, 128, 0.36);
+    --fill-lo: rgba(120, 120, 128, 0.14);
+    --hairline: rgba(255, 255, 255, 0.08);
+
+    --radius-sm: 9px;
+    --radius-md: 12px;
+    --radius-lg: 18px;
+
+    --space-4: 14px;
+    --space-5: 18px;
+    --space-6: 24px;
+
+    --control-h: 38px;
+
+    --font-ui: "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+    --shadow-panel: 0 0 0 0.5px var(--hairline);
+    --shadow-screen: inset 0 0 0 0.5px var(--hairline);
+    --shadow-pop: 0 0 0 0.5px rgba(255,255,255,0.10), 0 24px 60px rgba(0,0,0,0.6), 0 6px 18px rgba(0,0,0,0.4);
+
+    --ease: cubic-bezier(.32,.72,0,1);            /* пружина iOS */
+}
+
+body{
+    padding: 18px 16px 26px;
+    letter-spacing: -0.011em;
+    font-feature-settings: "cv11", "ss01", "tnum" 0;
+}
+::selection{ background: rgba(10,132,255,0.38); color: #fff; }
+
+/* тонкие полосы прокрутки */
+::-webkit-scrollbar{ width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.16); border: 2px solid transparent; background-clip: padding-box; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,0.28); border: 2px solid transparent; background-clip: padding-box; }
+
+/* нажатие — лёгкое сжатие, без сдвига */
+button:active{ transform: scale(0.97); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
+    outline: none; box-shadow: 0 0 0 3px rgba(10,132,255,0.45);
+}
+
+kbd{
+    font-family: var(--font-ui); font-size: 10.5px; font-weight: 600; letter-spacing: 0;
+    color: var(--text-dim); background: var(--fill);
+    border: 0; border-radius: 5px; padding: 1.5px 5px;
+}
+
+/* ---------- кнопки ---------- */
+.btn-ghost{
+    height: 30px; padding: 0 12px; border-radius: 8px;
+    background: var(--fill); border-color: transparent; color: var(--text);
+    font-weight: 590; font-size: 12.5px; letter-spacing: -0.01em;
+}
+.btn-ghost:hover{ background: var(--fill-hi); border-color: transparent; color: var(--text); }
+.btn-ghost--compact{ height: 26px; padding: 0 10px; border-radius: 7px; font-size: 12px; }
+
+.btn-ghost--var{ background: var(--tint-var); border-color: transparent; }
+.btn-ghost--var:hover{ background: rgba(255,159,10,0.24); border-color: transparent; }
+.btn-ghost--info{ background: var(--tint-info); border-color: transparent; }
+.btn-ghost--info:hover{ background: rgba(64,200,224,0.24); border-color: transparent; }
+.btn-ghost--good{ background: var(--tint-good); border-color: transparent; }
+.btn-ghost--good:hover{ background: rgba(48,209,88,0.24); border-color: transparent; }
+.btn-ghost--danger, .btn-alert{ background: var(--tint-trash); border-color: transparent; }
+.btn-ghost--danger:hover, .btn-alert:hover{ background: rgba(255,69,58,0.24); border-color: transparent; }
+
+.btn-tile{ border-radius: var(--radius-md); background: var(--fill); border-color: transparent; font-weight: 600; }
+.btn-tile:hover{ background: var(--fill-hi); border-color: transparent; }
+.btn-tile--sub{ height: 30px; font-size: 12.5px; text-transform: none; letter-spacing: -0.01em; border-radius: 8px; }
+.btn-tile--tall{ height: 44px; font-size: 15px; font-weight: 600; }
+.btn-tile--var, .btn-tile--good, .btn-tile--primary, .btn-tile--mode, .btn-tile--info{ border-color: transparent; }
+.btn-tile--var:hover, .btn-tile--good:hover, .btn-tile--primary:hover, .btn-tile--mode:hover, .btn-tile--info:hover{ border-color: transparent; }
+.btn-tile kbd, .custom-alert-btn kbd{ background: rgba(0,0,0,0.22); color: inherit; opacity: .8; }
+
+.custom-alert-btn{
+    min-height: var(--control-h); border-radius: var(--radius-md);
+    font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em;
+    box-shadow: none !important;
+}
+.custom-alert-btn:hover{ filter: brightness(1.12); }
+.btn-secondary{ background: var(--fill) !important; border-color: transparent !important; color: var(--text) !important; }
+.btn-secondary:hover{ background: var(--fill-hi) !important; }
+
+.help-btn{ border-radius: 50%; background: var(--fill); border-color: transparent; color: var(--text-dim); }
+.help-btn:hover{ border-color: transparent; background: var(--fill-hi); color: var(--text); }
+
+/* ---------- поля ---------- */
+.search-input, select.search-input, textarea{
+    background-color: var(--fill-lo); border-color: transparent; border-radius: 10px;
+    padding-top: 9px; padding-bottom: 9px; font-size: 13.5px;
+}
+.search-input:focus{ border-color: transparent; box-shadow: 0 0 0 3px rgba(10,132,255,0.4); background-color: var(--fill); }
+.search-input::placeholder{ color: var(--text-faint); }
+.field-label{ text-transform: none; letter-spacing: -0.005em; font-size: 12.5px; font-weight: 500; color: var(--text-dim); }
+
+input[type=range]::-webkit-slider-runnable-track{ height: 4px; background: var(--fill-hi); border-radius: 4px; }
+input[type=range]::-webkit-slider-thumb{
+    width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; border: 0;
+    background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.45), 0 0 0 0.5px rgba(0,0,0,0.2);
+}
+
+/* флажки-чипы */
+.opt-chip{ border-radius: 10px; background: var(--fill-lo); border-color: transparent; }
+.opt-chip:hover{ background: var(--fill); border-color: transparent; }
+.opt-chip:has(input:checked){ border-color: transparent; background: var(--tint-good); }
+.opt-chip__box{ border-radius: 50%; }
+
+/* ---------- окна ---------- */
+.custom-alert-overlay{
+    background: rgba(0,0,0,0.5) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+}
+.custom-alert-box, .custom-alert-overlay .custom-alert-box{
+    background: rgba(30,30,32,0.92);
+    border: 0; border-top: 0; border-radius: 22px;
+    padding: 24px; box-shadow: var(--shadow-pop);
+}
+.custom-alert-icon{ font-size: 28px; margin-bottom: 10px; }
+.custom-alert-text{ font-size: 14.5px; font-weight: 500; line-height: 1.5; margin-bottom: 20px; }
+.custom-alert-text b{ font-weight: 650; }
+.modal-title{ font-size: 17px; font-weight: 650; letter-spacing: -0.02em; }
+.modal-close{ border-radius: 50%; background: var(--fill); border-color: transparent; color: var(--text-dim); }
+.modal-close:hover{ background: var(--fill-hi); border-color: transparent; color: var(--text); }
+.modal-hint{ font-size: 12.5px; color: var(--text-dim); }
+.modal-actions{ gap: 10px; margin-top: 18px; }
+
+.toast{
+    border-radius: 999px !important; border: 0 !important;
+    background: rgba(44,44,46,0.88) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%);
+    box-shadow: var(--shadow-pop) !important; font-weight: 500;
+}
+
+/* ---------- карточки и панели ---------- */
+.loading-card, .stat-card{ border-color: transparent; box-shadow: var(--shadow-panel); }
+.stat-card{ border-radius: var(--radius-md); background: var(--panel-raised); }
+.stat-card__label{ text-transform: none; letter-spacing: -0.005em; font-size: 12px; font-weight: 500; }
+.stat-card__value{ font-weight: 700; letter-spacing: -0.03em; }
+.section-label{ text-transform: none; letter-spacing: -0.005em; }
+
+.option-card{ border-radius: var(--radius-md); border-color: transparent; background: var(--panel); }
+.option-card:hover{ border-color: transparent; background: var(--panel-raised); }
+.option-title{ font-weight: 600; letter-spacing: -0.015em; }
+
+.workspace-header{ margin-bottom: 12px; gap: 10px; }
+
+/* ---------- Студия записи ---------- */
+.tts-rbtn{ border-radius: 8px; background: var(--fill); border-color: transparent; color: var(--text); font-weight: 590; }
+.tts-rbtn:hover{ background: var(--fill-hi); border-color: transparent; }
+.tts-rbtn--stop, .tts-rbtn--start{ background: var(--tint-trash); border-color: transparent; color: var(--accent-trash); }
+.tts-rbtn--go{ background: var(--tint-good); border-color: transparent; color: var(--accent-good); }
+.tts-rbtn--live.is-on, .tts-rbtn--fast.is-on, .tts-rbtn.is-on{ background: var(--tint-var); border-color: transparent; color: var(--accent-var); }
+
+.tts-live{ border-color: transparent !important; background-color: var(--fill-lo); border-radius: 999px; }
+.tts-live.is-rec{ background: var(--accent-trash); }
+
+.tts-rail-wrap{ border-color: transparent; border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); }
+.tts-take{ border-radius: 10px; border-color: transparent; background: var(--panel-raised); }
+.tts-take:hover{ border-color: transparent; background: #3a3a3c; }
+.tts-take.is-saved{ background: rgba(48,209,88,0.16); }
+.tts-take.is-current{ border-color: transparent; box-shadow: 0 0 0 2px var(--accent-primary); }
+.tts-rail.is-playing .tts-take.is-current{ border-color: transparent; }
+
+.tts-mark{ border-color: transparent !important; background: var(--fill-lo); }
+.tts-mark:hover{ background: var(--fill); }
+.tts-mark.is-on{ background: var(--tint-primary); }
+.tts-mark--var.is-on{ background: var(--tint-var); }
+
+/* переключатели-сегменты (RU / KZ и подобные) */
+.tts-lang{ border: 0; border-radius: 7px; background: var(--fill); padding: 2px; gap: 2px; overflow: visible; }
+.tts-lang button{ border-radius: 5px; padding: 2px 8px; color: var(--text-dim); }
+.tts-lang button.is-on{ background: #636366; color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35); }
+
+.audit-path{ border-color: transparent; background: var(--fill-lo); border-radius: 10px; }
+.tts-lang button + button{ border-left: 0; }
+
+/* ---------- Студия: шапка как панель навигации ----------
+   Строка 1: ‹ Меню — название по центру — экран / справка.
+   Строка 2: счётчики слева, действия с проектом справа. Разметка HTML не менялась. */
+.stage-tts{ height: calc(100vh - 44px); }
+.tts-header{ position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+.tts-header .header-actions{ display: contents; }
+.tts-header::before{ content: ''; flex-basis: 100%; height: 0; order: 4; }
+.tts-header button{ order: 6; }
+.tts-header button[onclick="showMenu()"]{ order: 1; margin-right: auto; background: transparent; color: var(--accent-primary); font-size: 14px; padding: 0 6px; }
+.tts-header button[onclick="showMenu()"]:hover{ background: var(--fill-lo); color: var(--accent-primary); }
+.tts-header #ttsMarksBtn{ order: 3; }
+.tts-header .tts-fs-btn, .tts-header .tut-q{ order: 3; height: 30px; min-width: 30px; }
+.tts-header .tts-title{ order: 2; position: absolute; left: 50%; top: 0; transform: translateX(-50%); height: 30px; flex-direction: row; align-items: center; gap: 10px; }
+.tts-title__main{ font-size: 15px; font-weight: 650; letter-spacing: -0.02em; }
+.tts-title__sub{ font-family: var(--font-ui); font-size: 12px; display: inline-flex; align-items: center; }
+.tts-header .stat-row{ order: 5; margin: 0 auto 0 0; }
+
+.stat-row{ border-color: transparent; background: var(--panel); border-radius: 10px; padding: 4px 10px; min-height: 30px; box-shadow: var(--shadow-panel); font-size: 12.5px; }
+.stat-good::before, .stat-var::before{ box-shadow: none; }
+
+.tts-recbar{ border-radius: var(--radius-lg); border-color: transparent !important; box-shadow: var(--shadow-panel); }
+
+/* кнопка «назад» на всех экранах — как в панели навигации iOS */
+.workspace-header button[onclick="showMenu()"], .workspace-header button[onclick^="backTo"], .workspace-header button[onclick^="goBack"]{
+    background: transparent; color: var(--accent-primary); font-size: 14px; padding: 0 6px;
+}
+.workspace-header button[onclick="showMenu()"]:hover{ background: var(--fill-lo); color: var(--accent-primary); }

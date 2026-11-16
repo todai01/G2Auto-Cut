@@ -606,8 +606,8 @@ let isProcessing = false;
                     let p = t / 420, rr = 14 + 100 * easeOut(p);
                     let g = ctx.createRadialGradient(ox, oy, 0, ox, oy, rr);
                     g.addColorStop(0, `rgba(170,205,255,${.75 * (1 - p)})`);
-                    g.addColorStop(.4, `rgba(77,149,234,${.28 * (1 - p)})`);
-                    g.addColorStop(1, 'rgba(77,149,234,0)');
+                    g.addColorStop(.4, `rgba(10, 132, 255,${.28 * (1 - p)})`);
+                    g.addColorStop(1, 'rgba(10, 132, 255,0)');
                     ctx.fillStyle = g;
                     ctx.beginPath(); ctx.arc(ox, oy, rr, 0, Math.PI * 2); ctx.fill();
                 }
@@ -618,7 +618,7 @@ let isProcessing = false;
                     let a = w.alpha * (p < .7 ? 1 : 1 - (p - .7) / .3);
                     ctx.beginPath(); ctx.arc(ox, oy, rad, 0, Math.PI * 2);
                     [[16, .05], [9, .09], [4, .18]].forEach(([lw, k]) => {
-                        ctx.strokeStyle = `rgba(77,149,234,${a * k})`; ctx.lineWidth = lw; ctx.stroke();
+                        ctx.strokeStyle = `rgba(10, 132, 255,${a * k})`; ctx.lineWidth = lw; ctx.stroke();
                     });
                     ctx.strokeStyle = `rgba(140,190,255,${a * .9})`; ctx.lineWidth = w.width; ctx.stroke();
                 });
@@ -3264,7 +3264,7 @@ let isProcessing = false;
         }
         function edAccent(seg) {
             return seg.connector ? 'rgba(160,170,190,0.75)'
-                : (getComputedStyle(document.documentElement).getPropertyValue('--accent-var').trim() || '#eeac3e');
+                : (getComputedStyle(document.documentElement).getPropertyValue('--accent-var').trim() || '#ff9f0a');
         }
         function edTierColor(seg) {
             let c = sumTierAccent(seg.key);
@@ -6251,7 +6251,7 @@ let isProcessing = false;
                 }
                 pos += b - a; joins.push(pos);
             });
-            g.fillStyle = 'rgba(239,91,80,.8)';
+            g.fillStyle = 'rgba(255, 69, 58,.8)';
             joins.slice(0, -1).forEach(j => g.fillRect(x(j) - 1, 0, 2, h));        // места склеек
             if (aEd.sel) { g.fillStyle = 'rgba(90,150,255,.32)'; g.fillRect(x(aEd.sel.a), 0, x(aEd.sel.b) - x(aEd.sel.a), h); }
             g.fillStyle = '#5a96ff'; g.fillRect(x(aEd.cur) - 1, 0, 2, h);
@@ -8164,10 +8164,10 @@ let isProcessing = false;
                 ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x, 0, 1, TTS_ED_RULER - 4);
                 ctx.fillStyle = 'rgba(146,154,171,0.7)'; ctx.fillText(((tt - base) / 1000).toFixed(stepMs < 1000 ? 2 : 1), x + 3, 1);
             }
-            let colors = ['#4d95ea', '#2bc0cf', '#9270ea', '#eeac3e'];
+            let colors = ['#0a84ff', '#40c8e0', '#7d7aff', '#ff9f0a'];
             if (tlMultiLane()) ttsEd.lanes.forEach((ln, l) => {                 // полосы дорожек
                 let { top, h } = tlLaneRect(l);
-                ctx.fillStyle = l === ttsEd.cur.lane ? 'rgba(77,149,234,0.06)' : (l % 2 ? 'rgba(255,255,255,0.018)' : 'rgba(0,0,0,0)');
+                ctx.fillStyle = l === ttsEd.cur.lane ? 'rgba(10, 132, 255,0.06)' : (l % 2 ? 'rgba(255,255,255,0.018)' : 'rgba(0,0,0,0)');
                 ctx.fillRect(0, top, W, h);
                 ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(0, top + h - 1, W, 1);
             });
@@ -8204,7 +8204,7 @@ let isProcessing = false;
                 // метки вырезов (клик — вернуть)
                 (c.cuts || []).forEach(([c0]) => {
                     let x = tlX(tlTimeOfRaw(c, c0));
-                    ctx.fillStyle = 'rgba(239,91,80,0.95)'; ctx.fillRect(x - 1, wTop, 2, bot - wTop);
+                    ctx.fillStyle = 'rgba(255, 69, 58,0.95)'; ctx.fillRect(x - 1, wTop, 2, bot - wTop);
                     ctx.beginPath(); ctx.moveTo(x - 5, wTop); ctx.lineTo(x + 5, wTop); ctx.lineTo(x, wTop + 7); ctx.fill();
                 });
                 // ручки краёв
@@ -8222,7 +8222,7 @@ let isProcessing = false;
                 let ln = tlLane(ttsEd.sel.k);
                 ctx.fillStyle = 'rgba(122,162,255,0.28)'; ctx.fillRect(tlX(a), ln.top, tlX(b) - tlX(a), ln.h);
             }
-            if (ttsEd.play != null) { ctx.fillStyle = '#2fbf7d'; ctx.fillRect(tlX(ttsEd.play) - 1, 0, 2, H); }
+            if (ttsEd.play != null) { ctx.fillStyle = '#30d158'; ctx.fillRect(tlX(ttsEd.play) - 1, 0, 2, H); }
             let time = document.getElementById('ttsEdTime');
             if (time) {
                 let cuts = ttsEd.clips.reduce((acc, c) => acc + (c.cuts || []).length, 0);
