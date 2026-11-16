@@ -7190,6 +7190,16 @@ let isProcessing = false;
 
         // «Готовые записи»: папка с уже записанным → на свои места в проекте, суфлёр их пропустит.
         // Готовые фразы с переменными — на ленту: править вместе со значениями.
+        async function ttsRestoreTakes() {
+            let r = await pywebview.api.tts_restore_takes();
+            if (!r || r.error) { if (r) showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
+            tts = r.state; ttsRender();
+            let parts = [];
+            if (r.backup) parts.push(`из резервной копии: ${r.backup} (с привязкой к фразам)`);
+            if (r.added) parts.push(`из «Чанки»: ${r.added} — без фразы, привязать: «Сборка» → F`);
+            showBeautifulAlert(`✅ <b>Дубли возвращены на ленту</b><br><br>${parts.join('<br>')}`);
+        }
+
         async function ttsReadyToRail() {
             let r = await pywebview.api.tts_ready_to_rail();
             if (!r || r.error) { if (r) showBeautifulAlert('ℹ️ ' + escapeHtml(r.error)); return; }
@@ -7358,7 +7368,9 @@ let isProcessing = false;
                     : ready ? `Готовых записей в проекте: ${ready} — суфлёр их пропускает. Здесь появятся новые дубли`
                     : 'Загрузите или запишите запись — здесь появятся дубли';
                 let canReady = tts.loaded && !ttsRec.on && tts.stats && tts.stats.pieces_saved;
-                rail.innerHTML = `<div class="tts-rail__empty">${msg}${canReady ? ` <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsReadyToRail()"
+                let free = tts.loaded && !ttsRec.on ? (tts.free_chunks || 0) : 0;
+                rail.innerHTML = `<div class="tts-rail__empty">${msg}${free ? ` <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsRestoreTakes()"
+                    title="В папке «Чанки» есть файлы дублей, которых нет на ленте — вернуть их">Вернуть дубли (${free})</button>` : ''}${canReady ? ` <button type="button" class="btn-ghost btn-ghost--compact" onclick="ttsReadyToRail()"
                     title="Готовые фразы с переменными — дублями на ленту: править в «Сборке» вместе со значениями и сохранять поверх">Фразы с переменными — на ленту</button>` : ''}</div>`;
                 return;
             }

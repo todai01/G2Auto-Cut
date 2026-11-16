@@ -63,6 +63,7 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   `tts_raw_assembly`: папка записей переменной (спрашивается один раз, `st["raw_var_folder"]`) → экран «Прослушки»
   (`listen_setup_assembly`: строки — файлы папки, пара начало/конец — на оба языка). Волны: ключи кэша — с inode и ctime
   (`_listen_stamp`, `_file_sig`), полоска цепочки перечитывается при каждой полной перерисовке. `tools/files_to_excel.py` — названия файлов папки → столбец Excel без расширения.
+- Дубли не теряются: смена / перенос таблицы — дубли перепривязываются по строке и названию (не стираются); `tts_project.json` пишется через .tmp, а если дублей разом стало 0 или на 10+ меньше — прежний файл копируется в `_Кэш/tts_project_до_<время>_<N>.json` (`_tts_backup_state`, хранится 10). «Вернуть дубли (N)» на пустой ленте — `tts_restore_takes`: из резервной копии (с привязкой по названию), остальные файлы `Чанки` — дублями без фразы (`free_chunks` в `tts_state`).
 - Аудит: `core/project_handler.py` (`_audit_studio`), действия — `core/audit_fix.py`.
 - Классика: `phrase_handler.py` (Excel, нарезка), `variables_handler.py` (суммы, пакетная сборка),
   `constructor_handler.py` (конструктор), утилиты — `converter.py`, `clone_prep.py`,

@@ -436,6 +436,101 @@ class TtsFlowMixin:
                              "work_dir": None, "raw_path": None, "takes": [], "index": 0}
         return st
 
+    TTS_BACKUP_KEEP = 10
+
+    def _tts_backup_state(self, wd, n_new):
+        """Перед записью tts_project.json: на диске дублей заметно больше, чем станет (все пропали
+        или −10 и больше разом) — прежний файл копируется в «_Кэш/tts_project_до_<время>.json»."""
+        cur = os.path.join(wd, TTS_STATE_FILE)
+        known = self.__dict__.get('_tts_disk_takes')
+        if known is None or known[0] != cur:
+            try:
+                with open(cur, 'r', encoding='utf-8') as f:
+                    known = (cur, len(json.load(f).get("takes") or []))
+            except (OSError, ValueError, AttributeError):
+                known = (cur, 0)
+        n_old = known[1]
+        self._tts_disk_takes = (cur, n_new)
+        if not n_old or not (n_new == 0 or n_old - n_new >= 10):
+            return
+        try:
+            d = os.path.join(wd, self.TTS_CACHE_DIR)
+            os.makedirs(d, exist_ok=True)
+            shutil.copy2(cur, os.path.join(d, f"tts_project_до_{time.strftime('%Y%m%d_%H%M%S')}_{n_old}.json"))
+            old = sorted(f for f in os.listdir(d) if f.startswith('tts_project_до_') and f.endswith('.json'))
+            for f in old[:-self.TTS_BACKUP_KEEP]:
+                os.remove(os.path.join(d, f))
+        except OSError:
+            pass
+
+    def _tts_free_chunks(self):
+        """Файлы «Чанки/*.wav», которых нет на ленте (дубли пропали из tts_project.json)."""
+        st = self._tts()
+        wd = st.get("work_dir")
+        d = os.path.join(wd or '', TTS_CHUNKS_DIR)
+        if not wd or not os.path.isdir(d):
+            return []
+        used = {os.path.normcase(os.path.basename(t.get("file") or '')) for t in st["takes"]}
+        return sorted((f for f in os.listdir(d) if f.lower().endswith('.wav') and os.path.normcase(f) not in used),
+                      key=lambda f: [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', f)])
+
+    def tts_restore_takes(self):
+        """«Вернуть дубли»: из резервной копии tts_project.json (если есть, где дублей больше), иначе —
+        файлы «Чанки» без дубля возвращаются на ленту дублями без фразы (привязать — F в «Сборке»)."""
+        if getattr(self, '_tts_rec', None):
+            return {"error": "Сначала остановите запись (R)."}
+        st = self._tts()
+        wd = st.get("work_dir")
+        if not wd:
+            return {"error": "Сначала откройте проект Студии."}
+        d = os.path.join(wd, self.TTS_CACHE_DIR)
+        best = None
+        if os.path.isdir(d):
+            for f in sorted(os.listdir(d), reverse=True):
+                if f.startswith('tts_project_до_') and f.endswith('.json'):
+                    try:
+                        with open(os.path.join(d, f), 'r', encoding='utf-8') as fh:
+                            data = json.load(fh)
+                    except (OSError, ValueError):
+                        continue
+                    takes = [t for t in data.get("takes") or [] if os.path.exists(os.path.join(wd, t.get("file") or ''))]
+                    if len(takes) > len(st["takes"]) and (best is None or len(takes) > len(best[1])):
+                        best = (f, takes, data)
+        from_backup = 0
+        if best:
+            have = {os.path.normcase(t.get("file") or '') for t in st["takes"]}
+            units = {u["name"]: u["id"] for u in st["units"] if u["kind"] != "value"}
+            bu = best[2].get("units") or []
+            for t in best[1]:
+                if os.path.normcase(t.get("file") or '') in have:
+                    continue
+                t = dict(t)
+                uid = t.get("unit")                                  # фраза — по названию (таблицу могли перечитать)
+                name = bu[uid]["name"] if uid is not None and uid < len(bu) else None
+                t["unit"] = units.get(name) if name else None
+                st["takes"].append(t)
+                from_backup += 1
+        added = 0
+        n0 = max([t.get("chunk", 0) for t in st["takes"]] + [0])
+        for f in self._tts_free_chunks():
+            p = os.path.join(wd, TTS_CHUNKS_DIR, f)
+            try:
+                ms = len(AudioSegment.from_file(p))
+            except Exception:
+                continue
+            m = re.match(r'(\d+)', f)
+            n0 += 1
+            st["takes"].append({"file": os.path.join(TTS_CHUNKS_DIR, f), "start_ms": 0, "ms": ms, "orig": [0, ms], "raw": p,
+                                "heard": '', "listened": False, "chunk": int(m.group(1)) if m else n0, "unit": None,
+                                "score": 0.0, "status": "manual", "restored": True})
+            added += 1
+        if not (added or from_backup):
+            return {"error": "Возвращать нечего: все файлы из «Чанки» уже на ленте."}
+        st["takes"].sort(key=lambda t: t.get("chunk", 0))
+        self._tts_save()
+        return {"state": self.tts_state(), "backup": from_backup, "added": added,
+                "backup_file": best[0] if best else None}
+
     def tts_reset(self):
         """«Новый проект»: закрыть текущий TTS-проект (всё сохранено на диске —
         его можно открыть снова) и начать с чистого листа, без перезапуска."""
@@ -460,9 +555,12 @@ class TtsFlowMixin:
         wd = st.get("work_dir")
         if not wd or not os.path.isdir(wd):
             return
+        self._tts_backup_state(wd, len(st["takes"]))
         try:
-            with open(os.path.join(wd, TTS_STATE_FILE), 'w', encoding='utf-8') as f:
+            tmp = os.path.join(wd, TTS_STATE_FILE + '.tmp')
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(st, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, os.path.join(wd, TTS_STATE_FILE))
         except OSError:
             pass
         self._tts_disk_flush()
@@ -891,6 +989,7 @@ class TtsFlowMixin:
             "reuse_n": self._tts_reuse_count(saved) if units else 0,
             "prompt_mode": st.get("prompt_mode", "phrases"), "sum_logic": st.get("sum_logic", 1),
             "vars_only": bool(st.get("vars_only")),
+            "free_chunks": len(self._tts_free_chunks()) if wd else 0,
             "vars_progress": self._tts_vars_progress() if st.get("vars_only") and wd else None,
             "stats": {"units": len(main_units), "saved": sum(saved[u["id"]] for u in main_units),
                       "values": len(rows_now),
@@ -933,9 +1032,9 @@ class TtsFlowMixin:
         st = self._tts()
         old = st["units"]
         rebind = False
-        if st["takes"] and st.get("excel_path") and os.path.abspath(st["excel_path"]) != os.path.abspath(path):
-            st["takes"] = []      # другая таблица — старая привязка дублей неверна
-        elif st["takes"] and st["units"]:
+        if st["takes"] and st["units"]:
+            # та же или другая таблица (перенесли папку, переименовали) — дубли не стираем:
+            # привязываем к той же строке, иначе к фразе с тем же названием, иначе — без фразы
             rebind = True
         referenced = {k for s_ in parsed["phrase_sheets"] for k in s_["var_keys"]}
         st.update({"excel_path": path, "sheet": chosen["title"], "lang": chosen["lang"],
