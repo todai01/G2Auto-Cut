@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'shift_timer'))
 import app as shift_app                                    # noqa: E402
 import chime                                               # noqa: E402
+import tasks                                               # noqa: E402
 import timetrack                                           # noqa: E402
 
 
@@ -195,7 +196,8 @@ def test_clean_settings():
 def make_api(tmp_path):
     c = Clock()
     tr = c.tracker(str(tmp_path / 'h.json'))
-    return c, shift_app.Api(str(tmp_path / 's.json'), table=str(tmp_path / 'T' / 'Учёт.xlsx'), tracker=tr)
+    return c, shift_app.Api(str(tmp_path / 's.json'), table=str(tmp_path / 'T' / 'Учёт.xlsx'), tracker=tr,
+                            store=tasks.TaskStore(str(tmp_path / 'tasks.json'), clock=lambda: c.wall))
 
 
 def test_api_settings_roundtrip_and_norm_sync(tmp_path):
@@ -224,6 +226,12 @@ class FakeWin:
 
     def destroy(self):
         self.calls.append(('destroy',))
+
+    def resize(self, w, h):
+        self.calls.append(('resize', w, h))
+
+    def move(self, x, y):
+        self.calls.append(('move', x, y))
 
 
 def test_mini_visibility_and_push(tmp_path):
@@ -896,6 +904,117 @@ def test_ui_uses_new_name():
     for f in ('main.html', 'mini.html'):
         text = open(os.path.join(ui, f), encoding='utf-8').read()
         assert 'GTime' in text and 'Конец смены' not in text
+
+
+# ---------- задачи на день ----------
+def make_store(tmp_path, c=None, name='tasks.json'):
+    c = c or Clock()
+    return c, tasks.TaskStore(str(tmp_path / name), clock=lambda: c.wall)
+
+
+def test_tasks_add_toggle_edit_delete(tmp_path):
+    c, st = make_store(tmp_path)
+    assert st.get() == {"tasks": [], "total": 0, "done": 0}
+    st.add("  Позвонить клиенту  ")
+    v = st.add("Отчёт за неделю")
+    assert [t["text"] for t in v["tasks"]] == ["Позвонить клиенту", "Отчёт за неделю"] and v["total"] == 2 and v["done"] == 0
+    a, b = v["tasks"][0]["id"], v["tasks"][1]["id"]
+    assert a != b
+    v = st.toggle(a)
+    assert v["done"] == 1 and v["tasks"][0]["done"] is True
+    assert st.toggle(a)["done"] == 0                                    # повторное нажатие снимает галочку
+    assert st.toggle(a, True)["done"] == 1 and st.toggle(a, True)["done"] == 1
+    assert st.edit(b, "Отчёт за месяц")["tasks"][1]["text"] == "Отчёт за месяц"
+    assert st.edit(b, "   ")["tasks"][1]["text"] == "Отчёт за месяц"        # пустой текст не принимается
+    assert st.delete(a)["total"] == 1 and st.delete(999)["total"] == 1       # несуществующую — молча
+    assert st.counts() == {"total": 1, "done": 0}
+
+
+def test_tasks_validation(tmp_path):
+    c, st = make_store(tmp_path)
+    assert st.add("")["total"] == 0 and st.add("   ")["total"] == 0 and st.add(None)["total"] == 0
+    assert len(st.add("x" * 500)["tasks"][0]["text"]) == tasks.MAX_TEXT
+    for i in range(tasks.MAX_PER_DAY + 20):
+        st.add(f"задача {i}")
+    assert st.get()["total"] == tasks.MAX_PER_DAY                          # предел на день
+    assert st.toggle("не число")["total"] == tasks.MAX_PER_DAY             # мусор вместо id не ломает
+
+
+def test_tasks_persist_and_ids_not_reused(tmp_path):
+    c, st = make_store(tmp_path)
+    st.add("раз")
+    last = st.add("два")["tasks"][-1]["id"]
+    st.toggle(last)
+    st.delete(st.get()["tasks"][0]["id"])
+    c2, st2 = make_store(tmp_path, c)
+    v = st2.get()
+    assert [t["text"] for t in v["tasks"]] == ["два"] and v["tasks"][0]["done"] is True      # после перезапуска всё на месте
+    assert st2.add("три")["tasks"][-1]["id"] > last                                          # номера не повторяются
+    assert not os.path.exists(str(tmp_path / 'tasks.json.tmp'))
+
+
+def test_unfinished_tasks_carry_to_next_day_done_do_not(tmp_path):
+    c, st = make_store(tmp_path)
+    st.add("сделано")
+    st.add("не успел")
+    st.add("тоже не успел")
+    st.toggle(st.get()["tasks"][0]["id"])
+    c.wall += 86400                                                       # наступил следующий день
+    v = st.get()
+    assert [t["text"] for t in v["tasks"]] == ["не успел", "тоже не успел"] and all(t["carried"] for t in v["tasks"])
+    assert v["done"] == 0
+    c.wall += 86400                                                       # ещё день: те же задачи едут дальше, а не дублируются
+    assert [t["text"] for t in st.get()["tasks"]] == ["не успел", "тоже не успел"]
+    c.wall -= 2 * 86400                                                   # вчерашний день хранится как был
+    assert st.days["2026-11-17"][1]["moved"] is True
+    c2, st2 = make_store(tmp_path, c)                                     # перенос переживает перезапуск, без дублей
+    c2.wall += 86400
+    assert len(st2.get()["tasks"]) == 2
+
+
+def test_tasks_clear_done_and_broken_file(tmp_path):
+    c, st = make_store(tmp_path)
+    st.add("a")
+    st.add("b")
+    st.toggle(st.get()["tasks"][0]["id"])
+    assert [t["text"] for t in st.clear_done()["tasks"]] == ["b"]
+    (tmp_path / 'bad.json').write_text('{ не json', encoding='utf-8')
+    assert make_store(tmp_path, None, 'bad.json')[1].get()["total"] == 0
+    (tmp_path / 'weird.json').write_text('{"days": {"x": [], "2026-11-17": [{"id": "1", "text": "н"}, {"id": 2, "text": ""}, {"id": 3, "text": "ok", "done": true}]}}', encoding='utf-8')
+    v = make_store(tmp_path, Clock(), 'weird.json')[1].get()
+    assert [t["text"] for t in v["tasks"]] == ["ok"] and v["done"] == 1
+
+
+def test_api_tasks_and_counts_in_day(tmp_path):
+    c, api = make_api(tmp_path)
+    api._t.tick()
+    assert api.get_day()["tasks"] == {"total": 0, "done": 0}
+    api.task_add("Позвонить")
+    v = api.task_add("Отчёт")
+    api.task_toggle(v["tasks"][0]["id"])
+    assert api.get_day()["tasks"] == {"total": 2, "done": 1}              # значок «1/2» в мини-окне
+    assert api.tasks_get()["done"] == 1
+    api.task_edit(v["tasks"][1]["id"], "Отчёт за неделю")
+    assert api.tasks_get()["tasks"][1]["text"] == "Отчёт за неделю"
+    assert api.tasks_clear_done()["total"] == 1
+    assert api.task_delete(v["tasks"][1]["id"])["total"] == 0
+
+
+def test_mini_resize_clamps_and_keeps_window_on_screen(tmp_path):
+    c, api = make_api(tmp_path)
+    api._mini = FakeWin()
+    api._mini.x, api._mini.y = 1500, 100
+    assert api.mini_resize(300) == {"height": 300} and api._mini.calls == [('resize', 204, 300)]
+    api._mini.calls.clear()
+    assert api.mini_resize(10)["height"] == 100 and api.mini_resize(9999)["height"] == 520      # не меньше обычного и не выше предела
+    assert api.mini_resize("мусор") == {"error": "bad height"}
+    api._mini.calls.clear()
+    api._screen_h = 1080
+    api._mini.y = 900                                                     # окно у нижнего края
+    api.mini_resize(300)
+    assert api._mini.calls[0] == ('move', 1500, 740) and api._mini.calls[1] == ('resize', 204, 300)   # поднялось, чтобы поместиться
+    assert shift_app.DEFAULTS["mini_tasks"] is False
+    assert api.save_settings({"mini_tasks": True})["mini_tasks"] is True
 
 
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')

@@ -48,6 +48,27 @@ function syncSettings() {
     document.querySelectorAll('#segBreak button').forEach(b => { b.classList.toggle('on', +b.dataset.m === s.break_min); b.disabled = !s.notify_break; });
 }
 
+// ---------- задачи ----------
+let TKM = null, tkMainTimer = null, tkEdit = null;
+const escT = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const CKS = '<svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.5 3.5 7.5-8"/></svg>';
+function renderTasksMain() {
+    if (!TKM) return;
+    const ts = TKM.tasks.slice().sort((a, b) => a.done - b.done);
+    setText($('tkCnt'), TKM.total ? `${TKM.done} из ${TKM.total}` : '');
+    $('tkBar').style.width = (TKM.total ? TKM.done / TKM.total * 100 : 0) + '%';
+    if (tkEdit !== null && !ts.some(t => t.id === tkEdit)) tkEdit = null;
+    if (document.activeElement && document.activeElement.id === 'tkEditIn') return;     // не перерисовываем, пока правят
+    $('tkMain').innerHTML = ts.length ? ts.map(t => `<div class="tk2${t.done ? ' done' : ''}" data-id="${t.id}">`
+        + `<button class="ck2" data-act="t" title="Выполнено">${t.done ? CKS : ''}</button>`
+        + (tkEdit === t.id ? `<input id="tkEditIn" class="tk2-in" value="${escT(t.text)}" maxlength="200">` : `<span class="tk2-t" data-act="e">${escT(t.text)}</span>`)
+        + (t.carried && !t.done ? '<em>со вчера</em>' : '') + `<button class="tk2-x" data-act="d" title="Удалить">×</button></div>`).join('')
+        : '<div class="empty">Пока пусто. Запишите, что нужно сделать сегодня.</div>';
+    const inp = $('tkEditIn'); if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+async function loadTasksMain() { try { TKM = await pywebview.api.tasks_get(); renderTasksMain(); } catch (e) { /* повторим */ } }
+function startTasksTimer() { clearInterval(tkMainTimer); loadTasksMain(); tkMainTimer = setInterval(loadTasksMain, 3000); }
+
 // ---------- журнал ----------
 let JR = null, jrTimer = null;
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -120,6 +141,7 @@ boot(() => {
         document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
         document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + t.dataset.v));
         if (t.dataset.v === 'jr') startJournalTimer(); else clearInterval(jrTimer);
+        if (t.dataset.v === 'tk') startTasksTimer(); else clearInterval(tkMainTimer);
     });
     $('bMin').onclick = () => pywebview.api.minimize();
     pywebview.api.can_tray().then(v => {
@@ -151,6 +173,22 @@ boot(() => {
         const r = await pywebview.api.open_table();
         setText($('jrNote'), r.error ? r.error : 'Таблица обновлена и открыта: ' + r.path);
     };
+    $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkInput').value.trim(); if (!v) return; $('tkInput').value = ''; TKM = await pywebview.api.task_add(v); renderTasksMain(); };
+    $('tkMain').onclick = async e => {
+        const row = e.target.closest('.tk2'), act = e.target.closest('[data-act]');
+        if (!row || !act) return;
+        const id = +row.dataset.id;
+        if (act.dataset.act === 't') { TKM = await pywebview.api.task_toggle(id); renderTasksMain(); }
+        else if (act.dataset.act === 'd') { TKM = await pywebview.api.task_delete(id); renderTasksMain(); }
+    };
+    $('tkMain').ondblclick = e => { const row = e.target.closest('.tk2'); if (row && e.target.closest('.tk2-t')) { tkEdit = +row.dataset.id; renderTasksMain(); } };
+    $('tkMain').addEventListener('keydown', async e => {
+        if (e.target.id !== 'tkEditIn') return;
+        if (e.key === 'Enter') { const v = e.target.value.trim(), id = tkEdit; tkEdit = null; e.target.blur(); TKM = v ? await pywebview.api.task_edit(id, v) : TKM; renderTasksMain(); }
+        else if (e.key === 'Escape') { e.stopPropagation(); tkEdit = null; e.target.blur(); renderTasksMain(); }
+    });
+    $('tkMain').addEventListener('focusout', e => { if (e.target.id === 'tkEditIn' && tkEdit !== null) { tkEdit = null; setTimeout(renderTasksMain, 0); } });
+    $('tkClear').onclick = async () => { TKM = await pywebview.api.tasks_clear_done(); renderTasksMain(); };
     $('tileArr').onclick = $('tileWorked').onclick = editToday;
     $('dSuggest').onclick = suggest;
     $('dCancel').onclick = closeDlg;

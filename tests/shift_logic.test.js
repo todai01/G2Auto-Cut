@@ -64,4 +64,7 @@ assert.strictEqual(S.clock(l.remain, true), '00:35:00'); assert.ok(Math.abs(l.pr
 l = S.lunch(3600, 3600, true); assert.strictEqual(l.remain, 0); assert.strictEqual(l.progress, 1); assert.strictEqual(l.over, true);
 l = S.lunch(3700, 3600, false); assert.strictEqual(l.remain, 0); assert.strictEqual(l.over, true);
 assert.strictEqual(S.clock(S.lunch(3541, 3600, false).remain, false), '00:01');   // без секунд — вверх, как и у нормы
+// высота мини-окна с задачами: растёт до 5 строк и дальше не растёт
+assert.strictEqual(S.tasksHeight(0), 190); assert.strictEqual(S.tasksHeight(1), 186); assert.strictEqual(S.tasksHeight(5), 322);
+assert.strictEqual(S.tasksHeight(30), 322); assert.ok(S.tasksHeight(3) > S.tasksHeight(2));
 console.log('shift logic: OK');

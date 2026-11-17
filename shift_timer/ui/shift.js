@@ -55,6 +55,9 @@
     }
     function hmSec(sec) { const a = Math.floor(Math.max(0, sec) / 60); return `${Math.floor(a / 60)}:${p2(a % 60)}`; }   // 28800 → "8:00"
 
-    const api = { parseHM, calc, lunch, clock, words, hm, hmStr, signed, hmSec };
+    // Высота мини-окна с задачами: сам таймер (100) + список (до 5 строк, дальше прокрутка) + поле «Новая задача».
+    function tasksHeight(n) { return 100 + 8 + (n > 0 ? Math.min(n, 5) * 34 : 38) + 44; }
+
+    const api = { parseHM, calc, lunch, tasksHeight, clock, words, hm, hmStr, signed, hmSec };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Shift = api;
 })(typeof window !== 'undefined' ? window : globalThis);

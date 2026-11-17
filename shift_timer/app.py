@@ -17,16 +17,18 @@ import threading
 import time
 
 import chime
+import tasks
 import timetrack
 
 APP_NAME = 'GTime'
 OLD_APP_NAME = 'ShiftTimer'        # прежнее название: оттуда переносим журнал и настройки
 TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
-            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60,
+            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60, "mini_tasks": False,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
 MAIN_SIZE = (380, 690)
 MINI_SIZE = (204, 100)
+MINI_MAX_H = 520                 # выше мини-окно не растёт (список задач дальше прокручивается)
 
 
 def resource(rel):
@@ -60,6 +62,10 @@ def settings_file():
     return os.path.join(data_dir(), 'settings.json')
 
 
+def tasks_file():
+    return os.path.join(data_dir(), 'tasks.json')
+
+
 def history_file():
     return os.path.join(data_dir(), 'history.json')
 
@@ -80,7 +86,7 @@ def clean(raw):
     sec = timetrack.to_sec(raw.get('norm'))
     if sec is not None and 15 * 60 <= sec < 24 * 3600:
         s['norm'] = timetrack.hm_text(sec)
-    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart', 'notify_hours', 'notify_break', 'sound'):
+    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart', 'notify_hours', 'notify_break', 'sound', 'mini_tasks'):
         if isinstance(raw.get(k), bool):
             s[k] = raw[k]
     lm = raw.get('lunch_min')
@@ -145,10 +151,12 @@ def set_autostart(on):
 class Api:
     """Методы без «_» видны из JS как pywebview.api.<имя>."""
 
-    def __init__(self, path=None, history=None, table=None, tracker=None):
+    def __init__(self, path=None, history=None, table=None, tracker=None, store=None):
         self._path = path
         self._s = load_settings(path)
         self._table = table
+        self._tasks = store or tasks.TaskStore(tasks_file())
+        self._screen_h = None
         self._t = tracker or timetrack.Tracker(history or history_file(), norm_seconds(self._s["norm"]))
         self._t.set_norm(norm_seconds(self._s["norm"]))
         self._apply_notify()
@@ -219,7 +227,9 @@ class Api:
 
     # ---- учёт времени ----
     def get_day(self):
-        return self._t.snapshot()
+        d = self._t.snapshot()
+        d["tasks"] = self._tasks.counts()                # сколько задач и сколько выполнено — для значка в мини-окне
+        return d
 
     def get_history(self):
         return self._t.history()
@@ -232,6 +242,42 @@ class Api:
 
     def suggest_worked(self, arrival):
         return self._t.suggest_worked(arrival)
+
+    # ---- задачи на день ----
+    def tasks_get(self):
+        return self._tasks.get()
+
+    def task_add(self, text):
+        return self._tasks.add(text)
+
+    def task_toggle(self, tid, done=None):
+        return self._tasks.toggle(tid, done)
+
+    def task_edit(self, tid, text):
+        return self._tasks.edit(tid, text)
+
+    def task_delete(self, tid):
+        return self._tasks.delete(tid)
+
+    def tasks_clear_done(self):
+        return self._tasks.clear_done()
+
+    def mini_resize(self, height):
+        """Мини-окно с задачами выше обычного: растёт вниз, а у нижнего края экрана поднимается, чтобы не уйти за него."""
+        w = self._mini
+        try:
+            h = max(MINI_SIZE[1], min(MINI_MAX_H, int(height)))
+        except (TypeError, ValueError):
+            return {"error": "bad height"}
+        if w is not None:
+            try:
+                y = getattr(w, 'y', None)
+                if self._screen_h and isinstance(y, int) and y + h > self._screen_h - 40:
+                    w.move(getattr(w, 'x', 0), max(0, self._screen_h - 40 - h))
+                w.resize(MINI_SIZE[0], h)
+            except Exception:
+                pass
+        return {"height": h}
 
     def lunch_toggle(self):
         """Кнопка «Обед»: начать обед или закончить идущий. Возвращает {"on": идёт ли обед}."""
@@ -374,6 +420,10 @@ def run():
     api._main = _window(webview, title=TITLE, url=resource('ui/main.html'), js_api=api, width=MAIN_SIZE[0], height=MAIN_SIZE[1],
                         resizable=False, frameless=True, easy_drag=False, text_select=False, background_color=bg,
                         hidden=background and api._tray is not None, minimized=background and api._tray is None)
+    try:
+        api._screen_h = webview.screens[0].height
+    except Exception:
+        pass
     x, y = mini_start_pos(webview, s["mini_pos"])
     api._mini = _window(webview, title=TITLE + ' — мини', url=resource('ui/mini.html'), js_api=api,
                         width=MINI_SIZE[0], height=MINI_SIZE[1], x=x, y=y, resizable=False, frameless=True, easy_drag=False,
