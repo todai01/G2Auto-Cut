@@ -89,6 +89,9 @@ def hm_text(sec):
     return f"{sec // 3600:02d}:{sec % 3600 // 60:02d}"
 
 
+MARKS = {"vacation": "отпуск", "sick": "больничный", "dayoff": "выходной"}
+
+
 def _new_day(norm_s):
     return {"arrival": None, "leave": None, "worked": 0.0, "norm": int(norm_s), "events": [], "notified": [], "no_break": False}
 
@@ -100,6 +103,7 @@ class Tracker:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self.days = self._load()
+        self.marks = self._load_marks()                  # отметки дней: {"2026-12-01": "vacation" | "sick" | "dayoff"}
         self.locked = False
         self._last = mono()
         self._saved_at = self._last
@@ -190,13 +194,37 @@ class Tracker:
             self._strip_inside_lunch(d)                  # в старых журналах обед и блокировка на одно и то же время — оставляем обед
         return out
 
+    def _load_marks(self):
+        try:
+            with open(self.path, 'r', encoding='utf-8') as f:
+                raw = json.load(f).get("marks", {})
+        except (OSError, ValueError, AttributeError):
+            return {}
+        out = {}
+        for k, v in (raw.items() if isinstance(raw, dict) else []):
+            try:
+                date.fromisoformat(k)
+            except ValueError:
+                continue
+            if v in MARKS:
+                out[k] = v
+        return out
+
+    def reload(self):
+        """Перечитать журнал с диска (после восстановления из копии)."""
+        with self._lock:
+            self.days = self._load()
+            self.marks = self._load_marks()
+            self._open_lunch = self._find_open_lunch()
+            self._open_ev, self._active_day, self._active_at = None, None, None
+
     def save(self):
         with self._lock:
             try:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)
                 tmp = self.path + '.tmp'
                 with open(tmp, 'w', encoding='utf-8') as f:
-                    json.dump({"alive": self._alive, "days": self.days}, f, ensure_ascii=False, indent=1)
+                    json.dump({"alive": self._alive, "days": self.days, "marks": self.marks}, f, ensure_ascii=False, indent=1)
                 os.replace(tmp, self.path)               # не оставляем полузаписанный файл
             except OSError:
                 pass
@@ -382,7 +410,7 @@ class Tracker:
             for k in sorted(self.days, reverse=True):
                 d = self.days[k]
                 dd = date.fromisoformat(k)
-                rows.append({"date": k, "weekday": WEEK[dd.weekday()], "arrival": d["arrival"], "leave": d["leave"],
+                rows.append({"date": k, "weekday": WEEK[dd.weekday()], "mark": self.marks.get(k, ""), "arrival": d["arrival"], "leave": d["leave"],
                              "worked_s": d["worked"], "norm_s": d["norm"], "break_s": self._break(d),
                              "delta_s": d["worked"] - d["norm"], "today": dd == today,
                              "events": self._events(d, nowdt)})
@@ -390,6 +418,116 @@ class Tracker:
             return {"rows": rows, "month": {"days": len(month), "worked_s": sum(r["worked_s"] for r in month),
                                               "norm_s": sum(r["norm_s"] for r in month),
                                               "delta_s": sum(r["delta_s"] for r in month)}}
+
+    # ---------- отметки дней, сводки, календарь (график 5/2: суббота и воскресенье — выходные) ----------
+    def set_mark(self, start, end, kind):
+        """Отметить день или период: «vacation» (отпуск), «sick» (больничный), «dayoff» (выходной); kind = '' снимает отметку.
+        Норма таких дней — 0 (не недоработка). Возвращает {"ok", "n"} или {"error"}."""
+        with self._lock:
+            try:
+                a = date.fromisoformat(str(start))
+                b = date.fromisoformat(str(end or start))
+            except ValueError:
+                return {"error": "Неверная дата."}
+            if kind and kind not in MARKS:
+                return {"error": "Неизвестная отметка."}
+            if b < a:
+                return {"error": "Конец периода раньше начала."}
+            if (b - a).days > 366:
+                return {"error": "Период длиннее года."}
+            n = 0
+            for i in range((b - a).days + 1):
+                k = (a + timedelta(days=i)).isoformat()
+                if kind:
+                    self.marks[k] = kind
+                else:
+                    self.marks.pop(k, None)
+                n += 1
+            self.save()
+            return {"ok": True, "n": n}
+
+    def day_norm(self, iso):
+        """Норма дня в секундах: выходные (сб, вс) и отмеченные дни — 0; обычный будний день — норма дня (или текущая)."""
+        dd = date.fromisoformat(iso)
+        if self.marks.get(iso) or dd.weekday() >= 5:
+            return 0
+        d = self.days.get(iso)
+        return d["norm"] if d else self.norm_s
+
+    def summary(self, start, end):
+        """Сводка за период [start, end] (даты). Норма считается до сегодняшнего дня; сегодняшний день недоработки не даёт,
+        пока не закончен (норма сегодня = не больше уже отработанного). Возвращает словарь для экрана и отчёта."""
+        with self._lock:
+            today = datetime.fromtimestamp(self._clock()).date()
+            worked = norm = plan = 0.0
+            workdays = done_days = 0
+            cnt = {"vacation": 0, "sick": 0, "dayoff": 0}
+            arr, lea, by_day = [], [], []
+            dd = start
+            while dd <= end:
+                iso = dd.isoformat()
+                rec, mark = self.days.get(iso), self.marks.get(iso, "")
+                full = self.day_norm(iso)
+                w = rec["worked"] if rec else 0.0
+                n = 0.0
+                if dd <= today:
+                    n = min(full, w) if dd == today else full
+                worked += w if dd <= today else 0.0
+                norm += n
+                plan += full
+                if dd.weekday() < 5:
+                    if mark:
+                        cnt[mark] += 1
+                    else:
+                        workdays += 1
+                        done_days += 1 if dd <= today else 0
+                if rec and rec["arrival"] and to_sec(rec["arrival"]) is not None and w > 0:
+                    arr.append(to_sec(rec["arrival"]))
+                    if rec["leave"] and dd < today and to_sec(rec["leave"]) is not None:
+                        lea.append(to_sec(rec["leave"]))
+                by_day.append({"date": iso, "weekday": WEEK[dd.weekday()], "arrival": rec["arrival"] if rec else None, "leave": rec["leave"] if rec else None,
+                               "worked_s": w, "norm_s": n, "delta_s": w - n if dd <= today else 0, "mark": mark, "weekend": dd.weekday() >= 5,
+                               "break_s": self._break(rec) if rec else 0, "future": dd > today})
+                dd += timedelta(days=1)
+            avg = lambda xs: hm_text(sum(xs) / len(xs)) + ':00' if xs else None
+            return {"start": start.isoformat(), "end": end.isoformat(), "worked_s": worked, "norm_s": norm, "plan_s": plan, "delta_s": worked - norm,
+                    "workdays": workdays, "workdays_done": done_days, "vacation": cnt["vacation"], "sick": cnt["sick"], "dayoff": cnt["dayoff"],
+                    "days_worked": len(arr), "avg_arrival": avg(arr), "avg_leave": avg(lea), "by_day": by_day}
+
+    def calendar(self, year, month):
+        """Месяц для календаря: по каждому дню — отработано, норма, отметка; плюс сводка месяца."""
+        with self._lock:
+            try:
+                first = date(int(year), int(month), 1)
+            except (ValueError, TypeError):
+                return {"error": "Неверный месяц."}
+            last = (date(first.year + (first.month == 12), first.month % 12 + 1, 1)) - timedelta(days=1)
+            s = self.summary(first, last)
+            days = []
+            for r in s["by_day"]:
+                rec = self.days.get(r["date"])
+                days.append({"date": r["date"], "wd": date.fromisoformat(r["date"]).weekday(), "worked_s": r["worked_s"], "norm_s": r["norm_s"],
+                             "delta_s": r["delta_s"], "arrival": r["arrival"], "leave": r["leave"], "mark": r["mark"], "record": bool(rec and rec["worked"] > 0),
+                             "today": r["date"] == datetime.fromtimestamp(self._clock()).date().isoformat(), "future": r["future"]})
+            return {"year": first.year, "month": first.month, "days": days, "summary": {k: v for k, v in s.items() if k != "by_day"}}
+
+    def day_info(self, iso):
+        """Всё о дне для карточки в журнале (без задач — их добавляет Api)."""
+        with self._lock:
+            try:
+                dd = date.fromisoformat(str(iso))
+            except ValueError:
+                return {"error": "Неверная дата."}
+            now = datetime.fromtimestamp(self._clock())
+            d = self.days.get(iso)
+            full = self.day_norm(iso)
+            today = dd == now.date()
+            w = d["worked"] if d else 0.0
+            return {"date": iso, "weekday": WEEK[dd.weekday()], "weekend": dd.weekday() >= 5, "mark": self.marks.get(iso, ""), "record": d is not None,
+                    "arrival": d["arrival"] if d else None, "leave": d["leave"] if d else None, "worked_s": w, "norm_s": full,
+                    "delta_s": 0 if dd > now.date() or (today and w < full) else w - full, "break_s": self._break(d) if d else 0,
+                    "lunch_s": self._lunch_s(d, now) if d else 0, "today": today, "future": dd > now.date(),
+                    "events": self._events(d, now) if d else []}
 
     # ---------- ручные правки ----------
     def edit_day(self, iso, arrival, leave, worked):
@@ -534,7 +672,7 @@ class Tracker:
         ev.freeze_panes = 'A2'
         if task_rows is not None:                        # лист «Задачи»: когда создана, начата, выполнена и сколько ушло
             tk = wb.create_sheet('Задачи')
-            heads = ['Создана', 'Начата', 'Выполнена', 'Статус', 'Задача', 'Ушло, ч:мм', 'Ушло', 'Подзадачи', 'Комментарий', 'Файлы']
+            heads = ['Создана', 'Начата', 'Выполнена', 'Статус', 'Задача', 'Ушло, ч:мм', 'Ушло', 'Подзадачи', 'Комментарий', 'Файлы', 'Теги', 'Ждали ответа', 'Сейчас ждём']
             tk.append(heads)
             for c in tk[1]:
                 c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')
@@ -542,18 +680,20 @@ class Tracker:
             for r in task_rows:
                 sub = '\n'.join(('✓ ' if d else '○ ') + t for t, d in r["subs"])
                 el = r["elapsed_s"]
-                tk.append([r["created"], r["started"], r["finished"], 'выполнена' if r["done"] else 'в работе', r["text"],
+                tk.append([r["created"], r["started"], r["finished"], 'выполнена' if r["done"] else ('ждём ответа' if r.get("waiting_who") else 'в работе'), r["text"],
                            timedelta(seconds=el) if el is not None else None, fmt_dur(el) if el is not None else '', sub,
-                           r["comment"], '\n'.join(r["files"])])
+                           r["comment"], '\n'.join(r["files"]), ', '.join(r.get("tags") or []),
+                           timedelta(seconds=r["wait_s"]) if r.get("wait_s") else None, r.get("waiting_who") or ''])
                 row = tk.max_row
                 for col in (1, 2, 3):
                     tk.cell(row, col).number_format = 'DD.MM.YYYY HH:MM'
                 tk.cell(row, 6).number_format = '[h]:mm'
+                tk.cell(row, 12).number_format = '[h]:mm'
                 tk.cell(row, 4).font = Font(color='16A34A' if r["done"] else 'D97706', bold=True)
-                for col in range(1, 11):
-                    tk.cell(row, col).alignment = Alignment(wrap_text=col in (5, 8, 9, 10), vertical='top',
-                                                            horizontal='left' if col in (5, 8, 9, 10) else 'center')
-            for i, w in enumerate([17, 17, 17, 12, 46, 12, 16, 32, 40, 28], 1):
+                for col in range(1, 14):
+                    tk.cell(row, col).alignment = Alignment(wrap_text=col in (5, 8, 9, 10, 11), vertical='top',
+                                                            horizontal='left' if col in (5, 8, 9, 10, 11) else 'center')
+            for i, w in enumerate([17, 17, 17, 12, 46, 12, 16, 32, 40, 28, 22, 13, 16], 1):
                 tk.column_dimensions[get_column_letter(i)].width = w
             tk.freeze_panes = 'A2'
         os.makedirs(os.path.dirname(path), exist_ok=True)

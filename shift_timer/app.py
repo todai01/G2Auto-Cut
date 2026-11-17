@@ -15,8 +15,11 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime
 
+import backup
 import chime
+import report
 import tasks
 import timetrack
 
@@ -84,6 +87,10 @@ def history_file():
 
 def table_file():
     return os.path.join(os.path.expanduser('~'), 'Documents', APP_NAME, 'Учёт_времени.xlsx')
+
+
+def reports_dir():
+    return os.path.join(os.path.expanduser('~'), 'Documents', APP_NAME)
 
 
 def norm_seconds(norm):
@@ -168,6 +175,7 @@ class Api:
         self._s = load_settings(path)
         self._table = table
         self._tasks = store or tasks.TaskStore(tasks_file())
+        self._reports = None                             # папка отчётов (в тестах — временная)
         self._screen_h = None
         self._screen_w = None
         self._t = tracker or timetrack.Tracker(history or history_file(), norm_seconds(self._s["norm"]))
@@ -178,6 +186,7 @@ class Api:
         self._t.on_tick = self._after_tick
         self._temp_mini_until = 0.0
         self._main = None
+        self._main_shown = True                          # видно ли главное окно (для клика по мини-окну)
         self._mini = None
         self._tray = None
         self._pos_timer = None
@@ -321,6 +330,30 @@ class Api:
             return {"error": "Не удалось прочитать вставленное."}
         return self._tasks.attach_bytes(tid, name, data)
 
+    def task_tags(self, tid, tags):
+        return self._tasks.set_tags(tid, tags)
+
+    def task_wait(self, tid, who=''):
+        return self._tasks.wait_start(tid, who)
+
+    def task_wait_end(self, tid):
+        return self._tasks.wait_end(tid)
+
+    def task_attach_paths(self, tid, paths):
+        """Файлы, перетащенные мышью в окно задачи (пути даёт pywebview)."""
+        return self._tasks.attach(tid, [str(p) for p in paths] if isinstance(paths, (list, tuple)) else [])
+
+    def task_open_folder(self, tid):
+        """Показать папку вложений задачи в Проводнике."""
+        d = self._tasks.file_dir(tid)
+        if not d:
+            return {"error": "Задача не найдена."}
+        try:
+            os.startfile(d)                              # только Windows
+        except (AttributeError, OSError) as e:
+            return {"error": f"Не удалось открыть папку: {e}"}
+        return {"ok": True, "path": d}
+
     def task_file_open(self, tid, name):
         p = self._tasks.file_path(tid, name)
         if not p:
@@ -358,6 +391,116 @@ class Api:
                 pass
         return {"height": h, "width": width}
 
+    # ---- журнал: сводки, календарь, отметки дней ----
+    def _today_iso(self):
+        return self._t.snapshot()["date"]
+
+    def get_summary(self, kind='week', iso=None):
+        """Сводка за неделю (пн–вс) или месяц, в который попадает день iso (по умолчанию сегодня); график 5/2."""
+        kind = 'month' if kind == 'month' else 'week'
+        a, b = report.period(kind, iso or self._today_iso())
+        s = self._t.summary(a, b)
+        rows = self._tasks.rows_between(a, b)
+        s["kind"], s["label"] = kind, report.label(kind, a, b)
+        s["tasks"] = {"created": sum(1 for r in rows if a <= r["created"].date() <= b),
+                      "done": sum(1 for r in rows if r["done"] and r["finished"] and a <= r["finished"].date() <= b),
+                      "work": sum(1 for r in rows if not r["done"]),
+                      "by_tag": {g: {"n": v["n"], "done": v["done"], "sec": v["sec"]} for g, v in report.tag_stats(rows).items() if v["n"]}}
+        return s
+
+    def get_calendar(self, year, month):
+        cal = self._t.calendar(year, month)
+        if "days" in cal:
+            cnt = self._tasks.counts_by_day(f'{cal["year"]:04d}-{cal["month"]:02d}')
+            for d in cal["days"]:
+                c = cnt.get(d["date"], {})
+                d["tasks_created"], d["tasks_done"] = c.get("created", 0), c.get("done", 0)
+        return cal
+
+    def get_day_info(self, iso):
+        info = self._t.day_info(iso)
+        if "error" not in info:
+            info["tasks"] = self._tasks.tasks_on_day(iso)
+        return info
+
+    def set_mark(self, start, end, kind):
+        return self._t.set_mark(start, end, kind)
+
+    def report_save(self, kind='week', iso=None):
+        """Отчёт за неделю / месяц одним Excel-файлом: часы по дням, задачи, время по тегам. Файл открывается."""
+        kind = 'month' if kind == 'month' else 'week'
+        a, b = report.period(kind, iso or self._today_iso())
+        path = os.path.join(self._reports or reports_dir(), f'Отчёт_{"неделя" if kind == "week" else "месяц"}_{a.isoformat()}.xlsx')
+        try:
+            report.export_report(path, kind, self._t.summary(a, b), self._tasks.rows_between(a, b))
+        except PermissionError:
+            return {"error": "Файл отчёта открыт в Excel — закройте его и повторите."}
+        except Exception as e:
+            return {"error": f"Не удалось записать отчёт: {e}"}
+        try:
+            os.startfile(path)                           # только Windows
+        except (AttributeError, OSError):
+            pass
+        return {"path": path}
+
+    # ---- резервная копия и перенос ----
+    def _backup_paths(self):
+        return {"history.json": self._t.path, "tasks.json": self._tasks.path, "settings.json": self._path or settings_file(), "task_files": self._tasks.files_dir}
+
+    def _dialog(self, kind, **kw):
+        import webview
+        D = webview.FileDialog if hasattr(webview, 'FileDialog') else None
+        mode = getattr(D, kind) if D else getattr(webview, kind + '_DIALOG')
+        r = self._main.create_file_dialog(mode, **kw)
+        return (r[0] if isinstance(r, (list, tuple)) and r else r) or None
+
+    def _pick_save_zip(self, name):
+        """Куда сохранить копию (подменяется в тестах)."""
+        return self._dialog('SAVE', save_filename=name, file_types=('Архив GTime (*.zip)',))
+
+    def _pick_open_zip(self):
+        return self._dialog('OPEN', file_types=('Архив GTime (*.zip)',))
+
+    def backup_save(self):
+        """«Сохранить копию»: журнал, задачи, файлы и настройки — одним zip."""
+        name = f'GTime_копия_{datetime.now().strftime("%Y-%m-%d")}.zip'
+        try:
+            dest = self._pick_save_zip(name)
+        except Exception as e:
+            return {"error": f"Не удалось открыть окно сохранения: {e}"}
+        if not dest:
+            return {"cancelled": True}
+        if not str(dest).lower().endswith('.zip'):
+            dest = str(dest) + '.zip'
+        self._t.save()
+        try:
+            return {"ok": True, **backup.make_backup(self._backup_paths(), str(dest))}
+        except OSError as e:
+            return {"error": f"Не удалось сохранить копию: {e}"}
+
+    def backup_restore(self):
+        """«Восстановить»: данные из копии заменяют текущие (перед этим текущие сохраняются отдельным архивом)."""
+        try:
+            src = self._pick_open_zip()
+        except Exception as e:
+            return {"error": f"Не удалось открыть окно выбора: {e}"}
+        if not src:
+            return {"cancelled": True}
+        safety = os.path.join(os.path.dirname(self._t.path) or '.', 'backups')
+        try:
+            self._t.save()
+            res = backup.restore_backup(str(src), self._backup_paths(), safety)
+        except RuntimeError as e:
+            return {"error": str(e)}
+        self._t.reload()
+        self._tasks.reload()
+        self._s = load_settings(self._path)
+        self._t.set_norm(norm_seconds(self._s["norm"]))
+        self._t.set_lunch(self._s["lunch_min"] * 60)
+        self._apply_notify()
+        self._push()
+        return {"ok": True, **res}
+
     def lunch_toggle(self):
         """Кнопка «Обед»: начать обед или закончить идущий. Возвращает {"on": идёт ли обед}."""
         self._t.end_lunch() if self._t.snapshot()["lunch"]["on"] else self._t.start_lunch()
@@ -383,10 +526,12 @@ class Api:
 
     # ---- окна ----
     def minimize(self):
+        self._main_shown = False
         if self._main:
             self._main.minimize()
 
     def open_main(self):
+        self._main_shown = True
         if self._main:
             try:
                 self._main.show()
@@ -394,11 +539,25 @@ class Api:
             except Exception:
                 pass
 
+    def toggle_main(self):
+        """Клик по мини-окну: главное окно открывается, повторный клик — скрывается (остаётся только мини)."""
+        if self._main_shown:
+            self.hide_main()
+        else:
+            self.open_main()
+        return {"shown": self._main_shown}
+
+    def main_visible(self, shown):
+        """Главное окно само сообщает, видно ли оно (свернули, спрятали, закрыли в трей) — чтобы клик по мини-окну делал нужное."""
+        self._main_shown = bool(shown)
+        return {"shown": self._main_shown}
+
     def can_tray(self):
         return self._tray is not None
 
     def hide_main(self):
         """Убрать окно в фон: значок остаётся в трее, учёт времени идёт."""
+        self._main_shown = False
         if self._main and self._tray is not None:
             try:
                 self._main.hide()
@@ -544,6 +703,13 @@ def run():
                         on_top=s["mini_on_top"], hidden=not s["mini_visible"], text_select=False, background_color=bg)
     try:
         api._mini.events.moved += api._moved
+    except Exception:
+        pass
+    api._main_shown = not background
+    try:
+        api._main.events.minimized += lambda: setattr(api, '_main_shown', False)
+        api._main.events.restored += lambda: setattr(api, '_main_shown', True)
+        api._main.events.shown += lambda: setattr(api, '_main_shown', True)
     except Exception:
         pass
     api._main.events.closed += api.close_app              # закрыли главное — уходит и мини, иначе процесс не завершится

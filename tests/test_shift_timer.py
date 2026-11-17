@@ -1334,7 +1334,7 @@ def test_excel_tasks_sheet(tmp_path):
     p = tr.export_xlsx(str(tmp_path / 'o.xlsx'), ts.all_rows())
     wb = openpyxl.load_workbook(p)
     vals = [[x.value for x in r] for r in wb['Задачи'].iter_rows()]
-    assert vals[0] == ['Создана', 'Начата', 'Выполнена', 'Статус', 'Задача', 'Ушло, ч:мм', 'Ушло', 'Подзадачи', 'Комментарий', 'Файлы']
+    assert vals[0] == ['Создана', 'Начата', 'Выполнена', 'Статус', 'Задача', 'Ушло, ч:мм', 'Ушло', 'Подзадачи', 'Комментарий', 'Файлы', 'Теги', 'Ждали ответа', 'Сейчас ждём']
     done, work = vals[1], vals[2]
     assert done[0] == datetime(2026, 11, 17, 9, 0) and done[2] == datetime(2026, 11, 17, 10, 30, 20) and done[3] == 'выполнена'   # час и минута выполнения
     assert done[5] == timedelta(minutes=90, seconds=20) and done[6] == '1:30:20' and done[7] == '○ шаг 1' and done[8] == 'детали'

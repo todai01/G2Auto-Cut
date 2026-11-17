@@ -54,15 +54,18 @@
 
     <section class="view" id="v-jr">
       <div class="jr-top">
-        <div class="h" id="jrMonth">Журнал</div>
-        <div class="jr-btns"><button class="btn sm" id="jrAdd">+ День</button><button class="btn sm primary" id="jrXls">Таблица Excel</button></div>
+        <div class="cal-nav"><button class="btn sm ic" id="jrPrev" title="Прошлый месяц">‹</button><div class="h" id="jrMonth">Журнал</div><button class="btn sm ic" id="jrNext" title="Следующий месяц">›</button></div>
+        <div class="jr-btns"><button class="btn sm" id="jrToday">Сегодня</button><button class="btn sm" id="jrAdd">+ День</button></div>
+      </div>
+      <div class="jr-mid">
+        <div class="seg" id="segSum"><button data-k="week" class="on">Неделя</button><button data-k="month">Месяц</button></div>
+        <span class="sum-lab" id="sumLab"></span>
       </div>
       <div class="card jr-sum" id="jrSum"></div>
-      <div class="card jr-card">
-        <div class="jr-row jr-head"><span>Дата</span><span>Приход</span><span>Уход</span><span>Работа</span><span>±</span></div>
-        <div class="jr-list" id="jrList"></div>
-      </div>
-      <div class="note" id="jrNote">Нажмите на день, чтобы исправить.</div>
+      <div class="cal" id="cal"><div class="cal-h"><span>пн</span><span>вт</span><span>ср</span><span>чт</span><span>пт</span><span>сб</span><span>вс</span></div><div class="cal-g" id="calG"></div></div>
+      <div class="cal-leg"><i class="ok"></i>норма<i class="low"></i>меньше нормы<i class="vacation"></i>отпуск<i class="sick"></i>больничный<i class="dayoff"></i>выходной</div>
+      <div class="jr-acts"><button class="btn sm primary" id="jrRep">Отчёт за неделю (Excel)</button><button class="btn sm" id="jrMark">Отпуск / больничный…</button><button class="btn sm" id="jrXls">Вся таблица Excel</button></div>
+      <div class="note" id="jrNote">Нажмите на день — откроется всё за этот день. График 5/2: суббота и воскресенье — выходные.</div>
     </section>
 
     <section class="view" id="v-set">
@@ -94,6 +97,11 @@
         <div class="row"><span>Показывать мини-окно</span><button class="sw" id="swMini" role="switch"></button></div>
         <div class="row"><span>Поверх всех окон</span><button class="sw" id="swTop" role="switch"></button></div>
       </div>
+      <div class="h">Резервная копия</div>
+      <div class="card">
+        <div class="row"><span>Журнал, задачи и файлы — одним архивом</span><span class="btns2"><button class="btn sm" id="bkSave">Сохранить копию</button><button class="btn sm" id="bkRestore">Восстановить</button></span></div>
+      </div>
+      <div class="note" id="bkNote">Копия переносит данные на другой компьютер. Перед восстановлением текущие данные сохраняются отдельным архивом.</div>
       <div class="h">Система</div>
       <div class="card">
         <div class="row"><span>Запускать при входе в Windows</span><button class="sw" id="swAuto" role="switch"></button></div>
@@ -125,6 +133,8 @@
     <div class="dlg tall" id="dlgTask" hidden>
       <textarea class="tdt-in" id="tdText" rows="2" maxlength="200" aria-label="Задача"></textarea>
       <div class="td-timer"><span class="k">Идёт</span><b class="tm num" id="tdTimer">0:00:00</b></div>
+      <div class="chips" id="tdTags"></div>
+      <div class="td-wait" id="tdWait"></div>
       <label class="frow"><span>Создана</span><input type="datetime-local" id="tdCreated"></label>
       <label class="frow"><span>Начата</span><input type="datetime-local" id="tdStarted"></label>
       <label class="frow" id="tdFinRow"><span>Выполнена</span><input type="datetime-local" id="tdFinished"></label>
@@ -135,10 +145,29 @@
       <form class="tk-add2" id="tdSubForm"><input id="tdSubIn" placeholder="Новая подзадача" maxlength="200" autocomplete="off"><button class="btn sm" type="submit">Добавить</button></form>
       <div class="ev-h">Файлы <span id="tdFileN"></span></div>
       <div class="td-list" id="tdFiles"></div>
-      <button class="btn sm" id="tdAttach" type="button">Прикрепить файлы (фото, аудио, Excel…)</button>
+      <div class="td-drop" id="tdDrop">Перетащите файлы сюда или нажмите Ctrl+V</div>
+      <div class="td-btns"><button class="btn sm" id="tdAttach" type="button">Прикрепить файлы…</button><button class="btn sm" id="tdFolder" type="button">Показать папку</button></div>
       <div class="dlg-hint" id="tdHint"></div>
       <div class="dlg-btns"><button class="btn sm danger" id="tdDel">Удалить</button><span class="grow"></span>
         <button class="btn sm" id="tdCancel">Закрыть</button><button class="btn sm primary" id="tdSave">Сохранить</button></div>
+    </div>
+    <div class="dlg tall" id="dlgDay" hidden>
+      <div class="dlg-t" id="ddTitle">День</div>
+      <div class="dd-mark" id="ddMark"></div>
+      <div class="dd-grid" id="ddGrid"></div>
+      <div class="ev-h" id="ddEvH">Блокировки, паузы и обед</div>
+      <div class="ev" id="ddEvents"></div>
+      <div class="ev-h" id="ddTkH">Задачи</div>
+      <div class="dd-tasks" id="ddTasks"></div>
+      <div class="dlg-btns"><button class="btn sm" id="ddMarkBtn">Отметить…</button><span class="grow"></span><button class="btn sm" id="ddClose">Закрыть</button><button class="btn sm primary" id="ddEdit">Исправить день</button></div>
+    </div>
+    <div class="dlg" id="dlgMark" hidden>
+      <div class="dlg-t">Отпуск, больничный, выходной</div>
+      <div class="seg wrap" id="mkKind"><button data-k="vacation" class="on">Отпуск</button><button data-k="sick">Больничный</button><button data-k="dayoff">Выходной</button><button data-k="">Снять отметку</button></div>
+      <label class="frow"><span>С</span><input type="date" id="mkFrom"></label>
+      <label class="frow"><span>По</span><input type="date" id="mkTo"></label>
+      <div class="dlg-hint" id="mkHint">Отмеченные дни не считаются недоработкой: норма за них — 0. Суббота и воскресенье и так выходные.</div>
+      <div class="dlg-btns"><span class="grow"></span><button class="btn sm" id="mkCancel">Отмена</button><button class="btn sm primary" id="mkSave">Применить</button></div>
     </div>
     <div class="dlg" id="dlgClose" hidden>
       <div class="dlg-t">Закрыть программу?</div>

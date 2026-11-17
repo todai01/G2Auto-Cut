@@ -9,7 +9,7 @@ import os
 import shutil
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 MAX_TEXT = 200
 MAX_PER_DAY = 200                                        # не больше столько задач за раз в списке (невыполненные + сегодняшние)
@@ -18,6 +18,8 @@ MAX_SUBS = 50
 MAX_FILES = 25
 MAX_FILE_MB = 200
 FMT = '%Y-%m-%dT%H:%M:%S'
+TAGS = ['Срезка', 'Запись', 'Доработка', 'Ожидание', 'Прослушка и разметка', 'Синтез']      # теги задач (можно несколько)
+MAX_WHO = 80
 
 
 def _dt(s):
@@ -72,9 +74,17 @@ class TaskStore:
             if isinstance(s, dict) and isinstance(s.get("id"), int) and isinstance(s.get("text"), str) and s["text"].strip():
                 subs.append({"id": s["id"], "text": s["text"].strip()[:MAX_TEXT], "done": s.get("done") is True})
         files = [f for f in (t.get("files") if isinstance(t.get("files"), list) else []) if isinstance(f, str) and f]
+        tags = [g for g in TAGS if g in (t.get("tags") if isinstance(t.get("tags"), list) else [])]
+        waits = []
+        for w in t.get("waits") if isinstance(t.get("waits"), list) else []:
+            a, b = _dt(w.get("from")) if isinstance(w, dict) else None, _dt(w.get("to")) if isinstance(w, dict) else None
+            if a:
+                waits.append({"who": str(w.get("who") or '')[:MAX_WHO], "from": _iso(a), "to": _iso(b) if b else None})
+        for w in waits[:-1]:
+            w["to"] = w["to"] or w["from"]                # открытым может быть только последнее ожидание
         return {"id": t["id"], "text": t["text"].strip()[:MAX_TEXT], "created": _iso(created), "started": _iso(started),
                 "finished": _iso(finished) if finished else None, "done": done, "hidden": t.get("hidden") is True,
-                "comment": str(t.get("comment") or '')[:MAX_COMMENT], "subs": subs, "files": files,
+                "comment": str(t.get("comment") or '')[:MAX_COMMENT], "subs": subs, "files": files, "tags": tags, "waits": waits,
                 "legacy": legacy or t.get("legacy") is True}
 
     def _load(self):
@@ -148,9 +158,28 @@ class TaskStore:
         d = dict(t)
         d["subs"] = [dict(s) for s in t["subs"]]
         d["files"] = list(t["files"])
+        d["tags"] = list(t["tags"])
+        d["waits"] = [dict(w) for w in t["waits"]]
         d["elapsed_s"] = self._elapsed(t, now)
         d["running"] = not t["done"]
+        op = self._open_wait(t)
+        d["waiting"] = {"who": op["who"], "since": op["from"], "elapsed_s": max(0, int((now - _dt(op["from"])).total_seconds()))} if op else None
+        d["wait_s"] = self._wait_s(t, now)
         return d
+
+    @staticmethod
+    def _open_wait(t):
+        return t["waits"][-1] if t["waits"] and t["waits"][-1]["to"] is None else None
+
+    def _wait_s(self, t, now=None):
+        """Сколько всего ждали ответа (закрытые периоды + идущий)."""
+        now = now or self._now()
+        total = 0
+        for w in t["waits"]:
+            a, b = _dt(w["from"]), _dt(w["to"]) if w["to"] else now
+            if a and b:
+                total += max(0, int((b - a).total_seconds()))
+        return total
 
     def _view(self):
         now = self._now()
@@ -177,7 +206,7 @@ class TaskStore:
             if text and sum(1 for t in self.items if self._visible(t)) < MAX_PER_DAY:
                 now = _iso(self._now())
                 self.items.append({"id": self._next, "text": text, "created": now, "started": now, "finished": None, "done": False,
-                                   "hidden": False, "comment": "", "subs": [], "files": [], "legacy": False})
+                                   "hidden": False, "comment": "", "subs": [], "files": [], "tags": [], "waits": [], "legacy": False})
                 self._next += 1
                 self._save()
             return self._view()
@@ -191,6 +220,9 @@ class TaskStore:
                 if want != t["done"]:
                     t["done"] = want
                     t["finished"] = _iso(self._now()) if want else None
+                    op = self._open_wait(t)
+                    if want and op:
+                        op["to"] = t["finished"]                   # выполнили — ждать больше нечего
                     t["legacy"] = False if want else t["legacy"]
                     self._save()
             return self._view()
@@ -257,6 +289,40 @@ class TaskStore:
                 if t["done"]:
                     t["hidden"] = True
             self._save()
+            return self._view()
+
+    # ---------- теги и «жду ответа» ----------
+    def set_tags(self, tid, tags):
+        with self._lock:
+            t = self._find(tid)
+            if t:
+                want = tags if isinstance(tags, list) else []
+                t["tags"] = [g for g in TAGS if g in want]
+                self._save()
+            return self._view()
+
+    def wait_start(self, tid, who=''):
+        """«Жду ответа» (от кого — по желанию). Уже ждём — просто меняем имя."""
+        with self._lock:
+            t = self._find(tid)
+            if t and not t["done"]:
+                who = str(who or '').strip()[:MAX_WHO]
+                op = self._open_wait(t)
+                if op:
+                    op["who"] = who
+                else:
+                    t["waits"].append({"who": who, "from": _iso(self._now()), "to": None})
+                self._save()
+            return self._view()
+
+    def wait_end(self, tid):
+        """«Ответ получен»: ожидание закрывается, задача снова в работе."""
+        with self._lock:
+            t = self._find(tid)
+            op = self._open_wait(t) if t else None
+            if op:
+                op["to"] = _iso(self._now())
+                self._save()
             return self._view()
 
     # ---------- подзадачи ----------
@@ -353,16 +419,94 @@ class TaskStore:
                 self._save()
             return self._view()
 
-    # ---------- Excel ----------
+    # ---------- журнал, отчёт, Excel ----------
+    def _span(self, t, now):
+        a = _dt(t["started"])
+        b = _dt(t["finished"]) if t["done"] else now
+        return a, b
+
+    def _row(self, t, now, lo=None, hi=None):
+        legacy = t["legacy"]
+        a, b = self._span(t, now)
+        part = None
+        if lo is not None and a and b:                   # сколько из времени задачи пришлось на период [lo, hi)
+            part = max(0, int((min(b, hi) - max(a, lo)).total_seconds()))
+        op = self._open_wait(t)
+        return {"id": t["id"], "created": _dt(t["created"]), "started": _dt(t["started"]), "finished": None if legacy else _dt(t["finished"]),
+                "done": t["done"], "text": t["text"], "elapsed_s": None if legacy and t["done"] else self._elapsed(t, now),
+                "period_s": part, "tags": list(t["tags"]), "wait_s": self._wait_s(t, now), "waiting_who": (op["who"] or 'ответ') if op else '',
+                "subs": [(s["text"], s["done"]) for s in t["subs"]], "comment": t["comment"], "files": list(t["files"]), "legacy": legacy}
+
     def all_rows(self):
-        """Все задачи (в том числе скрытые) для листа «Задачи»: когда создана / начата / выполнена, сколько ушло, подзадачи, комментарий."""
+        """Все задачи (в том числе скрытые) для листа «Задачи»: когда создана / начата / выполнена, сколько ушло, теги, ожидание, подзадачи, комментарий."""
         with self._lock:
             now = self._now()
-            rows = []
+            return [self._row(t, now) for t in sorted(self.items, key=lambda t: (t["created"], t["id"]))]
+
+    def rows_between(self, start, end):
+        """Задачи, которые касаются периода [start, end] (даты включительно): создана, выполнена или шла в эти дни. period_s — время внутри периода."""
+        with self._lock:
+            now = self._now()
+            lo = datetime(start.year, start.month, start.day)
+            hi = datetime(end.year, end.month, end.day) + timedelta(days=1)
+            out = []
             for t in sorted(self.items, key=lambda t: (t["created"], t["id"])):
-                legacy = t["legacy"]
-                rows.append({"created": _dt(t["created"]), "started": _dt(t["started"]), "finished": None if legacy else _dt(t["finished"]),
-                             "done": t["done"], "text": t["text"], "elapsed_s": None if legacy and t["done"] else self._elapsed(t, now),
-                             "subs": [(s["text"], s["done"]) for s in t["subs"]], "comment": t["comment"], "files": list(t["files"]),
-                             "legacy": legacy})
-            return rows
+                a, b = self._span(t, now)
+                c, f = _dt(t["created"]), _dt(t["finished"]) if t["done"] else None
+                touched = (c and lo <= c < hi) or (f and lo <= f < hi) or (a and b and a < hi and b > lo)
+                if touched:
+                    out.append(self._row(t, now, lo, min(hi, now + timedelta(seconds=1)) if hi > now else hi))
+            return out
+
+    def tasks_on_day(self, iso):
+        """Задачи за день для карточки дня в журнале: что создано, выполнено и что шло (role — список из «создана», «выполнена», «в работе»)."""
+        try:
+            day = date.fromisoformat(str(iso))
+        except ValueError:
+            return []
+        with self._lock:
+            now = self._now()
+            lo = datetime(day.year, day.month, day.day)
+            hi = lo + timedelta(days=1)
+            out = []
+            for t in sorted(self.items, key=lambda t: (t["created"], t["id"])):
+                a, b = self._span(t, now)
+                c, f = _dt(t["created"]), _dt(t["finished"]) if t["done"] else None
+                role = []
+                if c and lo <= c < hi:
+                    role.append("создана")
+                if f and lo <= f < hi and not t["legacy"]:
+                    role.append("выполнена")
+                if not role and a and b and a < hi and b > lo and not t["legacy"]:
+                    role.append("в работе")
+                if role:
+                    r = self._row(t, now, lo, min(hi, now) if hi > now else hi)
+                    out.append({"id": t["id"], "text": t["text"], "role": role, "done": t["done"], "tags": r["tags"], "elapsed_s": r["elapsed_s"],
+                                "day_s": r["period_s"], "wait_s": r["wait_s"], "waiting_who": r["waiting_who"],
+                                "created": _iso(c) if c else None, "finished": _iso(f) if f else None, "hidden": t["hidden"]})
+            return out
+
+    def counts_by_day(self, prefix):
+        """{"2026-11-17": {"created": n, "done": m}} для календаря (prefix — «2026-11»)."""
+        out = {}
+        with self._lock:
+            for t in self.items:
+                for key, field in (("created", "created"), ("done", "finished")):
+                    v = t[field] if (key == "created" or (t["done"] and not t["legacy"])) else None
+                    if v and v.startswith(prefix):
+                        out.setdefault(v[:10], {"created": 0, "done": 0})[key] += 1
+        return out
+
+    def file_dir(self, tid):
+        """Папка вложений задачи (создаётся, если её ещё нет); нет такой задачи — None."""
+        with self._lock:
+            if not self._find(tid):
+                return None
+            os.makedirs(self._dir(tid), exist_ok=True)
+            return self._dir(tid)
+
+    def reload(self):
+        """Перечитать tasks.json (после восстановления из копии)."""
+        with self._lock:
+            self.items = self._load()
+            self._next = max([t["id"] for t in self.items] + [0]) + 1

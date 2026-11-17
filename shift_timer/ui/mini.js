@@ -72,7 +72,23 @@ function render() {
 }
 boot(() => {
     App.onChange = () => { render(); tickTasks(); };
-    $('mOpen').onclick = () => pywebview.api.open_main();
+    $('mOpen').onclick = () => pywebview.api.toggle_main();
+    // Клик по любому месту мини-окна (кроме кнопок и полей) открывает главное окно, повторный — скрывает его. Перетаскивание окна не считается кликом.
+    let down = null, moved = false, lastToggle = 0;
+    const SKIP = 'button, input, textarea, a, form, .tk-row, .nb';
+    document.addEventListener('mousedown', e => { down = { x: e.screenX, y: e.screenY, wx: window.screenX, wy: window.screenY }; moved = false; });
+    document.addEventListener('mousemove', e => {
+        if (down && (Math.hypot(e.screenX - down.x, e.screenY - down.y) > 4 || Math.abs(window.screenX - down.wx) > 3 || Math.abs(window.screenY - down.wy) > 3)) moved = true;
+    });
+    const maybeToggle = e => {
+        const d = down; down = null;
+        if (!d || moved || e.button > 0 || e.target.closest(SKIP) || Date.now() - lastToggle < 400) return;
+        if (Math.abs(window.screenX - d.wx) > 3 || Math.abs(window.screenY - d.wy) > 3) return;     // окно двигали
+        lastToggle = Date.now();
+        pywebview.api.toggle_main();
+    };
+    document.addEventListener('mouseup', maybeToggle);
+    document.addEventListener('click', e => { if (Date.now() - lastToggle >= 400 && !moved) { down = down || { x: e.screenX, y: e.screenY, wx: window.screenX, wy: window.screenY }; maybeToggle(e); } });
     $('mLunch').onclick = () => pywebview.api.lunch_toggle().then(poll);
     $('mClose').onclick = () => save({ mini_visible: false });
     $('mTasks').onclick = () => setTasksOpen(!tkOpen, true);
