@@ -65,9 +65,9 @@ class TeamMixin:
         return st
 
     def _viewer(self):
-        """Просмотр команды (таблица, карточки, отчёт): администратор и куратор."""
+        """Просмотр команды (таблица, карточки, отчёт): администратор и супервайзер."""
         if not self._user or self._user["role"] not in ('admin', 'mentor'):
-            raise team.TeamError('Только для администратора и куратора.')
+            raise team.TeamError('Только для администратора и супервайзера.')
         st = self._store()
         if st is None:
             raise team.TeamError('Сетевая папка не выбрана.')
