@@ -393,7 +393,7 @@ class Tracker:
         for k in ks:
             for e in snap[k]["events"]:
                 a, b = parse_dt(e["lock"]), parse_dt(e["unlock"])
-                ev.append([date.fromisoformat(k), 'сон' if e["kind"] == "sleep" else 'блокировка', a, b,
+                ev.append([date.fromisoformat(k), 'пауза' if e["kind"] == "sleep" else 'блокировка', a, b,
                            (b - a).total_seconds() / 86400 if a and b else None])
         for c in ev[1]:
             c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')

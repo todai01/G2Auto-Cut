@@ -64,7 +64,7 @@ function startJournalTimer() { clearInterval(jrTimer); loadJournal(); jrTimer = 
 let editing = null;
 function evText(row) {                                   // «12:10 → 12:55 · 45 мин» (дата — если разблокировали в другой день)
     const t = iso => iso ? (iso.slice(0, 10) === row.date ? iso.slice(11, 16) : iso.slice(8, 10) + '.' + iso.slice(5, 7) + ' ' + iso.slice(11, 16)) : 'сейчас';
-    return (row.events || []).map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'сон' : 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
+    return (row.events || []).map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'пауза' : 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
         + `<span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span></div>`).join('');
 }
 function openDlg(id) { $('dlgBack').classList.add('on'); $('dlgEdit').hidden = id !== 'dlgEdit'; $('dlgClose').hidden = id !== 'dlgClose'; }
@@ -99,7 +99,7 @@ async function suggest() {
     const sec = await pywebview.api.suggest_worked($('dArr').value);
     if (sec === null || sec === undefined) { $('dHint').textContent = 'Приход не может быть позже, чем сейчас.'; $('dHint').classList.add('err'); return; }
     $('dWork').value = Shift.hmSec(sec).padStart(5, '0'); $('dHint').classList.remove('err');
-    $('dHint').textContent = 'Вычла блокировки и сон. Если вы отходили без блокировки — уменьшите время.';
+    $('dHint').textContent = 'Вычла блокировки и паузы. Если вы отходили без блокировки — уменьшите время.';
 }
 async function saveEdit() {
     const r = await pywebview.api.edit_day($('dDate').value, $('dArr').value, $('dLeave').value, $('dWork').value);
