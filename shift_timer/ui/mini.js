@@ -52,23 +52,28 @@ function hideNotice() { $('nb').classList.remove('on'); }
 function render() {
     const v = view();
     if (!v) { setText($('t'), '--:--'); return; }
-    const { d, c, lunch } = v, s = App.s;
+    const { d, c, day, L, lunch } = v, s = App.s;
     if (d.notice && d.notice.id !== shownId) showNotice(d.notice);
-    const phase = lunch ? 'lunch' : c.phase;
-    $('b').className = 'mini ' + phase + (c.soon ? ' soon' : '') + (tkOpen ? ' exp' : '');   // «exp» (задачи развёрнуты) не теряем при каждой перерисовке
-    if (lunch) {
-        setText($('cap'), lunch.over ? 'обед закончился' : 'обед'); setText($('t'), Shift.clock(lunch.remain, s.seconds));
-        $('t').classList.remove('muted'); $('fill').style.width = (lunch.progress * 100).toFixed(2) + '%';
-        setText($('w'), `отработано ${Shift.clock(c.worked, s.seconds)}`);
-        if (!tkOpen && d.tasks) setText($('mTaskN'), d.tasks.total ? `${d.tasks.done}/${d.tasks.total}` : '');
-        return;
-    }
-    if (c.phase === 'done') { setText($('cap'), 'норма выполнена'); setText($('t'), '+' + Shift.clock(c.over, s.seconds)); }
-    else { setText($('cap'), c.phase === 'paused' ? 'пауза — экран заблокирован' : 'осталось'); setText($('t'), Shift.clock(c.remain, s.seconds)); }
-    $('t').classList.toggle('muted', c.phase === 'paused');
-    $('fill').style.width = (c.progress * 100).toFixed(2) + '%';
+    // Главный таймер — до ухода (приход + норма + обед), он не стоит ни на блокировке, ни на обеде; стоит только «отработано».
+    const locked = d.locked && !L.on, paused = d.locked || L.on;
+    const done = !!day && day.phase === 'done';
+    const phase = lunch ? 'lunch' : done ? 'done' : 'work';
+    $('b').className = 'mini ' + phase + (day && day.soon && !lunch ? ' soon' : '') + (tkOpen ? ' exp' : '');   // «exp» (задачи развёрнуты) не теряем при каждой перерисовке
+    $('w').classList.toggle('paused', paused);
     setText($('w'), `отработано ${Shift.clock(c.worked, s.seconds)}`);
     if (!tkOpen && d.tasks) setText($('mTaskN'), d.tasks.total ? `${d.tasks.done}/${d.tasks.total}` : '');
+    $('t').classList.remove('muted');
+    if (lunch) {
+        setText($('cap'), lunch.over ? 'обед закончился' : 'обед'); setText($('t'), Shift.clock(lunch.remain, s.seconds));
+        $('fill').style.width = (lunch.progress * 100).toFixed(2) + '%';
+    } else if (!day) {
+        setText($('cap'), 'до ухода'); setText($('t'), '--:--'); $('fill').style.width = '0%';
+    } else if (done) {
+        setText($('cap'), 'время ухода'); setText($('t'), '+' + Shift.clock(day.over, s.seconds)); $('fill').style.width = '100%';
+    } else {
+        setText($('cap'), locked ? 'до ухода · блок' : 'до ухода'); setText($('t'), Shift.clock(day.remain, s.seconds));
+        $('fill').style.width = (day.progress * 100).toFixed(2) + '%';
+    }
 }
 boot(() => {
     App.onChange = () => { render(); tickTasks(); };

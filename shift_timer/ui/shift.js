@@ -27,6 +27,28 @@
         };
     }
 
+    // Таймер ухода — простые настенные часы, от отработанного времени не зависят: уход = приход + норма + обед (8 ч + 1 ч = 9 ч).
+    // Не стоит ни при блокировке экрана, ни на обеде; меняется только если исправили время прихода.
+    // arrival — «ЧЧ:ММ:СС» (или «ЧЧ:ММ»), norm и lunchLen — секунды. Нет прихода — null.
+    function parseSec(s) {
+        const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(s || '').trim());
+        return m ? +m[1] * 3600 + +m[2] * 60 + (m[3] ? +m[3] : 0) : null;
+    }
+    function day(arrival, norm, lunchLen, nowMs, showSeconds) {
+        const a = parseSec(arrival);
+        if (a === null) return null;
+        const n = new Date(nowMs), nowS = n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds() + n.getMilliseconds() / 1000;
+        const total = norm + lunchLen, leave = a + total, left = leave - nowS;
+        return {
+            phase: left <= 0 ? 'done' : 'work',
+            remain: showSeconds ? Math.ceil(Math.max(0, left)) : Math.ceil(Math.max(0, left) / 60) * 60,   // без секунд — вверх, как и раньше
+            over: Math.max(0, Math.floor(-left)),
+            progress: total > 0 ? Math.min(1, Math.max(0, (nowS - a) / total)) : 1,
+            leave: `${p2(Math.floor(leave / 3600) % 24)}:${p2(Math.floor(leave % 3600 / 60))}`,
+            soon: left > 0 && left <= 30 * 60,
+        };
+    }
+
     // Обед — отдельный таймер: elapsed — сколько идёт, len — длина обеда (секунды).
     function lunch(elapsed, len, showSeconds) {
         const left = Math.max(0, len - elapsed);
@@ -81,6 +103,6 @@
         return 100 + 8 + (rows.length ? Math.min(rows.reduce((a, b) => a + b, 0), 190) : 38) + 44;
     }
 
-    const api = { parseHM, calc, lunch, tasksHeight, dur, when, clock, words, hm, hmStr, signed, hmSec };
+    const api = { parseHM, parseSec, day, calc, lunch, tasksHeight, dur, when, clock, words, hm, hmStr, signed, hmSec };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Shift = api;
 })(typeof window !== 'undefined' ? window : globalThis);

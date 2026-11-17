@@ -138,20 +138,34 @@ class Tracker:
             except Exception:
                 pass
 
+    def leave_left(self, day, now=None):
+        """Сколько секунд до ухода: приход + норма + обед (фиксированные настенные часы, от отработанного и блокировок не зависят).
+        Нет прихода — None."""
+        a = to_sec(day.get("arrival"))
+        if a is None:
+            return None
+        now = now or datetime.fromtimestamp(self._clock())
+        return a + day["norm"] + self.lunch_len_s - (now.hour * 3600 + now.minute * 60 + now.second)
+
     def _notify(self, day, dt, m):
-        """Каждый ровный час до нормы («Осталось 7 часов» …), «норма выполнена» и напоминание о перерыве после долгой работы."""
+        """Каждый ровный час до ухода («Осталось 8 часов» … «Остался 1 час»: уход = приход + норма + обед), «время ухода»,
+        «норма выполнена» (по отработанному) и напоминание о перерыве после долгой работы."""
         worked, norm = day["worked"], day["norm"]
-        if self.opts["hours"] and worked > 0:
-            left = norm - worked
-            for k in range((norm - 1) // 3600, 0, -1):               # 7, 6, … 1 при норме 8 ч (сам «8» — начало дня)
+        left = self.leave_left(day)
+        if self.opts["hours"] and left is not None:
+            for k in range((norm + self.lunch_len_s - 1) // 3600, 0, -1):        # 8, 7, … 1 при норме 8 ч и обеде 1 ч
                 if left <= k * 3600 and k not in day["notified"]:
                     day["notified"].append(k)
                     if left > k * 3600 - 120:                         # свежее пересечение; после перезапуска старые молча помечаются
                         self._fire("hour", hours_left_text(k), m)
-            if left <= 0 and 0 not in day["notified"]:
-                day["notified"].append(0)
+            if left <= 0 and -1 not in day["notified"]:
+                day["notified"].append(-1)
                 if -left < 120:
-                    self._fire("done", "Норма выполнена — можно заканчивать", m)
+                    self._fire("done", "Время ухода — можно идти домой", m)
+        if self.opts["hours"] and worked > 0 and worked >= norm and 0 not in day["notified"]:
+            day["notified"].append(0)
+            if worked - norm < 120:
+                self._fire("done", "Норма выполнена", m)
         if self.opts["brk"] and not day.get("no_break") and self.streak >= self._next_break:
             step = self.opts["brk_min"] * 60
             self._next_break = (int(self.streak // step) + 1) * step

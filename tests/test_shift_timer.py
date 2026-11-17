@@ -450,7 +450,8 @@ def test_hour_notices_each_full_hour(tmp_path):
     n = Notes(tr)
     tr.tick()
     run(c, tr, 3 * 3600 + 30)
-    assert n.items == [("hour", "Осталось 2 часа"), ("hour", "Остался 1 час"), ("done", "Норма выполнена — можно заканчивать")]
+    # уход = приход + норма (3 ч) + обед (1 ч) = 4 ч: «Осталось 3 часа» через час после прихода, и так до «Остался 1 час»
+    assert n.items == [("hour", "Осталось 3 часа"), ("hour", "Осталось 2 часа"), ("hour", "Остался 1 час"), ("done", "Норма выполнена")]
 
 
 def test_hour_notice_wording():
@@ -460,18 +461,19 @@ def test_hour_notice_wording():
     assert timetrack.hours_left_text(21) == "Остался 21 час" and timetrack.hours_left_text(6) == "Осталось 6 часов"
 
 
-def test_eight_hour_norm_gives_7_to_1(tmp_path):
+def test_eight_hour_norm_gives_8_to_1_until_departure(tmp_path):
     f = str(tmp_path / 'h.json')
     c = Clock()
     tr = c.tracker(f, norm=8 * 3600)
     tr.set_notify(True, False, 60)
     n = Notes(tr)
     tr.tick()
-    for _ in range(8 * 3600 + 10):                         # весь день одним прогоном
+    for _ in range(9 * 3600 + 10):                         # весь день (8 ч нормы + 1 ч обеда) одним прогоном
         c.wall += 1; c.m += 1
         tr.tick()
     texts = [t for k, t in n.items if k == "hour"]
-    assert texts == ["Осталось 7 часов", "Осталось 6 часов", "Осталось 5 часов", "Осталось 4 часа", "Осталось 3 часа", "Осталось 2 часа", "Остался 1 час"]
+    assert texts == ["Осталось 8 часов", "Осталось 7 часов", "Осталось 6 часов", "Осталось 5 часов", "Осталось 4 часа", "Осталось 3 часа", "Осталось 2 часа", "Остался 1 час"]
+    assert ("done", "Время ухода — можно идти домой") in n.items and ("done", "Норма выполнена") in n.items
 
 
 def test_old_hours_are_silent_after_restart_and_not_repeated(tmp_path):
@@ -568,9 +570,9 @@ def test_notice_visible_in_snapshot_for_ten_seconds(tmp_path):
     tr = c.tracker(str(tmp_path / 'h.json'), norm=2 * 3600)
     tr.set_notify(True, False, 60)
     tr.tick()
-    run(c, tr, 3600)
+    run(c, tr, 3600)                                       # уход через 3 ч (2 ч нормы + 1 ч обеда): через час — «Осталось 2 часа»
     s = tr.snapshot()
-    assert s["notice"] and s["notice"]["kind"] == "hour" and s["notice"]["text"] == "Остался 1 час"
+    assert s["notice"] and s["notice"]["kind"] == "hour" and s["notice"]["text"] == "Осталось 2 часа"
     nid = s["notice"]["id"]
     run(c, tr, 11)
     assert tr.snapshot()["notice"] is None
@@ -1369,3 +1371,45 @@ def test_paste_files_and_images_into_task(tmp_path, monkeypatch):
     monkeypatch.setattr(shift_app, 'clipboard_files', lambda: [])
     assert api.task_paste(tid)["added"] == 0                                 # в буфере нет файлов — тогда пробуем картинку из браузера
     assert shift_app.clipboard_files() == [] or sys.platform == 'win32'      # не Windows — безопасно пусто
+
+
+def test_departure_timer_is_wall_clock_and_ignores_lock_and_lunch(tmp_path):
+    c = Clock(h=9, mi=2, s=11)
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=8 * 3600)
+    tr.tick()
+    d = tr.days['2026-11-17']
+    assert tr.leave_left(d) == 9 * 3600                                  # приход 09:02:11 → уход 18:02:11, 9 часов
+    run(c, tr, 1800)
+    assert tr.leave_left(d) == 9 * 3600 - 1800
+    c.locked = True
+    run(c, tr, 1200)                                                      # 20 минут блокировки: отработанное стоит, таймер ухода — нет
+    c.locked = False
+    run(c, tr, 5)
+    assert tr.leave_left(d) == 9 * 3600 - 1800 - 1200 - 5
+    w = tr.snapshot()["worked_s"]
+    assert w < 1800 + 10                                                  # а отработанное остановилось на время блокировки
+    tr.start_lunch()
+    run(c, tr, 1200)                                                      # обед 20 минут вместо часа
+    tr.end_lunch()
+    assert tr.leave_left(d) == 9 * 3600 - 1800 - 1200 - 5 - 1200          # уход не сдвинулся: тот же момент 18:02:11
+    run(c, tr, 600)
+    left = tr.leave_left(d)
+    assert left == 9 * 3600 - (1800 + 1200 + 5 + 1200 + 600)
+    tr.set_lunch(30 * 60)                                                  # меняется только если поменяли обед в настройках
+    assert tr.leave_left(d) == left - 1800
+
+
+def test_leave_time_notice_fires_once_when_the_clock_reaches_it(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=2 * 3600)
+    tr.set_notify(True, False, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 600)
+    c.locked = True
+    run(c, tr, 80 * 60)                                                   # 80 минут блокировки: отработанное стоит, время ухода идёт
+    c.locked = False
+    run(c, tr, 3 * 3600 - 600 - 80 * 60 + 30)                             # до момента ухода (приход + 2 ч + 1 ч обеда) и чуть дальше
+    done = [t for k, t in n.items if k == "done"]
+    assert done.count("Время ухода — можно идти домой") == 1               # приходит в 12:00 по часам, хотя норма по отработанному ещё не выполнена
+    assert "Норма выполнена" not in done and tr.snapshot()["worked_s"] < 2 * 3600

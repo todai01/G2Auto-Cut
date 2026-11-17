@@ -1,34 +1,42 @@
 const C = 2 * Math.PI * 104;
 let TRAY = false;
-const CHIP = { work: 'Идёт учёт времени', paused: 'Пауза — экран заблокирован', done: 'Норма выполнена', lunch: 'Обед' };
+const CHIP = { work: 'Идёт учёт времени', paused: 'Экран заблокирован — отработанное стоит', done: 'Время ухода', lunch: 'Обед' };
 
 function render() {
     const v = view();
     if (!v) { setText($('big'), '--:--'); return; }
-    const { d, c, L, lunch } = v, s = App.s;
-    const phase = lunch ? 'lunch' : c.phase;
-    $('chip').className = 'chip ' + phase;
-    setText($('chipT'), CHIP[phase]);
+    const { d, c, day, L, lunch } = v, s = App.s;
+    // Большой таймер — до ухода (приход + норма + обед): простые часы, не стоят ни на блокировке, ни на обеде.
+    // Блокировка и обед останавливают только «Отработано» (плитка и «Осталось отработать»).
+    const locked = d.locked && !L.on;
+    const done = !!day && day.phase === 'done';
+    const phase = lunch ? 'lunch' : done ? 'done' : 'work';
+    $('chip').className = 'chip ' + (lunch ? 'lunch' : locked ? 'paused' : done ? 'done' : 'work');
+    setText($('chipT'), lunch ? CHIP.lunch : locked ? CHIP.paused : done ? CHIP.done : CHIP.work);
     const big = $('big');
-    big.className = 'big' + (s.seconds || phase === 'done' ? ' ss' : ' s') + (phase === 'paused' ? ' muted' : '');
-    $('ring').className = 'ringbox ' + (c.soon && phase === 'work' ? 'soon ' : '') + phase;
+    big.className = 'big' + (s.seconds || phase === 'done' ? ' ss' : ' s');
+    $('ring').className = 'ringbox ' + (day && day.soon && phase === 'work' ? 'soon ' : '') + phase;
 
     if (lunch) {
         setText($('cap'), 'Обед'); setText(big, Shift.clock(lunch.remain, s.seconds));
-        setText($('sub'), lunch.over ? 'обед закончился' : 'работа на паузе');
-    } else if (c.phase === 'done') {
-        setText($('cap'), 'Норма выполнена'); setText(big, '+' + Shift.clock(c.over, s.seconds)); setText($('sub'), 'сверх нормы');
+        setText($('sub'), lunch.over ? 'обед закончился' : day ? `работа на паузе · уход в ${day.leave}` : 'работа на паузе');
+    } else if (!day) {
+        setText($('cap'), 'До ухода'); setText(big, '--:--'); setText($('sub'), 'ждём прихода');
+    } else if (done) {
+        setText($('cap'), 'Время ухода прошло'); setText(big, '+' + Shift.clock(day.over, s.seconds)); setText($('sub'), `уход был в ${day.leave}`);
     } else {
-        setText($('cap'), 'Осталось'); setText(big, Shift.clock(c.remain, s.seconds));
-        setText($('sub'), c.phase === 'paused' ? 'время стоит' : `закончите около ${Shift.hm(c.finish)}`);
+        setText($('cap'), 'До ухода'); setText(big, Shift.clock(day.remain, s.seconds)); setText($('sub'), `уход в ${day.leave}`);
     }
-    setText($('pct'), lunch ? `${Math.floor(lunch.progress * 100)}% обеда` : `${Math.floor(c.progress * 100)}% нормы`);
-    $('fill').style.strokeDashoffset = String(C * (1 - (lunch ? lunch.progress : c.progress)));
+    const prog = lunch ? lunch.progress : day ? day.progress : 0;
+    setText($('pct'), lunch ? `${Math.floor(lunch.progress * 100)}% обеда` : day ? `${Math.floor(day.progress * 100)}% дня` : '');
+    $('fill').style.strokeDashoffset = String(C * (1 - prog));
 
     setText($('tWorked'), Shift.clock(c.worked, s.seconds));
+    $('tileWorked').classList.toggle('paused', d.locked || L.on);                      // отработанное стоит
     setText($('tArr'), Shift.hmStr(d.arrival));
     setText($('rNorm'), `${Shift.hmSec(d.norm_s)} + ${Shift.hmSec(L.len_s)} ч`);
-    setText($('rFinish'), c.phase === 'done' ? 'уже можно' : c.finish ? Shift.hm(c.finish) : '—');
+    setText($('rFinish'), day ? day.leave : '—');
+    setText($('rLeft'), c.phase === 'done' ? 'норма выполнена' : Shift.clock(c.remain, s.seconds) + (d.locked || L.on ? ' · пауза' : ''));
     setText($('rBreak'), d.events_n ? `${Shift.words(d.break_s, false) || '0 мин'} · ${d.events_n}×` : 'нет');
     setText($('bMini'), s.mini_visible ? 'Скрыть мини' : 'Мини-окно');
     setText($('bLunch'), L.on ? 'Закончить обед' : 'Обед');

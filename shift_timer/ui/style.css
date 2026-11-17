@@ -433,3 +433,6 @@ input:disabled{ opacity:.55; }
 .acc-row.off{ opacity:.55; }
 .acc-b{ grid-column:1/-1; display:flex; flex-wrap:wrap; gap:6px; } .acc-b .btn{ height:30px; font-size:12px; padding:0 10px; }
 .lock-card [hidden]{ display:none !important; }
+
+/* отработанное стоит (блокировка / обед) — таймер ухода при этом идёт */
+.tile.paused .v, .mini .w.paused{ color:var(--warn); }

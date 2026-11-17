@@ -51,5 +51,6 @@ function view() {
     const L = d.lunch || { on: false, len_s: 3600, plan_s: 0 };
     const el = liveLunch(), left = L.on ? Math.max(0, L.len_s - el) : L.plan_s;          // обед ещё впереди → день = норма + обед
     const c = Shift.calc(liveWorked(), d.norm_s, Date.now(), d.locked && !L.on, s.seconds, left);
-    return { d, c, L, lunch: L.on ? Shift.lunch(el, L.len_s, s.seconds) : null };
+    const day = Shift.day(d.arrival, d.norm_s, L.len_s, Date.now(), s.seconds);          // таймер ухода: приход + норма + обед, от блокировок не зависит
+    return { d, c, day, L, lunch: L.on ? Shift.lunch(el, L.len_s, s.seconds) : null };
 }

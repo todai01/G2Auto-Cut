@@ -78,4 +78,17 @@ assert.strictEqual(S.dur(3 * 86400 + 7200), '3 д 2 ч'); assert.strictEqual(S.d
 const TNOW = new Date(2026, 10, 17, 14, 0, 0);
 assert.strictEqual(S.when('2026-11-17T09:12:00', TNOW), 'сегодня 09:12'); assert.strictEqual(S.when('2026-11-16T16:40:00', TNOW), 'вчера 16:40');
 assert.strictEqual(S.when('2026-11-05T08:05:00', TNOW), '05.11 08:05'); assert.strictEqual(S.when('мусор', TNOW), '');
+// таймер ухода: приход + норма + обед, простые часы — от отработанного и блокировок не зависит
+const at = (h, m, sec) => new Date(2026, 10, 17, h, m, sec).getTime();
+let dd = S.day('09:02:11', 8 * H, H, at(14, 0, 0), true);
+assert.strictEqual(S.clock(dd.remain, true), '04:02:11'); assert.strictEqual(dd.leave, '18:02'); assert.strictEqual(dd.phase, 'work');
+assert.ok(Math.abs(dd.progress - (4 * H + 57 * 60 + 49) / (9 * H)) < 1e-9); assert.strictEqual(dd.soon, false);
+assert.strictEqual(S.day('09:02:11', 8 * H, H, at(14, 0, 0), false).remain, 4 * H + 3 * 60);              // без секунд — вверх
+assert.strictEqual(S.day('09:02', 8 * H, H, at(9, 2, 0), true).remain, 9 * H); assert.strictEqual(S.day('09:02', 8 * H, H, at(9, 2, 0), true).progress, 0);
+assert.strictEqual(S.day('09:02:11', 8 * H, H, at(17, 40, 0), true).soon, true);
+dd = S.day('09:02:11', 8 * H, H, at(18, 2, 11), true); assert.strictEqual(dd.phase, 'done'); assert.strictEqual(dd.remain, 0); assert.strictEqual(dd.progress, 1);
+dd = S.day('09:02:11', 8 * H, H, at(18, 32, 11), true); assert.strictEqual(dd.phase, 'done'); assert.strictEqual(S.clock(dd.over, true), '00:30:00');
+assert.strictEqual(S.day(null, 8 * H, H, at(14, 0, 0), true), null); assert.strictEqual(S.day('мусор', 8 * H, H, at(14, 0, 0), true), null);
+// обед короче или длиннее часа уход не двигает (длина обеда — настройка, а не факт); отработанное считается отдельно
+assert.strictEqual(S.day('09:00', 8 * H, H, at(12, 0, 0), true).remain, 6 * H); assert.strictEqual(S.day('09:00', 8 * H, 1800, at(12, 0, 0), true).leave, '17:30');
 console.log('shift logic: OK');
