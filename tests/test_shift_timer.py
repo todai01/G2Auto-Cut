@@ -10,6 +10,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'shift_timer'))
 import app as shift_app                                    # noqa: E402
+import chime                                               # noqa: E402
 import timetrack                                           # noqa: E402
 
 
@@ -602,3 +603,54 @@ def test_js_logic():
     r = subprocess.run(['node', os.path.join(ROOT, 'tests', 'shift_logic.test.js')], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert 'OK' in r.stdout
+
+
+# ---------- тихий звук ----------
+def _samples(data):
+    import io
+    import struct
+    import wave
+    with wave.open(io.BytesIO(data)) as w:
+        assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, chime.RATE)
+        raw = w.readframes(w.getnframes())
+    return struct.unpack('<%dh' % (len(raw) // 2), raw)
+
+
+def test_chime_is_quiet_single_fading_note():
+    x = _samples(chime.make_wav())
+    assert abs(len(x) / chime.RATE - chime.DURATION) < 0.01
+    peak = max(abs(v) for v in x) / 32767
+    assert 0.05 < peak <= 0.5                                # слышно, но тихо (не больше половины максимума)
+    assert max(abs(v) for v in x[:20]) < 600                 # начало плавное — без щелчка
+    assert max(abs(v) for v in x[-200:]) < 40                # конец — тишина, не обрыв
+    def env(a, b):                                           # огибающая на куске
+        return max(abs(v) for v in x[int(a * chime.RATE):int(b * chime.RATE)])
+    assert env(0.0, 0.3) > env(0.6, 0.9) > env(1.2, 1.5) > env(1.9, 2.2)    # звук монотонно затухает
+    assert env(0.0, 0.01) < env(0.05, 0.3) / 2               # и нарастает за доли секунды
+
+
+def test_chime_is_one_note():
+    """Основной тон 659 Гц сильнее любой другой частоты: одна нота, а не аккорд."""
+    import cmath
+    import math
+    x = _samples(chime.make_wav(duration=1.0))[4000:8096]    # кусок после атаки
+    def power(f):
+        return abs(sum(v * cmath.exp(-2j * math.pi * f * i / chime.RATE) for i, v in enumerate(x[:2048])))
+    main = power(chime.FREQ)
+    assert main > 3 * max(power(f) for f in (440, 523.25, 784, 880))
+
+
+def test_chime_silent_off_windows():
+    if sys.platform != 'win32':
+        assert chime.play_async() is False
+
+
+def test_sound_setting_controls_playing(tmp_path, monkeypatch):
+    c, api = make_api(tmp_path)
+    played = []
+    monkeypatch.setattr(chime, 'play_async', lambda: played.append(1) or True)
+    api._notice({"id": 1, "kind": "hour", "text": "x"})
+    assert played == [1] and shift_app.DEFAULTS["sound"] is True
+    api.save_settings({"sound": False})
+    api._notice({"id": 2, "kind": "hour", "text": "x"})
+    assert played == [1]                                     # звук выключен — тишина

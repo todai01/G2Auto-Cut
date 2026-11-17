@@ -16,12 +16,13 @@ import tempfile
 import threading
 import time
 
+import chime
 import timetrack
 
 APP_NAME = 'ShiftTimer'
 TITLE = 'Конец смены'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
-            "notify_hours": True, "notify_break": True, "break_min": 60,
+            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
 MAIN_SIZE = (380, 690)
 MINI_SIZE = (204, 100)
@@ -60,7 +61,7 @@ def clean(raw):
     sec = timetrack.to_sec(raw.get('norm'))
     if sec is not None and 15 * 60 <= sec < 24 * 3600:
         s['norm'] = timetrack.hm_text(sec)
-    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart', 'notify_hours', 'notify_break'):
+    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart', 'notify_hours', 'notify_break', 'sound'):
         if isinstance(raw.get(k), bool):
             s[k] = raw[k]
     bm = raw.get('break_min')
@@ -155,6 +156,8 @@ class Api:
 
     def _notice(self, n):
         """Новое уведомление: мини-окно его покажет (JS забирает из get_day). Окно скрыто — покажем его на время уведомления."""
+        if self._s["sound"]:
+            chime.play_async()                           # тихая одна нота
         w = self._mini
         if w is not None and not self._s["mini_visible"]:
             try:
@@ -367,6 +370,7 @@ def selftest():
         check('таблица Excel', os.path.getsize(os.path.join(tmpd, 't.xlsx')) > 1000)
     except Exception as e:
         check(f'таблица Excel: {e}', False)
+    check('звук: нота строится', len(chime.make_wav(duration=0.2)) > 1000)
     check('блокировка: функция отвечает', timetrack.is_locked() in (True, False))
     try:
         import pystray
