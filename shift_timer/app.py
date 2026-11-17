@@ -1,12 +1,12 @@
-"""Конец смены — мини-приложение: сколько отработано активного времени и сколько осталось до нормы.
+"""GTime — мини-приложение: сколько отработано активного времени и сколько осталось до нормы.
 
 Время идёт, пока Windows разблокирован, и стоит на блокировке. Журнал по дням (приход, уход, отработано, моменты
 блокировки и разблокировки) — в приложении и в Excel. Живёт в фоне: значок в трее, автозапуск при входе в Windows. Главное окно + маленькое окошко без рамки Windows (поверх окон, тянется мышью).
-Настройки — %APPDATA%\\ShiftTimer\\settings.json, журнал — history.json там же. Интерфейс — папка ui (HTML), окна — pywebview.
+Настройки — %APPDATA%\\GTime\\settings.json, журнал — history.json там же. Интерфейс — папка ui (HTML), окна — pywebview.
 
     python shift_timer/app.py            # запуск
-    ShiftTimer.exe --selftest            # проверка без окон: отчёт в %TEMP%\\ShiftTimer_selftest.txt
-    ShiftTimer.exe --minimized           # запуск в фоне, значок в трее (так стартует из автозапуска)
+    GTime.exe --selftest                  # проверка без окон: отчёт в %TEMP%\\GTime_selftest.txt
+    GTime.exe --minimized                 # запуск в фоне, значок в трее (так стартует из автозапуска)
 """
 import json
 import os
@@ -19,8 +19,9 @@ import time
 import chime
 import timetrack
 
-APP_NAME = 'ShiftTimer'
-TITLE = 'Конец смены'
+APP_NAME = 'GTime'
+OLD_APP_NAME = 'ShiftTimer'        # прежнее название: оттуда переносим журнал и настройки
+TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
@@ -35,6 +36,24 @@ def resource(rel):
 
 def data_dir():
     return os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), APP_NAME)
+
+
+def migrate_old_data(base=None):
+    """Приложение раньше называлось ShiftTimer: журнал и настройки из его папки копируем в новую (старую не трогаем)."""
+    import shutil
+    base = base or os.environ.get('APPDATA') or os.path.expanduser('~')
+    old, new = os.path.join(base, OLD_APP_NAME), os.path.join(base, APP_NAME)
+    moved = []
+    for f in ('history.json', 'settings.json'):
+        src, dst = os.path.join(old, f), os.path.join(new, f)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            try:
+                os.makedirs(new, exist_ok=True)
+                shutil.copy2(src, dst)
+                moved.append(f)
+            except OSError:
+                pass
+    return moved
 
 
 def settings_file():
@@ -107,6 +126,10 @@ def set_autostart(on):
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Run', 0, winreg.KEY_SET_VALUE) as k:
+            try:
+                winreg.DeleteValue(k, OLD_APP_NAME)         # автозапуск старого ShiftTimer.exe не нужен
+            except FileNotFoundError:
+                pass
             if on:
                 winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, f'"{sys.executable}" --minimized')
             else:
@@ -341,6 +364,7 @@ def start_tray(api):
 
 def run():
     import webview
+    migrate_old_data()
     api = Api()
     s = api.get_settings()
     set_autostart(s["autostart"])                        # путь к exe в автозапуске всегда актуальный

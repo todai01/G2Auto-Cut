@@ -1,4 +1,4 @@
-"""Мини-приложение «Конец смены» (shift_timer/): учёт активного времени, журнал, Excel, настройки (JS — через node)."""
+"""Мини-приложение GTime (shift_timer/): учёт активного времени, журнал, Excel, настройки (JS — через node)."""
 import os
 import shutil
 import subprocess
@@ -868,6 +868,34 @@ def test_api_lunch_and_setting(tmp_path):
     assert api.save_settings({"lunch_min": 5})["lunch_min"] == 60 and api.save_settings({"lunch_min": "x"})["lunch_min"] == 60
     assert api.lunch_toggle()["on"] is True and api.get_day()["lunch"]["on"] is True
     assert api.lunch_toggle()["on"] is False and api.get_day()["lunch"]["on"] is False
+
+
+# ---------- переименование ShiftTimer → GTime ----------
+def test_app_name_and_data_migration(tmp_path):
+    assert shift_app.APP_NAME == 'GTime' and shift_app.TITLE == 'GTime'
+    old = tmp_path / 'ShiftTimer'
+    old.mkdir()
+    (old / 'history.json').write_text('{"days": {"2026-11-10": {"arrival": "09:00:00", "leave": "18:00:00", "worked": 28800, "norm": 28800}}}', encoding='utf-8')
+    (old / 'settings.json').write_text('{"norm": "07:30", "theme": "dark"}', encoding='utf-8')
+    assert sorted(shift_app.migrate_old_data(str(tmp_path))) == ['history.json', 'settings.json']
+    new = tmp_path / 'GTime'
+    assert shift_app.load_settings(str(new / 'settings.json'))["norm"] == "07:30"
+    assert Clock().tracker(str(new / 'history.json')).history()["rows"][0]["worked_s"] == 28800     # журнал на месте
+    assert (old / 'history.json').exists()                                                         # старую папку не трогаем
+    (new / 'history.json').write_text('{"days": {}}', encoding='utf-8')                            # уже есть своё — не затираем
+    assert shift_app.migrate_old_data(str(tmp_path)) == []
+    assert Clock().tracker(str(new / 'history.json')).history()["rows"] == []
+
+
+def test_migration_without_old_folder_is_noop(tmp_path):
+    assert shift_app.migrate_old_data(str(tmp_path)) == [] and not (tmp_path / 'GTime').exists()
+
+
+def test_ui_uses_new_name():
+    ui = os.path.join(ROOT, 'shift_timer', 'ui')
+    for f in ('main.html', 'mini.html'):
+        text = open(os.path.join(ui, f), encoding='utf-8').read()
+        assert 'GTime' in text and 'Конец смены' not in text
 
 
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')

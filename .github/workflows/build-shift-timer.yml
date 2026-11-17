@@ -1,6 +1,6 @@
-# Сборка мини-приложения «Конец смены» — один файл ShiftTimer.exe (shift_timer/).
-# Выкладывается в Releases как shift-timer-<номер>: скачать ShiftTimer.exe и запустить.
-name: Сборка ShiftTimer.exe
+# Сборка мини-приложения GTime — один файл GTime.exe (shift_timer/).
+# Выкладывается в Releases как gtime-<номер>: скачать GTime.exe и запустить.
+name: Сборка GTime.exe
 
 # Только вручную (Actions → Run workflow): exe собираем и выкладываем по команде, а не на каждый пуш.
 on:
@@ -30,17 +30,17 @@ jobs:
         env:
           PYTHONUTF8: '1'
         run: >
-          pyinstaller --noconfirm --clean --onefile --windowed --name ShiftTimer
+          pyinstaller --noconfirm --clean --onefile --windowed --name GTime
           --icon shift_timer/icon.ico --add-data "shift_timer/ui;ui" --add-data "shift_timer/icon.ico;." --collect-all webview --collect-all pystray
           shift_timer/app.py
 
       - name: Самопроверка собранного exe
         shell: pwsh
         run: |
-          $exe = (Resolve-Path dist\ShiftTimer.exe).Path
+          $exe = (Resolve-Path dist\GTime.exe).Path
           $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
-          Get-Content "$env:TEMP\ShiftTimer_selftest.txt" -Encoding utf8
-          if ($p.ExitCode -ne 0) { throw "Самопроверка ShiftTimer.exe не прошла" }
+          Get-Content "$env:TEMP\GTime_selftest.txt" -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Самопроверка GTime.exe не прошла" }
           Get-Item $exe | Format-Table Name, Length
 
       - name: Выложить в Releases
@@ -49,5 +49,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $n = "${{ github.run_number }}"
-          $notes = "Конец смены — сборка $n, коммит ${{ github.sha }}.`n`nСкачайте ShiftTimer.exe и запустите (установка не нужна). Нужен Microsoft Edge WebView2 — он есть в Windows 10/11."
-          gh release create "shift-timer-$n" dist\ShiftTimer.exe --target "${{ github.sha }}" --title "Конец смены — сборка $n" --notes "$notes" --prerelease
+          $notes = "GTime — сборка $n, коммит ${{ github.sha }}.`n`nСкачайте GTime.exe и запустите (установка не нужна). Нужен Microsoft Edge WebView2 — он есть в Windows 10/11."
+          gh release create "gtime-$n" dist\GTime.exe --target "${{ github.sha }}" --title "GTime — сборка $n" --notes "$notes" --prerelease
