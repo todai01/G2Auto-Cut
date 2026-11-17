@@ -81,9 +81,14 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 
 ## Отдельные мини-приложения
 
-- `shift_timer/` — «Конец смены»: не часть GVox, свой pywebview-проект (`app.py`, интерфейс `ui/`, расчёт `ui/shift.js`, иконка).
-  Два окна без рамки Windows (главное и мини, `Api` общий), настройки — `%APPDATA%\ShiftTimer\settings.json`. Тесты: `tests/test_shift_timer.py`,
-  `tests/shift_logic.test.js` (node). Exe — `.github/workflows/build-shift-timer.yml` → Releases `shift-timer-N` (один `ShiftTimer.exe`).
+- `shift_timer/` — «Конец смены»: не часть GVox, свой pywebview-проект (`app.py` окна / настройки / трей, `timetrack.py` учёт, интерфейс `ui/`,
+  расчёт `ui/shift.js`, иконка). Считает **отработанное активное время** до нормы (по умолчанию 8 ч): стоит, пока Windows заблокирован
+  (`is_locked` — OpenInputDesktop, опрос раз в секунду) или компьютер спал (шаг тика > `CAP`). Журнал по дням — `%APPDATA%\ShiftTimer\history.json`
+  (приход, уход, отработано, norm, `events` — моменты блокировки / разблокировки / сна; метка `alive` закрывает блокировку, если выключили
+  компьютер). Excel — `export_xlsx` (листы «Учёт времени» и «Блокировки») в `Документы\ShiftTimer`. Живёт в фоне: значок в трее (`pystray`),
+  крестик → «В фон», автозапуск (`autostart` по умолчанию включён, реестр Run, `--minimized`). Два окна без рамки (главное и мини, `Api` общий).
+  Тесты: `tests/test_shift_timer.py` (часы подменяются — `Clock`), `tests/shift_logic.test.js` (node). Exe — `.github/workflows/build-shift-timer.yml`,
+  **только вручную** (workflow_dispatch) → Releases `shift-timer-N` (один `ShiftTimer.exe`); собирать по команде пользователя.
 
 ## Предметная область
 

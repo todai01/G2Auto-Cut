@@ -1,61 +1,55 @@
-// node tests/shift_logic.test.js — проверка расчёта смены (запускается и из pytest).
+// node tests/shift_logic.test.js — проверка расчёта по отработанному времени (запускается и из pytest).
 const assert = require('assert');
 const S = require('../shift_timer/ui/shift.js');
-const D = (h, m, s = 0, day = 17) => new Date(2026, 10, day, h, m, s);
+const NOW = new Date(2026, 10, 17, 14, 0, 0).getTime();
+const H = 3600;
 
-// разбор времени
-assert.strictEqual(S.parseHM('09:30'), 570);
-assert.strictEqual(S.parseHM('9:05'), 545);
+assert.strictEqual(S.parseHM('08:30'), 510);
 assert.strictEqual(S.parseHM('24:00'), null);
 assert.strictEqual(S.parseHM('12:60'), null);
 assert.strictEqual(S.parseHM(''), null);
 
-// обычная смена 09:00–18:00
-let r = S.report(D(15, 30, 0), '09:00', '18:00', true);
-assert.strictEqual(r.phase, 'work');
-assert.strictEqual(S.clock(r.remain, true), '02:30:00');
-assert.strictEqual(S.clock(r.elapsed, true), '06:30:00');
-assert.ok(Math.abs(r.progress - 6.5 / 9) < 1e-9);
-assert.strictEqual(S.words(r.remain, false), '2 ч 30 мин');
+// идёт работа: отработано 5:10:30 из 8 ч
+let c = S.calc(5 * H + 10 * 60 + 30, 8 * H, NOW, false, true);
+assert.strictEqual(c.phase, 'work');
+assert.strictEqual(S.clock(c.remain, true), '02:49:30');
+assert.strictEqual(S.clock(c.worked, true), '05:10:30');
+assert.ok(Math.abs(c.progress - (5 * H + 630) / (8 * H)) < 1e-9);
+assert.strictEqual(S.hm(c.finish), '16:50');                 // 14:00 + 2:49:30 = 16:49:30 → вверх до минуты
+assert.strictEqual(c.soon, false);
+assert.strictEqual(S.words(S.calc(5 * H + 630, 8 * H, NOW, false, false).remain, false), '2 ч 50 мин');   // без секунд — вверх
 
-// до начала и после конца
-r = S.report(D(8, 0), '09:00', '18:00', true);
-assert.strictEqual(r.phase, 'before'); assert.strictEqual(S.clock(r.untilStart, true), '01:00:00'); assert.strictEqual(r.progress, 0);
-r = S.report(D(18, 45), '09:00', '18:00', true);
-assert.strictEqual(r.phase, 'after'); assert.strictEqual(S.clock(r.over, true), '00:45:00'); assert.strictEqual(r.progress, 1);
+// экран заблокирован: пауза, прогноза ухода нет
+c = S.calc(3 * H, 8 * H, NOW, true, true);
+assert.strictEqual(c.phase, 'paused'); assert.strictEqual(c.finish, null);
 
-// ровно на границах
-assert.strictEqual(S.report(D(9, 0), '09:00', '18:00', true).phase, 'work');
-assert.strictEqual(S.report(D(18, 0), '09:00', '18:00', true).phase, 'after');
-assert.strictEqual(S.report(D(8, 59, 59), '09:00', '18:00', true).phase, 'before');
+// норма выполнена и переработка
+c = S.calc(8 * H, 8 * H, NOW, false, true);
+assert.strictEqual(c.phase, 'done'); assert.strictEqual(c.remain, 0); assert.strictEqual(c.over, 0); assert.strictEqual(c.progress, 1);
+c = S.calc(8 * H + 25 * 60 + 40, 8 * H, NOW, false, true);
+assert.strictEqual(c.phase, 'done'); assert.strictEqual(c.over, 25 * 60 + 40); assert.strictEqual(c.finish, null);
+assert.strictEqual(c.progress, 1);
+c = S.calc(8 * H + 100, 8 * H, NOW, true, true);             // пауза после выполненной нормы — всё равно «выполнена»
+assert.strictEqual(c.phase, 'done');
 
-// без секунд — вверх: за 20 секунд до конца ещё «00:01», не «00:00»
-r = S.report(D(17, 59, 40), '09:00', '18:00', false);
-assert.strictEqual(S.clock(r.remain, false), '00:01');
-r = S.report(D(15, 30, 1), '09:00', '18:00', false);
-assert.strictEqual(S.clock(r.remain, false), '02:30');
-r = S.report(D(15, 29, 59), '09:00', '18:00', false);
-assert.strictEqual(S.clock(r.remain, false), '02:31');
+// без секунд: оставшееся — вверх, отработанное — вниз
+c = S.calc(8 * H - 20, 8 * H, NOW, false, false);
+assert.strictEqual(S.clock(c.remain, false), '00:01'); assert.strictEqual(c.soon, true);
+c = S.calc(8 * H - 3 * H - 59, 8 * H, NOW, false, false);
+assert.strictEqual(S.clock(c.remain, false), '03:01'); assert.strictEqual(S.clock(c.worked, false), '04:59');   // осталось 3:00:59 → 03:01
+assert.strictEqual(S.clock(S.calc(5 * H + 59, 8 * H, NOW, false, false).worked, false), '05:00');   // 5:00:59 → 05:00
+assert.strictEqual(S.clock(S.calc(5 * H - 1, 8 * H, NOW, false, false).worked, false), '04:59');
 
-// ночная смена 22:00–06:00: в 23:00 и в 02:00 (смена началась «вчера»), днём — до начала
-r = S.report(D(23, 0), '22:00', '06:00', true);
-assert.strictEqual(r.phase, 'work'); assert.strictEqual(S.clock(r.remain, true), '07:00:00');
-r = S.report(D(2, 0), '22:00', '06:00', true);
-assert.strictEqual(r.phase, 'work'); assert.strictEqual(S.clock(r.remain, true), '04:00:00'); assert.strictEqual(S.hm(r.start), '22:00');
-assert.strictEqual(r.start.getDate(), 16);
-r = S.report(D(12, 0), '22:00', '06:00', true);
-assert.strictEqual(r.phase, 'before'); assert.strictEqual(S.clock(r.untilStart, true), '10:00:00');
-
-// одинаковые время начала и конца — сутки
-r = S.report(D(10, 0), '09:00', '09:00', true);
-assert.strictEqual(r.phase, 'work'); assert.strictEqual(S.clock(r.remain, true), '23:00:00');
-
-// неверное время
-assert.strictEqual(S.report(D(10, 0), 'xx', '18:00', true), null);
+// в начале дня
+c = S.calc(0, 8 * H, NOW, false, true);
+assert.strictEqual(S.clock(c.remain, true), '08:00:00'); assert.strictEqual(c.progress, 0);
 
 // подписи
-assert.strictEqual(S.words(45 * 60000, false), '45 мин');
+assert.strictEqual(S.words(45 * 60, false), '45 мин');
 assert.strictEqual(S.words(0, false), '0 мин');
-assert.strictEqual(S.words(3600000 + 5000, true), '1 ч 5 с');
-assert.strictEqual(S.clock(3 * 3600000 + 7 * 60000 + 9000, true), '03:07:09');
+assert.strictEqual(S.words(H + 5, true), '1 ч 5 с');
+assert.strictEqual(S.clock(3 * H + 7 * 60 + 9, true), '03:07:09');
+assert.strictEqual(S.hmStr('09:02:11'), '09:02'); assert.strictEqual(S.hmStr(null), '—');
+assert.strictEqual(S.signed(720), '+0:12'); assert.strictEqual(S.signed(-3900), '−1:05'); assert.strictEqual(S.signed(0), '+0:00');
+assert.strictEqual(S.hmSec(8 * H), '8:00'); assert.strictEqual(S.hmSec(8 * H + 30 * 60), '8:30');
 console.log('shift logic: OK');

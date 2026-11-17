@@ -19,7 +19,7 @@
           <defs>
             <linearGradient id="g-work" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b6cf6"/><stop offset="1" stop-color="#22c3a0"/></linearGradient>
             <linearGradient id="g-soon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#f97316"/></linearGradient>
-            <linearGradient id="g-after" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c3a0"/><stop offset="1" stop-color="#34d399"/></linearGradient>
+            <linearGradient id="g-done" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c3a0"/><stop offset="1" stop-color="#34d399"/></linearGradient>
           </defs>
           <circle class="track" cx="118" cy="118" r="104"/>
           <circle class="fill" id="fill" cx="118" cy="118" r="104" stroke-dasharray="653.45" stroke-dashoffset="653.45"/>
@@ -31,21 +31,37 @@
           <div class="pct" id="pct"></div>
         </div>
       </div>
+      <div class="tiles">
+        <div class="tile"><span class="k">Отработано</span><span class="v num" id="tWorked">—</span></div>
+        <div class="tile"><span class="k">Приход</span><span class="v num" id="tArr">—</span></div>
+      </div>
       <div class="card">
-        <div class="row"><span class="k">Рабочий день</span><span class="v" id="rRange">—</span></div>
-        <div class="row"><span class="k">Прошло</span><span class="v" id="rDone">—</span></div>
-        <div class="row"><span class="k">Осталось</span><span class="v" id="rLeft">—</span></div>
-        <div class="row"><span class="k">Всего в смене</span><span class="v" id="rTotal">—</span></div>
+        <div class="row"><span class="k">Норма за день</span><span class="v" id="rNorm">—</span></div>
+        <div class="row"><span class="k">Закончите около</span><span class="v" id="rFinish">—</span></div>
+        <div class="row"><span class="k">Блокировки и сон</span><span class="v" id="rBreak">—</span></div>
       </div>
       <button class="btn primary" id="bMini">Мини-окно</button>
+    </section>
+
+    <section class="view" id="v-jr">
+      <div class="jr-top">
+        <div class="h" id="jrMonth">Журнал</div>
+        <div class="jr-btns"><button class="btn sm" id="jrAdd">+ День</button><button class="btn sm primary" id="jrXls">Таблица Excel</button></div>
+      </div>
+      <div class="card jr-sum" id="jrSum"></div>
+      <div class="card jr-card">
+        <div class="jr-row jr-head"><span>Дата</span><span>Приход</span><span>Уход</span><span>Работа</span><span>±</span></div>
+        <div class="jr-list" id="jrList"></div>
+      </div>
+      <div class="note" id="jrNote">Нажмите на день, чтобы исправить.</div>
     </section>
 
     <section class="view" id="v-set">
       <div class="h">Рабочий день</div>
       <div class="card">
-        <div class="row"><span>Начало смены</span><input type="time" id="iStart"></div>
-        <div class="row"><span>Конец смены</span><input type="time" id="iEnd"></div>
+        <div class="row"><span>Норма за день</span><input type="time" id="iNorm"></div>
       </div>
+      <div class="note">Считается активное время: пока экран заблокирован или компьютер спит, оно стоит. Моменты блокировки и разблокировки пишутся в журнал.</div>
       <div class="h">Вид</div>
       <div class="card">
         <div class="row"><span>Показывать секунды</span><button class="sw" id="swSec" role="switch"></button></div>
@@ -57,14 +73,38 @@
         <div class="row"><span>Показывать мини-окно</span><button class="sw" id="swMini" role="switch"></button></div>
         <div class="row"><span>Поверх всех окон</span><button class="sw" id="swTop" role="switch"></button></div>
       </div>
-      <div class="note">Мини-окно — маленькое окошко без рамки: тяните его мышью куда удобно, оно запоминает место. Если конец смены раньше начала (например, 22:00 → 06:00), смена считается ночной.</div>
+      <div class="h">Система</div>
+      <div class="card">
+        <div class="row"><span>Запускать при входе в Windows</span><button class="sw" id="swAuto" role="switch"></button></div>
+      </div>
     </section>
   </div>
 
   <nav class="tabs">
     <button class="tab on" data-v="home"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>Смена</button>
+    <button class="tab" data-v="jr"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Журнал</button>
     <button class="tab" data-v="set"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Настройки</button>
   </nav>
+
+  <div class="back" id="dlgBack">
+    <div class="dlg" id="dlgEdit" hidden>
+      <div class="dlg-t" id="dTitle">День</div>
+      <label class="frow"><span>Дата</span><input type="date" id="dDate"></label>
+      <label class="frow"><span>Приход</span><input type="time" id="dArr"></label>
+      <label class="frow"><span>Уход</span><input type="time" id="dLeave"></label>
+      <label class="frow"><span>Отработано</span><input type="time" id="dWork"></label>
+      <div class="ev-h" id="dEvH">Блокировки и сон</div>
+      <div class="ev" id="dEvents"></div>
+      <div class="dlg-hint" id="dHint"></div>
+      <div class="dlg-btns"><button class="btn sm danger" id="dDel">Удалить</button><span class="grow"></span>
+        <button class="btn sm" id="dCancel">Отмена</button><button class="btn sm primary" id="dSave">Сохранить</button></div>
+    </div>
+    <div class="dlg" id="dlgClose" hidden>
+      <div class="dlg-t">Закрыть программу?</div>
+      <div class="dlg-hint" id="cHint">Пока она закрыта, время не считается.</div>
+      <div class="dlg-btns"><span class="grow"></span><button class="btn sm" id="cMin">Свернуть</button><button class="btn sm danger-fill" id="cQuit">Закрыть</button></div>
+    </div>
+  </div>
 </div>
 <script src="shift.js"></script><script src="common.js"></script><script src="main.js"></script>
 </body></html>

@@ -1,10 +1,12 @@
-"""Конец смены — мини-приложение: ставите время конца рабочего дня, видите, сколько осталось.
+"""Конец смены — мини-приложение: сколько отработано активного времени и сколько осталось до нормы.
 
-Главное окно + маленькое окошко без рамки Windows (поверх окон, тянется мышью).
-Настройки — %APPDATA%\\ShiftTimer\\settings.json. Интерфейс — папка ui (HTML), окна — pywebview.
+Время идёт, пока Windows разблокирован, и стоит на блокировке. Журнал по дням (приход, уход, отработано, моменты
+блокировки и разблокировки) — в приложении и в Excel. Живёт в фоне: значок в трее, автозапуск при входе в Windows. Главное окно + маленькое окошко без рамки Windows (поверх окон, тянется мышью).
+Настройки — %APPDATA%\\ShiftTimer\\settings.json, журнал — history.json там же. Интерфейс — папка ui (HTML), окна — pywebview.
 
     python shift_timer/app.py            # запуск
     ShiftTimer.exe --selftest            # проверка без окон: отчёт в %TEMP%\\ShiftTimer_selftest.txt
+    ShiftTimer.exe --minimized           # запуск в фоне, значок в трее (так стартует из автозапуска)
 """
 import json
 import os
@@ -13,12 +15,14 @@ import sys
 import tempfile
 import threading
 
+import timetrack
+
 APP_NAME = 'ShiftTimer'
 TITLE = 'Конец смены'
-DEFAULTS = {"start": "09:00", "end": "18:00", "seconds": True, "theme": "auto",
+DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
-MAIN_SIZE = (380, 640)
-MINI_SIZE = (204, 86)
+MAIN_SIZE = (380, 690)
+MINI_SIZE = (204, 100)
 
 
 def resource(rel):
@@ -26,9 +30,24 @@ def resource(rel):
     return os.path.join(base, rel)
 
 
+def data_dir():
+    return os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), APP_NAME)
+
+
 def settings_file():
-    base = os.environ.get('APPDATA') or os.path.expanduser('~')
-    return os.path.join(base, APP_NAME, 'settings.json')
+    return os.path.join(data_dir(), 'settings.json')
+
+
+def history_file():
+    return os.path.join(data_dir(), 'history.json')
+
+
+def table_file():
+    return os.path.join(os.path.expanduser('~'), 'Documents', APP_NAME, 'Учёт_времени.xlsx')
+
+
+def norm_seconds(norm):
+    return (timetrack.to_sec(norm) or 8 * 3600)
 
 
 def clean(raw):
@@ -36,11 +55,10 @@ def clean(raw):
     s = dict(DEFAULTS)
     if not isinstance(raw, dict):
         return s
-    for k in ('start', 'end'):
-        m = re.fullmatch(r'\s*(\d{1,2}):(\d{2})\s*', str(raw.get(k, '')))
-        if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
-            s[k] = f"{int(m.group(1)):02d}:{m.group(2)}"
-    for k in ('seconds', 'mini_visible', 'mini_on_top'):
+    sec = timetrack.to_sec(raw.get('norm'))
+    if sec is not None and 15 * 60 <= sec < 24 * 3600:
+        s['norm'] = timetrack.hm_text(sec)
+    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart'):
         if isinstance(raw.get(k), bool):
             s[k] = raw[k]
     if raw.get('theme') in ('light', 'dark', 'auto'):
@@ -71,14 +89,37 @@ def write_settings(s, path=None):
         pass
 
 
+def set_autostart(on):
+    """Запуск при входе в Windows (раздел Run текущего пользователя). Только для собранного exe."""
+    if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Run', 0, winreg.KEY_SET_VALUE) as k:
+            if on:
+                winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, f'"{sys.executable}" --minimized')
+            else:
+                try:
+                    winreg.DeleteValue(k, APP_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError:
+        return False
+
+
 class Api:
     """Методы без «_» видны из JS как pywebview.api.<имя>."""
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, history=None, table=None, tracker=None):
         self._path = path
         self._s = load_settings(path)
+        self._table = table
+        self._t = tracker or timetrack.Tracker(history or history_file(), norm_seconds(self._s["norm"]))
+        self._t.set_norm(norm_seconds(self._s["norm"]))
         self._main = None
         self._mini = None
+        self._tray = None
         self._pos_timer = None
 
     # ---- настройки ----
@@ -89,6 +130,10 @@ class Api:
         new = clean({**self._s, **(patch if isinstance(patch, dict) else {})})
         old, self._s = self._s, new
         write_settings(new, self._path)
+        if old["norm"] != new["norm"]:
+            self._t.set_norm(norm_seconds(new["norm"]))
+        if old["autostart"] != new["autostart"]:
+            set_autostart(new["autostart"])
         self._push()
         if old["mini_visible"] != new["mini_visible"] or old["mini_on_top"] != new["mini_on_top"]:
             self._apply_mini(old["mini_on_top"] != new["mini_on_top"])
@@ -103,6 +148,34 @@ class Api:
                 except Exception:
                     pass
 
+    # ---- учёт времени ----
+    def get_day(self):
+        return self._t.snapshot()
+
+    def get_history(self):
+        return self._t.history()
+
+    def edit_day(self, iso, arrival, leave, worked):
+        return self._t.edit_day(iso, arrival, leave, worked)
+
+    def delete_day(self, iso):
+        return self._t.delete_day(iso)
+
+    def open_table(self):
+        """Обновить Excel-таблицу из журнала и открыть её."""
+        path = self._table or table_file()
+        try:
+            self._t.export_xlsx(path)
+        except PermissionError:
+            return {"error": "Файл таблицы открыт в Excel — закройте его и повторите."}
+        except Exception as e:
+            return {"error": f"Не удалось записать таблицу: {e}"}
+        try:
+            os.startfile(path)                           # только Windows
+        except Exception:
+            pass
+        return {"path": path}
+
     # ---- окна ----
     def minimize(self):
         if self._main:
@@ -111,12 +184,34 @@ class Api:
     def open_main(self):
         if self._main:
             try:
-                self._main.restore()
                 self._main.show()
+                self._main.restore()
             except Exception:
                 pass
 
+    def can_tray(self):
+        return self._tray is not None
+
+    def hide_main(self):
+        """Убрать окно в фон: значок остаётся в трее, учёт времени идёт."""
+        if self._main and self._tray is not None:
+            try:
+                self._main.hide()
+            except Exception:
+                self._main.minimize()
+        elif self._main:
+            self._main.minimize()
+
+    def toggle_mini(self):
+        self.save_settings({"mini_visible": not self._s["mini_visible"]})
+
     def close_app(self):
+        self._t.stop()                                   # журнал — на диск до закрытия окон
+        if self._tray is not None:
+            try:
+                self._tray.stop()
+            except Exception:
+                pass
         for w in (self._mini, self._main):
             if w is not None:
                 try:
@@ -142,6 +237,7 @@ class Api:
     def _moved(self, x, y):
         if self._pos_timer:
             self._pos_timer.cancel()
+
         def done():
             self._s["mini_pos"] = [int(x), int(y)]
             write_settings(self._s, self._path)
@@ -167,13 +263,35 @@ def mini_start_pos(webview, saved):
         return [60, 60]
 
 
+def start_tray(api):
+    """Значок у часов: двойной клик — открыть, меню — мини-окно и выход. Нет pystray / не вышло — None (будет обычное сворачивание)."""
+    try:
+        import pystray
+        from PIL import Image
+        img = Image.open(resource('icon.ico'))
+        menu = pystray.Menu(
+            pystray.MenuItem('Открыть', lambda icon, item: api.open_main(), default=True),
+            pystray.MenuItem('Мини-окно', lambda icon, item: api.toggle_mini(), checked=lambda item: api.get_settings()["mini_visible"]),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('Выйти (учёт остановится)', lambda icon, item: api.close_app()))
+        icon = pystray.Icon(APP_NAME, img, TITLE, menu)
+        icon.run_detached()
+        return icon
+    except Exception:
+        return None
+
+
 def run():
     import webview
     api = Api()
     s = api.get_settings()
+    set_autostart(s["autostart"])                        # путь к exe в автозапуске всегда актуальный
+    api._tray = start_tray(api)
+    background = '--minimized' in sys.argv
     bg = '#0e1116'
     api._main = _window(webview, title=TITLE, url=resource('ui/main.html'), js_api=api, width=MAIN_SIZE[0], height=MAIN_SIZE[1],
-                        resizable=False, frameless=True, easy_drag=False, text_select=False, background_color=bg)
+                        resizable=False, frameless=True, easy_drag=False, text_select=False, background_color=bg,
+                        hidden=background and api._tray is not None, minimized=background and api._tray is None)
     x, y = mini_start_pos(webview, s["mini_pos"])
     api._mini = _window(webview, title=TITLE + ' — мини', url=resource('ui/mini.html'), js_api=api,
                         width=MINI_SIZE[0], height=MINI_SIZE[1], x=x, y=y, resizable=False, frameless=True, easy_drag=False,
@@ -183,7 +301,9 @@ def run():
     except Exception:
         pass
     api._main.events.closed += api.close_app              # закрыли главное — уходит и мини, иначе процесс не завершится
+    threading.Thread(target=api._t.run, daemon=True).start()   # секундный учёт времени
     webview.start()
+    api._t.stop()
 
 
 def selftest():
@@ -200,11 +320,28 @@ def selftest():
         check('webview ' + str(getattr(webview, '__version__', '?')), True)
     except Exception as e:
         check(f'webview: {e}', False)
-    tmp = os.path.join(tempfile.mkdtemp(), 'settings.json')
-    write_settings(clean({"start": "8:30", "end": "17:45", "seconds": False, "theme": "dark"}), tmp)
-    r = load_settings(tmp)
-    check('настройки: запись и чтение', r["start"] == "08:30" and r["end"] == "17:45" and r["seconds"] is False and r["theme"] == "dark")
-    check('настройки: мусор → по умолчанию', clean({"start": "99:99", "theme": 5}) == DEFAULTS)
+    tmpd = tempfile.mkdtemp()
+    p = os.path.join(tmpd, 'settings.json')
+    write_settings(clean({"norm": "7:30", "seconds": False, "theme": "dark"}), p)
+    r = load_settings(p)
+    check('настройки: запись и чтение', r["norm"] == "07:30" and r["seconds"] is False and r["theme"] == "dark")
+    check('настройки: мусор → по умолчанию', clean({"norm": "99:99", "theme": 5}) == DEFAULTS)
+    t = timetrack.Tracker(os.path.join(tmpd, 'h.json'))
+    t.tick()
+    check('журнал: день создаётся', len(t.history()["rows"]) == 1)
+    try:
+        t.export_xlsx(os.path.join(tmpd, 't.xlsx'))
+        check('таблица Excel', os.path.getsize(os.path.join(tmpd, 't.xlsx')) > 1000)
+    except Exception as e:
+        check(f'таблица Excel: {e}', False)
+    check('блокировка: функция отвечает', timetrack.is_locked() in (True, False))
+    try:
+        import pystray
+        from PIL import Image
+        Image.open(resource('icon.ico'))
+        check('значок в трее: pystray + иконка', bool(pystray))
+    except Exception as e:
+        check(f'значок в трее: {e}', False)
     out = os.path.join(tempfile.gettempdir(), f'{APP_NAME}_selftest.txt')
     with open(out, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
