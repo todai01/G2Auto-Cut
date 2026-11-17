@@ -223,10 +223,10 @@ def test_non_admin_cannot_use_admin_api_and_folder_errors(tmp_path):
     adm.team_setup_admin('boss', 'Босс', 'Boss-2026')
     adm.team_account_create('aida', 'Аида', 'Aida')
     cu, u = make_user_api(tmp_path, 'u', shared)
-    assert u.team_overview()["error"] == 'Только для администратора и наставника.'                       # не вошли
+    assert u.team_overview()["error"] == 'Только для администратора и куратора.'                       # не вошли
     u.team_login('aida', 'Aida')
     for call in (lambda: u.team_overview(), lambda: u.team_user('boss'), lambda: u.team_report()):
-        assert call()["error"] == 'Только для администратора и наставника.'
+        assert call()["error"] == 'Только для администратора и куратора.'
     for call in (lambda: u.team_accounts(), lambda: u.team_account_create('x1', 'x', 'xxxx'), lambda: u.team_account_reset('boss', 'hack')):
         assert call()["error"] == 'Только для администратора.'
     assert "не найдена" in u.team_set_dir(str(tmp_path / 'нет'))["error"]
@@ -275,7 +275,7 @@ def test_mentor_sees_team_but_cannot_manage_accounts_or_publish(tmp_path, monkey
     cm, m = make_user_api(tmp_path, 'mentor', shared, Clock(d=17, h=9))
     r = m.team_login('mentor1', 'Mentor1')
     assert r["user"]["role"] == 'mentor'
-    ov = m.team_overview('2026-11-17')                                                        # наставник видит команду, приход, статусы
+    ov = m.team_overview('2026-11-17')                                                        # куратор видит команду, приход, статусы
     assert {x["login"]: x["arrival"] for x in ov["rows"]}["aida"] == '09:05:00'
     card = m.team_user('aida', 'week', '2026-11-17')
     assert card["tasks"][0]["text"] == "Задача Аиды"                                          # и задачи с подробностями
@@ -286,6 +286,6 @@ def test_mentor_sees_team_but_cannot_manage_accounts_or_publish(tmp_path, monkey
     monkeypatch.setattr(updater, 'BUILD', 5)
     m._frozen = lambda: True
     assert "администратора" in m.update_publish()["error"]                                    # и выкладывать обновления
-    # снять роль админа с последнего нельзя, а наставника — можно сменить
+    # снять роль админа с последнего нельзя, а куратора — можно сменить
     assert "последнего" in adm.team_account_role('dev', 'mentor').get('error', '') or adm.team_account_role('dev', 'mentor').get("error")
     assert adm.team_account_role('mentor1', 'user')["ok"]

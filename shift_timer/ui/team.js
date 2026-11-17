@@ -2,7 +2,7 @@
 let TM = null, tmSkip = false, tmDay = null, tmTimer = null, tmStatusTimer = null, EMP = null, emLogin = null, emKind = 'week', accEdit = null, accRole = 'user';
 const TM_STATE = { work: ['в работе', 'ok'], lunch: ['обед', 'lunch'], locked: ['блокировка', 'warn'], left: ['ушёл', 'dim'], offline: ['нет связи', 'dim'], absent: ['не пришёл', 'low'],
     weekend: ['выходной', 'dim'], mark: ['', 'mk'], came: ['был', 'ok'], nodata: ['не входил', 'dim'] };
-const ROLE_RU = { admin: 'администратор', mentor: 'наставник', user: 'сотрудник' }, ROLE_SHORT = { admin: 'админ', mentor: 'наставник', user: 'сотрудник' };
+const ROLE_RU = { admin: 'администратор', mentor: 'куратор', user: 'сотрудник' }, ROLE_SHORT = { admin: 'админ', mentor: 'куратор', user: 'сотрудник' };
 const MARK_RU = { vacation: 'отпуск', sick: 'больничный', dayoff: 'выходной' };
 const err = (id, t) => { const h = $(id); h.textContent = t || ''; h.classList.toggle('err', !!t); };
 
@@ -114,7 +114,7 @@ async function loadTeam() {
     $('tmList').innerHTML = r.rows.length ? r.rows.map(u => {
         const [lab, cls] = TM_STATE[u.state] || ['', 'dim'], text = u.state === 'mark' ? (MARK_RU[u.mark] || '') : lab;
         const upd = u.state === 'offline' && u.updated ? ` · ${u.updated.slice(11, 16)}` : '';
-        return `<button class="tm-row${u.active ? '' : ' off'}" data-l="${escT(u.login)}"><span class="tm-n"><b>${escT(u.name)}</b><i>${escT(u.login)}${u.role === 'admin' ? ' · админ' : u.role === 'mentor' ? ' · наставник' : ''}${u.active ? '' : ' · отключён'}</i></span>`
+        return `<button class="tm-row${u.active ? '' : ' off'}" data-l="${escT(u.login)}"><span class="tm-n"><b>${escT(u.name)}</b><i>${escT(u.login)}${u.role === 'admin' ? ' · админ' : u.role === 'mentor' ? ' · куратор' : ''}${u.active ? '' : ' · отключён'}</i></span>`
             + `<span class="num"><b>${u.arrival ? Shift.hmStr(u.arrival) : '—'}</b></span><span><em class="st ${cls}">${text}${upd}</em></span>`
             + `<span class="num">${u.worked_s ? Shift.hmSec(u.worked_s) : '—'}</span><span class="num dim">${u.tasks_open} · ✓${u.tasks_done}</span></button>`;
     }).join('') : '<div class="empty">Учёток пока нет.</div>';
