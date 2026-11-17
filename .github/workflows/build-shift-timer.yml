@@ -1,0 +1,55 @@
+# Сборка мини-приложения «Конец смены» — один файл ShiftTimer.exe (shift_timer/).
+# Выкладывается в Releases как shift-timer-<номер>: скачать ShiftTimer.exe и запустить.
+name: Сборка ShiftTimer.exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/g2auto-cut-project-y8qvzc]
+    paths: ['shift_timer/**', 'tests/shift_logic.test.js', '.github/workflows/build-shift-timer.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Проверка расчёта времени (node)
+        run: node tests/shift_logic.test.js
+
+      - name: Модули
+        run: python -m pip install --upgrade pip pywebview pyinstaller
+
+      - name: Сборка одного exe
+        env:
+          PYTHONUTF8: '1'
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed --name ShiftTimer
+          --icon shift_timer/icon.ico --add-data "shift_timer/ui;ui" --collect-all webview
+          shift_timer/app.py
+
+      - name: Самопроверка собранного exe
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path dist\ShiftTimer.exe).Path
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest' -Wait -PassThru
+          Get-Content "$env:TEMP\ShiftTimer_selftest.txt" -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Самопроверка ShiftTimer.exe не прошла" }
+          Get-Item $exe | Format-Table Name, Length
+
+      - name: Выложить в Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $n = "${{ github.run_number }}"
+          $notes = "Конец смены — сборка $n, коммит ${{ github.sha }}.`n`nСкачайте ShiftTimer.exe и запустите (установка не нужна). Нужен Microsoft Edge WebView2 — он есть в Windows 10/11."
+          gh release create "shift-timer-$n" dist\ShiftTimer.exe --target "${{ github.sha }}" --title "Конец смены — сборка $n" --notes "$notes" --prerelease

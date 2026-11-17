@@ -79,6 +79,12 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   и сколько; файлы `Синтез_<таблица>/<столбец>/<значение>.wav`, повтор значения — копия в `<столбец>_повторы(_2…)/`; голоса и языки — `SYNTH_PRESET_VOICES`, `SYNTH_LANGS`.
 - `core/num_words.py` — числа словами RU/KZ, казахские месяцы, `month_abbr`.
 
+## Отдельные мини-приложения
+
+- `shift_timer/` — «Конец смены»: не часть GVox, свой pywebview-проект (`app.py`, интерфейс `ui/`, расчёт `ui/shift.js`, иконка).
+  Два окна без рамки Windows (главное и мини, `Api` общий), настройки — `%APPDATA%\ShiftTimer\settings.json`. Тесты: `tests/test_shift_timer.py`,
+  `tests/shift_logic.test.js` (node). Exe — `.github/workflows/build-shift-timer.yml` → Releases `shift-timer-N` (один `ShiftTimer.exe`).
+
 ## Предметная область
 
 - Таблица Студии: лист фраз (`<phrase>`, `<name_phrase>`, флаги `<start>/<start_2>/<end>`) и
