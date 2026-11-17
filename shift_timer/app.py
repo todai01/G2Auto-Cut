@@ -22,7 +22,7 @@ import timetrack
 APP_NAME = 'ShiftTimer'
 TITLE = 'Конец смены'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
-            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True,
+            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid",
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
 MAIN_SIZE = (380, 690)
 MINI_SIZE = (204, 100)
@@ -67,6 +67,8 @@ def clean(raw):
     bm = raw.get('break_min')
     if isinstance(bm, int) and not isinstance(bm, bool) and 15 <= bm <= 240:
         s['break_min'] = bm
+    if raw.get('volume') in chime.LEVELS:
+        s['volume'] = raw['volume']
     if raw.get('theme') in ('light', 'dark', 'auto'):
         s['theme'] = raw['theme']
     p = raw.get('mini_pos')
@@ -142,6 +144,8 @@ class Api:
         write_settings(new, self._path)
         if old["norm"] != new["norm"]:
             self._t.set_norm(norm_seconds(new["norm"]))
+        if new["sound"] and (old["volume"] != new["volume"] or not old["sound"]):
+            chime.play_async(new["volume"])              # образец: сразу слышно, какая громкость выбрана
         if any(old[k] != new[k] for k in ("notify_hours", "notify_break", "break_min")):
             self._apply_notify()
         if old["autostart"] != new["autostart"]:
@@ -157,7 +161,7 @@ class Api:
     def _notice(self, n):
         """Новое уведомление: мини-окно его покажет (JS забирает из get_day). Окно скрыто — покажем его на время уведомления."""
         if self._s["sound"]:
-            chime.play_async()                           # тихая одна нота
+            chime.play_async(self._s["volume"])         # две тихие ноты
         w = self._mini
         if w is not None and not self._s["mini_visible"]:
             try:

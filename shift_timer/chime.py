@@ -11,6 +11,7 @@ import wave
 
 RATE = 44100
 NOTES = ((523.25, 0.0), (783.99, 0.40))   # (частота, начало, с): до второй октавы, затем соль — низкая, потом высокая (квинта)
+LEVELS = {"low": 0.5, "mid": 1.0, "high": 2.0}   # громкость уведомления: низкая / средняя (пик ~0,22) / высокая (пик ~0,44)
 DURATION = 2.9           # секунд, вместе с затуханием
 PEAK = 0.12              # громкость от максимума: тихо (две ноты вместе дают пик около 0,22)
 ATTACK = 0.06            # плавное начало, без щелчка
@@ -26,7 +27,8 @@ def _note(t, freq):
     return env * sum(a * math.sin(2 * math.pi * freq * k * t) for k, a in OVERTONES)
 
 
-def make_wav(notes=NOTES, duration=DURATION, peak=PEAK):
+def make_wav(notes=NOTES, duration=DURATION, peak=PEAK, level='mid'):
+    peak = peak * LEVELS.get(level, 1.0)
     n = int(RATE * duration)
     fade_out = int(RATE * 0.4)                           # последние 0,4 с — окончательное затухание до нуля
     norm = sum(a for _, a in OVERTONES) * 1.25           # запас: две ноты немного перекрываются
@@ -46,22 +48,21 @@ def make_wav(notes=NOTES, duration=DURATION, peak=PEAK):
     return buf.getvalue()
 
 
-_wav = None
+_wav = {}
 
 
-def play_async():
-    """Сыграть сигнал, не задерживая вызывающего. Вне Windows — ничего."""
-    global _wav
+def play_async(level='mid'):
+    """Сыграть сигнал заданной громкости, не задерживая вызывающего. Вне Windows — ничего."""
     if sys.platform != 'win32':
         return False
+    level = level if level in LEVELS else 'mid'
 
     def go():
-        global _wav
         try:
             import winsound
-            if _wav is None:
-                _wav = make_wav()
-            winsound.PlaySound(_wav, winsound.SND_MEMORY)     # SND_ASYNC с памятью не поддерживается — играем в своём потоке
+            if level not in _wav:
+                _wav[level] = make_wav(level=level)
+            winsound.PlaySound(_wav[level], winsound.SND_MEMORY)     # SND_ASYNC с памятью не поддерживается — играем в своём потоке
         except Exception:
             pass
     threading.Thread(target=go, daemon=True).start()

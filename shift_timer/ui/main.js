@@ -37,6 +37,7 @@ function syncSettings() {
     setSwitch('swSec', s.seconds); setSwitch('swMini', s.mini_visible); setSwitch('swTop', s.mini_on_top); setSwitch('swAuto', s.autostart);
     document.querySelectorAll('#segTheme button').forEach(b => b.classList.toggle('on', b.dataset.t === s.theme));
     setSwitch('swSound', s.sound); setSwitch('swHours', s.notify_hours); setSwitch('swBreak', s.notify_break);
+    document.querySelectorAll('#segVol button').forEach(b => { b.classList.toggle('on', b.dataset.v === s.volume); b.disabled = !s.sound; });
     document.querySelectorAll('#segBreak button').forEach(b => { b.classList.toggle('on', +b.dataset.m === s.break_min); b.disabled = !s.notify_break; });
 }
 
@@ -112,6 +113,7 @@ boot(() => {
     $('swMini').onclick = () => save({ mini_visible: !App.s.mini_visible });
     $('swTop').onclick = () => save({ mini_on_top: !App.s.mini_on_top });
     $('swSound').onclick = () => save({ sound: !App.s.sound });
+    document.querySelectorAll('#segVol button').forEach(b => b.onclick = () => save({ volume: b.dataset.v }));
     $('swHours').onclick = () => save({ notify_hours: !App.s.notify_hours });
     $('swBreak').onclick = () => save({ notify_break: !App.s.notify_break });
     document.querySelectorAll('#segBreak button').forEach(b => b.onclick = () => save({ break_min: +b.dataset.m }));

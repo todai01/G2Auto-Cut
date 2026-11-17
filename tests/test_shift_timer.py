@@ -655,9 +655,30 @@ def test_chime_silent_off_windows():
 def test_sound_setting_controls_playing(tmp_path, monkeypatch):
     c, api = make_api(tmp_path)
     played = []
-    monkeypatch.setattr(chime, 'play_async', lambda: played.append(1) or True)
+    monkeypatch.setattr(chime, 'play_async', lambda level='mid': played.append(level) or True)
     api._notice({"id": 1, "kind": "hour", "text": "x"})
-    assert played == [1] and shift_app.DEFAULTS["sound"] is True
+    assert played == ["mid"] and shift_app.DEFAULTS["sound"] is True and shift_app.DEFAULTS["volume"] == "mid"
     api.save_settings({"sound": False})
+    played.clear()
     api._notice({"id": 2, "kind": "hour", "text": "x"})
-    assert played == [1]                                     # звук выключен — тишина
+    assert played == []                                      # звук выключен — тишина
+
+
+def test_volume_levels(tmp_path, monkeypatch):
+    def peak(level):
+        return max(abs(v) for v in _samples(chime.make_wav(level=level))) / 32767
+    lo, mid, hi = peak("low"), peak("mid"), peak("high")
+    assert lo < mid < hi and abs(hi / mid - 2) < 0.05 and abs(mid / lo - 2) < 0.05
+    assert hi < 0.6                                          # даже «высокая» без искажений и не оглушает
+    assert peak("bogus") == mid                              # неизвестная ступень — средняя
+    c, api = make_api(tmp_path)
+    played = []
+    monkeypatch.setattr(chime, 'play_async', lambda level='mid': played.append(level) or True)
+    api.save_settings({"volume": "high"})
+    assert played == ["high"]                                # при смене громкости играет образец
+    api._notice({"id": 3, "kind": "break", "text": "x"})
+    assert played == ["high", "high"]                        # и уведомления — выбранной громкости
+    played.clear()
+    api.save_settings({"sound": False, "volume": "low"})
+    assert played == []                                      # звук выключен — образца нет
+    assert api.save_settings({"volume": "очень"})["volume"] == "mid"    # мусор → по умолчанию
