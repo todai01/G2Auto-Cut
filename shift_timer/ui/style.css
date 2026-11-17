@@ -187,3 +187,19 @@ input:disabled{ opacity:.55; }
 .ev-r{ display:grid; grid-template-columns:42px 1fr auto; gap:8px; align-items:center; min-height:30px; font-size:12.5px; }
 .ev-r + .ev-r{ border-top:1px solid var(--line); }
 .ev-r > span:first-child{ color:var(--faint); font-size:11.5px; }
+
+/* уведомление в мини-окне */
+.nb{ position:absolute; inset:0; z-index:6; display:flex; align-items:center; gap:10px; padding:0 14px; color:#fff; cursor:pointer;
+    font-size:14px; font-weight:650; line-height:1.25; letter-spacing:-.01em;
+    background:linear-gradient(135deg,#3b6cf6,#22c3a0); transform:translateY(-102%); transition:transform .38s cubic-bezier(.32,.72,0,1); }
+.nb.on{ transform:none; }
+.nb.break{ background:linear-gradient(135deg,#f59e0b,#f97316); font-size:12.5px; }
+.nb.done{ background:linear-gradient(135deg,#16a34a,#22c3a0); }
+.nb svg{ width:26px; height:26px; flex:none; stroke:#fff; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.nb span{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+/* настройки не помещаются — прокрутка */
+#v-set{ overflow-y:auto; padding-bottom:16px; }
+#v-set::-webkit-scrollbar{ width:6px; } #v-set::-webkit-scrollbar-thumb{ background:var(--track); border-radius:6px; }
+#v-set > *{ flex-shrink:0; }
+.seg button{ white-space:nowrap; }
+.seg button:disabled{ opacity:.45; cursor:default; }

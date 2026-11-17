@@ -36,6 +36,8 @@ function syncSettings() {
     if (document.activeElement !== $('iNorm') && $('iNorm').value !== s.norm) $('iNorm').value = s.norm;   // не мешаем вводу
     setSwitch('swSec', s.seconds); setSwitch('swMini', s.mini_visible); setSwitch('swTop', s.mini_on_top); setSwitch('swAuto', s.autostart);
     document.querySelectorAll('#segTheme button').forEach(b => b.classList.toggle('on', b.dataset.t === s.theme));
+    setSwitch('swHours', s.notify_hours); setSwitch('swBreak', s.notify_break);
+    document.querySelectorAll('#segBreak button').forEach(b => { b.classList.toggle('on', +b.dataset.m === s.break_min); b.disabled = !s.notify_break; });
 }
 
 // ---------- журнал ----------
@@ -109,6 +111,9 @@ boot(() => {
     $('swSec').onclick = () => save({ seconds: !App.s.seconds });
     $('swMini').onclick = () => save({ mini_visible: !App.s.mini_visible });
     $('swTop').onclick = () => save({ mini_on_top: !App.s.mini_on_top });
+    $('swHours').onclick = () => save({ notify_hours: !App.s.notify_hours });
+    $('swBreak').onclick = () => save({ notify_break: !App.s.notify_break });
+    document.querySelectorAll('#segBreak button').forEach(b => b.onclick = () => save({ break_min: +b.dataset.m }));
     $('swAuto').onclick = () => save({ autostart: !App.s.autostart });
     document.querySelectorAll('#segTheme button').forEach(b => b.onclick = () => save({ theme: b.dataset.t }));
     $('iNorm').onchange = e => e.target.value && save({ norm: e.target.value });

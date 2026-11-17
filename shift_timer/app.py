@@ -14,12 +14,14 @@ import re
 import sys
 import tempfile
 import threading
+import time
 
 import timetrack
 
 APP_NAME = 'ShiftTimer'
 TITLE = 'Конец смены'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
+            "notify_hours": True, "notify_break": True, "break_min": 60,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
 MAIN_SIZE = (380, 690)
 MINI_SIZE = (204, 100)
@@ -58,9 +60,12 @@ def clean(raw):
     sec = timetrack.to_sec(raw.get('norm'))
     if sec is not None and 15 * 60 <= sec < 24 * 3600:
         s['norm'] = timetrack.hm_text(sec)
-    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart'):
+    for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart', 'notify_hours', 'notify_break'):
         if isinstance(raw.get(k), bool):
             s[k] = raw[k]
+    bm = raw.get('break_min')
+    if isinstance(bm, int) and not isinstance(bm, bool) and 15 <= bm <= 240:
+        s['break_min'] = bm
     if raw.get('theme') in ('light', 'dark', 'auto'):
         s['theme'] = raw['theme']
     p = raw.get('mini_pos')
@@ -117,6 +122,10 @@ class Api:
         self._table = table
         self._t = tracker or timetrack.Tracker(history or history_file(), norm_seconds(self._s["norm"]))
         self._t.set_norm(norm_seconds(self._s["norm"]))
+        self._apply_notify()
+        self._t.on_notice = self._notice
+        self._t.on_tick = self._after_tick
+        self._temp_mini_until = 0.0
         self._main = None
         self._mini = None
         self._tray = None
@@ -132,12 +141,36 @@ class Api:
         write_settings(new, self._path)
         if old["norm"] != new["norm"]:
             self._t.set_norm(norm_seconds(new["norm"]))
+        if any(old[k] != new[k] for k in ("notify_hours", "notify_break", "break_min")):
+            self._apply_notify()
         if old["autostart"] != new["autostart"]:
             set_autostart(new["autostart"])
         self._push()
         if old["mini_visible"] != new["mini_visible"] or old["mini_on_top"] != new["mini_on_top"]:
             self._apply_mini(old["mini_on_top"] != new["mini_on_top"])
         return new
+
+    def _apply_notify(self):
+        self._t.set_notify(self._s["notify_hours"], self._s["notify_break"], self._s["break_min"])
+
+    def _notice(self, n):
+        """Новое уведомление: мини-окно его покажет (JS забирает из get_day). Окно скрыто — покажем его на время уведомления."""
+        w = self._mini
+        if w is not None and not self._s["mini_visible"]:
+            try:
+                w.show()
+                self._temp_mini_until = time.time() + timetrack.NOTICE_SECONDS + 1
+            except Exception:
+                pass
+
+    def _after_tick(self):
+        if self._temp_mini_until and time.time() > self._temp_mini_until:
+            self._temp_mini_until = 0.0
+            if not self._s["mini_visible"] and self._mini is not None:
+                try:
+                    self._mini.hide()
+                except Exception:
+                    pass
 
     def _push(self):
         js = f"window.applySettings && window.applySettings({json.dumps(self._s, ensure_ascii=False)})"

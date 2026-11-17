@@ -426,6 +426,177 @@ def test_excel_events_sheet(tmp_path):
     assert rows[1][1] == 'блокировка' and rows[1][3] > rows[1][2] and abs(rows[1][4].total_seconds() - 600) <= 5
 
 
+# ---------- уведомления: ровные часы и перерыв ----------
+class Notes:
+    """Собирает уведомления tracker-а по порядку."""
+    def __init__(self, tr):
+        self.items = []
+        tr.on_notice = lambda n: self.items.append((n["kind"], n["text"]))
+
+
+def test_hour_notices_each_full_hour(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=3 * 3600)
+    tr.set_notify(True, False, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 3 * 3600 + 30)
+    assert n.items == [("hour", "Осталось 2 часа"), ("hour", "Остался 1 час"), ("done", "Норма выполнена — можно заканчивать")]
+
+
+def test_hour_notice_wording():
+    assert timetrack.hours_left_text(7) == "Осталось 7 часов" and timetrack.hours_left_text(5) == "Осталось 5 часов"
+    assert timetrack.hours_left_text(2) == "Осталось 2 часа" and timetrack.hours_left_text(4) == "Осталось 4 часа"
+    assert timetrack.hours_left_text(1) == "Остался 1 час" and timetrack.hours_left_text(11) == "Осталось 11 часов"
+    assert timetrack.hours_left_text(21) == "Остался 21 час" and timetrack.hours_left_text(6) == "Осталось 6 часов"
+
+
+def test_eight_hour_norm_gives_7_to_1(tmp_path):
+    f = str(tmp_path / 'h.json')
+    c = Clock()
+    tr = c.tracker(f, norm=8 * 3600)
+    tr.set_notify(True, False, 60)
+    n = Notes(tr)
+    tr.tick()
+    for _ in range(8 * 3600 + 10):                         # весь день одним прогоном
+        c.wall += 1; c.m += 1
+        tr.tick()
+    texts = [t for k, t in n.items if k == "hour"]
+    assert texts == ["Осталось 7 часов", "Осталось 6 часов", "Осталось 5 часов", "Осталось 4 часа", "Осталось 3 часа", "Осталось 2 часа", "Остался 1 час"]
+
+
+def test_old_hours_are_silent_after_restart_and_not_repeated(tmp_path):
+    f = str(tmp_path / 'h.json')
+    c = Clock()
+    tr = c.tracker(f, norm=3 * 3600)
+    tr.set_notify(True, False, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 3700)                                       # 2 часа уже объявлены
+    assert len(n.items) == 1
+    tr.stop()
+    tr2 = c.tracker(f, norm=3 * 3600)
+    tr2.set_notify(True, False, 60)
+    n2 = Notes(tr2)
+    tr2.tick()
+    run(c, tr2, 400)
+    assert n2.items == []                                  # после перезапуска «Осталось 2 часа» не повторяется
+    tr2.stop()
+    # день записан без пометок (старый файл) — и работа уже за границей часа: молча, а не залпом
+    import json as _j
+    data = _j.load(open(f, encoding='utf-8'))
+    data["days"]["2026-11-17"]["notified"] = []
+    _j.dump(data, open(f, 'w', encoding='utf-8'))
+    tr3 = c.tracker(f, norm=3 * 3600)
+    tr3.set_notify(True, False, 60)
+    n3 = Notes(tr3)
+    tr3.tick()
+    run(c, tr3, 10)
+    assert n3.items == []
+
+
+def test_notifications_can_be_switched_off(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=2 * 3600)
+    tr.set_notify(False, False, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 2 * 3600 + 10)
+    assert n.items == []
+
+
+def test_break_reminder_after_long_work_and_repeats(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=20 * 3600)
+    tr.set_notify(False, True, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 59 * 60)
+    assert n.items == []
+    run(c, tr, 120)
+    assert n.items == [("break", "Вы работаете уже 1 ч подряд — сделайте небольшой перерыв")]
+    run(c, tr, 59 * 60)
+    assert len(n.items) == 2 and "2 ч" in n.items[1][1]                # и снова через час
+
+
+def test_long_lock_resets_work_streak_short_lock_does_not(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=20 * 3600)
+    tr.set_notify(False, True, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 40 * 60)
+    c.locked = True
+    run(c, tr, 60)                                         # минута блокировки — не перерыв
+    c.locked = False
+    run(c, tr, 21 * 60)
+    assert len(n.items) == 1                               # 40 + 21 мин непрерывно (блок < 3 мин не считается перерывом)
+    c.locked = True
+    run(c, tr, 5 * 60)                                     # 5 минут — настоящий перерыв
+    c.locked = False
+    run(c, tr, 50 * 60)
+    assert len(n.items) == 1                               # счёт пошёл заново, 50 мин ещё не час
+    run(c, tr, 11 * 60)
+    assert len(n.items) == 2
+
+
+def test_sleep_resets_streak(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=20 * 3600)
+    tr.set_notify(False, True, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 50 * 60)
+    c.wall += 1200
+    c.m += 1200                                            # сон 20 минут
+    tr.tick()
+    run(c, tr, 30 * 60)
+    assert n.items == []                                   # 30 мин после сна, а не 80
+
+
+def test_notice_visible_in_snapshot_for_ten_seconds(tmp_path):
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=2 * 3600)
+    tr.set_notify(True, False, 60)
+    tr.tick()
+    run(c, tr, 3600)
+    s = tr.snapshot()
+    assert s["notice"] and s["notice"]["kind"] == "hour" and s["notice"]["text"] == "Остался 1 час"
+    nid = s["notice"]["id"]
+    run(c, tr, 11)
+    assert tr.snapshot()["notice"] is None
+    run(c, tr, 3600)
+    assert tr.snapshot()["notice"] is None or tr.snapshot()["notice"]["id"] > nid
+
+
+def test_api_notice_shows_hidden_mini_then_hides(tmp_path, monkeypatch):
+    c, api = make_api(tmp_path)
+    api._mini = FakeWin()
+    api._notice({"id": 1, "kind": "hour", "text": "Осталось 7 часов"})
+    assert ('show',) in api._mini.calls                    # мини было скрыто — показали на время уведомления
+    api._mini.calls.clear()
+    api._after_tick()
+    assert api._mini.calls == []                           # ещё рано
+    api._temp_mini_until = 1.0
+    api._after_tick()
+    assert ('hide',) in api._mini.calls
+    api.save_settings({"mini_visible": True})              # мини включено пользователем — не прячем и не трогаем
+    api._mini.calls.clear()
+    api._notice({"id": 2, "kind": "break", "text": "x"})
+    api._temp_mini_until = 1.0
+    api._after_tick()
+    assert api._mini.calls == []
+
+
+def test_notify_settings_roundtrip(tmp_path):
+    c, api = make_api(tmp_path)
+    s = api.save_settings({"notify_hours": False, "notify_break": True, "break_min": 45})
+    assert (s["notify_hours"], s["notify_break"], s["break_min"]) == (False, True, 45)
+    assert api._t.opts == {"hours": False, "brk": True, "brk_min": 45}
+    assert api.save_settings({"break_min": 5})["break_min"] == 60 and api.save_settings({"break_min": "x"})["break_min"] == 60
+    assert shift_app.DEFAULTS["notify_hours"] and shift_app.DEFAULTS["notify_break"] and shift_app.DEFAULTS["break_min"] == 60
+
+
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')
 def test_js_logic():
     r = subprocess.run(['node', os.path.join(ROOT, 'tests', 'shift_logic.test.js')], capture_output=True, text=True)

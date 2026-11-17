@@ -12,6 +12,8 @@ import threading
 import time
 from datetime import date, datetime
 
+REST = 180.0              # перерыв (блокировка / сон) от 3 минут обнуляет «долгую работу подряд»
+NOTICE_SECONDS = 10.0     # сколько уведомление «висит» в данных для окон
 CAP = 5.0                 # шаг дольше (сон / зависание) в отработанное не засчитывается
 SAVE_EVERY = 15.0         # как часто сбрасывать на диск, секунд
 WEEK = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
@@ -65,13 +67,29 @@ def parse_dt(text):
         return None
 
 
+def plural(n, one, few, many):
+    n = abs(int(n))
+    return one if n % 10 == 1 and n % 100 != 11 else few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
+
+
+def hours_left_text(k):
+    return f"{plural(k, 'Остался', 'Осталось', 'Осталось')} {k} {plural(k, 'час', 'часа', 'часов')}"
+
+
+def streak_text(sec):
+    m = int(sec // 60)
+    if m < 60:
+        return f"{m} мин"
+    return f"{m // 60} ч" + (f" {m % 60} мин" if m % 60 else "")
+
+
 def hm_text(sec):
     sec = max(0, int(sec))
     return f"{sec // 3600:02d}:{sec % 3600 // 60:02d}"
 
 
 def _new_day(norm_s):
-    return {"arrival": None, "leave": None, "worked": 0.0, "norm": int(norm_s), "events": []}
+    return {"arrival": None, "leave": None, "worked": 0.0, "norm": int(norm_s), "events": [], "notified": []}
 
 
 class Tracker:
@@ -88,6 +106,49 @@ class Tracker:
         self._active_day = None                          # день и момент последнего «живого» тика (для времени ухода в блок)
         self._active_at = None
         self._alive = None
+        self.opts = {"hours": True, "brk": True, "brk_min": 60}      # напоминания (настройки приложения)
+        self.streak = 0.0                                # секунд непрерывной работы (без перерыва от REST)
+        self._next_break = 3600.0
+        self._rest = 0.0                                 # сколько идёт текущая блокировка / сон
+        self.notice = None                               # {"id", "kind", "text", "until"} — последнее уведомление
+        self._nid = 0
+        self.on_notice = None                            # вызывается при новом уведомлении
+        self.on_tick = None                              # вызывается после каждого тика (run)
+
+    # ---------- уведомления ----------
+    def set_notify(self, hours, brk, brk_min):
+        with self._lock:
+            self.opts = {"hours": bool(hours), "brk": bool(brk), "brk_min": int(brk_min)}
+            step = self.opts["brk_min"] * 60
+            self._next_break = (int(self.streak // step) + 1) * step
+
+    def _fire(self, kind, text, m):
+        self._nid += 1
+        self.notice = {"id": self._nid, "kind": kind, "text": text, "until": m + NOTICE_SECONDS}
+        if self.on_notice:
+            try:
+                self.on_notice(self.notice)
+            except Exception:
+                pass
+
+    def _notify(self, day, dt, m):
+        """Каждый ровный час до нормы («Осталось 7 часов» …), «норма выполнена» и напоминание о перерыве после долгой работы."""
+        worked, norm = day["worked"], day["norm"]
+        if self.opts["hours"] and worked > 0:
+            left = norm - worked
+            for k in range((norm - 1) // 3600, 0, -1):               # 7, 6, … 1 при норме 8 ч (сам «8» — начало дня)
+                if left <= k * 3600 and k not in day["notified"]:
+                    day["notified"].append(k)
+                    if left > k * 3600 - 120:                         # свежее пересечение; после перезапуска старые молча помечаются
+                        self._fire("hour", hours_left_text(k), m)
+            if left <= 0 and 0 not in day["notified"]:
+                day["notified"].append(0)
+                if -left < 120:
+                    self._fire("done", "Норма выполнена — можно заканчивать", m)
+        if self.opts["brk"] and self.streak >= self._next_break:
+            step = self.opts["brk_min"] * 60
+            self._next_break = (int(self.streak // step) + 1) * step
+            self._fire("break", f"Вы работаете уже {streak_text(self.streak)} подряд — сделайте небольшой перерыв", m)
 
     # ---------- диск ----------
     def _load(self):
@@ -112,7 +173,8 @@ class Tracker:
                     evs.append({"lock": iso_dt(lock), "unlock": iso_dt(unlock), "kind": e.get("kind") if e.get("kind") in ("lock", "sleep") else "lock"})
                 out[k] = {"arrival": d.get("arrival") if to_sec(d.get("arrival")) is not None else None,
                           "leave": d.get("leave") if to_sec(d.get("leave")) is not None else None,
-                          "worked": max(0.0, float(d.get("worked", 0))), "norm": int(d.get("norm", self.norm_s)), "events": evs}
+                          "worked": max(0.0, float(d.get("worked", 0))), "norm": int(d.get("norm", self.norm_s)), "events": evs,
+                          "notified": [int(x) for x in d.get("notified", []) if isinstance(x, int)]}
             except (ValueError, TypeError, AttributeError):
                 continue
         return out
@@ -139,6 +201,9 @@ class Tracker:
             self.locked = bool(self._locked())
             self._alive = iso_dt(t)
             if self.locked:
+                self._rest += dt
+                if self._rest >= REST:
+                    self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
                 if not was and self._active_day in self.days:
                     # ушли в блокировку: время — последний момент, когда видели работу (после сна — не момент пробуждения)
                     ev = {"lock": iso_dt(self._active_at or t), "unlock": None, "kind": "lock"}
@@ -155,8 +220,15 @@ class Tracker:
                         self._open_ev = None
                 elif dt > CAP and self._active_at is not None:
                     day["events"].append({"lock": iso_dt(self._active_at), "unlock": iso_dt(t), "kind": "sleep"})   # сон без блокировки
+                if dt > CAP or was:
+                    self._rest += dt if dt > CAP and not was else 0.0
+                    if self._rest >= REST:               # долгий перерыв — «работа подряд» начинается заново
+                        self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
+                    self._rest = 0.0
                 if dt <= CAP and not was:
                     day["worked"] += dt                  # после блокировки / сна первый шаг не засчитываем
+                    self.streak += dt
+                    self._notify(day, dt, m)
                 day["leave"] = hms(t)
                 self._active_day, self._active_at = iso, t
             if self.locked != was or m - self._saved_at >= SAVE_EVERY:
@@ -167,6 +239,8 @@ class Tracker:
         while not stop.wait(1.0):
             try:
                 self.tick()
+                if self.on_tick:
+                    self.on_tick()
             except Exception:
                 pass
 
@@ -193,7 +267,8 @@ class Tracker:
             now = datetime.fromtimestamp(self._clock())
             d = self.days.get(now.date().isoformat()) or _new_day(self.norm_s)
             return {"date": now.date().isoformat(), "arrival": d["arrival"], "leave": d["leave"], "worked_s": d["worked"],
-                    "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": len(d["events"])}
+                    "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": len(d["events"]),
+                    "notice": {k: self.notice[k] for k in ("id", "kind", "text")} if self.notice and self._mono() < self.notice["until"] else None}
 
     def _events(self, d, now):
         out = []
