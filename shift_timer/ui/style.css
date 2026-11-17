@@ -221,3 +221,13 @@ input:disabled{ opacity:.55; }
 .nb.break svg{ display:none; }
 .nb.break{ padding:0 12px; }
 .na button{ flex:1; }
+
+/* обед */
+.ringbox.lunch .fill{ stroke:url(#g-lunch); }
+.chip.lunch i{ background:#2dd4bf; }
+.btns{ display:flex; gap:10px; flex:none; }
+.btns .btn{ flex:1; }
+.btn.lunch.on{ background:linear-gradient(135deg,#14b8a6,#38bdf8); color:#fff; box-shadow:none; }
+.mini.lunch .top i{ background:#2dd4bf; }
+.mini.lunch .pb i{ background:linear-gradient(90deg,#14b8a6,#38bdf8); }
+.nb.lunch{ background:linear-gradient(135deg,#14b8a6,#38bdf8); }

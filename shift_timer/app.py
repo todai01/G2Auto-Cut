@@ -22,7 +22,7 @@ import timetrack
 APP_NAME = 'ShiftTimer'
 TITLE = 'Конец смены'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
-            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid",
+            "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
 MAIN_SIZE = (380, 690)
 MINI_SIZE = (204, 100)
@@ -64,6 +64,9 @@ def clean(raw):
     for k in ('seconds', 'mini_visible', 'mini_on_top', 'autostart', 'notify_hours', 'notify_break', 'sound'):
         if isinstance(raw.get(k), bool):
             s[k] = raw[k]
+    lm = raw.get('lunch_min')
+    if isinstance(lm, int) and not isinstance(lm, bool) and 10 <= lm <= 180:
+        s['lunch_min'] = lm
     bm = raw.get('break_min')
     if isinstance(bm, int) and not isinstance(bm, bool) and 15 <= bm <= 240:
         s['break_min'] = bm
@@ -126,6 +129,7 @@ class Api:
         self._t = tracker or timetrack.Tracker(history or history_file(), norm_seconds(self._s["norm"]))
         self._t.set_norm(norm_seconds(self._s["norm"]))
         self._apply_notify()
+        self._t.set_lunch(self._s["lunch_min"] * 60)
         self._t.on_notice = self._notice
         self._t.on_tick = self._after_tick
         self._temp_mini_until = 0.0
@@ -146,6 +150,8 @@ class Api:
             self._t.set_norm(norm_seconds(new["norm"]))
         if new["sound"] and (old["volume"] != new["volume"] or not old["sound"]):
             chime.play_async(new["volume"])              # образец: сразу слышно, какая громкость выбрана
+        if old["lunch_min"] != new["lunch_min"]:
+            self._t.set_lunch(new["lunch_min"] * 60)
         if any(old[k] != new[k] for k in ("notify_hours", "notify_break", "break_min")):
             self._apply_notify()
         if old["autostart"] != new["autostart"]:
@@ -203,6 +209,11 @@ class Api:
 
     def suggest_worked(self, arrival):
         return self._t.suggest_worked(arrival)
+
+    def lunch_toggle(self):
+        """Кнопка «Обед»: начать обед или закончить идущий. Возвращает {"on": идёт ли обед}."""
+        self._t.end_lunch() if self._t.snapshot()["lunch"]["on"] else self._t.start_lunch()
+        return {"on": self._t.snapshot()["lunch"]["on"]}
 
     def skip_break(self, all_day=False):
         return self._t.skip_break(bool(all_day))
@@ -317,6 +328,7 @@ def start_tray(api):
         img = Image.open(resource('icon.ico'))
         menu = pystray.Menu(
             pystray.MenuItem('Открыть', lambda icon, item: api.open_main(), default=True),
+            pystray.MenuItem(lambda item: 'Закончить обед' if api.get_day()["lunch"]["on"] else 'Обед', lambda icon, item: api.lunch_toggle()),
             pystray.MenuItem('Мини-окно', lambda icon, item: api.toggle_mini(), checked=lambda item: api.get_settings()["mini_visible"]),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem('Выйти (учёт остановится)', lambda icon, item: api.close_app()))

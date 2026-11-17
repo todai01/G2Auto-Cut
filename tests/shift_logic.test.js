@@ -52,4 +52,16 @@ assert.strictEqual(S.clock(3 * H + 7 * 60 + 9, true), '03:07:09');
 assert.strictEqual(S.hmStr('09:02:11'), '09:02'); assert.strictEqual(S.hmStr(null), '—');
 assert.strictEqual(S.signed(720), '+0:12'); assert.strictEqual(S.signed(-3900), '−1:05'); assert.strictEqual(S.signed(0), '+0:00');
 assert.strictEqual(S.hmSec(8 * H), '8:00'); assert.strictEqual(S.hmSec(8 * H + 30 * 60), '8:30');
+// прогноз ухода учитывает обед, который ещё впереди (день = норма + обед)
+c = S.calc(5 * H + 630, 8 * H, NOW, false, true, 3600);
+assert.strictEqual(S.hm(c.finish), '17:50');                 // 14:00 + 2:49:30 + 1:00 = 17:49:30 → 17:50
+assert.strictEqual(S.hm(S.calc(5 * H + 630, 8 * H, NOW, false, true, 0).finish), '16:50');
+assert.strictEqual(S.calc(5 * H, 8 * H, NOW, true, true, 3600).finish, null);   // экран заблокирован (без обеда) — прогноза нет
+
+// таймер обеда
+let l = S.lunch(1500, 3600, true);
+assert.strictEqual(S.clock(l.remain, true), '00:35:00'); assert.ok(Math.abs(l.progress - 1500 / 3600) < 1e-9); assert.strictEqual(l.over, false);
+l = S.lunch(3600, 3600, true); assert.strictEqual(l.remain, 0); assert.strictEqual(l.progress, 1); assert.strictEqual(l.over, true);
+l = S.lunch(3700, 3600, false); assert.strictEqual(l.remain, 0); assert.strictEqual(l.over, true);
+assert.strictEqual(S.clock(S.lunch(3541, 3600, false).remain, false), '00:01');   // без секунд — вверх, как и у нормы
 console.log('shift logic: OK');

@@ -32,11 +32,21 @@ const save = patch => pywebview.api.save_settings(patch);
 function liveWorked() {
     const d = App.day;
     if (!d) return 0;
-    return d.worked_s + (d.locked ? 0 : Math.min((performance.now() - App.at) / 1000, 3));    // между опросами секунды идут плавно
+    if (d.locked || (d.lunch && d.lunch.on)) return d.worked_s;                               // на блокировке и на обеде работа стоит
+    return d.worked_s + Math.min((performance.now() - App.at) / 1000, 3);                    // между опросами секунды идут плавно
+}
+// Обед идёт по настенным часам (и при блокировке): сколько прошло с его начала.
+function liveLunch() {
+    const L = App.day && App.day.lunch;
+    if (!L) return 0;
+    return L.elapsed_s + (L.on ? Math.min((performance.now() - App.at) / 1000, 3) : 0);
 }
 // Что показать — одно и то же в главном окне и в мини.
 function view() {
     const d = App.day, s = App.s;
     if (!d || !s) return null;
-    return { d, c: Shift.calc(liveWorked(), d.norm_s, Date.now(), d.locked, s.seconds) };
+    const L = d.lunch || { on: false, len_s: 3600, plan_s: 0 };
+    const el = liveLunch(), left = L.on ? Math.max(0, L.len_s - el) : L.plan_s;          // обед ещё впереди → день = норма + обед
+    const c = Shift.calc(liveWorked(), d.norm_s, Date.now(), d.locked && !L.on, s.seconds, left);
+    return { d, c, L, lunch: L.on ? Shift.lunch(el, L.len_s, s.seconds) : null };
 }

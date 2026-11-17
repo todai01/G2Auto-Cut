@@ -10,7 +10,7 @@ import re
 import sys
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 REST = 180.0              # перерыв (блокировка / сон) от 3 минут обнуляет «долгую работу подряд»
 NOTICE_SECONDS = 10.0     # сколько уведомление «висит» в данных для окон
@@ -102,6 +102,8 @@ class Tracker:
         self.locked = False
         self._last = mono()
         self._saved_at = self._last
+        self.lunch_len_s = 3600                          # длительность обеда (настройка)
+        self._open_lunch = self._find_open_lunch()       # идущий обед: событие kind="lunch" без unlock (переживает перезапуск)
         self._open_ev = None                             # незакрытая блокировка (ссылка на запись в days[...]["events"])
         self._active_day = None                          # день и момент последнего «живого» тика (для времени ухода в блок)
         self._active_at = None
@@ -168,9 +170,15 @@ class Tracker:
                     lock, unlock = parse_dt(e.get("lock")), parse_dt(e.get("unlock"))
                     if lock is None:
                         continue
+                    kind = e.get("kind") if e.get("kind") in ("lock", "sleep", "lunch") else "lock"
+                    if unlock is None and kind == "lunch" and lock.date() == datetime.fromtimestamp(self._clock()).date():
+                        evs.append({"lock": iso_dt(lock), "unlock": None, "kind": "lunch"})      # обед идёт — таймер переживает перезапуск
+                        continue
                     if unlock is None:                   # программу выключили при блокировке (выключение, сбой) — до последнего «живого» момента
                         unlock = alive if alive and alive >= lock else lock
-                    evs.append({"lock": iso_dt(lock), "unlock": iso_dt(unlock), "kind": e.get("kind") if e.get("kind") in ("lock", "sleep") else "lock"})
+                        if kind == "lunch":
+                            unlock = min(unlock, lock + timedelta(hours=1))
+                    evs.append({"lock": iso_dt(lock), "unlock": iso_dt(unlock), "kind": kind})
                 out[k] = {"arrival": d.get("arrival") if to_sec(d.get("arrival")) is not None else None,
                           "leave": d.get("leave") if to_sec(d.get("leave")) is not None else None,
                           "worked": max(0.0, float(d.get("worked", 0))), "norm": int(d.get("norm", self.norm_s)), "events": evs,
@@ -225,8 +233,14 @@ class Tracker:
                     if self._rest >= REST:               # долгий перерыв — «работа подряд» начинается заново
                         self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
                     self._rest = 0.0
-                if dt <= CAP and not was:
-                    day["worked"] += dt                  # после блокировки / сна первый шаг не засчитываем
+                lunch = self._open_lunch
+                if lunch is not None:                    # обед закончился, а вы за компьютером — работа продолжается сама
+                    st = parse_dt(lunch["lock"])
+                    if st and (t - st).total_seconds() >= self.lunch_len_s:
+                        self._end_lunch(t, m, auto=True)
+                        lunch = None
+                if dt <= CAP and not was and lunch is None:
+                    day["worked"] += dt                  # после блокировки / сна первый шаг не засчитываем; на обеде время стоит
                     self.streak += dt
                     self._notify(day, dt, m)
                 day["leave"] = hms(t)
@@ -256,11 +270,62 @@ class Tracker:
                 self.days[today]["norm"] = self.norm_s
             self.save()
 
+    # ---------- обед: отдельный таймер ----------
+    def _find_open_lunch(self):
+        for d in self.days.values():
+            for e in d["events"]:
+                if e["kind"] == "lunch" and e["unlock"] is None:
+                    return e
+        return None
+
+    def set_lunch(self, seconds):
+        with self._lock:
+            self.lunch_len_s = max(60, int(seconds))
+
+    def start_lunch(self):
+        """Обед: рабочее время встаёт, идёт свой таймер (по настенным часам — и при блокировке, и во сне)."""
+        with self._lock:
+            if self._open_lunch is None:
+                t = datetime.fromtimestamp(self._clock())
+                day = self.days.setdefault(t.date().isoformat(), _new_day(self.norm_s))
+                ev = {"lock": iso_dt(t), "unlock": None, "kind": "lunch"}
+                day["events"].append(ev)
+                self._open_lunch = ev
+                self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
+                self.save()
+            return {"ok": True}
+
+    def end_lunch(self):
+        with self._lock:
+            if self._open_lunch is not None:
+                self._end_lunch(datetime.fromtimestamp(self._clock()), self._mono(), auto=False)
+            return {"ok": True}
+
+    def _end_lunch(self, t, m, auto):
+        self._open_lunch["unlock"] = iso_dt(t)
+        self._open_lunch = None
+        self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
+        if auto:
+            self._fire("lunch", "Обед закончился — время пошло", m)
+        self.save()
+
+    def _lunch_s(self, d, now):
+        """Сколько обеда в дне (идущий — до сейчас)."""
+        total = 0.0
+        for e in d["events"]:
+            if e["kind"] == "lunch":
+                a, b = parse_dt(e["lock"]), parse_dt(e["unlock"]) or now
+                if a:
+                    total += max(0.0, (b - a).total_seconds())
+        return total
+
     # ---------- данные для окон ----------
-    @staticmethod
-    def _break(d):
+    def _break(self, d):
+        """Перерывы без обеда: от прихода до ухода минус отработанное и обед."""
         a, l = to_sec(d.get("arrival")), to_sec(d.get("leave"))
-        return max(0, (l - a) - d["worked"]) if a is not None and l is not None and l >= a else 0
+        if a is None or l is None or l < a:
+            return 0
+        return max(0, (l - a) - d["worked"] - self._lunch_s(d, datetime.fromtimestamp(self._clock())))
 
     def snapshot(self):
         with self._lock:
@@ -268,7 +333,8 @@ class Tracker:
             d = self.days.get(now.date().isoformat()) or _new_day(self.norm_s)
             return {"date": now.date().isoformat(), "arrival": d["arrival"], "leave": d["leave"], "worked_s": d["worked"],
                     "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": len(d["events"]),
-                    "notice": {k: self.notice[k] for k in ("id", "kind", "text")} if self.notice and self._mono() < self.notice["until"] else None}
+                    "notice": {k: self.notice[k] for k in ("id", "kind", "text")} if self.notice and self._mono() < self.notice["until"] else None,
+                    "lunch": self._lunch_info(d, now)}
 
     def _events(self, d, now):
         out = []
@@ -277,6 +343,16 @@ class Tracker:
             out.append({"lock": e["lock"], "unlock": e["unlock"], "kind": e["kind"],
                         "dur_s": int(((b or now) - a).total_seconds()) if a else 0})
         return out
+
+    def _lunch_info(self, d, now):
+        on = self._open_lunch is not None and self._open_lunch in d["events"]
+        done = self._lunch_s(d, now)
+        elapsed = 0.0
+        if on:
+            st = parse_dt(self._open_lunch["lock"])
+            elapsed = max(0.0, (now - st).total_seconds()) if st else 0.0
+        plan = max(0.0, self.lunch_len_s - (elapsed if on else done))     # сколько обеда ещё впереди (для прогноза ухода)
+        return {"on": on, "len_s": self.lunch_len_s, "elapsed_s": elapsed, "done_s": done, "plan_s": plan}
 
     def history(self):
         with self._lock:
@@ -364,10 +440,11 @@ class Tracker:
         with self._lock:
             ks = sorted(self.days)
             snap = {k: dict(self.days[k]) for k in ks}
+        nowdt = datetime.fromtimestamp(self._clock())
         wb = Workbook()
         ws = wb.active
         ws.title = 'Учёт времени'
-        head = ['Дата', 'День', 'Приход', 'Уход', 'Отработано', 'Перерывы', 'Норма', 'Разница, мин']
+        head = ['Дата', 'День', 'Приход', 'Уход', 'Отработано', 'Перерывы', 'Обед', 'Норма', 'Разница, мин']
         ws.append(head)
         for k in ks:
             d = snap[k]
@@ -376,9 +453,10 @@ class Tracker:
             ws.append([dd, WEEK[dd.weekday()],
                        datetime.min.time().replace(hour=a // 3600, minute=a % 3600 // 60) if a is not None else None,
                        datetime.min.time().replace(hour=l // 3600, minute=l % 3600 // 60) if l is not None else None,
-                       d["worked"] / 86400, self._break(d) / 86400, d["norm"] / 86400, round((d["worked"] - d["norm"]) / 60)])
+                       d["worked"] / 86400, self._break(d) / 86400, self._lunch_s(d, nowdt) / 86400, d["norm"] / 86400,
+                       round((d["worked"] - d["norm"]) / 60)])
         n = len(ks)
-        ws.append(['Итого', None, None, None, f'=SUM(E2:E{n + 1})', f'=SUM(F2:F{n + 1})', f'=SUM(G2:G{n + 1})', f'=SUM(H2:H{n + 1})'])
+        ws.append(['Итого', None, None, None, f'=SUM(E2:E{n + 1})', f'=SUM(F2:F{n + 1})', f'=SUM(G2:G{n + 1})', f'=SUM(H2:H{n + 1})', f'=SUM(I2:I{n + 1})'])
         line = Side(style='thin', color='D0D5DD')
         for c in ws[1]:
             c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')
@@ -387,15 +465,15 @@ class Tracker:
             ws.cell(r, 1).number_format = 'DD.MM.YYYY'
             for col in (3, 4):
                 ws.cell(r, col).number_format = 'HH:MM'
-            for col in (5, 6, 7):
+            for col in (5, 6, 7, 8):
                 ws.cell(r, col).number_format = '[h]:mm'
-            ws.cell(r, 8).number_format = '+0;-0;0'
-            for col in range(1, 9):
+            ws.cell(r, 9).number_format = '+0;-0;0'
+            for col in range(1, 10):
                 ws.cell(r, col).border = Border(bottom=line)
                 ws.cell(r, col).alignment = Alignment(horizontal='center')
         for c in ws[n + 2]:
             c.font = Font(bold=True)
-        for i, w in enumerate([13, 7, 10, 10, 13, 12, 10, 14], 1):
+        for i, w in enumerate([13, 7, 10, 10, 13, 12, 10, 10, 14], 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = 'A2'
         ev = wb.create_sheet('Блокировки')
@@ -403,7 +481,7 @@ class Tracker:
         for k in ks:
             for e in snap[k]["events"]:
                 a, b = parse_dt(e["lock"]), parse_dt(e["unlock"])
-                ev.append([date.fromisoformat(k), 'пауза' if e["kind"] == "sleep" else 'блокировка', a, b,
+                ev.append([date.fromisoformat(k), {'sleep': 'пауза', 'lunch': 'обед'}.get(e["kind"], 'блокировка'), a, b,
                            (b - a).total_seconds() / 86400 if a and b else None])
         for c in ev[1]:
             c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')

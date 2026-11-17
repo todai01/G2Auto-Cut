@@ -1,32 +1,38 @@
 const C = 2 * Math.PI * 104;
 let TRAY = false;
-const CHIP = { work: 'Идёт учёт времени', paused: 'Пауза — экран заблокирован', done: 'Норма выполнена' };
+const CHIP = { work: 'Идёт учёт времени', paused: 'Пауза — экран заблокирован', done: 'Норма выполнена', lunch: 'Обед' };
 
 function render() {
     const v = view();
     if (!v) { setText($('big'), '--:--'); return; }
-    const { d, c } = v, s = App.s;
-    $('chip').className = 'chip ' + c.phase;
-    setText($('chipT'), CHIP[c.phase]);
+    const { d, c, L, lunch } = v, s = App.s;
+    const phase = lunch ? 'lunch' : c.phase;
+    $('chip').className = 'chip ' + phase;
+    setText($('chipT'), CHIP[phase]);
     const big = $('big');
-    big.className = 'big' + (s.seconds || c.phase === 'done' ? ' ss' : ' s') + (c.phase === 'paused' ? ' muted' : '');
-    $('ring').className = 'ringbox ' + (c.soon && c.phase === 'work' ? 'soon ' : '') + c.phase;
+    big.className = 'big' + (s.seconds || phase === 'done' ? ' ss' : ' s') + (phase === 'paused' ? ' muted' : '');
+    $('ring').className = 'ringbox ' + (c.soon && phase === 'work' ? 'soon ' : '') + phase;
 
-    if (c.phase === 'done') {
+    if (lunch) {
+        setText($('cap'), 'Обед'); setText(big, Shift.clock(lunch.remain, s.seconds));
+        setText($('sub'), lunch.over ? 'обед закончился' : 'работа на паузе');
+    } else if (c.phase === 'done') {
         setText($('cap'), 'Норма выполнена'); setText(big, '+' + Shift.clock(c.over, s.seconds)); setText($('sub'), 'сверх нормы');
     } else {
         setText($('cap'), 'Осталось'); setText(big, Shift.clock(c.remain, s.seconds));
         setText($('sub'), c.phase === 'paused' ? 'время стоит' : `закончите около ${Shift.hm(c.finish)}`);
     }
-    setText($('pct'), `${Math.floor(c.progress * 100)}% нормы`);
-    $('fill').style.strokeDashoffset = String(C * (1 - c.progress));
+    setText($('pct'), lunch ? `${Math.floor(lunch.progress * 100)}% обеда` : `${Math.floor(c.progress * 100)}% нормы`);
+    $('fill').style.strokeDashoffset = String(C * (1 - (lunch ? lunch.progress : c.progress)));
 
     setText($('tWorked'), Shift.clock(c.worked, s.seconds));
     setText($('tArr'), Shift.hmStr(d.arrival));
-    setText($('rNorm'), Shift.hmSec(d.norm_s) + ' ч');
-    setText($('rFinish'), c.phase === 'done' ? 'уже можно' : c.phase === 'paused' ? '—' : Shift.hm(c.finish));
+    setText($('rNorm'), `${Shift.hmSec(d.norm_s)} + ${Shift.hmSec(L.len_s)} ч`);
+    setText($('rFinish'), c.phase === 'done' ? 'уже можно' : c.finish ? Shift.hm(c.finish) : '—');
     setText($('rBreak'), d.events_n ? `${Shift.words(d.break_s, false) || '0 мин'} · ${d.events_n}×` : 'нет');
-    setText($('bMini'), s.mini_visible ? 'Скрыть мини-окно' : 'Показать мини-окно');
+    setText($('bMini'), s.mini_visible ? 'Скрыть мини' : 'Мини-окно');
+    setText($('bLunch'), L.on ? 'Закончить обед' : 'Обед');
+    $('bLunch').classList.toggle('on', L.on);
     syncSettings();
 }
 
@@ -36,6 +42,7 @@ function syncSettings() {
     if (document.activeElement !== $('iNorm') && $('iNorm').value !== s.norm) $('iNorm').value = s.norm;   // не мешаем вводу
     setSwitch('swSec', s.seconds); setSwitch('swMini', s.mini_visible); setSwitch('swTop', s.mini_on_top); setSwitch('swAuto', s.autostart);
     document.querySelectorAll('#segTheme button').forEach(b => b.classList.toggle('on', b.dataset.t === s.theme));
+    document.querySelectorAll('#segLunch button').forEach(b => b.classList.toggle('on', +b.dataset.m === s.lunch_min));
     setSwitch('swSound', s.sound); setSwitch('swHours', s.notify_hours); setSwitch('swBreak', s.notify_break);
     document.querySelectorAll('#segVol button').forEach(b => { b.classList.toggle('on', b.dataset.v === s.volume); b.disabled = !s.sound; });
     document.querySelectorAll('#segBreak button').forEach(b => { b.classList.toggle('on', +b.dataset.m === s.break_min); b.disabled = !s.notify_break; });
@@ -64,7 +71,7 @@ function startJournalTimer() { clearInterval(jrTimer); loadJournal(); jrTimer = 
 let editing = null;
 function evText(row) {                                   // «12:10 → 12:55 · 45 мин» (дата — если разблокировали в другой день)
     const t = iso => iso ? (iso.slice(0, 10) === row.date ? iso.slice(11, 16) : iso.slice(8, 10) + '.' + iso.slice(5, 7) + ' ' + iso.slice(11, 16)) : 'сейчас';
-    return (row.events || []).map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'пауза' : 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
+    return (row.events || []).map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'пауза' : e.kind === 'lunch' ? 'обед' : 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
         + `<span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span></div>`).join('');
 }
 function openDlg(id) { $('dlgBack').classList.add('on'); $('dlgEdit').hidden = id !== 'dlgEdit'; $('dlgClose').hidden = id !== 'dlgClose'; }
@@ -125,6 +132,8 @@ boot(() => {
     $('cMin').onclick = () => { closeDlg(); TRAY ? pywebview.api.hide_main() : pywebview.api.minimize(); };
     $('cQuit').onclick = () => pywebview.api.close_app();
     $('bMini').onclick = () => save({ mini_visible: !App.s.mini_visible });
+    $('bLunch').onclick = () => pywebview.api.lunch_toggle().then(poll);
+    document.querySelectorAll('#segLunch button').forEach(b => b.onclick = () => save({ lunch_min: +b.dataset.m }));
     $('swSec').onclick = () => save({ seconds: !App.s.seconds });
     $('swMini').onclick = () => save({ mini_visible: !App.s.mini_visible });
     $('swTop').onclick = () => save({ mini_on_top: !App.s.mini_on_top });

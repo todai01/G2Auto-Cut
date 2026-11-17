@@ -11,19 +11,26 @@
     }
 
     // phase: work — идёт, paused — экран заблокирован, done — норма выполнена.
-    function calc(worked, norm, nowMs, paused, showSeconds) {
+    // extra — сколько обеда ещё впереди (секунды): прогноз ухода учитывает его, день = норма + обед.
+    function calc(worked, norm, nowMs, paused, showSeconds, extra) {
         const left = Math.max(0, norm - worked);
         const done = worked >= norm;
         // Без секунд оставшееся округляем ВВЕРХ: «00:01» держится до самой нормы, а не «00:00» за минуту до неё.
         const remain = showSeconds ? Math.ceil(left) : Math.ceil(left / 60) * 60;
         const shownWorked = showSeconds ? Math.floor(worked) : Math.floor(worked / 60) * 60;
-        const finish = !done && !paused ? new Date(Math.ceil((nowMs + left * 1000) / 60000) * 60000) : null;
+        const finish = !done && !paused ? new Date(Math.ceil((nowMs + (left + (extra || 0)) * 1000) / 60000) * 60000) : null;
         return {
             phase: done ? 'done' : paused ? 'paused' : 'work',
             remain, worked: shownWorked, over: Math.max(0, Math.floor(worked - norm)), finish,
             progress: norm > 0 ? Math.min(1, worked / norm) : 1,
             soon: !done && left <= 30 * 60,
         };
+    }
+
+    // Обед — отдельный таймер: elapsed — сколько идёт, len — длина обеда (секунды).
+    function lunch(elapsed, len, showSeconds) {
+        const left = Math.max(0, len - elapsed);
+        return { remain: showSeconds ? Math.ceil(left) : Math.ceil(left / 60) * 60, progress: len > 0 ? Math.min(1, elapsed / len) : 1, over: elapsed >= len };
     }
 
     function clock(sec, showSeconds) {                      // 9015 → "02:30:15" / "02:30"
@@ -48,6 +55,6 @@
     }
     function hmSec(sec) { const a = Math.floor(Math.max(0, sec) / 60); return `${Math.floor(a / 60)}:${p2(a % 60)}`; }   // 28800 → "8:00"
 
-    const api = { parseHM, calc, clock, words, hm, hmStr, signed, hmSec };
+    const api = { parseHM, calc, lunch, clock, words, hm, hmStr, signed, hmSec };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Shift = api;
 })(typeof window !== 'undefined' ? window : globalThis);

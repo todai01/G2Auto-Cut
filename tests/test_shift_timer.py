@@ -172,10 +172,10 @@ def test_excel_export(tmp_path):
     p = tr.export_xlsx(str(tmp_path / 'out' / 'Учёт_времени.xlsx'))
     ws = openpyxl.load_workbook(p).active
     rows = [[c.value for c in r] for r in ws.iter_rows()]
-    assert rows[0][:5] == ['Дата', 'День', 'Приход', 'Уход', 'Отработано']
+    assert rows[0] == ['Дата', 'День', 'Приход', 'Уход', 'Отработано', 'Перерывы', 'Обед', 'Норма', 'Разница, мин']
     assert rows[1][0].date().isoformat() == '2026-11-10' and rows[1][1] == 'вт'
-    assert rows[1][4] == timedelta(hours=8) and rows[1][7] == 0      # [h]:mm читается как timedelta
-    assert rows[2][7] == -60                               # 7 ч при норме 8 ч → −60 мин
+    assert rows[1][4] == timedelta(hours=8) and rows[1][8] == 0      # [h]:mm читается как timedelta; колонки: … Перерывы, Обед, Норма, Разница
+    assert rows[2][8] == -60                               # 7 ч при норме 8 ч → −60 мин
     assert rows[3][0] == 'Итого' and rows[3][4] == '=SUM(E2:E3)'
 
 
@@ -698,6 +698,176 @@ def test_plain_skip_changes_nothing_and_api_works(tmp_path):
     assert api.skip_break(False) == {"ok": True}
     assert api.skip_break(True) == {"ok": True}
     assert api._t.days[api._t.snapshot()["date"]]["no_break"] is True
+
+
+# ---------- обед: отдельный таймер ----------
+def lunch_tracker(tmp_path, c, name='h.json', norm=8 * 3600):
+    tr = c.tracker(str(tmp_path / name), norm=norm)
+    tr.set_lunch(3600)
+    tr.set_notify(False, False, 60)
+    return tr
+
+
+def test_lunch_pauses_work_and_timer_runs(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    run(c, tr, 600)
+    w0 = tr.snapshot()["worked_s"]
+    tr.start_lunch()
+    run(c, tr, 1200)                                       # 20 минут обеда у компьютера
+    s = tr.snapshot()
+    assert s["lunch"]["on"] and abs(s["lunch"]["elapsed_s"] - 1200) <= 2
+    assert s["worked_s"] == w0                             # рабочее время на обеде стоит
+    assert abs(s["lunch"]["plan_s"] - 2400) <= 2           # до конца обеда ещё 40 минут (для прогноза ухода)
+
+
+def test_lunch_timer_runs_through_lock_and_resumes_work(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    run(c, tr, 60)
+    tr.start_lunch()
+    c.locked = True
+    run(c, tr, 1800)                                       # пол-часа обеда при заблокированном экране
+    assert abs(tr.snapshot()["lunch"]["elapsed_s"] - 1800) <= 2 and tr.snapshot()["lunch"]["on"]
+    c.locked = False
+    run(c, tr, 5)
+    assert tr.snapshot()["lunch"]["on"]                    # вернулись раньше часа — обед идёт, пока не нажмёте
+    w = tr.snapshot()["worked_s"]
+    run(c, tr, 60)
+    assert tr.snapshot()["worked_s"] == w                  # и время работы всё ещё стоит
+    tr.end_lunch()                                         # нажали «Закончить обед»
+    run(c, tr, 120)
+    s = tr.snapshot()
+    assert not s["lunch"]["on"] and s["worked_s"] >= w + 115    # дальше — как обычно
+    ev = [e for e in tr.history()["rows"][0]["events"] if e["kind"] == "lunch"]
+    assert len(ev) == 1 and 1860 <= ev[0]["dur_s"] <= 1870     # 30 мин у заблокированного экрана + ещё минута после возвращения
+
+
+def test_lunch_ends_by_itself_when_time_is_up_and_you_are_back(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    notes = Notes(tr)
+    tr.tick()
+    run(c, tr, 30)
+    tr.start_lunch()
+    c.locked = True
+    run(c, tr, 3700)                                       # час обеда прошёл при блокировке
+    assert tr.snapshot()["lunch"]["on"] and notes.items == []      # пока заблокировано — ждём возвращения
+    c.locked = False
+    run(c, tr, 3)
+    s = tr.snapshot()
+    assert not s["lunch"]["on"] and notes.items == [("lunch", "Обед закончился — время пошло")]
+    w = s["worked_s"]
+    run(c, tr, 60)
+    assert tr.snapshot()["worked_s"] >= w + 55             # после обеда время пошло само
+
+
+def test_lunch_at_desk_ends_after_the_hour(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    notes = Notes(tr)
+    tr.tick()
+    tr.start_lunch()
+    run(c, tr, 3598)
+    assert tr.snapshot()["lunch"]["on"]
+    run(c, tr, 5)
+    assert not tr.snapshot()["lunch"]["on"] and len(notes.items) == 1
+
+
+def test_lunch_not_counted_as_break_and_in_history(tmp_path):
+    c = Clock(h=9, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    run(c, tr, 3600)                                       # 09:00 → 10:00 работа
+    tr.start_lunch()
+    run(c, tr, 1800)
+    tr.end_lunch()
+    run(c, tr, 600)
+    s = tr.snapshot()
+    assert s["break_s"] < 10                               # «перерывы» — без обеда
+    r = tr.history()["rows"][0]
+    assert any(e["kind"] == "lunch" and abs(e["dur_s"] - 1800) <= 2 for e in r["events"])
+    assert abs(s["lunch"]["done_s"] - 1800) <= 2 and abs(s["lunch"]["plan_s"] - 1800) <= 2     # час обеда: 30 мин уже было, 30 ещё впереди
+
+
+def test_lunch_survives_restart_and_stale_lunch_is_closed(tmp_path):
+    f = 'h.json'
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c, f)
+    tr.tick()
+    tr.start_lunch()
+    run(c, tr, 600)
+    tr.stop()
+    tr2 = lunch_tracker(tmp_path, c, f)                    # перезапустили приложение посреди обеда
+    tr2.tick()
+    s = tr2.snapshot()
+    assert s["lunch"]["on"] and 595 <= s["lunch"]["elapsed_s"] <= 610
+    tr2.stop()
+    c.wall += 2 * 86400
+    c.m += 2 * 86400                                       # открыли через два дня — вчерашний обед не должен висеть
+    tr3 = lunch_tracker(tmp_path, c, f)
+    assert tr3.snapshot()["lunch"]["on"] is False
+    old = tr3.history()["rows"][-1]["events"]
+    assert [e["kind"] for e in old] == ["lunch"] and old[0]["unlock"] is not None and old[0]["dur_s"] <= 3600
+
+
+def test_lunch_double_start_and_end_are_safe(tmp_path):
+    c = Clock()
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    tr.end_lunch()                                         # обеда нет — ничего не ломается
+    tr.start_lunch()
+    tr.start_lunch()
+    assert sum(1 for e in tr.history()["rows"][0]["events"] if e["kind"] == "lunch") == 1
+    tr.end_lunch()
+    tr.end_lunch()
+    assert tr.snapshot()["lunch"]["on"] is False
+
+
+def test_lunch_resets_work_streak(tmp_path):
+    c = Clock(h=9, mi=0)
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=20 * 3600)
+    tr.set_lunch(1800)
+    tr.set_notify(False, True, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 50 * 60)
+    tr.start_lunch()
+    run(c, tr, 1800 + 3)                                   # обед 30 мин и конец
+    run(c, tr, 50 * 60)                                    # ещё 50 минут работы
+    assert [k for k, _ in n.items if k == "break"] == []   # час подряд не набрался: обед — перерыв
+    run(c, tr, 11 * 60)
+    assert [k for k, _ in n.items if k == "break"] == ["break"]
+
+
+def test_lunch_excel_column_and_type(tmp_path):
+    import openpyxl
+    c = Clock(h=9, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    run(c, tr, 600)
+    tr.start_lunch()
+    run(c, tr, 1200)
+    tr.end_lunch()
+    run(c, tr, 5)
+    wb = openpyxl.load_workbook(tr.export_xlsx(str(tmp_path / 'o.xlsx')))
+    rows = [[x.value for x in r] for r in wb['Учёт времени'].iter_rows()]
+    assert rows[1][6] == timedelta(seconds=rows[1][6].total_seconds()) and abs(rows[1][6].total_seconds() - 1200) <= 2
+    ev = [[x.value for x in r] for r in wb['Блокировки'].iter_rows()]
+    assert ev[1][1] == 'обед'
+
+
+def test_api_lunch_and_setting(tmp_path):
+    c, api = make_api(tmp_path)
+    api._t.tick()
+    s = api.save_settings({"lunch_min": 45})
+    assert s["lunch_min"] == 45 and api._t.lunch_len_s == 45 * 60
+    assert shift_app.DEFAULTS["lunch_min"] == 60
+    assert api.save_settings({"lunch_min": 5})["lunch_min"] == 60 and api.save_settings({"lunch_min": "x"})["lunch_min"] == 60
+    assert api.lunch_toggle()["on"] is True and api.get_day()["lunch"]["on"] is True
+    assert api.lunch_toggle()["on"] is False and api.get_day()["lunch"]["on"] is False
 
 
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')

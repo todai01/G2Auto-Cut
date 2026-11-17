@@ -19,6 +19,7 @@
           <defs>
             <linearGradient id="g-work" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b6cf6"/><stop offset="1" stop-color="#22c3a0"/></linearGradient>
             <linearGradient id="g-soon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#f97316"/></linearGradient>
+            <linearGradient id="g-lunch" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14b8a6"/><stop offset="1" stop-color="#38bdf8"/></linearGradient>
             <linearGradient id="g-done" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c3a0"/><stop offset="1" stop-color="#34d399"/></linearGradient>
           </defs>
           <circle class="track" cx="118" cy="118" r="104"/>
@@ -36,11 +37,11 @@
         <button class="tile tile-btn" id="tileArr" title="Указать, во сколько вы пришли"><span class="k">Приход<i>изменить</i></span><span class="v num" id="tArr">—</span></button>
       </div>
       <div class="card">
-        <div class="row"><span class="k">Норма за день</span><span class="v" id="rNorm">—</span></div>
+        <div class="row"><span class="k">Норма + обед</span><span class="v" id="rNorm">—</span></div>
         <div class="row"><span class="k">Закончите около</span><span class="v" id="rFinish">—</span></div>
         <div class="row"><span class="k">Блокировки и паузы</span><span class="v" id="rBreak">—</span></div>
       </div>
-      <button class="btn primary" id="bMini">Мини-окно</button>
+      <div class="btns"><button class="btn lunch" id="bLunch" title="Обед: рабочее время встаёт, идёт отдельный таймер">Обед</button><button class="btn primary" id="bMini">Мини-окно</button></div>
     </section>
 
     <section class="view" id="v-jr">
@@ -60,8 +61,10 @@
       <div class="h">Рабочий день</div>
       <div class="card">
         <div class="row"><span>Норма за день</span><input type="time" id="iNorm"></div>
+        <div class="row"><span>Обед</span>
+          <div class="seg" id="segLunch"><button data-m="30">30 мин</button><button data-m="45">45 мин</button><button data-m="60">1 час</button><button data-m="90">1,5 ч</button></div></div>
       </div>
-      <div class="note">Считается активное время: пока экран заблокирован или компьютер в режиме ожидания, оно стоит. Моменты блокировки и разблокировки пишутся в журнал.</div>
+      <div class="note">Считается активное время: пока экран заблокирован или компьютер в режиме ожидания, оно стоит. Обед — отдельный таймер: на нём работа стоит, идёт он и при блокировке экрана.</div>
       <div class="h">Вид</div>
       <div class="card">
         <div class="row"><span>Показывать секунды</span><button class="sw" id="swSec" role="switch"></button></div>
