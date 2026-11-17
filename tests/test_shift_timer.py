@@ -658,6 +658,48 @@ def test_api_suggest_and_edit_today_roundtrip(tmp_path):
     assert api.suggest_worked('13:00') is None                      # приход позже, чем сейчас
 
 
+# ---------- перерыв не обязателен: пропустить ----------
+def test_skip_break_for_the_day_stops_break_reminders_only(tmp_path):
+    f = str(tmp_path / 'h.json')
+    c = Clock()
+    tr = c.tracker(f, norm=3 * 3600)
+    tr.set_notify(True, True, 60)
+    n = Notes(tr)
+    tr.tick()
+    run(c, tr, 61 * 60)
+    assert [k for k, _ in n.items if k == "break"] == ["break"]
+    tr.skip_break(True)                                    # «Не сегодня»
+    run(c, tr, 2 * 3600)
+    assert [k for k, _ in n.items if k == "break"] == ["break"]            # новых напоминаний о перерыве нет
+    assert any(k == "hour" for k, _ in n.items) and any(k == "done" for k, _ in n.items)    # часы и «норма» работают
+    tr.stop()
+    tr2 = c.tracker(f, norm=3 * 3600)                      # перезапуск в тот же день — выбор сохранён
+    tr2.set_notify(False, True, 60)
+    n2 = Notes(tr2)
+    tr2.tick()
+    run(c, tr2, 2 * 3600)
+    assert n2.items == []
+
+
+def test_skip_break_resets_next_day(tmp_path):
+    c = Clock(h=22, mi=0)
+    tr = c.tracker(str(tmp_path / 'h.json'), norm=20 * 3600)
+    tr.set_notify(False, True, 60)
+    when = []
+    tr.on_notice = lambda n: when.append(datetime.fromtimestamp(c.wall).date().isoformat())
+    tr.tick()
+    tr.skip_break(True)
+    run(c, tr, 3 * 3600)                                   # 22:00 → 01:00: на границе суток работа без перерыва продолжается
+    assert when and set(when) == {'2026-11-18'}            # в день «Не сегодня» (17.11) тишина, на следующий день напоминания снова
+
+
+def test_plain_skip_changes_nothing_and_api_works(tmp_path):
+    c, api = make_api(tmp_path)
+    assert api.skip_break(False) == {"ok": True}
+    assert api.skip_break(True) == {"ok": True}
+    assert api._t.days[api._t.snapshot()["date"]]["no_break"] is True
+
+
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')
 def test_js_logic():
     r = subprocess.run(['node', os.path.join(ROOT, 'tests', 'shift_logic.test.js')], capture_output=True, text=True)

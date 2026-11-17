@@ -89,7 +89,7 @@ def hm_text(sec):
 
 
 def _new_day(norm_s):
-    return {"arrival": None, "leave": None, "worked": 0.0, "norm": int(norm_s), "events": [], "notified": []}
+    return {"arrival": None, "leave": None, "worked": 0.0, "norm": int(norm_s), "events": [], "notified": [], "no_break": False}
 
 
 class Tracker:
@@ -145,7 +145,7 @@ class Tracker:
                 day["notified"].append(0)
                 if -left < 120:
                     self._fire("done", "Норма выполнена — можно заканчивать", m)
-        if self.opts["brk"] and self.streak >= self._next_break:
+        if self.opts["brk"] and not day.get("no_break") and self.streak >= self._next_break:
             step = self.opts["brk_min"] * 60
             self._next_break = (int(self.streak // step) + 1) * step
             self._fire("break", f"Вы работаете уже {streak_text(self.streak)} подряд — сделайте небольшой перерыв", m)
@@ -174,7 +174,7 @@ class Tracker:
                 out[k] = {"arrival": d.get("arrival") if to_sec(d.get("arrival")) is not None else None,
                           "leave": d.get("leave") if to_sec(d.get("leave")) is not None else None,
                           "worked": max(0.0, float(d.get("worked", 0))), "norm": int(d.get("norm", self.norm_s)), "events": evs,
-                          "notified": [int(x) for x in d.get("notified", []) if isinstance(x, int)]}
+                          "notified": [int(x) for x in d.get("notified", []) if isinstance(x, int)], "no_break": d.get("no_break") is True}
             except (ValueError, TypeError, AttributeError):
                 continue
         return out
@@ -317,6 +317,16 @@ class Tracker:
             d["arrival"], d["worked"] = hm_text(a) + ':00', float(w)
             d["leave"] = self.days[iso]["leave"] if iso == today and d["leave"] else hm_text(l) + ':00'
             self.save()
+            return {"ok": True}
+
+    def skip_break(self, all_day=False):
+        """Перерыв не обязателен. all_day — до конца сегодняшнего дня о перерыве больше не напоминать
+        (обычное «Пропустить» только закрывает плашку, следующее напоминание — через обычный интервал)."""
+        with self._lock:
+            if all_day:
+                day = self.days.setdefault(datetime.fromtimestamp(self._clock()).date().isoformat(), _new_day(self.norm_s))
+                day["no_break"] = True
+                self.save()
             return {"ok": True}
 
     def suggest_worked(self, arrival):

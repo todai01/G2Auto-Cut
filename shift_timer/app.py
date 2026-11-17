@@ -204,6 +204,9 @@ class Api:
     def suggest_worked(self, arrival):
         return self._t.suggest_worked(arrival)
 
+    def skip_break(self, all_day=False):
+        return self._t.skip_break(bool(all_day))
+
     def open_table(self):
         """Обновить Excel-таблицу из журнала и открыть её."""
         path = self._table or table_file()

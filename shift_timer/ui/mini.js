@@ -10,6 +10,7 @@ function showNotice(n) {
     $('nb').className = 'nb ' + n.kind;
     $('nIcon').innerHTML = ICONS[n.kind] || ICONS.hour;
     setText($('nText'), n.text);
+    $('nAct').style.display = n.kind === 'break' ? '' : 'none';
     requestAnimationFrame(() => $('nb').classList.add('on'));
     clearTimeout(noticeTimer);
     noticeTimer = setTimeout(hideNotice, 9000);
@@ -33,5 +34,7 @@ boot(() => {
     $('mOpen').onclick = () => pywebview.api.open_main();
     $('mClose').onclick = () => save({ mini_visible: false });
     $('nb').onclick = hideNotice;
+    $('nSkip').onclick = e => { e.stopPropagation(); hideNotice(); };
+    $('nOff').onclick = e => { e.stopPropagation(); pywebview.api.skip_break(true); hideNotice(); };
     render();
 });
