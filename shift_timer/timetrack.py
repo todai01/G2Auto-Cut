@@ -338,9 +338,9 @@ class Tracker:
 
     def _events(self, d, now):
         out = []
-        for e in d["events"]:
+        for i, e in enumerate(d["events"]):
             a, b = parse_dt(e["lock"]), parse_dt(e["unlock"])
-            out.append({"lock": e["lock"], "unlock": e["unlock"], "kind": e["kind"],
+            out.append({"i": i, "lock": e["lock"], "unlock": e["unlock"], "kind": e["kind"],
                         "dur_s": int(((b or now) - a).total_seconds()) if a else 0})
         return out
 
@@ -425,6 +425,22 @@ class Tracker:
                 if hi > lo:
                     rest += (hi - lo).total_seconds()
             return int(max(0, now_s - a - rest))
+
+    def set_event_kind(self, iso, idx, kind):
+        """Исправить тип уже закончившегося события: блокировка / пауза → «обед» (забыли нажать «Обед») и обратно.
+        На рабочее время это не влияет (блокировка и так не считается работой) — меняется, что видно в «Обед» и «Перерывы»."""
+        with self._lock:
+            if kind not in ("lock", "sleep", "lunch"):
+                return {"error": "Неизвестный тип."}
+            day = self.days.get(str(iso))
+            if day is None or not isinstance(idx, int) or isinstance(idx, bool) or not 0 <= idx < len(day["events"]):
+                return {"error": "Такого события нет."}
+            ev = day["events"][idx]
+            if ev["unlock"] is None:
+                return {"error": "Это событие ещё идёт — дождитесь его окончания."}
+            ev["kind"] = kind
+            self.save()
+            return {"ok": True}
 
     def delete_day(self, iso):
         with self._lock:

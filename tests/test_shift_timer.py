@@ -1017,6 +1017,67 @@ def test_mini_resize_clamps_and_keeps_window_on_screen(tmp_path):
     assert api.save_settings({"mini_tasks": True})["mini_tasks"] is True
 
 
+# ---------- «это был обед»: поправить блокировку задним числом ----------
+def _day_with_lock(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    run(c, tr, 600)
+    c.locked = True
+    run(c, tr, 1800)                                       # 12:10 → 12:40 заблокировано: на самом деле обедал
+    c.locked = False
+    run(c, tr, 60)
+    return c, tr
+
+
+def test_mark_lock_as_lunch_moves_it_from_breaks_to_lunch(tmp_path):
+    c, tr = _day_with_lock(tmp_path)
+    before = tr.snapshot()
+    assert before["break_s"] >= 1790 and before["lunch"]["done_s"] == 0
+    worked = before["worked_s"]
+    ev = tr.history()["rows"][0]["events"]
+    assert len(ev) == 1 and ev[0]["i"] == 0 and ev[0]["kind"] == "lock"
+    assert tr.set_event_kind('2026-11-17', 0, 'lunch') == {"ok": True}
+    after = tr.snapshot()
+    assert after["break_s"] < 10 and abs(after["lunch"]["done_s"] - 1800) <= 5      # блок стал обедом: в «Перерывах» его нет
+    assert abs(after["lunch"]["plan_s"] - 1800) <= 5                                # и прогноз ухода учитывает, что полчаса обеда уже было
+    assert after["worked_s"] == worked                                              # рабочее время не изменилось
+    assert tr.history()["rows"][0]["events"][0]["kind"] == "lunch"
+    assert tr.set_event_kind('2026-11-17', 0, 'lock') == {"ok": True}               # и обратно
+    assert tr.snapshot()["break_s"] >= 1790
+
+
+def test_mark_event_validation_and_persistence(tmp_path):
+    c, tr = _day_with_lock(tmp_path)
+    assert "Такого" in tr.set_event_kind('2026-11-17', 5, 'lunch')["error"]
+    assert "Такого" in tr.set_event_kind('2026-01-01', 0, 'lunch')["error"]
+    assert "Такого" in tr.set_event_kind('2026-11-17', True, 'lunch')["error"]
+    assert "Неизвестный" in tr.set_event_kind('2026-11-17', 0, 'rest')["error"]
+    c.locked = True
+    run(c, tr, 30)                                         # новая блокировка ещё идёт
+    n = len(tr.history()["rows"][0]["events"])
+    assert "ещё идёт" in tr.set_event_kind('2026-11-17', n - 1, 'lunch')["error"]
+    c.locked = False
+    run(c, tr, 3)
+    tr.set_event_kind('2026-11-17', 0, 'lunch')
+    tr.stop()
+    tr2 = lunch_tracker(tmp_path, c)
+    assert tr2.history()["rows"][0]["events"][0]["kind"] == "lunch"                # выбор сохраняется
+
+
+def test_marked_lunch_in_excel_and_api(tmp_path):
+    import openpyxl
+    c, tr = _day_with_lock(tmp_path)
+    tr.set_event_kind('2026-11-17', 0, 'lunch')
+    wb = openpyxl.load_workbook(tr.export_xlsx(str(tmp_path / 'o.xlsx')))
+    assert [x.value for x in wb['Блокировки'][2]][1] == 'обед'
+    rows = [[x.value for x in r] for r in wb['Учёт времени'].iter_rows()]
+    assert abs(rows[1][6].total_seconds() - 1800) <= 5 and rows[1][5].total_seconds() < 10     # «Обед» ≈ 30 мин, «Перерывы» ≈ 0
+    c2, api = make_api(tmp_path)
+    api._t = tr
+    assert api.event_kind('2026-11-17', 0, 'lock') == {"ok": True} and api.get_history()["rows"][0]["events"][0]["kind"] == "lock"
+
+
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')
 def test_js_logic():
     r = subprocess.run(['node', os.path.join(ROOT, 'tests', 'shift_logic.test.js')], capture_output=True, text=True)

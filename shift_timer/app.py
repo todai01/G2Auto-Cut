@@ -240,6 +240,9 @@ class Api:
     def delete_day(self, iso):
         return self._t.delete_day(iso)
 
+    def event_kind(self, iso, idx, kind):
+        return self._t.set_event_kind(iso, idx, kind)
+
     def suggest_worked(self, arrival):
         return self._t.suggest_worked(arrival)
 

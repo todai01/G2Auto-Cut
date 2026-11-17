@@ -93,7 +93,9 @@ let editing = null;
 function evText(row) {                                   // «12:10 → 12:55 · 45 мин» (дата — если разблокировали в другой день)
     const t = iso => iso ? (iso.slice(0, 10) === row.date ? iso.slice(11, 16) : iso.slice(8, 10) + '.' + iso.slice(5, 7) + ' ' + iso.slice(11, 16)) : 'сейчас';
     return (row.events || []).map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'пауза' : e.kind === 'lunch' ? 'обед' : 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
-        + `<span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span></div>`).join('');
+        + `<span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span>`
+        + (e.unlock ? `<button class="ev-b${e.kind === 'lunch' ? ' on' : ''}" data-i="${e.i}" data-k="${e.kind === 'lunch' ? 'lock' : 'lunch'}" title="${e.kind === 'lunch' ? 'Вернуть: это не обед, а блокировка' : 'Это был обед: забыли нажать «Обед»'}">${e.kind === 'lunch' ? 'не обед' : 'обед'}</button>` : '<span></span>')
+        + '</div>').join('');
 }
 function openDlg(id) { $('dlgBack').classList.add('on'); $('dlgEdit').hidden = id !== 'dlgEdit'; $('dlgClose').hidden = id !== 'dlgClose'; }
 function closeDlg() { $('dlgBack').classList.remove('on'); }
@@ -191,6 +193,17 @@ boot(() => {
     $('tkClear').onclick = async () => { TKM = await pywebview.api.tasks_clear_done(); renderTasksMain(); };
     $('tileArr').onclick = $('tileWorked').onclick = editToday;
     $('dSuggest').onclick = suggest;
+    $('dEvents').onclick = async e => {                      // «обед» на блокировке: забыли нажать кнопку «Обед»
+        const bt = e.target.closest('.ev-b');
+        if (!bt || !editing) return;
+        const r = await pywebview.api.event_kind(editing, +bt.dataset.i, bt.dataset.k);
+        if (r && r.error) { $('dHint').textContent = r.error; $('dHint').classList.add('err'); return; }
+        $('dHint').classList.remove('err');
+        await loadJournal(); await poll();
+        const row = JR && JR.rows.find(x => x.date === editing);
+        if (row) $('dEvents').innerHTML = evText(row);
+        render();
+    };
     $('dCancel').onclick = closeDlg;
     $('dSave').onclick = saveEdit;
     $('dDel').onclick = async () => { await pywebview.api.delete_day(editing); closeDlg(); await loadJournal(); await poll(); render(); };
