@@ -598,6 +598,66 @@ def test_notify_settings_roundtrip(tmp_path):
     assert shift_app.DEFAULTS["notify_hours"] and shift_app.DEFAULTS["notify_break"] and shift_app.DEFAULTS["break_min"] == 60
 
 
+# ---------- «пришёл в 9, открыл приложение в 11» ----------
+def test_set_arrival_and_worked_by_hand_then_time_continues(tmp_path):
+    c = Clock(h=11, mi=0)                                   # приложение открыли в 11:00, а пришли в 9:00
+    tr = c.tracker(str(tmp_path / 'h.json'))
+    tr.tick()
+    run(c, tr, 300)                                         # 11:05
+    assert tr.snapshot()["arrival"] == "11:00:00"
+    assert tr.edit_day('2026-11-17', '09:00', '11:05', '02:05') == {"ok": True}      # пришёл в 9, отработано уже 2:05
+    s = tr.snapshot()
+    assert s["arrival"] == "09:00:00" and s["worked_s"] == 125 * 60
+    run(c, tr, 600)                                         # время продолжает идти от введённого
+    s = tr.snapshot()
+    assert 125 * 60 + 595 <= s["worked_s"] <= 125 * 60 + 605 and s["arrival"] == "09:00:00"
+    assert s["leave"] == "11:15:00"
+
+
+def test_manual_arrival_survives_next_ticks_and_restart(tmp_path):
+    f = str(tmp_path / 'h.json')
+    c = Clock(h=11, mi=0)
+    tr = c.tracker(f)
+    tr.tick()
+    run(c, tr, 60)
+    tr.edit_day('2026-11-17', '08:45', '11:01', '02:00')
+    run(c, tr, 30)
+    tr.stop()
+    tr2 = c.tracker(f)
+    tr2.tick()
+    s = tr2.snapshot()
+    assert s["arrival"] == "08:45:00" and s["worked_s"] >= 7200      # приход не затирается ни тиком, ни перезапуском
+
+
+def test_suggest_worked_subtracts_locks(tmp_path):
+    c = Clock(h=11, mi=0)
+    tr = c.tracker(str(tmp_path / 'h.json'))
+    tr.tick()
+    run(c, tr, 600)                                         # 11:10
+    c.locked = True
+    run(c, tr, 600)                                         # 11:10 → 11:20 блокировка
+    c.locked = False
+    run(c, tr, 600)                                         # 11:30
+    assert tr.suggest_worked('09:00') in range(150 * 60 - 12 * 60 - 5, 150 * 60 - 8 * 60 + 5)    # 2:30 от прихода минус ~10 мин блока
+    assert tr.suggest_worked('11:00') in range(20 * 60 - 5, 20 * 60 + 5)                         # с 11:00: 30 мин − блок 10 мин
+    assert tr.suggest_worked('12:00') is None                                                    # приход в будущем — нельзя
+    assert tr.suggest_worked('xx') is None
+
+
+def test_api_suggest_and_edit_today_roundtrip(tmp_path):
+    c, api = make_api(tmp_path)
+    c.wall = datetime(2026, 11, 17, 11, 0, 0).timestamp()          # приложение открыли в 11:00
+    api._t.tick()
+    run(c, api._t, 300)                                            # 11:05
+    sec = api.suggest_worked('09:00')
+    assert sec == 125 * 60                                         # с 9:00 до 11:05 — блокировок не было
+    h, m = divmod(sec // 60, 60)
+    assert api.edit_day('2026-11-17', '09:00', '11:05', f'{h:02d}:{m:02d}')["ok"] is True
+    d = api.get_day()
+    assert d["arrival"] == "09:00:00" and d["worked_s"] == 7500
+    assert api.suggest_worked('13:00') is None                      # приход позже, чем сейчас
+
+
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')
 def test_js_logic():
     r = subprocess.run(['node', os.path.join(ROOT, 'tests', 'shift_logic.test.js')], capture_output=True, text=True)

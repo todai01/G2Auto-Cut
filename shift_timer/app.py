@@ -201,6 +201,9 @@ class Api:
     def delete_day(self, iso):
         return self._t.delete_day(iso)
 
+    def suggest_worked(self, arrival):
+        return self._t.suggest_worked(arrival)
+
     def open_table(self):
         """Обновить Excel-таблицу из журнала и открыть её."""
         path = self._table or table_file()

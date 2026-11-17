@@ -72,18 +72,34 @@ function closeDlg() { $('dlgBack').classList.remove('on'); }
 function openEdit(row) {
     editing = row ? row.date : null;
     const today = row && row.today;
-    $('dTitle').textContent = row ? 'Исправить день' : 'Добавить день';
+    $('dTitle').textContent = today ? 'Сегодня: приход и отработано' : row ? 'Исправить день' : 'Добавить день';
     $('dDate').value = row ? row.date : new Date().toISOString().slice(0, 10);
     $('dDate').disabled = !!row;
     $('dArr').value = row ? Shift.hmStr(row.arrival) : '09:00';
     $('dLeave').value = row ? Shift.hmStr(row.leave) : '18:00';
     $('dLeave').disabled = !!today;
     $('dWork').value = row ? Shift.hmSec(row.worked_s).padStart(5, '0') : '08:00';
-    $('dHint').textContent = today ? 'Уход за сегодня обновляется сам.' : '';
-    $('dDel').style.display = row ? '' : 'none';
+    $('dHint').textContent = '';
+    $('dHint').classList.remove('err');
+    $('dDel').style.display = row && !today ? '' : 'none';
+    $('dSuggest').hidden = !today;
+    if (today) $('dHint').textContent = 'Укажите, во сколько пришли и сколько уже отработано, — дальше время пойдёт само. Уход за сегодня обновляется сам.';
     const ev = row ? evText(row) : '';
     $('dEvents').innerHTML = ev; $('dEvents').style.display = $('dEvH').style.display = ev ? '' : 'none';
     openDlg('dlgEdit');
+}
+// «Приход» / «Отработано» на главном экране — сразу правка сегодняшнего дня (приложение могли открыть позже, чем вы пришли).
+async function editToday() {
+    let row = null;
+    try { row = ((await pywebview.api.get_history()).rows || []).find(r => r.today); } catch (e) { /* нет журнала — правим по данным дня */ }
+    const d = App.day;
+    openEdit(row || { date: d.date, arrival: d.arrival || new Date().toTimeString().slice(0, 8), leave: d.leave, worked_s: d.worked_s, today: true, events: [] });
+}
+async function suggest() {
+    const sec = await pywebview.api.suggest_worked($('dArr').value);
+    if (sec === null || sec === undefined) { $('dHint').textContent = 'Приход не может быть позже, чем сейчас.'; $('dHint').classList.add('err'); return; }
+    $('dWork').value = Shift.hmSec(sec).padStart(5, '0'); $('dHint').classList.remove('err');
+    $('dHint').textContent = 'Вычла блокировки и сон. Если вы отходили без блокировки — уменьшите время.';
 }
 async function saveEdit() {
     const r = await pywebview.api.edit_day($('dDate').value, $('dArr').value, $('dLeave').value, $('dWork').value);
@@ -126,6 +142,8 @@ boot(() => {
         const r = await pywebview.api.open_table();
         setText($('jrNote'), r.error ? r.error : 'Таблица обновлена и открыта: ' + r.path);
     };
+    $('tileArr').onclick = $('tileWorked').onclick = editToday;
+    $('dSuggest').onclick = suggest;
     $('dCancel').onclick = closeDlg;
     $('dSave').onclick = saveEdit;
     $('dDel').onclick = async () => { await pywebview.api.delete_day(editing); closeDlg(); await loadJournal(); await poll(); render(); };

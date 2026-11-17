@@ -319,6 +319,27 @@ class Tracker:
             self.save()
             return {"ok": True}
 
+    def suggest_worked(self, arrival):
+        """Сколько отработано на сейчас, если сегодня пришли в arrival («ЧЧ:ММ»): от прихода до этого момента минус
+        известные блокировки и сон. Время, когда приложение было закрыто, считается рабочим — его можно поправить руками."""
+        with self._lock:
+            a = to_sec(arrival)
+            now = datetime.fromtimestamp(self._clock())
+            if a is None:
+                return None
+            now_s = now.hour * 3600 + now.minute * 60 + now.second
+            if a > now_s:
+                return None
+            day = self.days.get(now.date().isoformat())
+            start = datetime.combine(now.date(), datetime.min.time()).replace(hour=a // 3600, minute=a % 3600 // 60)
+            rest = 0
+            for e in (day["events"] if day else []):
+                lo, hi = parse_dt(e["lock"]), parse_dt(e["unlock"]) or now
+                lo = max(lo, start)
+                if hi > lo:
+                    rest += (hi - lo).total_seconds()
+            return int(max(0, now_s - a - rest))
+
     def delete_day(self, iso):
         with self._lock:
             if self.days.pop(str(iso), None) is not None:

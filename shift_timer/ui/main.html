@@ -32,8 +32,8 @@
         </div>
       </div>
       <div class="tiles">
-        <div class="tile"><span class="k">Отработано</span><span class="v num" id="tWorked">—</span></div>
-        <div class="tile"><span class="k">Приход</span><span class="v num" id="tArr">—</span></div>
+        <button class="tile tile-btn" id="tileWorked" title="Исправить, сколько отработано"><span class="k">Отработано<i>изменить</i></span><span class="v num" id="tWorked">—</span></button>
+        <button class="tile tile-btn" id="tileArr" title="Указать, во сколько вы пришли"><span class="k">Приход<i>изменить</i></span><span class="v num" id="tArr">—</span></button>
       </div>
       <div class="card">
         <div class="row"><span class="k">Норма за день</span><span class="v" id="rNorm">—</span></div>
@@ -103,6 +103,7 @@
       <label class="frow"><span>Приход</span><input type="time" id="dArr"></label>
       <label class="frow"><span>Уход</span><input type="time" id="dLeave"></label>
       <label class="frow"><span>Отработано</span><input type="time" id="dWork"></label>
+      <button class="btn sm" id="dSuggest" hidden>Посчитать с прихода до сейчас</button>
       <div class="ev-h" id="dEvH">Блокировки и сон</div>
       <div class="ev" id="dEvents"></div>
       <div class="dlg-hint" id="dHint"></div>
