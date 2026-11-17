@@ -453,5 +453,6 @@ boot(() => {
     $('dlgBack').onclick = e => { if (e.target === $('dlgBack')) closeDlg(); };
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDlg(); });
     if (window.teamInit) teamInit();
+    if (window.updateInit) updateInit();
     render();
 });

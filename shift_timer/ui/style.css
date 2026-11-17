@@ -436,3 +436,10 @@ input:disabled{ opacity:.55; }
 
 /* отработанное стоит (блокировка / обед) — таймер ухода при этом идёт */
 .tile.paused .v, .mini .w.paused{ color:var(--warn); }
+
+/* обновления */
+.upd{ flex:none; display:flex; align-items:center; gap:12px; margin:0 18px 8px; padding:8px 8px 8px 14px; border-radius:13px; background:color-mix(in srgb, var(--accent) 16%, var(--card)); font-size:13px; font-weight:600; }
+.upd[hidden]{ display:none; }
+.upd span{ flex:1; min-width:0; word-break:break-word; }
+.upd-state{ font-size:12.5px; line-height:1.35; padding:8px 0; flex:1; }
+.nb.update{ background:linear-gradient(135deg,#3b6cf6,#22c3a0); }

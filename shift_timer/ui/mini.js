@@ -4,6 +4,7 @@ const ICONS = {
     break: '<path d="M5 9h11v5a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V9z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>',
     lunch: '<path d="M5 9h11v5a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V9z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>',
     done: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+    update: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v7M8.8 11.8l3.2 3.2 3.2-3.2"/>',
 };
 // ---- задачи: развернуть / свернуть мини-окно ----
 let TK = null, TKAT = 0, tkOpen = false, tkTimer = null, tkH = 0, tkWide = false;

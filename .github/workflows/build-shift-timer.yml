@@ -26,6 +26,12 @@ jobs:
       - name: Модули
         run: python -m pip install --upgrade pip pywebview pystray pillow openpyxl pyinstaller
 
+      - name: Номер сборки в exe (для обновлений через папку команды)
+        shell: pwsh
+        run: |
+          Set-Content -Path shift_timer/version.py -Value "BUILD = ${{ github.run_number }}" -Encoding utf8
+          Get-Content shift_timer/version.py
+
       - name: Сборка одного exe
         env:
           PYTHONUTF8: '1'

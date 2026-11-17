@@ -34,6 +34,7 @@ function applyTeam() {
     else if (!user) lockMode(tmSkip ? null : 'login');
     else lockMode(null);
     if ($('tabTeam').hidden && document.querySelector('.tab[data-v=team].on')) document.querySelector('.tab[data-v=home]').click();
+    window.updRender && window.updRender();
     setText($('tmDir'), s && s.enabled ? s.dir + (s.reachable ? '' : ' — недоступна') : 'не выбрана — GTime работает сам по себе');
     $('tmOff').disabled = !(s && s.enabled);
     $('tmWhoRow').style.display = user ? '' : 'none';

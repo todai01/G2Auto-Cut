@@ -11,6 +11,8 @@
     </div>
   </div>
 
+  <div class="upd" id="updBar" hidden><span id="updTxt"></span><button class="btn sm primary" id="updBtn" type="button">Обновить</button></div>
+
   <div class="views">
     <section class="view on" id="v-home">
       <div class="chip" id="chip"><i></i><span id="chipT">…</span></div>
@@ -118,6 +120,14 @@
         <div class="row" id="tmWhoRow" style="display:none"><span id="tmWho">—</span><span class="btns2"><button class="btn sm" id="tmPass">Сменить пароль</button><button class="btn sm" id="tmOut">Выйти</button></span></div>
       </div>
       <div class="note" id="tmSetNote">С папкой команды у каждого сотрудника своя учётка, а администратор видит, кто во сколько пришёл, и задачи команды. Папка общая, поэтому пароли защищают от случайного просмотра; жёсткую защиту даёт доступ к папке в Windows.</div>
+      <div class="h">Обновления</div>
+      <div class="card">
+        <div class="row"><span>Версия GTime</span><span class="v" id="updVer">—</span></div>
+        <div class="row"><span class="dim upd-state" id="updState">—</span><span class="btns2"><button class="btn sm" id="updCheck">Проверить</button><button class="btn sm primary" id="updGo" hidden>Обновить</button></span></div>
+        <div class="row" id="updNotesRow" hidden><input class="fld" id="updNotes" placeholder="Что нового (по желанию, увидят все)" maxlength="300" autocomplete="off"></div>
+        <div class="row" id="updPubRow" hidden><span>Выложить эту сборку для команды</span><span class="btns2"><button class="btn sm" id="updPub">Опубликовать</button></span></div>
+      </div>
+      <div class="note">GTime сам смотрит папку команды раз в час. Нашёл новую сборку — покажет «Обновить»; по кнопке заменит себя и перезапустится. Данные не трогаются.</div>
       <div class="h">Резервная копия</div>
       <div class="card">
         <div class="row"><span>Журнал, задачи и файлы — одним архивом</span><span class="btns2"><button class="btn sm" id="bkSave">Сохранить копию</button><button class="btn sm" id="bkRestore">Восстановить</button></span></div>
@@ -246,5 +256,5 @@
     </div>
   </div>
 </div>
-<script src="shift.js"></script><script src="common.js"></script><script src="team.js"></script><script src="main.js"></script>
+<script src="shift.js"></script><script src="common.js"></script><script src="team.js"></script><script src="update.js"></script><script src="main.js"></script>
 </body></html>

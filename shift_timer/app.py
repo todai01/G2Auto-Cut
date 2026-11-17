@@ -23,6 +23,8 @@ import report
 import tasks
 import team_api
 import timetrack
+import update_api
+import updater
 
 APP_NAME = 'GTime'
 OLD_APP_NAME = 'ShiftTimer'        # прежнее название: оттуда переносим журнал и настройки
@@ -171,7 +173,7 @@ def set_autostart(on):
         return False
 
 
-class Api(team_api.TeamMixin):
+class Api(team_api.TeamMixin, update_api.UpdateMixin):
     """Методы без «_» видны из JS как pywebview.api.<имя>."""
 
     def __init__(self, path=None, history=None, table=None, tracker=None, store=None):
@@ -180,6 +182,7 @@ class Api(team_api.TeamMixin):
         self._table = table
         self._tasks = store or tasks.TaskStore(tasks_file())
         self._team_init()
+        self._update_init()
         self._reports = None                             # папка отчётов (в тестах — временная)
         self._screen_h = None
         self._screen_w = None
@@ -236,6 +239,7 @@ class Api(team_api.TeamMixin):
 
     def _after_tick(self):
         self._team_sync()
+        self._update_maybe()
         if self._temp_mini_until and time.time() > self._temp_mini_until:
             self._temp_mini_until = 0.0
             if not self._s["mini_visible"] and self._mini is not None:
@@ -680,6 +684,15 @@ def start_tray(api):
 def run():
     import webview
     migrate_old_data()
+    updater.cleanup_old()                                # остатки прошлого обновления
+    if updater.ensure_installed(sys.argv):               # любой exe переезжает в %LOCALAPPDATA%\GTime и запускается оттуда
+        sys.exit(0)
+    replacing = '--replace' in sys.argv                  # нас запустили вместо работающей копии (обновление)
+    if replacing:
+        updater.instance_signal('quit')
+    if not updater.instance_acquire(wait_s=20 if replacing else 0):
+        updater.instance_signal('show')                  # GTime уже работает — просто покажем его окно
+        sys.exit(0)
     api = Api()
     s = api.get_settings()
     set_autostart(s["autostart"])                        # путь к exe в автозапуске всегда актуальный
@@ -713,6 +726,7 @@ def run():
         api._main.events.shown += lambda: setattr(api, '_main_shown', True)
     except Exception:
         pass
+    updater.instance_watch(api.open_main, api.close_app)
     api._main.events.closed += api.close_app              # закрыли главное — уходит и мини, иначе процесс не завершится
     threading.Thread(target=api._t.run, daemon=True).start()   # секундный учёт времени
     webview.start()

@@ -138,6 +138,11 @@ class Tracker:
             except Exception:
                 pass
 
+    def notify(self, kind, text):
+        """Показать своё уведомление (мини-окно, звук) — например «Доступна новая версия»."""
+        with self._lock:
+            self._fire(kind, text, self._mono())
+
     def leave_left(self, day, now=None):
         """Сколько секунд до ухода: приход + норма + обед (фиксированные настенные часы, от отработанного и блокировок не зависят).
         Нет прихода — None."""
