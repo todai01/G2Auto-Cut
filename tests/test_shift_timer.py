@@ -1347,3 +1347,25 @@ def test_main_window_size_fits_screen():
     w, h = f(1366, 768)                                                    # ноутбук: не выше экрана с запасом под панель задач
     assert h <= 768 - 90 and w <= 1366 - 60 and (w, h) >= shift_app.MAIN_MIN
     assert f(300, 300) == shift_app.MAIN_MIN                               # совсем маленький экран — не меньше минимума
+
+
+def test_paste_files_and_images_into_task(tmp_path, monkeypatch):
+    import base64
+    c, api = make_api(tmp_path)
+    tid = api.task_add("материалы")["tasks"][0]["id"]
+    png = b'\x89PNG\r\n\x1a\nfake'
+    r = api.task_attach_data(tid, "Снимок 2026-11-17 14-05-12.png", base64.b64encode(png).decode())      # скриншот из буфера
+    assert r["added"] == 1 and r["tasks"][0]["files"] == ["Снимок 2026-11-17 14-05-12.png"]
+    assert open(api._tasks.file_path(tid, "Снимок 2026-11-17 14-05-12.png"), 'rb').read() == png
+    r = api.task_attach_data(tid, "Снимок 2026-11-17 14-05-12.png", base64.b64encode(b'second').decode())   # то же имя — не перезаписывается
+    assert r["tasks"][0]["files"][-1] == "Снимок 2026-11-17 14-05-12 (2).png" and open(api._tasks.file_path(tid, "Снимок 2026-11-17 14-05-12.png"), 'rb').read() == png
+    assert api.task_attach_data(tid, "x.png", "")["added"] == 0              # пустое не добавляется
+    assert api.task_attach_data(tid, "../../evil.txt", base64.b64encode(b'x').decode())["tasks"][0]["files"][-1] == "evil.txt"   # путь из имени отбрасывается
+    f = tmp_path / 'отчёт.xlsx'
+    f.write_bytes(b'xl')
+    monkeypatch.setattr(shift_app, 'clipboard_files', lambda: [str(f), str(tmp_path)])                      # файл и папка из Проводника
+    r = api.task_paste(tid)
+    assert r["added"] == 1 and "отчёт.xlsx" in r["tasks"][0]["files"] and len(r["skipped"]) == 1 and f.exists()
+    monkeypatch.setattr(shift_app, 'clipboard_files', lambda: [])
+    assert api.task_paste(tid)["added"] == 0                                 # в буфере нет файлов — тогда пробуем картинку из браузера
+    assert shift_app.clipboard_files() == [] or sys.platform == 'win32'      # не Windows — безопасно пусто

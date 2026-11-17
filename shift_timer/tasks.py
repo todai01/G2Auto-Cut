@@ -321,6 +321,17 @@ class TaskStore:
                 self._save()
             return {"added": added, "skipped": skipped, **self._view()}
 
+    def attach_bytes(self, tid, name, data):
+        """Вложение из памяти (скриншот из буфера обмена): байты → файл с этим именем → обычное прикрепление."""
+        import tempfile
+        if not isinstance(data, (bytes, bytearray)) or not data:
+            return {"added": 0, "skipped": ["пустой файл"], **self.get()}
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, _clean_name(name))
+            with open(p, 'wb') as f:
+                f.write(data)
+            return self.attach(tid, [p])
+
     def file_path(self, tid, name):
         """Полный путь вложения (только то, что записано у задачи), иначе None."""
         with self._lock:

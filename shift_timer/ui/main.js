@@ -121,6 +121,32 @@ async function saveTask() {
     await pywebview.api.task_comment(id, $('tdComment').value);
     closeDlg(); loadTasksMain();
 }
+const MAX_PASTE = 40 * 1024 * 1024;                       // картинку через мост передаём целиком — не больше 40 МБ
+const b64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = no; r.readAsDataURL(f); });
+function pasteName(f, i) {                                 // у скриншота имя «image.png» — даём понятное
+    if (f.name && !/^image\.\w+$/i.test(f.name)) return f.name;
+    const d = new Date(), p = n => String(n).padStart(2, '0'), ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    return `Снимок ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}${i ? ' ' + (i + 1) : ''}.${ext}`;
+}
+async function pasteFiles(files) {
+    const id = tdId, skipped = [];
+    let added = 0, v = null;
+    $('tdHint').classList.remove('err'); $('tdHint').textContent = 'Вставляю…';
+    try {
+        v = await pywebview.api.task_paste(id);                         // файлы из Проводника: пути берёт Python
+        added = v.added || 0; skipped.push(...(v.skipped || []));
+        if (!added) for (const [i, f] of files.entries()) {              // картинки и прочее без пути — содержимым
+            if (f.size > MAX_PASTE) { skipped.push(`${f.name || 'файл'}: больше 40 МБ`); continue; }
+            v = await pywebview.api.task_attach_data(id, pasteName(f, i), await b64(f));
+            if (v.error) { skipped.push(v.error); continue; }
+            added += v.added || 0; skipped.push(...(v.skipped || []));
+        }
+    } catch (e) { skipped.push('не удалось вставить'); }
+    if (v && v.tasks) applyTasks(v);
+    if (tdId === id) renderTdLists();
+    $('tdHint').classList.toggle('err', !!skipped.length && !added);
+    $('tdHint').textContent = (added ? `Добавлено файлов: ${added}. ` : '') + (skipped.length ? 'Не вставлено: ' + skipped.join('; ') : '');
+}
 async function tdAct(fn) { const v = await fn(); if (v && v.error) { $('tdHint').textContent = v.error; $('tdHint').classList.add('err'); } else { $('tdHint').classList.remove('err'); if (v && v.skipped && v.skipped.length) $('tdHint').textContent = 'Не прикреплено: ' + v.skipped.join('; '); else $('tdHint').textContent = ''; } applyTasks(v); renderTdLists(); }
 
 // ---------- журнал ----------
@@ -249,6 +275,13 @@ boot(() => {
         if (!b || !r) return;
         tdAct(() => b.dataset.a === 'st' ? pywebview.api.sub_toggle(tdId, +r.dataset.id) : pywebview.api.sub_delete(tdId, +r.dataset.id));
     };
+    // Ctrl+V с файлами или картинкой в буфере (скриншот, файлы из Проводника) → во вложения; обычный текст вставляется как раньше
+    $('dlgTask').addEventListener('paste', e => {
+        const cd = e.clipboardData, files = cd ? Array.from(cd.files || []) : [];
+        if (!files.length || (cd.getData('text/plain') || '').length || tdId === null) return;
+        e.preventDefault();
+        pasteFiles(files);
+    });
     $('tdAttach').onclick = () => tdAct(() => pywebview.api.task_attach(tdId));
     $('tdFiles').onclick = async e => {
         const b = e.target.closest('[data-a]'), r = e.target.closest('.td-row');

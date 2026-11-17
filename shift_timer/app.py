@@ -307,6 +307,20 @@ class Api:
             return {"error": f"Не удалось открыть выбор файлов: {e}"}
         return self._tasks.attach(tid, paths) if paths else {"added": 0, "skipped": [], **self._tasks.get()}
 
+    def task_paste(self, tid):
+        """Ctrl+V в окне задачи: файлы из буфера обмена (скопированные в Проводнике) → вложения. Нет файлов — added: 0."""
+        paths = clipboard_files()
+        return self._tasks.attach(tid, paths) if paths else {"added": 0, "skipped": [], **self._tasks.get()}
+
+    def task_attach_data(self, tid, name, b64):
+        """Вложение из браузерного буфера (скриншот, картинка): имя и содержимое в base64."""
+        import base64
+        try:
+            data = base64.b64decode(b64 or '', validate=False)
+        except (ValueError, TypeError):
+            return {"error": "Не удалось прочитать вставленное."}
+        return self._tasks.attach_bytes(tid, name, data)
+
     def task_file_open(self, tid, name):
         p = self._tasks.file_path(tid, name)
         if not p:
@@ -442,6 +456,36 @@ def _window(webview, **kw):
         return webview.create_window(shadow=True, **kw)
     except TypeError:
         return webview.create_window(**kw)                # старый pywebview без параметра shadow
+
+
+def clipboard_files():
+    """Файлы, скопированные в буфер (Проводник → Ctrl+C): список путей. Только Windows (формат CF_HDROP), иначе пусто."""
+    if sys.platform != 'win32':
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u, sh = ctypes.windll.user32, ctypes.windll.shell32
+        u.OpenClipboard.argtypes, u.OpenClipboard.restype = [wintypes.HWND], wintypes.BOOL
+        u.GetClipboardData.argtypes, u.GetClipboardData.restype = [wintypes.UINT], wintypes.HANDLE
+        sh.DragQueryFileW.argtypes, sh.DragQueryFileW.restype = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT], wintypes.UINT
+        if not u.OpenClipboard(None):
+            return []
+        try:
+            h = u.GetClipboardData(15)                   # CF_HDROP
+            if not h:
+                return []
+            out = []
+            for i in range(sh.DragQueryFileW(h, 0xFFFFFFFF, None, 0)):
+                n = sh.DragQueryFileW(h, i, None, 0)
+                buf = ctypes.create_unicode_buffer(n + 1)
+                sh.DragQueryFileW(h, i, buf, n + 1)
+                out.append(buf.value)
+            return out
+        finally:
+            u.CloseClipboard()
+    except Exception:
+        return []
 
 
 def mini_start_pos(webview, saved):
