@@ -1339,3 +1339,11 @@ def test_excel_tasks_sheet(tmp_path):
     assert done[0] == datetime(2026, 11, 17, 9, 0) and done[2] == datetime(2026, 11, 17, 10, 30, 20) and done[3] == 'выполнена'   # час и минута выполнения
     assert done[5] == timedelta(minutes=90, seconds=20) and done[6] == '1:30:20' and done[7] == '○ шаг 1' and done[8] == 'детали'
     assert work[3] == 'в работе' and work[2] is None and work[6] == '1 д 4 ч 40 мин'                                                # ждём уже больше суток
+
+
+def test_main_window_size_fits_screen():
+    f = shift_app.main_size
+    assert f() == shift_app.MAIN_SIZE and f(1920, 1080) == shift_app.MAIN_SIZE
+    w, h = f(1366, 768)                                                    # ноутбук: не выше экрана с запасом под панель задач
+    assert h <= 768 - 90 and w <= 1366 - 60 and (w, h) >= shift_app.MAIN_MIN
+    assert f(300, 300) == shift_app.MAIN_MIN                               # совсем маленький экран — не меньше минимума

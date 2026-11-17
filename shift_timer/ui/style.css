@@ -65,7 +65,7 @@ button{ font:inherit; color:inherit; border:0; background:none; cursor:pointer; 
 .chip.before i{ background:var(--warn); }
 @keyframes pulse{ 70%{ box-shadow:0 0 0 7px rgba(52,211,153,0); } 100%{ box-shadow:0 0 0 0 rgba(52,211,153,0); } }
 
-.ringbox{ position:relative; width:212px; height:212px; align-self:center; flex:none; }
+.ringbox{ position:relative; width:212px; height:212px; align-self:center; flex:none; zoom:var(--z,1); }
 .ringbox svg{ width:100%; height:100%; transform:rotate(-90deg); }
 .ringbox .track{ stroke:var(--track); fill:none; stroke-width:12; }
 .ringbox .fill{ fill:none; stroke-width:12; stroke-linecap:round; stroke:url(#g-work); transition:stroke-dashoffset .5s cubic-bezier(.32,.72,0,1); }

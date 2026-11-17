@@ -26,7 +26,18 @@ TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60, "mini_tasks": False,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
-MAIN_SIZE = (520, 700)            # не «телефонная» узкая колонка: шире и чуть выше
+MAIN_SIZE = (720, 840)            # не «телефонная» узкая колонка: широкое и высокое окно
+MAIN_MIN = (480, 600)
+
+
+def main_size(screen_w=None, screen_h=None):
+    """Размер главного окна: как задано, но не больше экрана (запас под панель задач и рамку), не меньше MAIN_MIN."""
+    w, h = MAIN_SIZE
+    if screen_w:
+        w = min(w, screen_w - 60)
+    if screen_h:
+        h = min(h, screen_h - 90)
+    return max(MAIN_MIN[0], int(w)), max(MAIN_MIN[1], int(h))
 MINI_SIZE = (204, 100)
 MINI_WIDE = 340                  # ширина мини-окна с развёрнутым списком задач (свёрнутое — MINI_SIZE[0])
 MINI_MAX_H = 520                 # выше мини-окно не растёт (список задач дальше прокручивается)
@@ -471,8 +482,12 @@ def run():
     api._tray = start_tray(api)
     background = '--minimized' in sys.argv
     bg = '#0e1116'
-    api._main = _window(webview, title=TITLE, url=resource('ui/main.html'), js_api=api, width=MAIN_SIZE[0], height=MAIN_SIZE[1],
-                        resizable=False, frameless=True, easy_drag=False, text_select=False, background_color=bg,
+    try:
+        size = main_size(webview.screens[0].width, webview.screens[0].height)
+    except Exception:
+        size = main_size()
+    api._main = _window(webview, title=TITLE, url=resource('ui/main.html'), js_api=api, width=size[0], height=size[1], min_size=MAIN_MIN,
+                        resizable=True, frameless=True, easy_drag=False, text_select=False, background_color=bg,
                         hidden=background and api._tray is not None, minimized=background and api._tray is None)
     try:
         api._screen_h = webview.screens[0].height

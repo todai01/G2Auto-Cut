@@ -4,6 +4,9 @@ const App = { s: null, day: null, at: 0, onChange: null };
 const $ = id => document.getElementById(id);
 const setText = (el, t) => { if (el && el.textContent !== t) el.textContent = t; };
 
+// Окно можно растянуть: кольцо на главном экране растёт вместе с высотой (до ×1,5).
+function fitZoom() { document.documentElement.style.setProperty('--z', String(Math.max(1, Math.min(1.5, window.innerHeight / 700)).toFixed(2))); }
+window.addEventListener('resize', fitZoom); fitZoom();
 function applyTheme() {
     const t = App.s && App.s.theme;
     if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
