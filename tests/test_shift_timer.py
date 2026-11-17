@@ -620,7 +620,7 @@ def test_chime_is_quiet_and_fades_to_silence():
     x = _samples(chime.make_wav())
     assert abs(len(x) / chime.RATE - chime.DURATION) < 0.01
     peak = max(abs(v) for v in x) / 32767
-    assert 0.05 < peak <= 0.5                                # слышно, но тихо (не больше половины максимума)
+    assert 0.1 < peak <= 0.3                                 # слышно, но тихо (не больше половины максимума)
     assert max(abs(v) for v in x[:20]) < 600                 # начало плавное — без щелчка
     assert max(abs(v) for v in x[-200:]) < 40                # конец — тишина, не обрыв
 
