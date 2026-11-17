@@ -616,28 +616,35 @@ def _samples(data):
     return struct.unpack('<%dh' % (len(raw) // 2), raw)
 
 
-def test_chime_is_quiet_single_fading_note():
+def test_chime_is_quiet_and_fades_to_silence():
     x = _samples(chime.make_wav())
     assert abs(len(x) / chime.RATE - chime.DURATION) < 0.01
     peak = max(abs(v) for v in x) / 32767
     assert 0.05 < peak <= 0.5                                # слышно, но тихо (не больше половины максимума)
     assert max(abs(v) for v in x[:20]) < 600                 # начало плавное — без щелчка
     assert max(abs(v) for v in x[-200:]) < 40                # конец — тишина, не обрыв
+
     def env(a, b):                                           # огибающая на куске
         return max(abs(v) for v in x[int(a * chime.RATE):int(b * chime.RATE)])
-    assert env(0.0, 0.3) > env(0.6, 0.9) > env(1.2, 1.5) > env(1.9, 2.2)    # звук монотонно затухает
-    assert env(0.0, 0.01) < env(0.05, 0.3) / 2               # и нарастает за доли секунды
+    assert env(1.1, 1.4) > env(1.7, 2.0) > env(2.3, 2.6) > env(2.7, 2.9)     # после второй ноты — монотонное затухание
+    assert env(0.0, 0.01) < env(0.05, 0.3) / 2               # плавное нарастание
 
 
-def test_chime_is_one_note():
-    """Основной тон 659 Гц сильнее любой другой частоты: одна нота, а не аккорд."""
+def test_chime_is_low_note_then_high_note():
+    """Сначала звучит низкая нота (523 Гц), потом высокая (784 Гц), и они не звучат вместе с самого начала."""
     import cmath
     import math
-    x = _samples(chime.make_wav(duration=1.0))[4000:8096]    # кусок после атаки
-    def power(f):
-        return abs(sum(v * cmath.exp(-2j * math.pi * f * i / chime.RATE) for i, v in enumerate(x[:2048])))
-    main = power(chime.FREQ)
-    assert main > 3 * max(power(f) for f in (440, 523.25, 784, 880))
+    x = _samples(chime.make_wav())
+
+    def power(f, a, b):
+        i0 = int(a * chime.RATE)
+        seg = x[i0:i0 + 2048]
+        return abs(sum(v * cmath.exp(-2j * math.pi * f * i / chime.RATE) for i, v in enumerate(seg)))
+    low, high = chime.NOTES[0][0], chime.NOTES[1][0]
+    assert high > low * 1.4
+    assert power(low, 0.15, 0.2) > 4 * power(high, 0.15, 0.2)          # вначале — только низкая
+    assert power(high, 1.0, 1.1) > 1.3 * power(low, 1.0, 1.1)          # затем доминирует высокая
+    assert power(high, 0.9, 1.0) > 5 * power(659.25, 0.9, 1.0)         # и это именно две ноты, не «что-то между»
 
 
 def test_chime_silent_off_windows():
