@@ -309,6 +309,7 @@ boot(() => {
         document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + t.dataset.v));
         if (t.dataset.v === 'jr') startJournalTimer(); else clearInterval(jrTimer);
         if (t.dataset.v === 'tk') startTasksTimer(); else clearInterval(tkMainTimer);
+        if (t.dataset.v === 'team') { window.teamStart && teamStart(); } else { window.teamStop && teamStop(); }
     });
     $('bMin').onclick = () => pywebview.api.minimize();
     pywebview.api.can_tray().then(v => {
@@ -443,5 +444,6 @@ boot(() => {
     $('dDel').onclick = async () => { await pywebview.api.delete_day(editing); closeDlg(); await loadJournal(); await poll(); render(); };
     $('dlgBack').onclick = e => { if (e.target === $('dlgBack')) closeDlg(); };
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDlg(); });
+    if (window.teamInit) teamInit();
     render();
 });
