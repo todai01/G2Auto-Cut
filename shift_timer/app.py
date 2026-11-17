@@ -28,6 +28,7 @@ DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
 MAIN_SIZE = (380, 690)
 MINI_SIZE = (204, 100)
+MINI_WIDE = 340                  # ширина мини-окна с развёрнутым списком задач (свёрнутое — MINI_SIZE[0])
 MINI_MAX_H = 520                 # выше мини-окно не растёт (список задач дальше прокручивается)
 
 
@@ -157,6 +158,7 @@ class Api:
         self._table = table
         self._tasks = store or tasks.TaskStore(tasks_file())
         self._screen_h = None
+        self._screen_w = None
         self._t = tracker or timetrack.Tracker(history or history_file(), norm_seconds(self._s["norm"]))
         self._t.set_norm(norm_seconds(self._s["norm"]))
         self._apply_notify()
@@ -265,22 +267,29 @@ class Api:
     def tasks_clear_done(self):
         return self._tasks.clear_done()
 
-    def mini_resize(self, height):
-        """Мини-окно с задачами выше обычного: растёт вниз, а у нижнего края экрана поднимается, чтобы не уйти за него."""
+    def mini_resize(self, height, wide=False):
+        """Мини-окно с задачами выше и шире обычного: растёт вправо и вниз, а у краёв экрана сдвигается, чтобы не уйти за него.
+        wide=False — обычная ширина (список свёрнут)."""
         w = self._mini
         try:
             h = max(MINI_SIZE[1], min(MINI_MAX_H, int(height)))
         except (TypeError, ValueError):
             return {"error": "bad height"}
+        width = MINI_WIDE if wide else MINI_SIZE[0]
         if w is not None:
             try:
-                y = getattr(w, 'y', None)
+                x, y = getattr(w, 'x', None), getattr(w, 'y', None)
+                nx, ny = x, y
                 if self._screen_h and isinstance(y, int) and y + h > self._screen_h - 40:
-                    w.move(getattr(w, 'x', 0), max(0, self._screen_h - 40 - h))
-                w.resize(MINI_SIZE[0], h)
+                    ny = max(0, self._screen_h - 40 - h)
+                if self._screen_w and isinstance(x, int) and x + width > self._screen_w - 8:
+                    nx = max(0, self._screen_w - 8 - width)
+                if (nx, ny) != (x, y):
+                    w.move(nx if nx is not None else 0, ny if ny is not None else 0)
+                w.resize(width, h)
             except Exception:
                 pass
-        return {"height": h}
+        return {"height": h, "width": width}
 
     def lunch_toggle(self):
         """Кнопка «Обед»: начать обед или закончить идущий. Возвращает {"on": идёт ли обед}."""
@@ -425,6 +434,7 @@ def run():
                         hidden=background and api._tray is not None, minimized=background and api._tray is None)
     try:
         api._screen_h = webview.screens[0].height
+        api._screen_w = webview.screens[0].width
     except Exception:
         pass
     x, y = mini_start_pos(webview, s["mini_pos"])

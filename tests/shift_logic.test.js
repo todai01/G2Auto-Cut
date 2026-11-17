@@ -66,5 +66,8 @@ l = S.lunch(3700, 3600, false); assert.strictEqual(l.remain, 0); assert.strictEq
 assert.strictEqual(S.clock(S.lunch(3541, 3600, false).remain, false), '00:01');   // без секунд — вверх, как и у нормы
 // высота мини-окна с задачами: растёт до 5 строк и дальше не растёт
 assert.strictEqual(S.tasksHeight(0), 190); assert.strictEqual(S.tasksHeight(1), 186); assert.strictEqual(S.tasksHeight(5), 322);
-assert.strictEqual(S.tasksHeight(30), 322); assert.ok(S.tasksHeight(3) > S.tasksHeight(2));
+assert.strictEqual(S.tasksHeight(30), 342); assert.ok(S.tasksHeight(3) > S.tasksHeight(2));          // список не выше 190, дальше прокрутка
+assert.strictEqual(S.tasksHeight([]), 190); assert.strictEqual(S.tasksHeight(['коротко']), 186);
+assert.strictEqual(S.tasksHeight(['я'.repeat(80)]), 198);                                          // длинная задача — две строки
+assert.strictEqual(S.tasksHeight(['a', 'b', 'c', 'd', 'e', 'f', 'g']), 342);                         // семь задач — предел
 console.log('shift logic: OK');

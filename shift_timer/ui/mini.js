@@ -6,12 +6,12 @@ const ICONS = {
     done: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
 };
 // ---- задачи: развернуть / свернуть мини-окно ----
-let TK = null, tkOpen = false, tkTimer = null, tkH = 0;
+let TK = null, tkOpen = false, tkTimer = null, tkH = 0, tkWide = false;
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const CK = '<svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.5 3.5 7.5-8"/></svg>';
 function fitTasks() {
-    const h = tkOpen ? Shift.tasksHeight(TK ? TK.total : 0) : 100;
-    if (h !== tkH) { tkH = h; pywebview.api.mini_resize(h); }
+    const h = tkOpen ? Shift.tasksHeight(TK ? TK.tasks.map(t => t.text) : []) : 100;
+    if (h !== tkH || tkOpen !== tkWide) { tkH = h; tkWide = tkOpen; pywebview.api.mini_resize(h, tkOpen); }     // с задачами окно шире — видно текст
 }
 function renderTasks() {
     if (!TK) return;
@@ -25,6 +25,7 @@ async function loadTasks() { try { TK = await pywebview.api.tasks_get(); renderT
 function setTasksOpen(on, persist) {
     tkOpen = on; clearInterval(tkTimer);
     $('b').classList.toggle('exp', on);
+    $('mTasks').title = on ? 'Скрыть задачи (Esc)' : 'Задачи на сегодня';
     if (on) { loadTasks(); tkTimer = setInterval(loadTasks, 3000); } else fitTasks();
     if (persist) save({ mini_tasks: on });
 }
@@ -69,6 +70,7 @@ boot(() => {
     $('mLunch').onclick = () => pywebview.api.lunch_toggle().then(poll);
     $('mClose').onclick = () => save({ mini_visible: false });
     $('mTasks').onclick = () => setTasksOpen(!tkOpen, true);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && tkOpen) { e.preventDefault(); document.activeElement && document.activeElement.blur(); setTasksOpen(false, true); } });
     $('tkList').onclick = async e => { const r = e.target.closest('.tk-row'); if (r) { TK = await pywebview.api.task_toggle(+r.dataset.id); renderTasks(); } };
     $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkIn').value.trim(); if (!v) return; $('tkIn').value = ''; TK = await pywebview.api.task_add(v); renderTasks(); $('tkList').scrollTop = 1e6; };
     if (App.s.mini_tasks) setTasksOpen(true, false);                                   // как оставили в прошлый раз

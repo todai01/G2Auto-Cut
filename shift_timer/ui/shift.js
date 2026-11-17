@@ -55,8 +55,13 @@
     }
     function hmSec(sec) { const a = Math.floor(Math.max(0, sec) / 60); return `${Math.floor(a / 60)}:${p2(a % 60)}`; }   // 28800 → "8:00"
 
-    // Высота мини-окна с задачами: сам таймер (100) + список (до 5 строк, дальше прокрутка) + поле «Новая задача».
-    function tasksHeight(n) { return 100 + 8 + (n > 0 ? Math.min(n, 5) * 34 : 38) + 44; }
+    // Высота мини-окна с задачами: сам таймер (100) + список + поле «Новая задача». Задачи — массив текстов (или просто число):
+    // короткая — строка 34, длинная переносится на две — 46; сумма не больше 190, дальше список прокручивается.
+    const TASK_CHARS = 36;                                   // примерно столько знаков влезает в строку широкого мини-окна
+    function tasksHeight(items) {
+        const rows = Array.isArray(items) ? items.map(t => (String(t).length > TASK_CHARS ? 46 : 34)) : Array(Math.max(0, items | 0)).fill(34);
+        return 100 + 8 + (rows.length ? Math.min(rows.reduce((a, b) => a + b, 0), 190) : 38) + 44;
+    }
 
     const api = { parseHM, calc, lunch, tasksHeight, clock, words, hm, hmStr, signed, hmSec };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Shift = api;

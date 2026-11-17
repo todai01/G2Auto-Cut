@@ -1004,7 +1004,7 @@ def test_mini_resize_clamps_and_keeps_window_on_screen(tmp_path):
     c, api = make_api(tmp_path)
     api._mini = FakeWin()
     api._mini.x, api._mini.y = 1500, 100
-    assert api.mini_resize(300) == {"height": 300} and api._mini.calls == [('resize', 204, 300)]
+    assert api.mini_resize(300) == {"height": 300, "width": 204} and api._mini.calls == [('resize', 204, 300)]
     api._mini.calls.clear()
     assert api.mini_resize(10)["height"] == 100 and api.mini_resize(9999)["height"] == 520      # не меньше обычного и не выше предела
     assert api.mini_resize("мусор") == {"error": "bad height"}
@@ -1013,6 +1013,7 @@ def test_mini_resize_clamps_and_keeps_window_on_screen(tmp_path):
     api._mini.y = 900                                                     # окно у нижнего края
     api.mini_resize(300)
     assert api._mini.calls[0] == ('move', 1500, 740) and api._mini.calls[1] == ('resize', 204, 300)   # поднялось, чтобы поместиться
+    assert shift_app.MINI_WIDE > 204 and shift_app.MINI_WIDE <= 480
     assert shift_app.DEFAULTS["mini_tasks"] is False
     assert api.save_settings({"mini_tasks": True})["mini_tasks"] is True
 
@@ -1076,6 +1077,23 @@ def test_marked_lunch_in_excel_and_api(tmp_path):
     c2, api = make_api(tmp_path)
     api._t = tr
     assert api.event_kind('2026-11-17', 0, 'lock') == {"ok": True} and api.get_history()["rows"][0]["events"][0]["kind"] == "lock"
+
+
+def test_mini_resize_wide_grows_right_and_stays_on_screen(tmp_path):
+    c, api = make_api(tmp_path)
+    api._mini = FakeWin()
+    api._mini.x, api._mini.y = 100, 100
+    r = api.mini_resize(300, True)
+    assert r == {"height": 300, "width": shift_app.MINI_WIDE} and api._mini.calls == [('resize', shift_app.MINI_WIDE, 300)]     # с задачами — шире
+    api._mini.calls.clear()
+    api._screen_w = 1920
+    api._mini.x = 1800                                                                                                         # окно у правого края
+    api.mini_resize(300, True)
+    assert api._mini.calls[0] == ('move', 1920 - 8 - shift_app.MINI_WIDE, 100) and api._mini.calls[1] == ('resize', shift_app.MINI_WIDE, 300)
+    api._mini.calls.clear()
+    api._mini.x = 1500
+    api.mini_resize(100, False)                                                                                                # свернули — снова узкое
+    assert api._mini.calls == [('resize', 204, 100)]
 
 
 @pytest.mark.skipif(not shutil.which('node'), reason='нет node')
