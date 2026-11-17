@@ -223,10 +223,11 @@ def test_non_admin_cannot_use_admin_api_and_folder_errors(tmp_path):
     adm.team_setup_admin('boss', 'Босс', 'Boss-2026')
     adm.team_account_create('aida', 'Аида', 'Aida')
     cu, u = make_user_api(tmp_path, 'u', shared)
-    assert u.team_overview()["error"] == 'Только для администратора.'                       # не вошли
+    assert u.team_overview()["error"] == 'Только для администратора и наставника.'                       # не вошли
     u.team_login('aida', 'Aida')
-    for call in (lambda: u.team_overview(), lambda: u.team_accounts(), lambda: u.team_user('boss'), lambda: u.team_report(),
-                 lambda: u.team_account_create('x1', 'x', 'xxxx'), lambda: u.team_account_reset('boss', 'hack')):
+    for call in (lambda: u.team_overview(), lambda: u.team_user('boss'), lambda: u.team_report()):
+        assert call()["error"] == 'Только для администратора и наставника.'
+    for call in (lambda: u.team_accounts(), lambda: u.team_account_create('x1', 'x', 'xxxx'), lambda: u.team_account_reset('boss', 'hack')):
         assert call()["error"] == 'Только для администратора.'
     assert "не найдена" in u.team_set_dir(str(tmp_path / 'нет'))["error"]
     ok = u.team_set_dir(str(shared))
@@ -254,3 +255,37 @@ def test_team_script_loads_before_main_so_init_is_not_missed():
         assert f'id="{needed}"' in html
     js = open(os.path.join(ROOT, 'shift_timer', 'ui', 'main.js'), encoding='utf-8').read()
     assert 'teamInit' in js and 'teamStart' in js
+
+
+def test_mentor_sees_team_but_cannot_manage_accounts_or_publish(tmp_path, monkeypatch):
+    import updater
+    shared = tmp_path / 'net'
+    shared.mkdir()
+    c, adm = make_user_api(tmp_path, 'adm', shared, Clock(d=17, h=9))
+    adm.team_setup_admin('dev', 'Разработчик', 'Dev-pass-1')
+    adm.team_account_create('mentor1', 'Ментор', 'Mentor1')
+    adm.team_account_role('mentor1', 'mentor')
+    adm.team_account_create('aida', 'Аида', 'Aida')
+    assert {a["login"]: a["role"] for a in adm.team_accounts()["accounts"]} == {'dev': 'admin', 'mentor1': 'mentor', 'aida': 'user'}
+    cu, aida = make_user_api(tmp_path, 'aida', shared, Clock(d=17, h=9, mi=5))
+    aida.team_login('aida', 'Aida')
+    aida._t.tick()
+    aida.task_add("Задача Аиды")
+    aida._team_sync_now()
+    cm, m = make_user_api(tmp_path, 'mentor', shared, Clock(d=17, h=9))
+    r = m.team_login('mentor1', 'Mentor1')
+    assert r["user"]["role"] == 'mentor'
+    ov = m.team_overview('2026-11-17')                                                        # наставник видит команду, приход, статусы
+    assert {x["login"]: x["arrival"] for x in ov["rows"]}["aida"] == '09:05:00'
+    card = m.team_user('aida', 'week', '2026-11-17')
+    assert card["tasks"][0]["text"] == "Задача Аиды"                                          # и задачи с подробностями
+    assert m.team_report('week', '2026-11-17')["people"] >= 1                                 # и отчёт команды
+    for call in (lambda: m.team_accounts(), lambda: m.team_account_create('x1', 'x', 'xxxx'), lambda: m.team_account_reset('aida', 'hack'),
+                 lambda: m.team_account_role('aida', 'admin'), lambda: m.team_account_active('aida', False)):
+        assert call()["error"] == 'Только для администратора.'                                # учётки — только разработчик
+    monkeypatch.setattr(updater, 'BUILD', 5)
+    m._frozen = lambda: True
+    assert "администратора" in m.update_publish()["error"]                                    # и выкладывать обновления
+    # снять роль админа с последнего нельзя, а наставника — можно сменить
+    assert "последнего" in adm.team_account_role('dev', 'mentor').get('error', '') or adm.team_account_role('dev', 'mentor').get("error")
+    assert adm.team_account_role('mentor1', 'user')["ok"]

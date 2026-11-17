@@ -471,3 +471,4 @@ input:disabled{ opacity:.55; }
 .pal [data-p="violet"]{ background:linear-gradient(135deg,#9b82ff,#c7b6ff); } .pal [data-p="green"]{ background:linear-gradient(135deg,#34d399,#86efac); }
 .pal [data-p="orange"]{ background:linear-gradient(135deg,#ff9a3c,#ffd27a); } .pal [data-p="teal"]{ background:linear-gradient(135deg,#22d3ee,#67e8f9); }
 .pal [data-p="graphite"]{ background:linear-gradient(135deg,#cbd5e1,#64748b); }
+.row[hidden]{ display:none; }

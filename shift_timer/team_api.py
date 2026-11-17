@@ -64,6 +64,15 @@ class TeamMixin:
             raise team.TeamError('Сетевая папка не выбрана.')
         return st
 
+    def _viewer(self):
+        """Просмотр команды (таблица, карточки, отчёт): администратор и наставник."""
+        if not self._user or self._user["role"] not in ('admin', 'mentor'):
+            raise team.TeamError('Только для администратора и наставника.')
+        st = self._store()
+        if st is None:
+            raise team.TeamError('Сетевая папка не выбрана.')
+        return st
+
     def _login_as(self, acct, remember=None):
         self._user = {"login": acct["login"], "name": acct["name"], "role": acct["role"], "must_change": acct["must_change"]}
         if remember is not None:
@@ -233,7 +242,7 @@ class TeamMixin:
     @_safe
     def team_overview(self, iso=None):
         """Таблица команды за день: кто во сколько пришёл, кто сейчас в работе, на обеде, в блокировке."""
-        st = self._admin()
+        st = self._viewer()
         today = self._today_iso()
         iso = iso or today
         now = datetime.now()
@@ -275,7 +284,7 @@ class TeamMixin:
     @_safe
     def team_user(self, login, kind='week', iso=None):
         """Карточка сотрудника: сводка недели / месяца, дни месяца и задачи периода (с комментариями и подзадачами)."""
-        st = self._admin()
+        st = self._viewer()
         a = st.get(login)
         snap = st.read_snapshot(login) if a else None
         if not a:
@@ -335,7 +344,7 @@ class TeamMixin:
     @_safe
     def team_report(self, kind='week', iso=None):
         """Отчёт команды одним Excel: сводка по людям, приход и уход по дням, задачи всех."""
-        st = self._admin()
+        st = self._viewer()
         kind = 'month' if kind == 'month' else 'week'
         a, b = report.period(kind, iso or self._today_iso())
         members = []

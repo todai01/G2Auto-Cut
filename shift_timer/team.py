@@ -22,6 +22,9 @@ MIN_PASSWORD = 6
 MAX_FAILS, LOCK_S = 5, 30                                    # после 5 неверных паролей подряд — пауза 30 с
 
 
+ROLES = ('user', 'mentor', 'admin')                      # сотрудник · наставник (видит команду и отчёты) · администратор-разработчик (всё, включая учётки и обновления)
+
+
 class TeamError(Exception):
     """Понятная пользователю ошибка (текст можно показывать как есть)."""
 
@@ -114,7 +117,7 @@ class TeamStore:
             raise TeamError('Пароль — не короче 3 знаков.')
         if self.get(login):
             raise TeamError('Такой логин уже есть.')
-        a = {"login": login, "name": str(name or '').strip()[:60] or login, "role": 'admin' if role == 'admin' else 'user', "active": True,
+        a = {"login": login, "name": str(name or '').strip()[:60] or login, "role": role if role in ROLES else 'user', "active": True,
              "must_change": bool(must_change), "created": self._now().strftime('%Y-%m-%dT%H:%M:%S'), **hash_password(password)}
         self._save(a)
         return self._public(a)
@@ -181,8 +184,8 @@ class TeamStore:
         a = self.get(login)
         if not a:
             raise TeamError('Учётки нет.')
-        role = 'admin' if role == 'admin' else 'user'
-        if role == 'user' and a["role"] == 'admin' and sum(1 for x in self.list() if x["role"] == 'admin' and x["active"]) <= 1:
+        role = role if role in ROLES else 'user'
+        if role != 'admin' and a["role"] == 'admin' and sum(1 for x in self.list() if x["role"] == 'admin' and x["active"]) <= 1:
             raise TeamError('Нельзя снять роль у последнего администратора.')
         a["role"] = role
         self._save(a)

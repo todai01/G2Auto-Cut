@@ -2,6 +2,7 @@
 let TM = null, tmSkip = false, tmDay = null, tmTimer = null, tmStatusTimer = null, EMP = null, emLogin = null, emKind = 'week', accEdit = null, accRole = 'user';
 const TM_STATE = { work: ['в работе', 'ok'], lunch: ['обед', 'lunch'], locked: ['блокировка', 'warn'], left: ['ушёл', 'dim'], offline: ['нет связи', 'dim'], absent: ['не пришёл', 'low'],
     weekend: ['выходной', 'dim'], mark: ['', 'mk'], came: ['был', 'ok'], nodata: ['не входил', 'dim'] };
+const ROLE_RU = { admin: 'администратор', mentor: 'наставник', user: 'сотрудник' }, ROLE_SHORT = { admin: 'админ', mentor: 'наставник', user: 'сотрудник' };
 const MARK_RU = { vacation: 'отпуск', sick: 'больничный', dayoff: 'выходной' };
 const err = (id, t) => { const h = $(id); h.textContent = t || ''; h.classList.toggle('err', !!t); };
 
@@ -26,7 +27,8 @@ function lockMode(mode) {
 }
 function applyTeam() {
     const s = TM, user = s && s.user;
-    $('tabTeam').hidden = !(user && user.role === 'admin' && !user.must_change);
+    $('tabTeam').hidden = !(user && (user.role === 'admin' || user.role === 'mentor') && !user.must_change);
+    $('tmAcc').hidden = !(user && user.role === 'admin');                                 // учётками и обновлениями управляет только администратор-разработчик
     if (!s || !s.enabled) { lockMode(null); }
     else if (user && user.must_change) lockMode('change');
     else if (!s.reachable && !user) lockMode(tmSkip ? null : 'offline');
@@ -38,7 +40,7 @@ function applyTeam() {
     setText($('tmDir'), s && s.enabled ? s.dir + (s.reachable ? '' : ' — недоступна') : 'не выбрана — GTime работает сам по себе');
     $('tmOff').disabled = !(s && s.enabled);
     $('tmWhoRow').style.display = user ? '' : 'none';
-    if (user) setText($('tmWho'), `${user.name} · ${user.role === 'admin' ? 'администратор' : 'сотрудник'}${s.sync && s.sync.ok === false ? ' · нет связи с папкой' : ''}`);
+    if (user) setText($('tmWho'), `${user.name} · ${ROLE_RU[user.role] || 'сотрудник'}${s.sync && s.sync.ok === false ? ' · нет связи с папкой' : ''}`);
 }
 async function teamRefresh() { try { TM = await pywebview.api.team_status(); } catch (e) { return; } applyTeam(); }
 window.teamChanged = teamRefresh;
@@ -95,7 +97,7 @@ function teamInit() {
         let r;
         if (b.dataset.a === 'pw') { accForm(a); return; }
         if (b.dataset.a === 'on') r = await pywebview.api.team_account_active(l, !a.active);
-        else if (b.dataset.a === 'role') r = await pywebview.api.team_account_role(l, a.role === 'admin' ? 'user' : 'admin');
+        else if (b.dataset.a === 'role') r = await pywebview.api.team_account_role(l, b.dataset.r);
         if (r && r.error) err('acHint', r.error); else if (r) { err('acHint', ''); ACC = r.accounts; renderAcc(); }
     };
 }
@@ -112,7 +114,7 @@ async function loadTeam() {
     $('tmList').innerHTML = r.rows.length ? r.rows.map(u => {
         const [lab, cls] = TM_STATE[u.state] || ['', 'dim'], text = u.state === 'mark' ? (MARK_RU[u.mark] || '') : lab;
         const upd = u.state === 'offline' && u.updated ? ` · ${u.updated.slice(11, 16)}` : '';
-        return `<button class="tm-row${u.active ? '' : ' off'}" data-l="${escT(u.login)}"><span class="tm-n"><b>${escT(u.name)}</b><i>${escT(u.login)}${u.role === 'admin' ? ' · админ' : ''}${u.active ? '' : ' · отключён'}</i></span>`
+        return `<button class="tm-row${u.active ? '' : ' off'}" data-l="${escT(u.login)}"><span class="tm-n"><b>${escT(u.name)}</b><i>${escT(u.login)}${u.role === 'admin' ? ' · админ' : u.role === 'mentor' ? ' · наставник' : ''}${u.active ? '' : ' · отключён'}</i></span>`
             + `<span class="num"><b>${u.arrival ? Shift.hmStr(u.arrival) : '—'}</b></span><span><em class="st ${cls}">${text}${upd}</em></span>`
             + `<span class="num">${u.worked_s ? Shift.hmSec(u.worked_s) : '—'}</span><span class="num dim">${u.tasks_open} · ✓${u.tasks_done}</span></button>`;
     }).join('') : '<div class="empty">Учёток пока нет.</div>';
@@ -156,8 +158,8 @@ async function loadEmp(open) {
 let ACC = [];
 function renderAcc() {
     $('accList').innerHTML = ACC.map(a => `<div class="acc-row${a.active ? '' : ' off'}" data-l="${escT(a.login)}"><span class="tm-n"><b>${escT(a.name)}</b><i>${escT(a.login)}${a.must_change ? ' · ждёт смены пароля' : ''}</i></span>`
-        + `<span class="mk ${a.role === 'admin' ? 'dayoff' : ''}">${a.role === 'admin' ? 'админ' : 'сотрудник'}</span>`
-        + `<span class="acc-b"><button class="btn sm" data-a="pw" title="Задать новый стартовый пароль">Пароль</button><button class="btn sm" data-a="role">${a.role === 'admin' ? 'Снять админа' : 'Сделать админом'}</button><button class="btn sm${a.active ? '' : ' primary'}" data-a="on">${a.active ? 'Отключить' : 'Включить'}</button></span></div>`).join('')
+        + `<span class="mk ${a.role === 'admin' ? 'dayoff' : a.role === 'mentor' ? 'vacation' : ''}">${ROLE_RU[a.role] || 'сотрудник'}</span>`
+        + `<span class="acc-b"><button class="btn sm" data-a="pw" title="Задать новый стартовый пароль">Пароль</button>${['user', 'mentor', 'admin'].filter(r => r !== a.role).map(r => `<button class="btn sm" data-a="role" data-r="${r}" title="Сменить роль">→ ${ROLE_SHORT[r]}</button>`).join('')}<button class="btn sm${a.active ? '' : ' primary'}" data-a="on">${a.active ? 'Отключить' : 'Включить'}</button></span></div>`).join('')
         || '<div class="td-empty">Учёток нет</div>';
 }
 function accForm(a) {
