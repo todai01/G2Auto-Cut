@@ -185,6 +185,8 @@ class Tracker:
                           "notified": [int(x) for x in d.get("notified", []) if isinstance(x, int)], "no_break": d.get("no_break") is True}
             except (ValueError, TypeError, AttributeError):
                 continue
+        for d in out.values():
+            self._strip_inside_lunch(d)                  # в старых журналах обед и блокировка на одно и то же время — оставляем обед
         return out
 
     def save(self):
@@ -212,7 +214,9 @@ class Tracker:
                 self._rest += dt
                 if self._rest >= REST:
                     self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
-                if not was and self._active_day in self.days:
+                if self._open_lunch is not None:
+                    self._open_ev = None                 # идёт обед: блокировка — часть обеда, отдельным событием её не пишем
+                elif not was and self._active_day in self.days:
                     # ушли в блокировку: время — последний момент, когда видели работу (после сна — не момент пробуждения)
                     ev = {"lock": iso_dt(self._active_at or t), "unlock": None, "kind": "lock"}
                     self.days[self._active_day]["events"].append(ev)
@@ -226,8 +230,8 @@ class Tracker:
                     if self._open_ev is not None:
                         self._open_ev["unlock"] = iso_dt(t)      # разблокировали
                         self._open_ev = None
-                elif dt > CAP and self._active_at is not None:
-                    day["events"].append({"lock": iso_dt(self._active_at), "unlock": iso_dt(t), "kind": "sleep"})   # сон без блокировки
+                elif dt > CAP and self._active_at is not None and self._open_lunch is None:
+                    day["events"].append({"lock": iso_dt(self._active_at), "unlock": iso_dt(t), "kind": "sleep"})   # пауза без блокировки (на обеде не пишем)
                 if dt > CAP or was:
                     self._rest += dt if dt > CAP and not was else 0.0
                     if self._rest >= REST:               # долгий перерыв — «работа подряд» начинается заново
@@ -301,9 +305,24 @@ class Tracker:
                 self._end_lunch(datetime.fromtimestamp(self._clock()), self._mono(), auto=False)
             return {"ok": True}
 
+    @staticmethod
+    def _strip_inside_lunch(day, tol=3):
+        """Убрать блокировки и паузы, целиком лежащие внутри обеда: это то же время (на допуск tol секунд)."""
+        lun = [(parse_dt(e["lock"]), parse_dt(e["unlock"]) or datetime.max) for e in day["events"] if e["kind"] == "lunch"]
+        if not lun:
+            return
+        t = timedelta(seconds=tol)
+
+        def inside(e):
+            a, b = parse_dt(e["lock"]), parse_dt(e["unlock"])
+            return e["kind"] != "lunch" and a and b and any(a >= la - t and b <= lb + t for la, lb in lun if la)
+        day["events"][:] = [e for e in day["events"] if not inside(e)]
+
     def _end_lunch(self, t, m, auto):
         self._open_lunch["unlock"] = iso_dt(t)
         self._open_lunch = None
+        for d in self.days.values():
+            self._strip_inside_lunch(d)
         self.streak, self._next_break = 0.0, self.opts["brk_min"] * 60.0
         if auto:
             self._fire("lunch", "Обед закончился — время пошло", m)
@@ -332,7 +351,7 @@ class Tracker:
             now = datetime.fromtimestamp(self._clock())
             d = self.days.get(now.date().isoformat()) or _new_day(self.norm_s)
             return {"date": now.date().isoformat(), "arrival": d["arrival"], "leave": d["leave"], "worked_s": d["worked"],
-                    "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": len(d["events"]),
+                    "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": sum(1 for e in d["events"] if e["kind"] != "lunch"),
                     "notice": {k: self.notice[k] for k in ("id", "kind", "text")} if self.notice and self._mono() < self.notice["until"] else None,
                     "lunch": self._lunch_info(d, now)}
 
@@ -439,6 +458,7 @@ class Tracker:
             if ev["unlock"] is None:
                 return {"error": "Это событие ещё идёт — дождитесь его окончания."}
             ev["kind"] = kind
+            self._strip_inside_lunch(day)
             self.save()
             return {"ok": True}
 
@@ -449,7 +469,7 @@ class Tracker:
             return {"ok": True}
 
     # ---------- таблица Excel ----------
-    def export_xlsx(self, path):
+    def export_xlsx(self, path, task_rows=None):
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
         from openpyxl.utils import get_column_letter
@@ -511,6 +531,24 @@ class Tracker:
         for i, w in enumerate([13, 13, 21, 21, 14], 1):
             ev.column_dimensions[get_column_letter(i)].width = w
         ev.freeze_panes = 'A2'
+        if task_rows is not None:                        # лист «Задачи»: день, задача, статус
+            tk = wb.create_sheet('Задачи')
+            tk.append(['День', 'Задача', 'Статус', 'Со вчера'])
+            for c in tk[1]:
+                c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')
+                c.alignment = Alignment(horizontal='center', vertical='center')
+            colors = {'выполнена': '16A34A', 'не выполнена': 'D97706', 'перенесена на следующий день': '6B7280'}
+            for r in task_rows:
+                tk.append([date.fromisoformat(r["date"]), r["text"], r["status"], 'да' if r["carried"] else ''])
+                row = tk.max_row
+                tk.cell(row, 1).number_format = 'DD.MM.YYYY'
+                tk.cell(row, 3).font = Font(color=colors.get(r["status"], '000000'), bold=True)
+                tk.cell(row, 2).alignment = Alignment(wrap_text=True, vertical='top')
+                for col in (1, 3, 4):
+                    tk.cell(row, col).alignment = Alignment(horizontal='center', vertical='top')
+            for i, w in enumerate([13, 60, 28, 11], 1):
+                tk.column_dimensions[get_column_letter(i)].width = w
+            tk.freeze_panes = 'A2'
         os.makedirs(os.path.dirname(path), exist_ok=True)
         wb.save(path)
         return path

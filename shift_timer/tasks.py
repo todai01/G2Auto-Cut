@@ -121,6 +121,16 @@ class TaskStore:
                 self._save()
             return self._view()
 
+    def all_rows(self):
+        """Все задачи по дням (для листа «Задачи» в Excel): день, текст, статус, пришла ли со вчера."""
+        with self._lock:
+            rows = []
+            for k in sorted(self.days):
+                for t in self.days[k]:
+                    status = 'выполнена' if t["done"] else 'перенесена на следующий день' if t["moved"] else 'не выполнена'
+                    rows.append({"date": k, "text": t["text"], "status": status, "carried": t["carried"]})
+            return rows
+
     def clear_done(self):
         with self._lock:
             ts = self._today()

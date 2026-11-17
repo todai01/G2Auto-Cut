@@ -26,7 +26,7 @@ TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60, "mini_tasks": False,
             "mini_visible": False, "mini_on_top": True, "mini_pos": None}
-MAIN_SIZE = (380, 690)
+MAIN_SIZE = (520, 700)            # не «телефонная» узкая колонка: шире и чуть выше
 MINI_SIZE = (204, 100)
 MINI_WIDE = 340                  # ширина мини-окна с развёрнутым списком задач (свёрнутое — MINI_SIZE[0])
 MINI_MAX_H = 520                 # выше мини-окно не растёт (список задач дальше прокручивается)
@@ -303,7 +303,7 @@ class Api:
         """Обновить Excel-таблицу из журнала и открыть её."""
         path = self._table or table_file()
         try:
-            self._t.export_xlsx(path)
+            self._t.export_xlsx(path, self._tasks.all_rows())
         except PermissionError:
             return {"error": "Файл таблицы открыт в Excel — закройте его и повторите."}
         except Exception as e:

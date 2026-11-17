@@ -161,7 +161,7 @@ body.mini:hover .mb{ opacity:1; }
 
 .back{ position:absolute; inset:0; z-index:20; background:rgba(0,0,0,.38); display:none; align-items:center; justify-content:center; padding:20px; backdrop-filter:blur(4px); }
 .back.on{ display:flex; animation:in .2s; }
-.dlg{ width:100%; background:var(--card); border-radius:20px; box-shadow:0 20px 60px rgba(0,0,0,.45); padding:18px; display:flex; flex-direction:column; gap:10px; }
+.dlg{ width:100%; max-width:440px; background:var(--card); border-radius:20px; box-shadow:0 20px 60px rgba(0,0,0,.45); padding:18px; display:flex; flex-direction:column; gap:10px; }
 .dlg[hidden]{ display:none; }
 .dlg-t{ font-size:16px; font-weight:650; letter-spacing:-.015em; }
 .frow{ display:flex; align-items:center; justify-content:space-between; gap:10px; }

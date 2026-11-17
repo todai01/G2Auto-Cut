@@ -1180,3 +1180,51 @@ def test_volume_levels(tmp_path, monkeypatch):
     api.save_settings({"sound": False, "volume": "low"})
     assert played == []                                      # звук выключен — образца нет
     assert api.save_settings({"volume": "очень"})["volume"] == "mid"    # мусор → по умолчанию
+
+
+def test_lunch_with_lock_has_no_duplicate_block(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    tr.tick()
+    run(c, tr, 60)
+    tr.start_lunch()
+    c.locked = True
+    run(c, tr, 1800)
+    c.locked = False
+    run(c, tr, 5)
+    tr.end_lunch()
+    run(c, tr, 60)
+    kinds = [e["kind"] for e in tr.history()["rows"][0]["events"]]
+    assert kinds == ["lunch"]                              # блокировка внутри обеда отдельной строкой не пишется
+    assert tr.snapshot()["events_n"] == 0                  # и в «Блокировки и паузы» обед не входит
+    c.locked = True                                        # блокировка после обеда — обычная
+    run(c, tr, 30)
+    assert [e["kind"] for e in tr.history()["rows"][0]["events"]] == ["lunch", "lock"]
+
+
+def test_old_journal_duplicate_inside_lunch_is_cleaned(tmp_path):
+    c = Clock(h=12, mi=0)
+    tr = lunch_tracker(tmp_path, c)
+    d = {"events": [
+        {"lock": "2026-11-10T12:10:00", "unlock": "2026-11-10T12:50:00", "kind": "lunch"},
+        {"lock": "2026-11-10T12:10:02", "unlock": "2026-11-10T12:49:58", "kind": "lock"},
+        {"lock": "2026-11-10T13:30:00", "unlock": "2026-11-10T13:31:00", "kind": "lock"}]}
+    type(tr)._strip_inside_lunch(d)
+    assert [(e["kind"], e["lock"][-8:]) for e in d["events"]] == [("lunch", "12:10:00"), ("lock", "13:30:00")]
+
+
+def test_excel_has_tasks_sheet(tmp_path):
+    import openpyxl
+    from shift_timer.tasks import TaskStore
+    c = Clock()
+    tr = c.tracker(str(tmp_path / 'h.json'))
+    tr.edit_day('2026-11-10', '09:05', '18:20', '08:00')
+    ts = TaskStore(str(tmp_path / 't.json'))
+    ts.add('Сверить таблицу')
+    rows = ts.all_rows()
+    assert rows and rows[0]["status"] == 'не выполнена'
+    p = tr.export_xlsx(str(tmp_path / 'o.xlsx'), rows)
+    wb = openpyxl.load_workbook(p)
+    assert 'Задачи' in wb.sheetnames
+    vals = [[x.value for x in r] for r in wb['Задачи'].iter_rows()]
+    assert vals[0] == ['День', 'Задача', 'Статус', 'Со вчера'] and vals[1][1] == 'Сверить таблицу'
