@@ -248,7 +248,7 @@ class Api:
     def suggest_worked(self, arrival):
         return self._t.suggest_worked(arrival)
 
-    # ---- задачи на день ----
+    # ---- задачи ----
     def tasks_get(self):
         return self._tasks.get()
 
@@ -261,11 +261,53 @@ class Api:
     def task_edit(self, tid, text):
         return self._tasks.edit(tid, text)
 
+    def task_times(self, tid, created, started=None, finished=None):
+        return self._tasks.set_times(tid, created, started, finished)
+
+    def task_comment(self, tid, text):
+        return self._tasks.set_comment(tid, text)
+
     def task_delete(self, tid):
         return self._tasks.delete(tid)
 
     def tasks_clear_done(self):
         return self._tasks.clear_done()
+
+    def sub_add(self, tid, text):
+        return self._tasks.sub_add(tid, text)
+
+    def sub_toggle(self, tid, sid):
+        return self._tasks.sub_toggle(tid, sid)
+
+    def sub_delete(self, tid, sid):
+        return self._tasks.sub_delete(tid, sid)
+
+    def _pick_files(self):
+        """Окно выбора файлов (подменяется в тестах)."""
+        import webview
+        kind = webview.FileDialog.OPEN if hasattr(webview, 'FileDialog') else webview.OPEN_DIALOG
+        return list(self._main.create_file_dialog(kind, allow_multiple=True) or [])
+
+    def task_attach(self, tid):
+        """Прикрепить файлы к задаче (фото, аудио, Excel — что угодно): копии лежат в папке данных GTime."""
+        try:
+            paths = self._pick_files()
+        except Exception as e:
+            return {"error": f"Не удалось открыть выбор файлов: {e}"}
+        return self._tasks.attach(tid, paths) if paths else {"added": 0, "skipped": [], **self._tasks.get()}
+
+    def task_file_open(self, tid, name):
+        p = self._tasks.file_path(tid, name)
+        if not p:
+            return {"error": "Файл не найден."}
+        try:
+            os.startfile(p)                              # только Windows
+        except (AttributeError, OSError) as e:
+            return {"error": f"Не удалось открыть: {e}"}
+        return {"ok": True}
+
+    def task_file_remove(self, tid, name):
+        return self._tasks.remove_file(tid, name)
 
     def mini_resize(self, height, wide=False):
         """Мини-окно с задачами выше и шире обычного: растёт вправо и вниз, а у краёв экрана сдвигается, чтобы не уйти за него.

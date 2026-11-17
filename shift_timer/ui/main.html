@@ -45,11 +45,11 @@
     </section>
 
     <section class="view" id="v-tk">
-      <div class="jr-top"><div class="h tk-h" id="tkTitle">Задачи на сегодня</div><span class="tk-cnt" id="tkCnt"></span></div>
+      <div class="jr-top"><div class="h tk-h" id="tkTitle">Задачи</div><span class="tk-cnt" id="tkCnt"></span></div>
       <div class="tk-prog"><i id="tkBar"></i></div>
-      <form class="tk-add2" id="tkForm"><input id="tkInput" placeholder="Что нужно сделать сегодня?" maxlength="200" autocomplete="off"><button class="btn sm primary" type="submit">Добавить</button></form>
+      <form class="tk-add2" id="tkForm"><input id="tkInput" placeholder="Новая задача" maxlength="200" autocomplete="off"><button class="btn sm primary" type="submit">Добавить</button></form>
       <div class="card tk-card"><div class="tk-list2" id="tkMain"></div></div>
-      <div class="tk-foot"><button class="btn sm" id="tkClear">Убрать выполненные</button><span class="note" id="tkNote">Двойной клик — изменить. Невыполненное перейдёт на завтра.</span></div>
+      <div class="tk-foot"><button class="btn sm" id="tkClear">Убрать выполненные</button><span class="note" id="tkNote">Нажмите на задачу — детали, время, файлы. Выполненные скрываются после полуночи.</span></div>
     </section>
 
     <section class="view" id="v-jr">
@@ -121,6 +121,24 @@
       <div class="dlg-hint" id="dHint"></div>
       <div class="dlg-btns"><button class="btn sm danger" id="dDel">Удалить</button><span class="grow"></span>
         <button class="btn sm" id="dCancel">Отмена</button><button class="btn sm primary" id="dSave">Сохранить</button></div>
+    </div>
+    <div class="dlg tall" id="dlgTask" hidden>
+      <textarea class="tdt-in" id="tdText" rows="2" maxlength="200" aria-label="Задача"></textarea>
+      <div class="td-timer"><span class="k">Идёт</span><b class="tm num" id="tdTimer">0:00:00</b></div>
+      <label class="frow"><span>Создана</span><input type="datetime-local" id="tdCreated"></label>
+      <label class="frow"><span>Начата</span><input type="datetime-local" id="tdStarted"></label>
+      <label class="frow" id="tdFinRow"><span>Выполнена</span><input type="datetime-local" id="tdFinished"></label>
+      <div class="ev-h">Комментарий</div>
+      <textarea id="tdComment" rows="4" maxlength="8000" placeholder="Детали задачи, с кем согласовать, чего ждём…"></textarea>
+      <div class="ev-h">Подзадачи <span id="tdSubN"></span></div>
+      <div class="td-list" id="tdSubs"></div>
+      <form class="tk-add2" id="tdSubForm"><input id="tdSubIn" placeholder="Новая подзадача" maxlength="200" autocomplete="off"><button class="btn sm" type="submit">Добавить</button></form>
+      <div class="ev-h">Файлы <span id="tdFileN"></span></div>
+      <div class="td-list" id="tdFiles"></div>
+      <button class="btn sm" id="tdAttach" type="button">Прикрепить файлы (фото, аудио, Excel…)</button>
+      <div class="dlg-hint" id="tdHint"></div>
+      <div class="dlg-btns"><button class="btn sm danger" id="tdDel">Удалить</button><span class="grow"></span>
+        <button class="btn sm" id="tdCancel">Закрыть</button><button class="btn sm primary" id="tdSave">Сохранить</button></div>
     </div>
     <div class="dlg" id="dlgClose" hidden>
       <div class="dlg-t">Закрыть программу?</div>

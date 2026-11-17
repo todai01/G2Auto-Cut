@@ -6,7 +6,7 @@ const ICONS = {
     done: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
 };
 // ---- задачи: развернуть / свернуть мини-окно ----
-let TK = null, tkOpen = false, tkTimer = null, tkH = 0, tkWide = false;
+let TK = null, TKAT = 0, tkOpen = false, tkTimer = null, tkH = 0, tkWide = false;
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const CK = '<svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.5 3.5 7.5-8"/></svg>';
 function fitTasks() {
@@ -15,13 +15,19 @@ function fitTasks() {
 }
 function renderTasks() {
     if (!TK) return;
-    const ts = TK.tasks.slice().sort((a, b) => a.done - b.done);                       // невыполненные выше
-    $('tkList').innerHTML = ts.length ? ts.map(t => `<button class="tk-row${t.done ? ' done' : ''}" data-id="${t.id}" title="${esc(t.text)}"><i class="ck">${t.done ? CK : ''}</i><span>${esc(t.text)}</span></button>`).join('')
+    const ts = TK.tasks;                                                               // невыполненные выше (порядок от сервера)
+    $('tkList').innerHTML = ts.length ? ts.map(t => `<button class="tk-row${t.done ? ' done' : ''}" data-id="${t.id}" title="${esc(t.text)}"><i class="ck">${t.done ? CK : ''}</i><span>${esc(t.text)}</span><b class="tm num" data-id="${t.id}">${Shift.dur(taskSec(t))}</b></button>`).join('')
         : '<div class="tk-empty">Задач пока нет — добавьте ниже</div>';
     setText($('mTaskN'), TK.total ? `${TK.done}/${TK.total}` : '');
     fitTasks();
 }
-async function loadTasks() { try { TK = await pywebview.api.tasks_get(); renderTasks(); } catch (e) { /* повторим через 3 с */ } }
+const taskSec = t => t.elapsed_s + (t.running ? (performance.now() - TKAT) / 1000 : 0);
+function tickTasks() {                                                                 // секундомеры идут каждую секунду, список — раз в 3 с
+    if (!TK || !tkOpen) return;
+    document.querySelectorAll('#tkList .tm').forEach(el => { const t = TK.tasks.find(x => x.id === +el.dataset.id); if (t) setText(el, Shift.dur(taskSec(t))); });
+}
+function setTasks(v) { if (v && v.tasks) { TK = v; TKAT = performance.now(); renderTasks(); } }
+async function loadTasks() { try { setTasks(await pywebview.api.tasks_get()); } catch (e) { /* повторим через 3 с */ } }
 function setTasksOpen(on, persist) {
     tkOpen = on; clearInterval(tkTimer);
     $('b').classList.toggle('exp', on);
@@ -65,14 +71,14 @@ function render() {
     if (!tkOpen && d.tasks) setText($('mTaskN'), d.tasks.total ? `${d.tasks.done}/${d.tasks.total}` : '');
 }
 boot(() => {
-    App.onChange = render;
+    App.onChange = () => { render(); tickTasks(); };
     $('mOpen').onclick = () => pywebview.api.open_main();
     $('mLunch').onclick = () => pywebview.api.lunch_toggle().then(poll);
     $('mClose').onclick = () => save({ mini_visible: false });
     $('mTasks').onclick = () => setTasksOpen(!tkOpen, true);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && tkOpen) { e.preventDefault(); document.activeElement && document.activeElement.blur(); setTasksOpen(false, true); } });
-    $('tkList').onclick = async e => { const r = e.target.closest('.tk-row'); if (r) { TK = await pywebview.api.task_toggle(+r.dataset.id); renderTasks(); } };
-    $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkIn').value.trim(); if (!v) return; $('tkIn').value = ''; TK = await pywebview.api.task_add(v); renderTasks(); $('tkList').scrollTop = 1e6; };
+    $('tkList').onclick = async e => { const r = e.target.closest('.tk-row'); if (r) { setTasks(await pywebview.api.task_toggle(+r.dataset.id)); } };
+    $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkIn').value.trim(); if (!v) return; $('tkIn').value = ''; setTasks(await pywebview.api.task_add(v)); $('tkList').scrollTop = 1e6; };
     if (App.s.mini_tasks) setTasksOpen(true, false);                                   // как оставили в прошлый раз
     $('nb').onclick = hideNotice;
     $('nSkip').onclick = e => { e.stopPropagation(); hideNotice(); };

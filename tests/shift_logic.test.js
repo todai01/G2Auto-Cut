@@ -70,4 +70,12 @@ assert.strictEqual(S.tasksHeight(30), 342); assert.ok(S.tasksHeight(3) > S.tasks
 assert.strictEqual(S.tasksHeight([]), 190); assert.strictEqual(S.tasksHeight(['коротко']), 186);
 assert.strictEqual(S.tasksHeight(['я'.repeat(80)]), 198);                                          // длинная задача — две строки
 assert.strictEqual(S.tasksHeight(['a', 'b', 'c', 'd', 'e', 'f', 'g']), 342);                         // семь задач — предел
+// секундомер задачи: до суток — ч:мм:сс, дальше — «1 д 10 ч 30 мин»
+assert.strictEqual(S.dur(0), '0:00:00'); assert.strictEqual(S.dur(65), '0:01:05'); assert.strictEqual(S.dur(86399), '23:59:59');
+assert.strictEqual(S.dur(86400), '1 д'); assert.strictEqual(S.dur(86460), '1 д 1 мин'); assert.strictEqual(S.dur(86400 + 37800), '1 д 10 ч 30 мин');
+assert.strictEqual(S.dur(3 * 86400 + 7200), '3 д 2 ч'); assert.strictEqual(S.dur(-5), '0:00:00');
+// когда создана
+const TNOW = new Date(2026, 10, 17, 14, 0, 0);
+assert.strictEqual(S.when('2026-11-17T09:12:00', TNOW), 'сегодня 09:12'); assert.strictEqual(S.when('2026-11-16T16:40:00', TNOW), 'вчера 16:40');
+assert.strictEqual(S.when('2026-11-05T08:05:00', TNOW), '05.11 08:05'); assert.strictEqual(S.when('мусор', TNOW), '');
 console.log('shift logic: OK');

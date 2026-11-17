@@ -55,14 +55,32 @@
     }
     function hmSec(sec) { const a = Math.floor(Math.max(0, sec) / 60); return `${Math.floor(a / 60)}:${p2(a % 60)}`; }   // 28800 → "8:00"
 
+    // Сколько идёт задача: до суток — секундомер «10:30:12», дальше — «1 д 10 ч 30 мин» (нулевые части пропускаются: «1 д 5 мин»).
+    function dur(sec) {
+        sec = Math.floor(Math.max(0, sec));
+        if (sec < 86400) return `${Math.floor(sec / 3600)}:${p2(Math.floor(sec % 3600 / 60))}:${p2(sec % 60)}`;
+        const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+        return [d + ' д', h ? h + ' ч' : '', m ? m + ' мин' : ''].filter(Boolean).join(' ');
+    }
+    // Когда создана: «сегодня 09:12», «вчера 16:40», «15.11 09:12» (iso — «ГГГГ-ММ-ДДTЧЧ:ММ:СС», now — Date).
+    function when(iso, now) {
+        const d = new Date(iso);
+        if (isNaN(d)) return '';
+        const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+        const diff = Math.round((day(now) - day(d)) / 86400000), t = hm(d);
+        if (diff === 0) return 'сегодня ' + t;
+        if (diff === 1) return 'вчера ' + t;
+        return `${p2(d.getDate())}.${p2(d.getMonth() + 1)} ${t}`;
+    }
+
     // Высота мини-окна с задачами: сам таймер (100) + список + поле «Новая задача». Задачи — массив текстов (или просто число):
     // короткая — строка 34, длинная переносится на две — 46; сумма не больше 190, дальше список прокручивается.
-    const TASK_CHARS = 36;                                   // примерно столько знаков влезает в строку широкого мини-окна
+    const TASK_CHARS = 26;                                   // примерно столько знаков влезает в строку широкого мини-окна
     function tasksHeight(items) {
         const rows = Array.isArray(items) ? items.map(t => (String(t).length > TASK_CHARS ? 46 : 34)) : Array(Math.max(0, items | 0)).fill(34);
         return 100 + 8 + (rows.length ? Math.min(rows.reduce((a, b) => a + b, 0), 190) : 38) + 44;
     }
 
-    const api = { parseHM, calc, lunch, tasksHeight, clock, words, hm, hmStr, signed, hmSec };
+    const api = { parseHM, calc, lunch, tasksHeight, dur, when, clock, words, hm, hmStr, signed, hmSec };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Shift = api;
 })(typeof window !== 'undefined' ? window : globalThis);

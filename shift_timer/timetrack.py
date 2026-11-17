@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
+from tasks import fmt_dur
 
 REST = 180.0              # перерыв (блокировка / сон) от 3 минут обнуляет «долгую работу подряд»
 NOTICE_SECONDS = 10.0     # сколько уведомление «висит» в данных для окон
@@ -531,22 +532,28 @@ class Tracker:
         for i, w in enumerate([13, 13, 21, 21, 14], 1):
             ev.column_dimensions[get_column_letter(i)].width = w
         ev.freeze_panes = 'A2'
-        if task_rows is not None:                        # лист «Задачи»: день, задача, статус
+        if task_rows is not None:                        # лист «Задачи»: когда создана, начата, выполнена и сколько ушло
             tk = wb.create_sheet('Задачи')
-            tk.append(['День', 'Задача', 'Статус', 'Со вчера'])
+            heads = ['Создана', 'Начата', 'Выполнена', 'Статус', 'Задача', 'Ушло, ч:мм', 'Ушло', 'Подзадачи', 'Комментарий', 'Файлы']
+            tk.append(heads)
             for c in tk[1]:
                 c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')
-                c.alignment = Alignment(horizontal='center', vertical='center')
-            colors = {'выполнена': '16A34A', 'не выполнена': 'D97706', 'перенесена на следующий день': '6B7280'}
+                c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
             for r in task_rows:
-                tk.append([date.fromisoformat(r["date"]), r["text"], r["status"], 'да' if r["carried"] else ''])
+                sub = '\n'.join(('✓ ' if d else '○ ') + t for t, d in r["subs"])
+                el = r["elapsed_s"]
+                tk.append([r["created"], r["started"], r["finished"], 'выполнена' if r["done"] else 'в работе', r["text"],
+                           timedelta(seconds=el) if el is not None else None, fmt_dur(el) if el is not None else '', sub,
+                           r["comment"], '\n'.join(r["files"])])
                 row = tk.max_row
-                tk.cell(row, 1).number_format = 'DD.MM.YYYY'
-                tk.cell(row, 3).font = Font(color=colors.get(r["status"], '000000'), bold=True)
-                tk.cell(row, 2).alignment = Alignment(wrap_text=True, vertical='top')
-                for col in (1, 3, 4):
-                    tk.cell(row, col).alignment = Alignment(horizontal='center', vertical='top')
-            for i, w in enumerate([13, 60, 28, 11], 1):
+                for col in (1, 2, 3):
+                    tk.cell(row, col).number_format = 'DD.MM.YYYY HH:MM'
+                tk.cell(row, 6).number_format = '[h]:mm'
+                tk.cell(row, 4).font = Font(color='16A34A' if r["done"] else 'D97706', bold=True)
+                for col in range(1, 11):
+                    tk.cell(row, col).alignment = Alignment(wrap_text=col in (5, 8, 9, 10), vertical='top',
+                                                            horizontal='left' if col in (5, 8, 9, 10) else 'center')
+            for i, w in enumerate([17, 17, 17, 12, 46, 12, 16, 32, 40, 28], 1):
                 tk.column_dimensions[get_column_letter(i)].width = w
             tk.freeze_panes = 'A2'
         os.makedirs(os.path.dirname(path), exist_ok=True)

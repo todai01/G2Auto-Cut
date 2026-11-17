@@ -906,7 +906,7 @@ def test_ui_uses_new_name():
         assert 'GTime' in text and 'Конец смены' not in text
 
 
-# ---------- задачи на день ----------
+# ---------- задачи ----------
 def make_store(tmp_path, c=None, name='tasks.json'):
     c = c or Clock()
     return c, tasks.TaskStore(str(tmp_path / name), clock=lambda: c.wall)
@@ -921,11 +921,11 @@ def test_tasks_add_toggle_edit_delete(tmp_path):
     a, b = v["tasks"][0]["id"], v["tasks"][1]["id"]
     assert a != b
     v = st.toggle(a)
-    assert v["done"] == 1 and v["tasks"][0]["done"] is True
+    assert v["done"] == 1 and v["tasks"][-1]["done"] is True            # выполненные уходят вниз списка
     assert st.toggle(a)["done"] == 0                                    # повторное нажатие снимает галочку
     assert st.toggle(a, True)["done"] == 1 and st.toggle(a, True)["done"] == 1
-    assert st.edit(b, "Отчёт за месяц")["tasks"][1]["text"] == "Отчёт за месяц"
-    assert st.edit(b, "   ")["tasks"][1]["text"] == "Отчёт за месяц"        # пустой текст не принимается
+    assert st.edit(b, "Отчёт за месяц")["tasks"][0]["text"] == "Отчёт за месяц"
+    assert st.edit(b, "   ")["tasks"][0]["text"] == "Отчёт за месяц"        # пустой текст не принимается
     assert st.delete(a)["total"] == 1 and st.delete(999)["total"] == 1       # несуществующую — молча
     assert st.counts() == {"total": 1, "done": 0}
 
@@ -936,7 +936,7 @@ def test_tasks_validation(tmp_path):
     assert len(st.add("x" * 500)["tasks"][0]["text"]) == tasks.MAX_TEXT
     for i in range(tasks.MAX_PER_DAY + 20):
         st.add(f"задача {i}")
-    assert st.get()["total"] == tasks.MAX_PER_DAY                          # предел на день
+    assert st.get()["total"] == tasks.MAX_PER_DAY
     assert st.toggle("не число")["total"] == tasks.MAX_PER_DAY             # мусор вместо id не ломает
 
 
@@ -949,40 +949,131 @@ def test_tasks_persist_and_ids_not_reused(tmp_path):
     c2, st2 = make_store(tmp_path, c)
     v = st2.get()
     assert [t["text"] for t in v["tasks"]] == ["два"] and v["tasks"][0]["done"] is True      # после перезапуска всё на месте
-    assert st2.add("три")["tasks"][-1]["id"] > last                                          # номера не повторяются
+    assert max(t["id"] for t in st2.add("три")["tasks"]) > last                                          # номера не повторяются
     assert not os.path.exists(str(tmp_path / 'tasks.json.tmp'))
 
 
-def test_unfinished_tasks_carry_to_next_day_done_do_not(tmp_path):
+def test_task_timer_created_started_and_finish_minute(tmp_path):
+    c, st = make_store(tmp_path)
+    t = st.add("Ответ от коллеги")["tasks"][0]
+    assert t["created"] == t["started"] == "2026-11-17T09:00:00" and t["elapsed_s"] == 0 and t["running"]
+    c.wall += 3725                                                        # 1 ч 2 мин 5 с
+    assert st.get()["tasks"][0]["elapsed_s"] == 3725
+    v = st.toggle(t["id"])                                                # «Выполнено» фиксирует час и минуту
+    d = v["tasks"][0]
+    assert d["finished"] == "2026-11-17T10:02:05" and d["elapsed_s"] == 3725 and not d["running"]
+    c.wall += 600
+    assert st.get()["tasks"][0]["elapsed_s"] == 3725                      # выполненная — секундомер стоит
+    v = st.toggle(t["id"])                                                # вернули в работу — идёт дальше от начала
+    assert v["tasks"][0]["finished"] is None and v["tasks"][0]["elapsed_s"] == 3725 + 600
+
+
+def test_task_runs_for_days_not_carried_copies(tmp_path):
+    c, st = make_store(tmp_path)
+    st.add("ждём согласование")
+    c.wall += 86400 + 10 * 3600 + 30 * 60                                 # через 1 день 10 ч 30 мин
+    v = st.get()
+    assert v["total"] == 1 and v["tasks"][0]["elapsed_s"] == 86400 + 37800 and v["tasks"][0]["created"].startswith("2026-11-17")
+    assert tasks.fmt_dur(v["tasks"][0]["elapsed_s"]) == "1 д 10 ч 30 мин"
+    assert len(st.items) == 1                                             # одна запись, а не копия на каждый день
+
+
+def test_fmt_dur():
+    f = tasks.fmt_dur
+    assert f(0) == "0:00:00" and f(65) == "0:01:05" and f(3600 * 23 + 59 * 60 + 59) == "23:59:59"
+    assert f(86400) == "1 д" and f(86400 + 60) == "1 д 1 мин" and f(86400 + 3600 * 10 + 1800) == "1 д 10 ч 30 мин" and f(3 * 86400 + 7200) == "3 д 2 ч"
+
+
+def test_done_tasks_hide_after_midnight_but_stay_in_excel_rows(tmp_path):
     c, st = make_store(tmp_path)
     st.add("сделано")
-    st.add("не успел")
-    st.add("тоже не успел")
+    st.add("в работе")
     st.toggle(st.get()["tasks"][0]["id"])
+    assert st.counts() == {"total": 2, "done": 1}
     c.wall += 86400                                                       # наступил следующий день
     v = st.get()
-    assert [t["text"] for t in v["tasks"]] == ["не успел", "тоже не успел"] and all(t["carried"] for t in v["tasks"])
-    assert v["done"] == 0
-    c.wall += 86400                                                       # ещё день: те же задачи едут дальше, а не дублируются
-    assert [t["text"] for t in st.get()["tasks"]] == ["не успел", "тоже не успел"]
-    c.wall -= 2 * 86400                                                   # вчерашний день хранится как был
-    assert st.days["2026-11-17"][1]["moved"] is True
-    c2, st2 = make_store(tmp_path, c)                                     # перенос переживает перезапуск, без дублей
-    c2.wall += 86400
-    assert len(st2.get()["tasks"]) == 2
+    assert [t["text"] for t in v["tasks"]] == ["в работе"] and v["done"] == 0 and st.counts() == {"total": 1, "done": 0}
+    assert {r["text"]: r["done"] for r in st.all_rows()} == {"сделано": True, "в работе": False}
 
 
-def test_tasks_clear_done_and_broken_file(tmp_path):
+def test_tasks_clear_done_hides_but_keeps_for_excel(tmp_path):
     c, st = make_store(tmp_path)
     st.add("a")
     st.add("b")
     st.toggle(st.get()["tasks"][0]["id"])
     assert [t["text"] for t in st.clear_done()["tasks"]] == ["b"]
+    assert len(st.all_rows()) == 2
     (tmp_path / 'bad.json').write_text('{ не json', encoding='utf-8')
     assert make_store(tmp_path, None, 'bad.json')[1].get()["total"] == 0
-    (tmp_path / 'weird.json').write_text('{"days": {"x": [], "2026-11-17": [{"id": "1", "text": "н"}, {"id": 2, "text": ""}, {"id": 3, "text": "ok", "done": true}]}}', encoding='utf-8')
-    v = make_store(tmp_path, Clock(), 'weird.json')[1].get()
-    assert [t["text"] for t in v["tasks"]] == ["ok"] and v["done"] == 1
+
+
+def test_task_set_times_flexible_and_validated(tmp_path):
+    c, st = make_store(tmp_path, Clock(h=15, mi=0))
+    tid = st.add("отчёт")["tasks"][0]["id"]
+    r = st.set_times(tid, "2026-11-15T10:00", "2026-11-16T09:30")           # создана позавчера, начата вчера
+    assert r["ok"] and r["tasks"][0]["created"] == "2026-11-15T10:00:00"
+    assert st.get()["tasks"][0]["elapsed_s"] == int((datetime(2026, 11, 17, 15) - datetime(2026, 11, 16, 9, 30)).total_seconds())
+    st.toggle(tid)
+    r = st.set_times(tid, "2026-11-15T10:00", "2026-11-16T09:30", "2026-11-16T11:45")        # заняла с 09:30 до 11:45
+    assert r["ok"] and r["tasks"] == []                                   # выполнена «вчера» — в списке уже не видна
+    row = st.all_rows()[0]
+    assert row["elapsed_s"] == 2 * 3600 + 15 * 60 and row["finished"] == datetime(2026, 11, 16, 11, 45)
+    assert "раньше" in st.set_times(tid, "2026-11-15T10:00", "2026-11-16T09:30", "2026-11-16T09:00")["error"]
+    assert "не наступило" in st.set_times(tid, "2026-11-15T10:00", "2026-11-16T09:30", "2026-11-18T09:00")["error"]
+    assert "формате" in st.set_times(tid, "2026-11-15T10:00", "плохо", "2026-11-16T11:00")["error"]
+    assert "создана" in st.set_times(tid, "", "", "")["error"]
+    assert "выполнена" in st.set_times(tid, "2026-11-15T10:00", "2026-11-16T09:30", "")["error"]
+    assert "не найдена" in st.set_times(999, "2026-11-15T10:00")["error"]
+    assert st.all_rows()[0]["elapsed_s"] == 2 * 3600 + 15 * 60                              # ошибки ничего не испортили
+
+
+def test_task_comment_subtasks(tmp_path):
+    c, st = make_store(tmp_path)
+    tid = st.add("запись")["tasks"][0]["id"]
+    assert st.set_comment(tid, "ждём Данияра")["tasks"][0]["comment"] == "ждём Данияра"
+    st.sub_add(tid, "согласовать текст")
+    v = st.sub_add(tid, "  отправить  ")
+    subs = v["tasks"][0]["subs"]
+    assert [s["text"] for s in subs] == ["согласовать текст", "отправить"] and not st.sub_add(tid, "  ")["tasks"][0]["subs"][2:]
+    assert st.sub_toggle(tid, subs[0]["id"])["tasks"][0]["subs"][0]["done"] is True
+    assert [s["id"] for s in st.sub_delete(tid, subs[0]["id"])["tasks"][0]["subs"]] == [subs[1]["id"]]
+    c2, st2 = make_store(tmp_path, c)
+    d = st2.get()["tasks"][0]
+    assert d["comment"] == "ждём Данияра" and [s["text"] for s in d["subs"]] == ["отправить"]
+
+
+def test_task_files_attach_open_remove_delete(tmp_path):
+    c, st = make_store(tmp_path)
+    tid = st.add("материалы")["tasks"][0]["id"]
+    src = tmp_path / 'src'
+    src.mkdir()
+    (src / 'фото.jpg').write_bytes(b'jpg')
+    (src / 'голос.wav').write_bytes(b'wav')
+    r = st.attach(tid, [str(src / 'фото.jpg'), str(src / 'голос.wav'), str(src / 'нет.xlsx')])
+    assert r["added"] == 2 and len(r["skipped"]) == 1 and r["tasks"][0]["files"] == ['фото.jpg', 'голос.wav']
+    assert (src / 'фото.jpg').exists()                                    # оригинал не тронут
+    r = st.attach(tid, [str(src / 'фото.jpg')])                           # то же имя — не перезаписываем
+    assert r["tasks"][0]["files"][-1] == 'фото (2).jpg' and open(st.file_path(tid, 'фото.jpg'), 'rb').read() == b'jpg'
+    assert st.file_path(tid, '../../tasks.json') is None and st.file_path(tid, 'нет') is None
+    st.remove_file(tid, 'голос.wav')
+    assert not os.path.exists(os.path.join(st.files_dir, str(tid), 'голос.wav')) and 'голос.wav' not in st.get()["tasks"][0]["files"]
+    st.delete(tid)
+    assert not os.path.exists(os.path.join(st.files_dir, str(tid)))       # удалили задачу — и её файлы
+
+
+def test_old_tasks_file_is_migrated(tmp_path):
+    import json
+    old = {"days": {"2026-11-15": [{"id": 1, "text": "не успел", "done": False, "carried": False, "moved": True},
+                                   {"id": 2, "text": "сделано", "done": True, "carried": False, "moved": False}],
+                    "2026-11-16": [{"id": 1, "text": "не успел", "done": False, "carried": True, "moved": False}]}}
+    (tmp_path / 'tasks.json').write_text(json.dumps(old, ensure_ascii=False), encoding='utf-8')
+    c, st = make_store(tmp_path)
+    v = st.get()
+    assert [t["text"] for t in v["tasks"]] == ["не успел"]                # выполненная давно скрыта; невыполненная одна, без дублей
+    assert v["tasks"][0]["created"] == "2026-11-15T09:00:00" and v["tasks"][0]["elapsed_s"] == 2 * 86400
+    assert len(st.all_rows()) == 2 and max(t["id"] for t in st.add("новая")["tasks"]) == 3
+    st2 = make_store(tmp_path, c)[1]
+    assert len(st2.items) == 3 and json.load(open(tmp_path / 'tasks.json', encoding='utf-8'))["v"] == 2
 
 
 def test_api_tasks_and_counts_in_day(tmp_path):
@@ -991,13 +1082,27 @@ def test_api_tasks_and_counts_in_day(tmp_path):
     assert api.get_day()["tasks"] == {"total": 0, "done": 0}
     api.task_add("Позвонить")
     v = api.task_add("Отчёт")
-    api.task_toggle(v["tasks"][0]["id"])
+    ids = [t["id"] for t in v["tasks"]]
+    api.task_toggle(ids[0])
     assert api.get_day()["tasks"] == {"total": 2, "done": 1}              # значок «1/2» в мини-окне
     assert api.tasks_get()["done"] == 1
-    api.task_edit(v["tasks"][1]["id"], "Отчёт за неделю")
-    assert api.tasks_get()["tasks"][1]["text"] == "Отчёт за неделю"
+    api.task_edit(ids[1], "Отчёт за неделю")
+    assert api.tasks_get()["tasks"][0]["text"] == "Отчёт за неделю"
+    assert api.task_comment(ids[1], "коммент")["tasks"][0]["comment"] == "коммент"
+    assert api.task_times(ids[1], "2026-11-16T09:00", "2026-11-16T10:00")["ok"]
+    assert api.sub_add(ids[1], "шаг")["tasks"][0]["subs"][0]["text"] == "шаг"
+    sid = api.tasks_get()["tasks"][0]["subs"][0]["id"]
+    assert api.sub_toggle(ids[1], sid)["tasks"][0]["subs"][0]["done"] and api.sub_delete(ids[1], sid)["tasks"][0]["subs"] == []
+    f = tmp_path / 'a.xlsx'
+    f.write_bytes(b'x')
+    api._pick_files = lambda: [str(f)]
+    r = api.task_attach(ids[1])
+    assert r["added"] == 1 and api.task_file_open(ids[1], 'нет.txt')["error"]
+    api._pick_files = lambda: []
+    assert api.task_attach(ids[1])["added"] == 0                          # закрыли окно выбора — ничего не меняется
+    assert api.task_file_remove(ids[1], 'a.xlsx')["tasks"][0]["files"] == []
     assert api.tasks_clear_done()["total"] == 1
-    assert api.task_delete(v["tasks"][1]["id"])["total"] == 0
+    assert api.task_delete(ids[1])["total"] == 0
 
 
 def test_mini_resize_clamps_and_keeps_window_on_screen(tmp_path):
@@ -1213,18 +1318,24 @@ def test_old_journal_duplicate_inside_lunch_is_cleaned(tmp_path):
     assert [(e["kind"], e["lock"][-8:]) for e in d["events"]] == [("lunch", "12:10:00"), ("lock", "13:30:00")]
 
 
-def test_excel_has_tasks_sheet(tmp_path):
+def test_excel_tasks_sheet(tmp_path):
     import openpyxl
-    from shift_timer.tasks import TaskStore
-    c = Clock()
+    c = Clock(h=9, mi=0)
     tr = c.tracker(str(tmp_path / 'h.json'))
     tr.edit_day('2026-11-10', '09:05', '18:20', '08:00')
-    ts = TaskStore(str(tmp_path / 't.json'))
-    ts.add('Сверить таблицу')
-    rows = ts.all_rows()
-    assert rows and rows[0]["status"] == 'не выполнена'
-    p = tr.export_xlsx(str(tmp_path / 'o.xlsx'), rows)
+    ts = tasks.TaskStore(str(tmp_path / 't.json'), clock=lambda: c.wall)
+    a = ts.add("Сверить таблицу")["tasks"][0]["id"]
+    ts.add("Ждём ответ")
+    ts.sub_add(a, "шаг 1")
+    ts.set_comment(a, "детали")
+    c.wall += 90 * 60 + 20
+    ts.toggle(a)
+    c.wall += 86400 + 3600 * 3 + 600
+    p = tr.export_xlsx(str(tmp_path / 'o.xlsx'), ts.all_rows())
     wb = openpyxl.load_workbook(p)
-    assert 'Задачи' in wb.sheetnames
     vals = [[x.value for x in r] for r in wb['Задачи'].iter_rows()]
-    assert vals[0] == ['День', 'Задача', 'Статус', 'Со вчера'] and vals[1][1] == 'Сверить таблицу'
+    assert vals[0] == ['Создана', 'Начата', 'Выполнена', 'Статус', 'Задача', 'Ушло, ч:мм', 'Ушло', 'Подзадачи', 'Комментарий', 'Файлы']
+    done, work = vals[1], vals[2]
+    assert done[0] == datetime(2026, 11, 17, 9, 0) and done[2] == datetime(2026, 11, 17, 10, 30, 20) and done[3] == 'выполнена'   # час и минута выполнения
+    assert done[5] == timedelta(minutes=90, seconds=20) and done[6] == '1:30:20' and done[7] == '○ шаг 1' and done[8] == 'детали'
+    assert work[3] == 'в работе' and work[2] is None and work[6] == '1 д 4 ч 40 мин'                                                # ждём уже больше суток

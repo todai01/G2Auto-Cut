@@ -49,25 +49,79 @@ function syncSettings() {
 }
 
 // ---------- задачи ----------
-let TKM = null, tkMainTimer = null, tkEdit = null;
+let TKM = null, TKAT = 0, tkMainTimer = null, tdId = null;
 const escT = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const CKS = '<svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.5 3.5 7.5-8"/></svg>';
+const taskById = id => TKM && TKM.tasks.find(t => t.id === id);
+const taskSec = t => t.elapsed_s + (t.running ? (performance.now() - TKAT) / 1000 : 0);
+function applyTasks(v) {
+    if (!v || !v.tasks) return;
+    TKM = v; TKAT = performance.now();
+    renderTasksMain();
+    if (tdId !== null && !taskById(tdId)) closeDlg();                                      // задачу удалили / она скрылась
+}
 function renderTasksMain() {
     if (!TKM) return;
-    const ts = TKM.tasks.slice().sort((a, b) => a.done - b.done);
+    const ts = TKM.tasks;
     setText($('tkCnt'), TKM.total ? `${TKM.done} из ${TKM.total}` : '');
     $('tkBar').style.width = (TKM.total ? TKM.done / TKM.total * 100 : 0) + '%';
-    if (tkEdit !== null && !ts.some(t => t.id === tkEdit)) tkEdit = null;
-    if (document.activeElement && document.activeElement.id === 'tkEditIn') return;     // не перерисовываем, пока правят
-    $('tkMain').innerHTML = ts.length ? ts.map(t => `<div class="tk2${t.done ? ' done' : ''}" data-id="${t.id}">`
-        + `<button class="ck2" data-act="t" title="Выполнено">${t.done ? CKS : ''}</button>`
-        + (tkEdit === t.id ? `<input id="tkEditIn" class="tk2-in" value="${escT(t.text)}" maxlength="200">` : `<span class="tk2-t" data-act="e">${escT(t.text)}</span>`)
-        + (t.carried && !t.done ? '<em>со вчера</em>' : '') + `<button class="tk2-x" data-act="d" title="Удалить">×</button></div>`).join('')
-        : '<div class="empty">Пока пусто. Запишите, что нужно сделать сегодня.</div>';
-    const inp = $('tkEditIn'); if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    const now = new Date();
+    $('tkMain').innerHTML = ts.length ? ts.map(t => {
+        const sn = t.subs.length, sd = t.subs.filter(s => s.done).length;
+        const meta = [`создана ${Shift.when(t.created, now)}`, t.done ? `выполнена ${Shift.when(t.finished, now)}` : '', sn ? `подзадачи ${sd}/${sn}` : '',
+                      t.files.length ? `файлов ${t.files.length}` : '', t.comment ? 'есть комментарий' : ''].filter(Boolean).join(' · ');
+        return `<div class="tk2${t.done ? ' done' : ''}" data-id="${t.id}">`
+            + `<button class="ck2" data-act="t" title="${t.done ? 'Вернуть в работу' : 'Выполнено'}">${t.done ? CKS : ''}</button>`
+            + `<div class="tk2-b" data-act="o"><span class="tk2-t">${escT(t.text)}</span><span class="tk2-m">${escT(meta)}</span></div>`
+            + `<b class="tm num" data-id="${t.id}">${Shift.dur(taskSec(t))}</b><button class="tk2-x" data-act="d" title="Удалить">×</button></div>`;
+    }).join('') : '<div class="empty">Пока пусто. Запишите задачу — секундомер пойдёт сам.</div>';
+    tickTasks();
 }
-async function loadTasksMain() { try { TKM = await pywebview.api.tasks_get(); renderTasksMain(); } catch (e) { /* повторим */ } }
+// секундомеры: сервер присылает «сколько прошло», секунды между опросами идут здесь
+function tickTasks() {
+    if (!TKM) return;
+    document.querySelectorAll('.tk2 .tm').forEach(el => { const t = taskById(+el.dataset.id); if (t) setText(el, Shift.dur(taskSec(t))); });
+    const t = tdId !== null && taskById(tdId);
+    if (t) setText($('tdTimer'), Shift.dur(taskSec(t)));
+}
+async function loadTasksMain() { try { applyTasks(await pywebview.api.tasks_get()); } catch (e) { /* повторим */ } }
 function startTasksTimer() { clearInterval(tkMainTimer); loadTasksMain(); tkMainTimer = setInterval(loadTasksMain, 3000); }
+
+// окно задачи: название, времена, комментарий, подзадачи, файлы
+const tdLocal = iso => (iso || '').slice(0, 16);
+function renderTdLists() {
+    const t = taskById(tdId);
+    if (!t) return;
+    $('tdSubs').innerHTML = t.subs.length ? t.subs.map(s => `<div class="td-row${s.done ? ' done' : ''}" data-id="${s.id}"><button class="ck2 sm" data-a="st">${s.done ? CKS : ''}</button><span>${escT(s.text)}</span><button class="tk2-x on" data-a="sd" title="Удалить">×</button></div>`).join('')
+        : '<div class="td-empty">Нет подзадач</div>';
+    setText($('tdSubN'), t.subs.length ? `${t.subs.filter(s => s.done).length}/${t.subs.length}` : '');
+    $('tdFiles').innerHTML = t.files.length ? t.files.map(f => `<div class="td-row" data-f="${escT(f)}"><button class="td-file" data-a="fo" title="Открыть">${escT(f)}</button><button class="tk2-x on" data-a="fd" title="Убрать">×</button></div>`).join('')
+        : '<div class="td-empty">Нет файлов</div>';
+    setText($('tdFileN'), t.files.length ? String(t.files.length) : '');
+}
+function openTask(id) {
+    const t = taskById(id);
+    if (!t) return;
+    tdId = id;
+    $('tdText').value = t.text; $('tdComment').value = t.comment;
+    $('tdCreated').value = tdLocal(t.created); $('tdStarted').value = tdLocal(t.started); $('tdFinished').value = tdLocal(t.finished);
+    $('tdFinRow').style.display = t.done ? '' : 'none';
+    $('tdHint').textContent = ''; $('tdHint').classList.remove('err');
+    renderTdLists(); tickTasks();
+    $('dlgBack').classList.add('on');
+    ['dlgEdit', 'dlgClose'].forEach(i => $(i).hidden = true); $('dlgTask').hidden = false;
+}
+async function saveTask() {
+    const id = tdId, t = taskById(id);
+    if (!t) return;
+    const r = await pywebview.api.task_times(id, $('tdCreated').value, $('tdStarted').value, $('tdFinished').value);
+    if (r && r.error) { $('tdHint').textContent = r.error; $('tdHint').classList.add('err'); return; }
+    const txt = $('tdText').value.replace(/\s+/g, ' ').trim();
+    if (txt && txt !== t.text) await pywebview.api.task_edit(id, txt);
+    await pywebview.api.task_comment(id, $('tdComment').value);
+    closeDlg(); loadTasksMain();
+}
+async function tdAct(fn) { const v = await fn(); if (v && v.error) { $('tdHint').textContent = v.error; $('tdHint').classList.add('err'); } else { $('tdHint').classList.remove('err'); if (v && v.skipped && v.skipped.length) $('tdHint').textContent = 'Не прикреплено: ' + v.skipped.join('; '); else $('tdHint').textContent = ''; } applyTasks(v); renderTdLists(); }
 
 // ---------- журнал ----------
 let JR = null, jrTimer = null;
@@ -97,8 +151,8 @@ function evText(row) {                                   // «12:10 → 12:55 ·
         + (e.unlock ? `<button class="ev-b${e.kind === 'lunch' ? ' on' : ''}" data-i="${e.i}" data-k="${e.kind === 'lunch' ? 'lock' : 'lunch'}" title="${e.kind === 'lunch' ? 'Вернуть: это не обед, а блокировка' : 'Это был обед: забыли нажать «Обед»'}">${e.kind === 'lunch' ? 'не обед' : 'обед'}</button>` : '<span></span>')
         + '</div>').join('');
 }
-function openDlg(id) { $('dlgBack').classList.add('on'); $('dlgEdit').hidden = id !== 'dlgEdit'; $('dlgClose').hidden = id !== 'dlgClose'; }
-function closeDlg() { $('dlgBack').classList.remove('on'); }
+function openDlg(id) { $('dlgBack').classList.add('on'); $('dlgEdit').hidden = id !== 'dlgEdit'; $('dlgClose').hidden = id !== 'dlgClose'; $('dlgTask').hidden = true; tdId = null; }
+function closeDlg() { $('dlgBack').classList.remove('on'); tdId = null; }
 function openEdit(row) {
     editing = row ? row.date : null;
     const today = row && row.today;
@@ -138,7 +192,7 @@ async function saveEdit() {
 }
 
 boot(() => {
-    App.onChange = render;
+    App.onChange = () => { render(); tickTasks(); };
     document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
         document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
         document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + t.dataset.v));
@@ -175,22 +229,33 @@ boot(() => {
         const r = await pywebview.api.open_table();
         setText($('jrNote'), r.error ? r.error : 'Таблица обновлена и открыта: ' + r.path);
     };
-    $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkInput').value.trim(); if (!v) return; $('tkInput').value = ''; TKM = await pywebview.api.task_add(v); renderTasksMain(); };
+    $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkInput').value.trim(); if (!v) return; $('tkInput').value = ''; applyTasks(await pywebview.api.task_add(v)); };
     $('tkMain').onclick = async e => {
         const row = e.target.closest('.tk2'), act = e.target.closest('[data-act]');
         if (!row || !act) return;
         const id = +row.dataset.id;
-        if (act.dataset.act === 't') { TKM = await pywebview.api.task_toggle(id); renderTasksMain(); }
-        else if (act.dataset.act === 'd') { TKM = await pywebview.api.task_delete(id); renderTasksMain(); }
+        if (act.dataset.act === 't') applyTasks(await pywebview.api.task_toggle(id));
+        else if (act.dataset.act === 'd') applyTasks(await pywebview.api.task_delete(id));
+        else if (act.dataset.act === 'o') openTask(id);
     };
-    $('tkMain').ondblclick = e => { const row = e.target.closest('.tk2'); if (row && e.target.closest('.tk2-t')) { tkEdit = +row.dataset.id; renderTasksMain(); } };
-    $('tkMain').addEventListener('keydown', async e => {
-        if (e.target.id !== 'tkEditIn') return;
-        if (e.key === 'Enter') { const v = e.target.value.trim(), id = tkEdit; tkEdit = null; e.target.blur(); TKM = v ? await pywebview.api.task_edit(id, v) : TKM; renderTasksMain(); }
-        else if (e.key === 'Escape') { e.stopPropagation(); tkEdit = null; e.target.blur(); renderTasksMain(); }
-    });
-    $('tkMain').addEventListener('focusout', e => { if (e.target.id === 'tkEditIn' && tkEdit !== null) { tkEdit = null; setTimeout(renderTasksMain, 0); } });
-    $('tkClear').onclick = async () => { TKM = await pywebview.api.tasks_clear_done(); renderTasksMain(); };
+    $('tkClear').onclick = async () => applyTasks(await pywebview.api.tasks_clear_done());
+    $('tdSave').onclick = saveTask;
+    $('tdCancel').onclick = async () => { if (tdId !== null) await pywebview.api.task_comment(tdId, $('tdComment').value); closeDlg(); loadTasksMain(); };
+    $('tdComment').onchange = () => tdId !== null && pywebview.api.task_comment(tdId, $('tdComment').value);          // комментарий не теряется
+    $('tdDel').onclick = async () => { const id = tdId; closeDlg(); applyTasks(await pywebview.api.task_delete(id)); };
+    $('tdSubForm').onsubmit = e => { e.preventDefault(); const v = $('tdSubIn').value.trim(); if (!v) return; $('tdSubIn').value = ''; tdAct(() => pywebview.api.sub_add(tdId, v)); };
+    $('tdSubs').onclick = e => {
+        const b = e.target.closest('[data-a]'), r = e.target.closest('.td-row');
+        if (!b || !r) return;
+        tdAct(() => b.dataset.a === 'st' ? pywebview.api.sub_toggle(tdId, +r.dataset.id) : pywebview.api.sub_delete(tdId, +r.dataset.id));
+    };
+    $('tdAttach').onclick = () => tdAct(() => pywebview.api.task_attach(tdId));
+    $('tdFiles').onclick = async e => {
+        const b = e.target.closest('[data-a]'), r = e.target.closest('.td-row');
+        if (!b || !r) return;
+        if (b.dataset.a === 'fo') { const x = await pywebview.api.task_file_open(tdId, r.dataset.f); if (x && x.error) { $('tdHint').textContent = x.error; $('tdHint').classList.add('err'); } }
+        else tdAct(() => pywebview.api.task_file_remove(tdId, r.dataset.f));
+    };
     $('tileArr').onclick = $('tileWorked').onclick = editToday;
     $('dSuggest').onclick = suggest;
     $('dEvents').onclick = async e => {                      // «обед» на блокировке: забыли нажать кнопку «Обед»
