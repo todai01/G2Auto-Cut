@@ -1413,3 +1413,68 @@ def test_leave_time_notice_fires_once_when_the_clock_reaches_it(tmp_path):
     done = [t for k, t in n.items if k == "done"]
     assert done.count("Время ухода — можно идти домой") == 1               # приходит в 12:00 по часам, хотя норма по отработанному ещё не выполнена
     assert "Норма выполнена" not in done and tr.snapshot()["worked_s"] < 2 * 3600
+
+
+def test_palette_setting_and_big_window(tmp_path):
+    c, api = make_api(tmp_path)
+    assert api.get_settings()["palette"] == 'blue' and shift_app.DEFAULTS["palette"] == 'blue'
+    for p in shift_app.PALETTES:
+        assert api.save_settings({"palette": p})["palette"] == p
+    assert api.save_settings({"palette": 'neon'})["palette"] == 'blue'              # мусор не принимается — по умолчанию
+    assert shift_app.clean({"palette": 5})["palette"] == 'blue'
+    assert 'pink' in shift_app.PALETTES and len(shift_app.PALETTES) >= 6
+    css = open(os.path.join(ROOT, 'shift_timer', 'ui', 'style.css'), encoding='utf-8').read()
+    for p in shift_app.PALETTES[1:]:
+        assert f'data-palette="{p}"][data-theme="dark"]' in css and f'data-palette="{p}"][data-theme="light"]' in css
+    assert shift_app.MAIN_SIZE[0] > 720 and shift_app.MAIN_SIZE[1] > 840                   # окно больше прежнего 720×840
+
+
+def test_journal_in_one_call_and_notice_does_not_block(tmp_path):
+    c, api = make_api(tmp_path)
+    api._t.tick()
+    j = api.get_journal('week', 2026, 11, '2026-11-17')
+    assert j["cal"]["month"] == 11 and len(j["cal"]["days"]) == 30 and j["sum"]["kind"] == 'week' and j["sum"]["start"] == '2026-11-16'
+    m = api.get_journal('month', 2026, 11)
+    assert m["sum"]["kind"] == 'month' and m["sum"]["start"] == '2026-11-01'
+    assert api.get_journal()["cal"]["year"] == 2026                                       # без параметров — текущий месяц
+    # окно мини показывается не из потока учёта и не под блокировкой журнала: тик не ждёт UI-поток
+    import threading, time as _t
+
+    class Slow(FakeWin):
+        def show(self):
+            _t.sleep(1.0)
+            self.calls.append(('show',))
+    api._mini = Slow()
+    api._s["mini_visible"] = False
+    t0 = _t.time()
+    api._notice({"id": 1, "kind": "hour", "text": "x"})
+    assert _t.time() - t0 < 0.5                                                           # не ждали медленное окно
+    _t.sleep(1.3)
+    assert ('show',) in api._mini.calls
+
+
+def test_stall_watchdog_writes_thread_dump_only_when_polling_stops(tmp_path):
+    import time as _t
+    c, api = make_api(tmp_path)
+    api._main_shown = True
+    log = tmp_path / 'stall.log'
+    api._poll_at = _t.monotonic() - 30                                                    # опроса нет 30 с при видимом окне
+    shift_app.start_watchdog(api, log_path=str(log), stall_s=1, every=0.2, limit=1)
+    _t.sleep(0.8)
+    text = log.read_text(encoding='utf-8')
+    assert 'окно не отвечает' in text and 'Thread' in text and text.count('===') == 2     # одна запись со стеками потоков
+    log2 = tmp_path / 'ok.log'
+    api2 = make_api(tmp_path)[1]
+    api2._main_shown = True
+    shift_app.start_watchdog(api2, log_path=str(log2), stall_s=1, every=0.2)
+    for _ in range(5):
+        api2.get_day()                                                                    # окно опрашивает — записи нет
+        _t.sleep(0.2)
+    assert not log2.exists()
+    api3 = make_api(tmp_path)[1]
+    api3._main_shown = False
+    api3._poll_at -= 100
+    log3 = tmp_path / 'hidden.log'
+    shift_app.start_watchdog(api3, log_path=str(log3), stall_s=1, every=0.2)
+    _t.sleep(0.6)
+    assert not log3.exists()                                                              # окно скрыто в трей — опроса и не должно быть

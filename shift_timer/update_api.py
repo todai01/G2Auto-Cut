@@ -16,7 +16,7 @@ class UpdateMixin:
         self._upd = {"checked_at": None, "remote": None, "available": False, "error": ""}
         self._upd_next = time.monotonic() + FIRST_CHECK
         self._upd_busy = False
-        self._upd_notified = 0
+        self._upd_notified = None
 
     def _exe_path(self):
         return sys.executable
@@ -29,8 +29,9 @@ class UpdateMixin:
         try:
             r = updater.check(self._s.get("team_dir") or '')
             self._upd = {"checked_at": time.strftime('%Y-%m-%dT%H:%M:%S'), "remote": r["remote"], "available": r["available"], "error": ""}
-            if r["available"] and notify and self._upd_notified != r["remote"]["version"] and hasattr(self._t, "notify"):
-                self._upd_notified = r["remote"]["version"]
+            key = (r["remote"]["version"], r["remote"]["build"]) if r["remote"] else None
+            if r["available"] and notify and self._upd_notified != key and hasattr(self._t, "notify"):
+                self._upd_notified = key
                 self._t.notify("update", f'Доступна новая версия GTime ({r["remote"]["version"]}) — обновите в главном окне')
         except (updater.UpdateError, OSError) as e:
             self._upd = {**self._upd, "checked_at": time.strftime('%Y-%m-%dT%H:%M:%S'), "available": False, "error": str(e)}
@@ -47,7 +48,7 @@ class UpdateMixin:
     # ---------- для JS ----------
     def update_status(self):
         u = self._upd
-        return {"build": updater.BUILD, "frozen": self._frozen(), "dir": self._s.get("team_dir") or '', "remote": u["remote"],
+        return {"version": updater.VERSION, "build": updater.BUILD, "frozen": self._frozen(), "dir": self._s.get("team_dir") or '', "remote": u["remote"],
                 "available": bool(u["available"]), "checked_at": u["checked_at"], "error": u["error"]}
 
     def update_check(self):

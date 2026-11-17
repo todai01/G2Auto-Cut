@@ -11,6 +11,7 @@ Windows не даёт перезаписать запущенный файл, н
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,9 +20,9 @@ import time
 from datetime import datetime
 
 try:
-    from version import BUILD
+    from version import BUILD, VERSION
 except ImportError:                                      # запуск не из папки приложения
-    BUILD = 0
+    BUILD, VERSION = 0, '0.0'
 
 SUB = 'GTime_team'
 EXE = 'GTime.exe'
@@ -32,6 +33,17 @@ EV_SHOW, EV_QUIT = 'Local\\GTime_show', 'Local\\GTime_quit'
 
 class UpdateError(Exception):
     """Понятная пользователю ошибка."""
+
+
+def parse_version(v):
+    """«1.10.2» → (1, 10, 2); «1.1» → (1, 1, 0). Сравнение — по числам, а не по тексту (1.10 новее 1.9)."""
+    nums = [int(x) for x in re.findall(r'\d+', str(v or ''))][:3]
+    return tuple(nums + [0] * (3 - len(nums)))
+
+
+def newer(a_version, a_build, b_version, b_build):
+    """a новее b? Сначала версия, при равной версии — номер сборки (заново выложенная сборка той же версии)."""
+    return (parse_version(a_version), int(a_build or 0)) > (parse_version(b_version), int(b_build or 0))
 
 
 def is_frozen():
@@ -63,45 +75,49 @@ def _write_json(path, obj):
 
 
 def read_remote(team_dir):
-    """Что лежит в папке обновлений: {"version", "sha256", "notes", "published", "size"} или None (нет папки / файл повреждён)."""
+    """Что лежит в папке обновлений: {"version": "1.1", "build": 14, "sha256", "notes", "published", "size"} или None (нет папки / файл повреждён)."""
     if not team_dir:
         return None
     try:
         with open(os.path.join(update_folder(team_dir), MANIFEST), 'r', encoding='utf-8') as f:
             m = json.load(f)
-        v = int(m["version"])
+        ver = str(m["version"]).strip()
+        build = int(m.get("build") or 0)
         sha = str(m["sha256"]).lower()
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    if v <= 0 or len(sha) != 64:
+    if parse_version(ver) == (0, 0, 0) or len(sha) != 64 or build < 0:
         return None
-    return {"version": v, "sha256": sha, "notes": str(m.get("notes") or '')[:1000], "published": m.get("published"), "size": int(m.get("size") or 0)}
+    return {"version": ver[:20], "build": build, "sha256": sha, "notes": str(m.get("notes") or '')[:1000], "published": m.get("published"),
+            "size": int(m.get("size") or 0)}
 
 
-def check(team_dir, current=None):
-    """Есть ли новее своей сборки. Возвращает {"current", "remote", "available"}; нет папки — UpdateError."""
-    current = BUILD if current is None else current
+def check(team_dir, version=None, build=None):
+    """Есть ли новее своей сборки. Возвращает {"version", "build", "remote", "available"}; нет папки — UpdateError."""
+    version = VERSION if version is None else version
+    build = BUILD if build is None else build
     if not team_dir:
         raise UpdateError('Папка команды не выбрана (Настройки → Команда).')
     if not os.path.isdir(team_dir):
         raise UpdateError('Сетевая папка недоступна.')
     r = read_remote(team_dir)
     ok = bool(r and os.path.isfile(os.path.join(update_folder(team_dir), EXE)))
-    return {"current": current, "remote": r, "available": bool(ok and r["version"] > current)}
+    return {"version": version, "build": build, "remote": r, "available": bool(ok and newer(r["version"], r["build"], version, build))}
 
 
-def publish(team_dir, exe_path, version=None, notes=''):
-    """Выложить exe для команды: копия в папку обновлений + version.json. Номер — сборки этого exe (version.BUILD)."""
-    version = BUILD if version is None else int(version)
-    if version <= 0:
+def publish(team_dir, exe_path, version=None, build=None, notes=''):
+    """Выложить exe для команды: копия в папку обновлений + version.json. Версия и номер — этой сборки (version.VERSION / BUILD)."""
+    version = VERSION if version is None else str(version)
+    build = BUILD if build is None else int(build)
+    if build <= 0:
         raise UpdateError('У этой сборки нет номера (запуск из исходников) — выкладывать нечего.')
     if not team_dir or not os.path.isdir(team_dir):
         raise UpdateError('Сетевая папка недоступна.')
     if not exe_path or not os.path.isfile(exe_path):
         raise UpdateError('Не найден файл exe.')
     cur = read_remote(team_dir)
-    if cur and cur["version"] > version:
-        raise UpdateError(f'В папке уже более новая сборка ({cur["version"]}), а эта — {version}.')
+    if cur and newer(cur["version"], cur["build"], version, build):
+        raise UpdateError(f'В папке уже более новая версия ({cur["version"]}), а эта — {version}.')
     folder = update_folder(team_dir)
     os.makedirs(folder, exist_ok=True)
     dst, tmp = os.path.join(folder, EXE), os.path.join(folder, EXE + '.tmp')
@@ -111,7 +127,7 @@ def publish(team_dir, exe_path, version=None, notes=''):
         os.remove(tmp)
         raise UpdateError('Копия в папке не совпала с исходным файлом — повторите.')
     os.replace(tmp, dst)
-    m = {"version": version, "sha256": sha, "notes": str(notes or '').strip()[:1000], "published": datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+    m = {"version": version, "build": build, "sha256": sha, "notes": str(notes or '').strip()[:1000], "published": datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
          "size": os.path.getsize(dst)}
     _write_json(os.path.join(folder, MANIFEST), m)
     return m
@@ -165,7 +181,7 @@ def apply_update(team_dir, exe_path, launch=_spawn, extra_args=()):
     except OSError as e:
         _silent_remove(new)
         raise UpdateError(f'Не удалось заменить программу: {e.strerror or e}')
-    _write_version(os.path.dirname(exe_path), r["version"])
+    _write_version(os.path.dirname(exe_path), r["version"], r["build"])
     launch(exe_path, ['--replace'] + list(extra_args))
     return r["version"]
 
@@ -177,20 +193,22 @@ def _silent_remove(p):
         pass
 
 
-def _write_version(folder, v):
+def _write_version(folder, version, build):
     try:
         with open(os.path.join(folder, 'version.txt'), 'w', encoding='utf-8') as f:
-            f.write(str(int(v)))
+            f.write(f'{version} {int(build)}')
     except OSError:
         pass
 
 
 def _read_version(folder):
+    """(версия, сборка) установленной копии; нет файла — ((0, 0, 0), 0)."""
     try:
         with open(os.path.join(folder, 'version.txt'), 'r', encoding='utf-8') as f:
-            return int(f.read().strip())
+            v, _, b = f.read().strip().partition(' ')
+        return parse_version(v), int(b or 0)
     except (OSError, ValueError):
-        return 0
+        return (0, 0, 0), 0
 
 
 def cleanup_old(exe_path=None):
@@ -200,12 +218,13 @@ def cleanup_old(exe_path=None):
         _silent_remove(exe_path + ext)
 
 
-def ensure_installed(argv, exe_path=None, target=None, launch=_spawn, frozen=None, build=None):
+def ensure_installed(argv, exe_path=None, target=None, launch=_spawn, frozen=None, build=None, version=None):
     """Самоустановка в %LOCALAPPDATA%\\GTime\\GTime.exe. True — запущена копия оттуда, этот процесс надо закрыть. Только Windows / exe."""
     frozen = is_frozen() if frozen is None else frozen
     if not frozen or ('--no-install' in argv):
         return False
     build = BUILD if build is None else build
+    version = VERSION if version is None else version
     me = os.path.abspath(exe_path or sys.executable)
     target = os.path.abspath(target or os.path.join(install_dir(), EXE))
     if os.path.normcase(me) == os.path.normcase(target):
@@ -214,13 +233,13 @@ def ensure_installed(argv, exe_path=None, target=None, launch=_spawn, frozen=Non
     folder = os.path.dirname(target)
     try:
         os.makedirs(folder, exist_ok=True)
-        if os.path.isfile(target) and _read_version(folder) >= build:
+        if os.path.isfile(target) and _read_version(folder) >= (parse_version(version), build):
             launch(target, rest)                         # там уже такая же или новее — просто запускаем её (она покажет окно)
             return True
         new = target + '.new'
         shutil.copyfile(me, new)
         _swap_in(new, target)
-        _write_version(folder, build)
+        _write_version(folder, version, build)
     except OSError:
         return False                                     # установить нельзя (права) — работаем из текущего места
     launch(target, ['--replace'] + rest)

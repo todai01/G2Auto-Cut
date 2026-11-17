@@ -28,7 +28,6 @@ function render() {
         setText($('cap'), 'До ухода'); setText(big, Shift.clock(day.remain, s.seconds)); setText($('sub'), `уход в ${day.leave}`);
     }
     const prog = lunch ? lunch.progress : day ? day.progress : 0;
-    setText($('pct'), lunch ? `${Math.floor(lunch.progress * 100)}% обеда` : day ? `${Math.floor(day.progress * 100)}% дня` : '');
     $('fill').style.strokeDashoffset = String(C * (1 - prog));
 
     setText($('tWorked'), Shift.clock(c.worked, s.seconds));
@@ -50,6 +49,7 @@ function syncSettings() {
     if (document.activeElement !== $('iNorm') && $('iNorm').value !== s.norm) $('iNorm').value = s.norm;   // не мешаем вводу
     setSwitch('swSec', s.seconds); setSwitch('swMini', s.mini_visible); setSwitch('swTop', s.mini_on_top); setSwitch('swAuto', s.autostart);
     document.querySelectorAll('#segTheme button').forEach(b => b.classList.toggle('on', b.dataset.t === s.theme));
+    document.querySelectorAll('#palette button').forEach(b => b.classList.toggle('on', b.dataset.p === (s.palette || 'blue')));
     document.querySelectorAll('#segLunch button').forEach(b => b.classList.toggle('on', +b.dataset.m === s.lunch_min));
     setSwitch('swSound', s.sound); setSwitch('swHours', s.notify_hours); setSwitch('swBreak', s.notify_break);
     document.querySelectorAll('#segVol button').forEach(b => { b.classList.toggle('on', b.dataset.v === s.volume); b.disabled = !s.sound; });
@@ -189,15 +189,18 @@ function weekOf(iso) {                                    // понедельн�
     return [isoOf(mon), isoOf(new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6))];
 }
 const hmOr = (v, dash) => v ? Shift.hmStr(v) : (dash || '—');
+let jrBusy = false;
 async function loadJournal() {
+    if (jrBusy) return;                                    // запросы не накладываются: пока предыдущий не вернулся, новый не шлём
     if (!jrY) { const t = todayIso(); jrY = +t.slice(0, 4); jrM = +t.slice(5, 7); jrSel = t; }
+    jrBusy = true;
     try {
-        const iso = jrKind === 'month' ? `${jrY}-${p2(jrM)}-01` : jrSel;
-        [CAL, SUM] = await Promise.all([pywebview.api.get_calendar(jrY, jrM), pywebview.api.get_summary(jrKind, iso)]);
-    } catch (e) { return; }
+        const r = await pywebview.api.get_journal(jrKind, jrY, jrM, jrKind === 'month' ? null : jrSel);
+        CAL = r.cal; SUM = r.sum;
+    } catch (e) { return; } finally { jrBusy = false; }
     renderJournal();
 }
-function startJournalTimer() { clearInterval(jrTimer); loadJournal(); jrTimer = setInterval(() => { if (!$('dlgBack').classList.contains('on')) loadJournal(); }, 5000); }
+function startJournalTimer() { clearInterval(jrTimer); loadJournal(); jrTimer = setInterval(() => { if (!document.hidden && !$('dlgBack').classList.contains('on')) loadJournal(); }, 15000); }
 function sumRow(k, v) { return `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`; }
 function renderJournal() {
     if (!CAL || !SUM || CAL.error) return;
@@ -215,8 +218,10 @@ function renderJournal() {
     const today = todayIso(), wk = jrKind === 'week' ? weekOf(jrSel) : null, lead = CAL.days[0].wd;
     let html = '<span></span>'.repeat(lead);
     CAL.days.forEach(d => {
-        const cls = ['cal-d', d.today ? 'today' : '', d.wd >= 5 ? 'weekend' : '', d.mark, d.future ? 'future' : '', wk && d.date >= wk[0] && d.date <= wk[1] ? 'inwk' : '',
-            d.record && !d.mark ? (d.worked_s >= d.norm_s ? 'ok' : (d.today ? 'prog' : 'low')) : ''].filter(Boolean).join(' ');
+        // цвет дня по доле нормы: от 95% — зелёный, 75–95% — жёлтый, меньше 75% — красный; сегодня, пока день идёт, — нейтральный
+        const ratio = d.norm_s > 0 ? d.worked_s / d.norm_s : 1;
+        const tone = d.record && !d.mark ? (d.today && d.worked_s < d.norm_s ? 'prog' : ratio >= 0.95 ? 'ok' : ratio >= 0.75 ? 'mid' : 'bad') : '';
+        const cls = ['cal-d', d.today ? 'today' : '', d.wd >= 5 ? 'weekend' : '', d.mark, d.future ? 'future' : '', wk && d.date >= wk[0] && d.date <= wk[1] ? 'inwk' : '', tone].filter(Boolean).join(' ');
         const low = d.tasks_done ? `✓${d.tasks_done}` : '';
         html += `<button class="${cls}" data-d="${d.date}"><b>${+d.date.slice(8)}</b><span class="cw">${d.record ? Shift.hmSec(d.worked_s) : ''}</span><i class="cm">${d.mark ? MARK_SHORT[d.mark] : low}</i></button>`;
     });
@@ -342,6 +347,7 @@ boot(() => {
     document.querySelectorAll('#segBreak button').forEach(b => b.onclick = () => save({ break_min: +b.dataset.m }));
     $('swAuto').onclick = () => save({ autostart: !App.s.autostart });
     document.querySelectorAll('#segTheme button').forEach(b => b.onclick = () => save({ theme: b.dataset.t }));
+    document.querySelectorAll('#palette button').forEach(b => b.onclick = () => save({ palette: b.dataset.p }));
     $('iNorm').onchange = e => e.target.value && save({ norm: e.target.value });
     $('jrAdd').onclick = () => openEdit(null);
     $('jrPrev').onclick = () => { jrM--; if (jrM < 1) { jrM = 12; jrY--; } loadJournal(); };

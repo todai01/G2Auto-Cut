@@ -19,7 +19,7 @@
       <div class="ringbox" id="ring">
         <svg viewBox="0 0 236 236">
           <defs>
-            <linearGradient id="g-work" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b6cf6"/><stop offset="1" stop-color="#22c3a0"/></linearGradient>
+            <linearGradient id="g-work" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="s1"/><stop offset="1" class="s2"/></linearGradient>
             <linearGradient id="g-soon" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#f97316"/></linearGradient>
             <linearGradient id="g-lunch" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14b8a6"/><stop offset="1" stop-color="#38bdf8"/></linearGradient>
             <linearGradient id="g-done" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c3a0"/><stop offset="1" stop-color="#34d399"/></linearGradient>
@@ -31,7 +31,6 @@
           <div class="cap" id="cap">Осталось</div>
           <div class="big" id="big">--:--</div>
           <div class="sub" id="sub"></div>
-          <div class="pct" id="pct"></div>
         </div>
       </div>
       <div class="tiles">
@@ -66,7 +65,7 @@
       </div>
       <div class="card jr-sum" id="jrSum"></div>
       <div class="cal" id="cal"><div class="cal-h"><span>пн</span><span>вт</span><span>ср</span><span>чт</span><span>пт</span><span>сб</span><span>вс</span></div><div class="cal-g" id="calG"></div></div>
-      <div class="cal-leg"><i class="ok"></i>норма<i class="low"></i>меньше нормы<i class="vacation"></i>отпуск<i class="sick"></i>больничный<i class="dayoff"></i>выходной</div>
+      <div class="cal-leg"><i class="ok"></i>норма (от 95%)<i class="mid"></i>средне (75–95%)<i class="bad"></i>мало (меньше 75%)<i class="vacation"></i>отпуск<i class="sick"></i>больничный<i class="dayoff"></i>выходной</div>
       <div class="jr-acts"><button class="btn sm primary" id="jrRep">Отчёт за неделю (Excel)</button><button class="btn sm" id="jrMark">Отпуск / больничный…</button><button class="btn sm" id="jrXls">Вся таблица Excel</button></div>
       <div class="note" id="jrNote">Нажмите на день — откроется всё за этот день. График 5/2: суббота и воскресенье — выходные.</div>
     </section>
@@ -95,12 +94,17 @@
       <div class="h">Вид</div>
       <div class="card">
         <div class="row"><span>Показывать секунды</span><button class="sw" id="swSec" role="switch"></button></div>
+        <div class="row"><span>Цвет</span>
+          <div class="pal" id="palette">
+            <button data-p="blue" title="Синяя"></button><button data-p="pink" title="Розовая"></button><button data-p="violet" title="Фиолетовая"></button>
+            <button data-p="green" title="Зелёная"></button><button data-p="orange" title="Оранжевая"></button><button data-p="teal" title="Бирюзовая"></button><button data-p="graphite" title="Графит"></button>
+          </div></div>
         <div class="row"><span>Тема</span>
           <div class="seg" id="segTheme"><button data-t="light">Светлая</button><button data-t="dark">Тёмная</button><button data-t="auto">Авто</button></div></div>
       </div>
       <div class="h">Напоминания в мини-окне</div>
       <div class="card">
-        <div class="row"><span>Каждый ровный час до нормы</span><button class="sw" id="swHours" role="switch"></button></div>
+        <div class="row"><span>Каждый ровный час до ухода</span><button class="sw" id="swHours" role="switch"></button></div>
         <div class="row"><span>Напоминать о перерыве</span><button class="sw" id="swBreak" role="switch"></button></div>
         <div class="row"><span>Тихий звук при уведомлении</span><button class="sw" id="swSound" role="switch"></button></div>
         <div class="row"><span>Громкость</span>

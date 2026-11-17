@@ -31,8 +31,9 @@ OLD_APP_NAME = 'ShiftTimer'        # прежнее название: оттуд
 TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60, "mini_tasks": False,
-            "mini_visible": False, "mini_on_top": True, "mini_pos": None, "team_dir": "", "team_login": ""}
-MAIN_SIZE = (720, 840)            # не «телефонная» узкая колонка: широкое и высокое окно
+            "mini_visible": False, "mini_on_top": True, "mini_pos": None, "team_dir": "", "team_login": "", "palette": "blue"}
+PALETTES = ("blue", "pink", "violet", "green", "orange", "teal", "graphite")     # цветовые схемы (ui/style.css, data-palette)
+MAIN_SIZE = (940, 960)            # не «телефонная» узкая колонка: большое окно (на маленьком экране уменьшается — main_size)
 MAIN_MIN = (480, 600)
 
 
@@ -121,6 +122,8 @@ def clean(raw):
         s['volume'] = raw['volume']
     if raw.get('theme') in ('light', 'dark', 'auto'):
         s['theme'] = raw['theme']
+    if raw.get('palette') in PALETTES:
+        s['palette'] = raw['palette']
     for k in ('team_dir', 'team_login'):
         if isinstance(raw.get(k), str):
             s[k] = raw[k].strip()[:260]
@@ -195,6 +198,7 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
         self._temp_mini_until = 0.0
         self._main = None
         self._main_shown = True                          # видно ли главное окно (для клика по мини-окну)
+        self._poll_at = time.monotonic()
         self._mini = None
         self._tray = None
         self._pos_timer = None
@@ -231,11 +235,14 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
             chime.play_async(self._s["volume"])         # две тихие ноты
         w = self._mini
         if w is not None and not self._s["mini_visible"]:
-            try:
-                w.show()
-                self._temp_mini_until = time.time() + timetrack.NOTICE_SECONDS + 1
-            except Exception:
-                pass
+            self._temp_mini_until = time.time() + timetrack.NOTICE_SECONDS + 1
+
+            def show():                                  # вызов окна идёт в UI-поток: делаем это отдельным потоком, а не под блокировкой журнала
+                try:
+                    w.show()
+                except Exception:
+                    pass
+            threading.Thread(target=show, daemon=True).start()
 
     def _after_tick(self):
         self._team_sync()
@@ -259,6 +266,7 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
 
     # ---- учёт времени ----
     def get_day(self):
+        self._poll_at = time.monotonic()                 # окно опрашивает раз в секунду — по этому видно, что интерфейс жив (сторож зависаний)
         d = self._t.snapshot()
         d["tasks"] = self._tasks.counts()                # сколько задач и сколько выполнено — для значка в мини-окне
         return d
@@ -409,6 +417,14 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
         """Сводка за неделю (пн–вс) или месяц, в который попадает день iso (по умолчанию сегодня); график 5/2."""
         s, _ = self._summary_for(self._t, self._tasks, kind, iso or self._today_iso())
         return s
+
+    def get_journal(self, kind='week', year=None, month=None, iso=None):
+        """Всё для экрана «Журнал» одним вызовом: календарь месяца и сводка (меньше вызовов — меньше шансов, что экран зависнет в ожидании)."""
+        today = self._today_iso()
+        year = int(year or today[:4])
+        month = int(month or today[5:7])
+        return {"cal": self.get_calendar(year, month),
+                "sum": self.get_summary(kind, f'{year:04d}-{month:02d}-01' if kind == 'month' else (iso or today))}
 
     def get_calendar(self, year, month):
         cal = self._t.calendar(year, month)
@@ -694,6 +710,7 @@ def run():
         updater.instance_signal('show')                  # GTime уже работает — просто покажем его окно
         sys.exit(0)
     api = Api()
+    start_watchdog(api)
     s = api.get_settings()
     set_autostart(s["autostart"])                        # путь к exe в автозапуске всегда актуальный
     api._tray = start_tray(api)
@@ -731,6 +748,38 @@ def run():
     threading.Thread(target=api._t.run, daemon=True).start()   # секундный учёт времени
     webview.start()
     api._t.stop()
+
+
+def start_watchdog(api, log_path=None, stall_s=20, every=5, limit=3):
+    """Сторож зависаний. Окно опрашивает get_day раз в секунду; если опроса нет дольше stall_s секунд, пока окно должно быть видно, —
+    в gtime_stall.log пишется, где «застряли» все потоки Python (так видно причину, если интерфейс завис). Не больше limit записей за запуск."""
+    import faulthandler
+    log_path = log_path or os.path.join(data_dir(), 'gtime_stall.log')
+    state = {"n": 0, "last": 0.0}
+
+    def loop():
+        while True:
+            time.sleep(every)
+            try:
+                visible = api._main_shown or api._s.get("mini_visible")
+                stalled = time.monotonic() - api._poll_at
+                if not visible or stalled < stall_s:
+                    state["last"] = 0.0
+                    continue
+                if state["n"] >= limit or time.monotonic() - state["last"] < 60:
+                    continue
+                state["n"] += 1
+                state["last"] = time.monotonic()
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, 'a', encoding='utf-8') as f:
+                    f.write(f'\n=== {datetime.now():%Y-%m-%d %H:%M:%S} окно не отвечает {int(stalled)} с (сборка {updater.VERSION}/{updater.BUILD}) ===\n')
+                    f.flush()
+                    faulthandler.dump_traceback(file=f, all_threads=True)
+            except Exception:
+                pass
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    return t
 
 
 def selftest():

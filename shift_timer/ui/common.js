@@ -5,13 +5,31 @@ const $ = id => document.getElementById(id);
 const setText = (el, t) => { if (el && el.textContent !== t) el.textContent = t; };
 
 // Окно можно растянуть: кольцо на главном экране растёт вместе с высотой (до ×1,5).
-function fitZoom() { document.documentElement.style.setProperty('--z', String(Math.max(1, Math.min(1.5, window.innerHeight / 700)).toFixed(2))); }
+function fitZoom() { document.documentElement.style.setProperty('--z', String(Math.max(1, Math.min(1.6, window.innerHeight / 700)).toFixed(2))); }
 window.addEventListener('resize', fitZoom); fitZoom();
+// Тема (светлая / тёмная / по системе) и цветовая схема (palette): всё через атрибуты на <html>, стили — в style.css.
 function applyTheme() {
-    const t = App.s && App.s.theme;
-    if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
-    else delete document.documentElement.dataset.theme;
+    const t = App.s && App.s.theme, el = document.documentElement;
+    const dark = t === 'dark' || (t !== 'light' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    el.dataset.theme = dark ? 'dark' : 'light';
+    el.dataset.palette = (App.s && App.s.palette) || 'blue';
 }
+if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme());
+
+// Колесо мыши листает медленнее обычного: по умолчанию одно деление — 100 px, это слишком быстро. Тачпад (мелкие шаги) — как есть.
+document.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.defaultPrevented || e.deltaY === 0) return;
+    let el = e.target;
+    while (el && el !== document.body && el.nodeType === 1) {
+        const o = getComputedStyle(el).overflowY;
+        if ((o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight + 1) break;
+        el = el.parentElement;
+    }
+    if (!el || el === document.body || el.nodeType !== 1) return;
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    e.preventDefault();
+    el.scrollTop += Math.abs(dy) >= 50 ? dy * 0.35 : dy;
+}, { passive: false });
 async function poll() {
     try { App.day = await pywebview.api.get_day(); App.at = performance.now(); } catch (e) { /* Python занят — возьмём на следующем тике */ }
 }

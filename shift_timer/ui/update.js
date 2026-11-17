@@ -7,16 +7,16 @@ async function updRefresh(force) {
 function updRender() {
     const u = UPD;
     if (!u) return;
-    setText($('updVer'), u.build ? `сборка ${u.build}` : 'запуск из исходников');
+    setText($('updVer'), u.build ? `${u.version} (сборка ${u.build})` : `${u.version} (из исходников)`);
     $('updBar').hidden = !u.available;
-    if (u.available) setText($('updTxt'), `Доступна новая версия ${u.remote.version}` + (u.remote.notes ? ` — ${u.remote.notes}` : ''));
+    if (u.available) setText($('updTxt'), `Доступна новая версия GTime ${u.remote.version}` + (u.remote.notes ? ` — ${u.remote.notes}` : ''));
     $('updGo').hidden = !u.available;
     const admin = !!(typeof TM !== 'undefined' && TM && TM.user && TM.user.role === 'admin' && u.frozen && u.build > 0);
     $('updPubRow').hidden = $('updNotesRow').hidden = !admin;
     if (!u.dir) setText($('updState'), 'Папка команды не выбрана — обновления через неё недоступны.');
     else if (u.error) setText($('updState'), u.error);
-    else if (u.available) setText($('updState'), `Есть новая версия ${u.remote.version} (у вас ${u.build}).`);
-    else if (u.remote) setText($('updState'), `У вас актуальная сборка (в папке команды — ${u.remote.version}).`);
+    else if (u.available) setText($('updState'), `Есть новая версия ${u.remote.version} (у вас ${u.version}).`);
+    else if (u.remote) setText($('updState'), `У вас актуальная версия (в папке команды — ${u.remote.version}).`);
     else setText($('updState'), 'В папке команды пока нет выложенной сборки.');
 }
 async function updApply() {
@@ -34,7 +34,7 @@ function updateInit() {
         setText($('updState'), 'Выкладываю…');
         const r = await pywebview.api.update_publish($('updNotes').value);
         if (r.error) { setText($('updState'), r.error); return; }
-        setText($('updState'), `Сборка ${r.version} выложена (${Math.max(1, Math.round(r.size / 1048576))} МБ). Остальным придёт «Обновить».`);
+        setText($('updState'), `Версия ${r.version} выложена (${Math.max(1, Math.round(r.size / 1048576))} МБ). Остальным придёт «Обновить».`);
         $('updNotes').value = ''; updRefresh(false);
     };
 }
