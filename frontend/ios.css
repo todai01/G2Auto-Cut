@@ -282,3 +282,15 @@ input[type=range]::-webkit-slider-thumb{
 .home__slot .menu-cut{ width: 100%; }
 
 .radial.is-home .radial__continue{ align-self: flex-start; margin: 0; }
+
+
+/* Прослушка: режим «Фразы» — текст фразы из таблицы под названием; цепочка начало → имя → конец и её настройки не нужны */
+.listen-phrase{ display: none; margin: 10px auto 0; max-width: 880px; padding: 12px 16px; border-radius: 14px; background: var(--fill, rgba(255,255,255,.06));
+  font-size: clamp(17px, 1.9vw, 24px); line-height: 1.45; color: var(--text); text-align: center; white-space: pre-wrap; word-break: break-word; max-height: 32vh; overflow: auto; }
+.stage-listen[data-lmode="phrase"] .listen-phrase{ display: block; }
+.stage-listen[data-lmode="phrase"] .listen-phrase:empty{ display: none; }
+.stage-listen[data-lmode="phrase"] .listen-now__name{ font-size: clamp(18px, 2vw, 26px); font-weight: 650; letter-spacing: 0; color: var(--text-dim); }
+.stage-listen[data-lmode="phrase"] .listen-chain,
+.stage-listen[data-lmode="phrase"] .listen-asm,
+.stage-listen[data-lmode="phrase"] [data-lvar]{ display: none !important; }
+.listen-lang--sm#listenModeSw{ margin-top: 4px; }

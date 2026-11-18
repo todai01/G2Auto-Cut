@@ -338,3 +338,80 @@ def test_play_resample_no_robot(listen, tmp_path):
     spec = np.abs(np.fft.rfft(a * np.hanning(len(a)))) ** 2
     fr = np.fft.rfftfreq(len(a), 1 / got.frame_rate)
     assert 10 * np.log10(spec[fr > 8000].sum() / spec[fr < 5000].sum()) < -60
+
+
+# ---------- режим «Фразы» ----------
+@pytest.fixture
+def phrases(api, dialog, tmp_path):
+    """Папка фраз ru / kz + таблица <phrase_ru> / <phrase_kz> / <name_phrase>; у одной строки записи нет, у одной нет названия."""
+    import openpyxl
+    f = tmp_path / 'Фразы'
+    for lang in ('ru', 'kz'):
+        for n in ('greet', 'bye'):
+            wav(str(f / lang / f'{n}.wav'), f'{n} {lang}')
+    xl = tmp_path / 'фразы.xlsx'
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['<phrase_ru>', '<phrase_kz>', '<name_phrase>', '<start>'])
+    ws.append(['Здравствуйте, это банк', 'Сәлеметсіз бе, банк', 'greet', 1])
+    ws.append(['До свидания', 'Сау болыңыз', 'bye', 0])
+    ws.append(['Без записи', 'Жазбасыз', 'nofile', 0])
+    ws.append(['Нет названия', 'Атауы жоқ', None, 0])
+    wb.save(xl)
+    api.listen_mode('phrase')
+    dialog(str(f), str(xl))
+    api.listen_pick_folder()
+    return api, api.listen_pick_table()
+
+
+def test_phrase_mode_rows_and_text(phrases):
+    api, t = phrases
+    assert t["skipped"] == 1 and t["mode"] == 'phrase'
+    st = api.listen_state()
+    assert [r["name"] for r in st["rows"]] == ['greet', 'bye', 'nofile']
+    assert [r["text"] for r in st["rows"]] == ['Здравствуйте, это банк', 'До свидания', 'Без записи']
+    assert st["rows"][0]["path"].replace(os.sep, '/').endswith('ru/greet.wav') and st["rows"][2]["path"] is None
+    api.listen_set(lang='kz')
+    st = api.listen_state()
+    assert st["rows"][0]["text"] == 'Сәлеметсіз бе, банк' and st["rows"][0]["path"].replace(os.sep, '/').endswith('kz/greet.wav')
+    api.listen_set(lang='uni')                                         # универсалов во фразах нет
+    assert api.listen_state()["lang"] == 'kz'
+
+
+def test_phrase_mode_separate_from_vars(listen, dialog, tmp_path):
+    """Переключатель режимов: у переменных и фраз — свои папка, таблица, строки."""
+    var_rows = [r["name"] for r in listen.listen_state()["rows"]]
+    assert listen.listen_mode('phrase')["rows"] == [] and listen.listen_state()["mode"] == 'phrase'
+    assert [r["name"] for r in listen.listen_mode('var')["rows"]] == var_rows
+
+
+def test_phrase_mode_play_and_save_untouched(phrases):
+    api, _ = phrases
+    played = []
+    api.player.play = lambda p: played.append(p)
+    api.player.stop = lambda: None
+    r = api.listen_go(0, play=True)
+    assert r["play"].get("playing") and [m["kind"] for m in r["play"]["marks"]] == ['var']     # только запись, без начала и конца
+    path = api.listen_state()["rows"][0]["path"]
+    before = md5(path)
+    e = api.listen_edit_load(path)
+    api.listen_edit_save(path, [[100, 600]], 0.0, 1.0, True)
+    assert os.path.exists(os.path.join(os.path.dirname(path), '_до_правок', os.path.basename(path)))
+    assert md5(os.path.join(os.path.dirname(path), '_до_правок', os.path.basename(path))) == before
+    assert md5(path) != before
+
+
+def test_phrase_table_without_header(api, dialog, tmp_path):
+    import openpyxl
+    wav(str(tmp_path / 'p' / 'a1.wav'))
+    xl = tmp_path / 'x.xlsx'
+    wb = openpyxl.Workbook()
+    wb.active.append(['Фраза', 'Название файла'])
+    wb.active.append(['Привет, мир', 'a1'])
+    wb.save(xl)
+    api.listen_mode('phrase')
+    dialog(str(tmp_path / 'p'), str(xl))
+    api.listen_pick_folder()
+    api.listen_pick_table()
+    rows = api.listen_state()["rows"]
+    assert [(r["name"], r["text"]) for r in rows] == [('a1', 'Привет, мир')] and rows[0]["path"]

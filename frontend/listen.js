@@ -13,6 +13,7 @@ const lEl = id => document.getElementById(id);
 const lRow = () => LS && LS.rows[LS.pos];
 
 async function listenStart() {
+    LS = await pywebview.api.listen_mode('var');
     let ok = await showBeautifulAlert('<b>Прослушка переменных · шаг 1 из 3</b><br><br>Выберите <b>папку с записями переменных</b> — '
         + 'файлы, названные как значения (например, «Гизат.wav»). Подпапки тоже смотрю.');
     if (!ok) return;
@@ -36,6 +37,42 @@ async function listenStart() {
     LS = r;
     listenOpen();
     showToast(`Таблица: ${r.rows.length} названий · есть запись у ${r.found}${r.column ? ` · ${r.column}` : ''}`, 4500);
+}
+
+// ----- режим «Фразы»: текст из таблицы + запись с этим названием (папка с ru / kz) -----
+// Свои папка, таблица и позиция у каждого режима; переключатель — в шапке.
+async function listenStartPhrases() {
+    LS = await pywebview.api.listen_mode('phrase');
+    await listenSetupPhrases();
+}
+async function listenSetupPhrases() {
+    let ok = await showBeautifulAlert('<b>Прослушка фраз · шаг 1 из 2</b><br><br>Выберите <b>папку с записями фраз</b>. Если внутри папки <b>ru</b> и <b>kz</b> — язык переключается '
+        + 'тумблером RU / KZ. Файлы названы так, как в таблице; подпапки тоже смотрю.');
+    if (!ok) return;
+    let r = await pywebview.api.listen_pick_folder();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    LS = r;
+    ok = await showBeautifulAlert(`<b>Шаг 2 из 2</b><br><br>Найдено записей: <b>${r.files}</b>.<br><br><b>Таблица с фразами</b> (.xlsx): колонка с текстом (<b>&lt;phrase&gt;</b>, `
+        + '<b>&lt;phrase_ru&gt;</b>, <b>&lt;phrase_kz&gt;</b>) и колонка с названием файла (<b>&lt;name_phrase&gt;</b>…). Без шапки: колонка A — текст, B — название файла.');
+    if (!ok) return;
+    r = await pywebview.api.listen_pick_table();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    LS = r;
+    listenOpen();
+    showToast(`Фраз: ${r.rows.length} · есть запись у ${r.found}${r.skipped ? ` · без названия или текста пропущено ${r.skipped}` : ''}`, 4500);
+}
+const listenModeBtns = () => [['phrase', 'Фразы'], ['var', 'Переменные']].map(([m, t]) =>
+    `<button type="button" class="${LS.mode === m ? 'is-on' : ''}" onclick="listenModeSet('${m}')">${t}</button>`).join('');
+async function listenModeSet(m) {
+    if (!LS || LS.mode === m) return;
+    if (!(await listenLeave())) return;
+    listenAutoSet(false); listenStopHead(); pywebview.api.listen_stop();
+    LS = await pywebview.api.listen_mode(m);
+    lEd = null; lAsm = {};
+    if (m === 'phrase' && (!LS.folder || !LS.rows.length)) { listenOpen(); await listenSetupPhrases(); return; }
+    listenOpen();
 }
 
 function listenOpen() {
@@ -63,14 +100,22 @@ async function listenPick(what) {
     LS = r;
     listenRender();
     listenLoadEditor();
+    if (what === 'table' && r.skipped) showToast(`Без названия файла или текста пропущено строк: ${r.skipped}`, 4500);
 }
 
 // ----- отрисовка -----
 function listenRender(light) {
     if (!LS) return;
+    let phr = LS.mode === 'phrase';
+    lEl('stage5-listen').dataset.lmode = LS.mode || 'var';
+    lEl('listenTitle').innerText = phr ? 'Прослушка фраз' : 'Прослушка переменных';
+    lEl('listenModeSw').innerHTML = listenModeBtns();
+    lEl('listenPickFolder').title = phr ? 'Папка с записями фраз (внутри можно ru и kz)' : 'Папка с записями переменных';
+    lEl('listenPickTable').title = phr ? 'Таблица с фразами: текст и название файла' : 'Таблица с названиями переменных';
     lEl('listenLangTop').innerHTML = listenLangBtns();
-    lEl('listenMeta').innerText = [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, listenLangName(LS.lang),
-        LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет'].filter(Boolean).join(' · ');
+    lEl('listenMeta').innerText = (phr ? [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, listenLangName(LS.lang)]
+        : [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, listenLangName(LS.lang),
+        LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет']).filter(Boolean).join(' · ');
     lEl('listenShort').checked = !!LS.short;
     lEl('listenNorm').checked = LS.norm !== false;
     lEl('listenAutoOn').checked = LS.auto_on !== false;
@@ -80,11 +125,13 @@ function listenRender(light) {
     lEl('listenPos').innerText = r ? `${LS.pos + 1} / ${LS.rows.length}` : 'Загрузите таблицу';
     listenStatusRender();
     lEl('listenName').innerText = r ? r.name : '—';
+    lEl('listenPhrase').innerText = phr && r && r.text ? r.text : '';
     lEl('listenName').classList.toggle('is-miss', !!r && !r.path);
     listenStatusRender();
     lEl('listenFile').innerHTML = !r ? '' : r.path
         ? `${r.dir ? `<span class="listen-dir">${escapeHtml(r.dir)}/</span>` : ''}${escapeHtml(r.file)}${r.uni ? ' · <span class="listen-uni">универсал — RU и KZ</span>' : ''}${r.dups ? ` · <span class="listen-warn">в папке ещё ${r.dups} с тем же именем</span>` : ''}${r.edited ? ' · правилась' : ''}`
         : 'записи с таким именем в папке нет — синтез (R)';
+    if (phr) { listenRenderSynth(); return; }                     // фразы: цепочки начало → имя → конец нет
     let part = (t, label, name, ok) => `<button type="button" class="listen-part ${lTarget === t ? 'is-on' : ''} ${ok ? '' : 'is-miss'}" ${ok ? '' : 'disabled'}
             onclick="listenTarget('${t}')" title="${ok ? 'Править' + (t === 'var' ? ' запись переменной' : ' фразу целиком') : ''}">
             <i>${label}</i><b>${escapeHtml(name || '—')}</b>${ok ? '<span>✎</span>' : ''}</button>`;
@@ -266,7 +313,7 @@ function listenEdRender() {
         listenEdDraw();
         return;
     }
-    let kind = { var: 'переменная', start: 'начало фразы (целиком)', end: 'конец фразы (целиком)' }[lEd.target];
+    let kind = { var: LS.mode === 'phrase' ? 'фраза' : 'переменная', start: 'начало фразы (целиком)', end: 'конец фразы (целиком)' }[lEd.target];
     let au = lEd.auto, sec = ms => (ms / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
     let autoTxt = au ? ` · <span class="listen-auto">срезано по голосу${au.breath ? ` · вдох / шум ${sec(au.breath)} с` : ''}${au.by_tpl ? ` · по шаблону «${escapeHtml(au.by_tpl)}»` : ''}</span>` : '';
     lEl('listenEdTitle').innerHTML = listenSynthBusy() ? `Синтез «${escapeHtml(lRow().name)}»…`
@@ -748,7 +795,7 @@ function listenRenderSynth() {
     let box = lEl('listenSynth'), r = lRow();
     if (!r) { box.innerHTML = ''; return; }
     let st = r.synth;
-    let keep = lEl('listenSynthText'), sk = `${LS.lang}:${r.base}`, txt = keep && keep.dataset.k === sk ? keep.value : r.name;
+    let keep = lEl('listenSynthText'), sk = `${LS.lang}:${r.base}`, txt = keep && keep.dataset.k === sk ? keep.value : (LS.mode === 'phrase' && r.text) || r.name;
     box.innerHTML = `<span class="listen-synth__label">Синтез ${listenLangName(LS.lang === 'uni' ? 'ru' : LS.lang)}</span>
         <input class="listen-synth__text" id="listenSynthText" data-k="${sk}" value="${escapeHtml(txt)}" title="Текст для синтеза — можно поправить (ударение, написание)">
         <button class="listen-synth__go" onclick="listenSynthQuick()" ${st === 'busy' ? 'disabled' : ''} title="Синтез сразу встанет на дорожку вместо записи (прежняя — в «_до_правок»)">${st === 'busy' ? 'Синтезирую…' : 'Синтезировать <kbd>R</kbd>'}</button>
@@ -760,7 +807,7 @@ function listenRenderSynth() {
     listenStatusRender(); listenEdRender();
 }
 const listenLangName = l => l === 'uni' ? 'УНИВ' : l.toUpperCase();
-const listenLangBtns = (cur = LS.lang, fn = 'listenLang', langs = LS.split ? ['ru', 'kz', 'uni'] : ['ru', 'kz']) => langs.map(l =>
+const listenLangBtns = (cur = LS.lang, fn = 'listenLang', langs = LS.split && LS.mode !== 'phrase' ? ['ru', 'kz', 'uni'] : ['ru', 'kz']) => langs.map(l =>
     `<button type="button" class="${cur === l ? 'is-on' : ''}" onclick="${fn}('${l}')" ${l === 'uni' ? 'title="Универсалы — марки без цифр: одна запись на оба языка"' : ''}>${listenLangName(l)}</button>`).join('');
 // Язык — для всего: пара начало / конец, записи из ru / kz (если папка разделена) и синтез
 async function listenLang(l) {
@@ -871,7 +918,7 @@ async function listenSynthQuick() {
     if (!row) return;
     if (row.synth === 'busy') { showToast('Синтез уже идёт'); return; }
     if (!(await listenVoiceReady())) return;
-    let inp = lEl('listenSynthText'), text = inp && inp.value.trim() ? inp.value.trim() : row.name;
+    let inp = lEl('listenSynthText'), text = inp && inp.value.trim() ? inp.value.trim() : (LS.mode === 'phrase' && row.text) || row.name;
     let r = await pywebview.api.listen_synth(LS.pos, text, LS.lang, true, listenPart('var'));
     if (!r || r.error) { showToast(r && r.error || 'Не получилось'); return; }
     let pos = LS.pos; LS = r.state; LS.pos = pos;
@@ -927,7 +974,7 @@ function listenKey(e) {
     if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
     if (e.code === 'KeyP') { e.preventDefault(); listenPlayOnly(); return; }
     if (e.code === 'KeyM') { e.preventDefault(); listenSwap(); return; }
-    if (e.code === 'KeyL') { e.preventDefault(); listenLang(({ ru: 'kz', kz: LS.split ? 'uni' : 'ru', uni: 'ru' })[LS.lang]); return; }
+    if (e.code === 'KeyL') { e.preventDefault(); listenLang(({ ru: 'kz', kz: LS.split && LS.mode !== 'phrase' ? 'uni' : 'ru', uni: 'ru' })[LS.lang]); return; }
     if (e.code === 'ArrowDown' || e.code === 'KeyS') { e.preventDefault(); listenStep(1); return; }
     if (e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); listenStep(-1); return; }
     if (e.code === 'KeyX' || e.code === 'Delete') { e.preventDefault(); listenEdCut(); return; }
@@ -1139,5 +1186,5 @@ async function listenTotals() {
     if (!t) return;
     let part = (k, label) => `<span class="${LS.lang === k ? 'is-on' : ''}" title="${label}: проверено / строк (записей найдено ${t[k][1]})">${label} <b>${t[k][0]}/${t[k][2]}</b></span>`;
     el.innerHTML = `<div class="lp-totals__all">Всего <b>${t.all[0]} / ${t.all[2]}</b> <small>записей найдено ${t.all[1]}</small></div>`
-        + `<div class="lp-totals__parts">${part('ru', 'RU')}${part('kz', 'KZ')}${LS.split ? part('uni', 'УНИВ') : ''}</div>`;
+        + `<div class="lp-totals__parts">${part('ru', 'RU')}${part('kz', 'KZ')}${LS.split && LS.mode !== 'phrase' ? part('uni', 'УНИВ') : ''}</div>`;
 }

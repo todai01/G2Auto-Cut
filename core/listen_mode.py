@@ -139,12 +139,23 @@ class ListenMixin:
     LISTEN_TAIL_MS = 60           # и после
 
     def _ls(self):
-        ls = getattr(self, '_listen', None)
+        """Состояние Прослушки текущего режима. Два независимых сеанса: «var» — переменные (начало + имя + конец),
+        «phrase» — полные фразы (текст из таблицы + запись); у каждого своя папка, таблица и позиция."""
+        mode = getattr(self, '_listen_mode_name', 'var')
+        sessions = self.__dict__.setdefault('_listen_sessions', {})
+        ls = sessions.get(mode)
         if ls is None:
-            ls = self._listen = {"folder": None, "index": {}, "start": None, "end": None, "table": None,
-                                 "rows": [], "pos": 0, "lang": "ru", "short": True, "norm": True, "auto_on": True, "synth": {},
-                                 "phr_folder": None, "phrases": [], "pick": {"ru": {}, "kz": {}}, "lang_dirs": {}}
+            ls = sessions[mode] = {"mode": mode, "folder": None, "index": {}, "start": None, "end": None, "table": None,
+                                   "rows": [], "pos": 0, "lang": "ru", "short": True, "norm": True, "auto_on": True, "synth": {},
+                                   "phr_folder": None, "phrases": [], "pick": {"ru": {}, "kz": {}}, "lang_dirs": {}}
         return ls
+
+    def listen_mode(self, mode=None):
+        """Режим Прослушки: 'var' — переменные, 'phrase' — полные фразы. Каждый помнит свою папку и таблицу."""
+        if mode in ('var', 'phrase'):
+            self.player.stop()
+            self._listen_mode_name = mode
+        return self.listen_state()
 
     # ---------------- папка, фразы, таблица ----------------
     def _listen_scan(self):
@@ -176,6 +187,7 @@ class ListenMixin:
     def listen_setup_assembly(self, phr_dir, start, end, folder):
         """«Сборка переменной» из Студии: начало и конец — отмеченные файлы из «Фразы_Переменные»,
         записи значений — выбранная папка; строки — файлы этой папки (таблицу можно загрузить потом)."""
+        self._listen_mode_name = 'var'
         r = self._listen_load_phrases(phr_dir)
         if r.get("error"):
             return r
@@ -204,7 +216,7 @@ class ListenMixin:
         """'uni' — универсал: в названии нет цифр и записей в папках ru / kz нет (лежит в общей или её нет совсем);
         'lang' — своя у каждого языка. Папка не разделена на ru / kz — делить не на что (всё 'lang')."""
         ls = self._ls()
-        if not ls["lang_dirs"]:
+        if not ls["lang_dirs"] or ls["mode"] == 'phrase':      # фразы — всегда своя запись на язык, универсалов нет
             return 'lang'
         if any(re.search(r'\d', x) or listen_num(x) for x in (ru, kz)):
             return 'lang'
@@ -234,7 +246,10 @@ class ListenMixin:
             hits = self._listen_hits(name, lang if split and lang != 'uni' else None)
             if k in old_synth:
                 synth[len(rows)] = old_synth[k]
-            rows.append({"name": name, "path": hits[0] if hits else None, "dups": max(0, len(hits) - 1), "base": k})
+            texts = ls.get("texts") or {}
+            text = (texts.get('kz' if lang == 'kz' else 'ru') or [])
+            rows.append({"name": name, "path": hits[0] if hits else None, "dups": max(0, len(hits) - 1), "base": k,
+                         "text": text[k] if k < len(text) else None})
         ls["rows"], ls["synth"] = rows, synth
         ls["pos"] = next((i for i, r in enumerate(rows) if r["base"] == cur), min(ls["pos"], max(0, len(rows) - 1)))
 
@@ -353,17 +368,71 @@ class ListenMixin:
         if not picked:
             return {"error": "cancel"}
         path = picked if isinstance(picked, str) else picked[0]
+        ls = self._ls()
+        texts, skipped = None, 0
         try:
-            by_lang, col = self._listen_read_table(path)
+            if ls["mode"] == 'phrase':
+                by_lang, texts, col, skipped = self._listen_read_phrases(path)
+            else:
+                by_lang, col = self._listen_read_table(path)
         except Exception as e:
             return {"error": f"Не удалось прочитать таблицу: {e}"}
         if not by_lang or not by_lang.get("ru"):
-            return {"error": "В таблице не нашлось названий."}
-        ls = self._ls()
-        ls["table"], ls["table_names"] = path, by_lang
+            return {"error": "В таблице не нашлось фраз с названиями файлов." if ls["mode"] == 'phrase'
+                    else "В таблице не нашлось названий."}
+        ls["table"], ls["table_names"], ls["texts"] = path, by_lang, texts
         ls["rows"], ls["pos"], ls["synth"] = [], 0, {}
         self._listen_match()
-        return {**self.listen_state(), "column": col}
+        return {**self.listen_state(), "column": col, "skipped": skipped}
+
+    def _listen_read_phrases(self, path):
+        """Таблица фраз: на листе с шапкой <phrase> / <name_phrase> (и _ru / _kz) — текст и название файла; без шапки —
+        колонка A текст, B название файла (как в Студии). Возвращает ({"ru": названия, "kz": названия},
+        {"ru": тексты, "kz": тексты}, подпись листа, сколько строк без названия или без текста пропущено)."""
+        import openpyxl
+        from core.tts_flow import _tag, _text_tag, _name_tag, _AUTO_HEAD_WORDS
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        best = None
+        sfx = lambda t: {'ru': 'ru', 'kz': 'kz', 'kk': 'kz'}.get(t.rsplit('_', 1)[-1])      # None — общая колонка
+        for ws in wb.worksheets:
+            grid = [list(r) for r in ws.iter_rows(values_only=True)]
+            cols, first = {"text": {}, "name": {}}, 0
+            for i, row in enumerate(grid):
+                tags = [_tag(v) for v in row]
+                if any(t and (_text_tag(t) or _name_tag(t)) for t in tags):
+                    for c, t in enumerate(tags):
+                        if t and _text_tag(t):
+                            cols["text"].setdefault(sfx(t), c)
+                        elif t and _name_tag(t):
+                            cols["name"].setdefault(sfx(t), c)
+                    first = i + 1
+                    break
+            if not (cols["text"] and cols["name"]):
+                cols = {"text": {None: 0}, "name": {None: 1}}                               # без шапки: A — текст, B — название
+                a0 = str(grid[0][0] if grid and grid[0] and grid[0][0] is not None else '').strip().lower() if grid else ''
+                first = 1 if a0 in _AUTO_HEAD_WORDS else 0
+            cell = lambda r, c: str(r[c]).strip() if c is not None and c < len(r) and r[c] is not None else ''
+            pick = lambda d, lang: d.get(lang, d.get(None, next(iter(d.values()), None)))
+            data, skipped = [], 0
+            for row in grid[first:]:
+                nm = {l: cell(row, pick(cols["name"], l)) for l in ('ru', 'kz')}
+                tx = {l: cell(row, cols["text"].get(l, cols["text"].get(None))) for l in ('ru', 'kz')}
+                if not any(nm.values()) and not any(tx.values()):
+                    continue                                                                 # пустая строка
+                nm = {l: nm[l] or nm['ru' if l == 'kz' else 'kz'] for l in nm}               # название одно на оба языка
+                if not nm['ru'] or not any(tx.values()):
+                    skipped += 1
+                    continue
+                data.append((nm, tx))
+            if data and (best is None or len(data) > len(best[0])):
+                best = (data, ws.title, skipped)
+        wb.close()
+        if not best:
+            return {}, {}, None, 0
+        data, title, skipped = best
+        names = {l: [d[0][l] for d in data] for l in ('ru', 'kz')}
+        texts = {l: [d[1][l] for d in data] for l in ('ru', 'kz')}
+        return names, texts, title, skipped
 
     @staticmethod
     def _listen_col_lang(head, vals):
@@ -512,7 +581,7 @@ class ListenMixin:
     def _listen_row(self, k):
         ls = self._ls()
         r = ls["rows"][k]
-        return {"name": r["name"], "base": r.get("base", k), "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
+        return {"name": r["name"], "text": r.get("text"), "base": r.get("base", k), "file": os.path.basename(r["path"]) if r["path"] else None, "path": r["path"],
                 "dir": os.path.relpath(os.path.dirname(r["path"]), ls["folder"]).replace(os.sep, '/')
                 if r["path"] and ls["folder"] and os.path.dirname(r["path"]) != os.path.normpath(ls["folder"]) else None,
                 "uni": bool(r["path"]) and bool(ls["lang_dirs"]) and listen_lang_of(r["path"], ls["folder"]) is None,
@@ -548,6 +617,7 @@ class ListenMixin:
         rows = ls["rows"]
         nm = lambda p: os.path.basename(p) if p else None
         return {
+            "mode": ls["mode"],
             "folder": ls["folder"], "folder_name": nm(ls["folder"]), "files": sum(len(v) for v in ls["index"].values()),
             "start": nm(ls["start"]), "end": nm(ls["end"]), "start_path": ls["start"], "end_path": ls["end"],
             "table": nm(ls["table"]), "pos": min(ls["pos"], max(0, len(rows) - 1)), "lang": ls["lang"],
@@ -571,7 +641,7 @@ class ListenMixin:
         if pos is not None and ls["rows"]:
             ls["pos"] = max(0, min(int(pos), len(ls["rows"]) - 1))
         if lang in ('ru', 'kz', 'uni') and lang != ls["lang"]:
-            if lang == 'uni' and not ls["lang_dirs"]:
+            if lang == 'uni' and (not ls["lang_dirs"] or ls["mode"] == 'phrase'):
                 return self.listen_state()
             ls["lang"] = lang
             self._listen_apply_pick()
@@ -1018,7 +1088,7 @@ class ListenMixin:
                 self._listen_render(ref["path"], ref.get("ranges"), float(ref.get("gain") or 0), float(ref.get("tempo") or 1)).export(etalon, format="wav")
             except Exception as e:
                 return {"error": f"Образец не собрался: {e}"}
-        etalon_text = row["name"]
+        etalon_text = row.get("text") or row["name"]
         ls["synth"][k] = {"status": "busy", "file": dst, "text": text, "lang": lang}
 
         def job(worker):

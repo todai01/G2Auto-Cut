@@ -1463,16 +1463,17 @@
         <header class="workspace-header">
             <div class="header-actions">
                 <button class="btn-ghost" onclick="listenExit()">&#8592;&nbsp; Главное меню</button>
-                <button class="btn-ghost btn-ghost--info" onclick="listenPick('folder')" title="Папка с записями переменных">Папка</button>
-                <button class="btn-ghost btn-ghost--info" onclick="listenPhrases()" title="Начало и конец фразы — из папки кусочков (Фразы_Переменные)">Начало / конец</button>
-                <button class="btn-ghost btn-ghost--info" onclick="listenPick('table')" title="Таблица с названиями переменных">Таблица</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenPick('folder')" id="listenPickFolder" title="Папка с записями переменных">Папка</button>
+                <button class="btn-ghost btn-ghost--info" data-lvar onclick="listenPhrases()" title="Начало и конец фразы — из папки кусочков (Фразы_Переменные)">Начало / конец</button>
+                <button class="btn-ghost btn-ghost--info" onclick="listenPick('table')" id="listenPickTable" title="Таблица с названиями переменных">Таблица</button>
                 <button class="btn-ghost btn-ghost--info" onclick="listenOvOpen()" title="Вся таблица: у какой строки есть запись в RU и в KZ, а где её нет">Обзор</button>
-                <button class="btn-ghost btn-ghost--info" onclick="listenUni()" title="Марки без цифр (универсалы) — из папки ru в общую uni_mark: звучит и в RU, и в KZ">Универсалы</button>
+                <button class="btn-ghost btn-ghost--info" data-lvar onclick="listenUni()" title="Марки без цифр (универсалы) — из папки ru в общую uni_mark: звучит и в RU, и в KZ">Универсалы</button>
                 <button class="btn-ghost btn-ghost--good" onclick="listenExport()" title="Собрать папку для сдачи: только готовые аудио, без служебных файлов">Финальная папка</button>
                 <button class="btn-ghost btn-ghost--compact tut-q" onclick="openTutorial('listen')" title="Обучение: ролик про прослушку">?</button>
             </div>
             <div class="constructor-title">
-                <span class="constructor-title__main"><svg class="icon"><use href="#icon-headphones"></use></svg> Прослушка переменных</span>
+                <span class="constructor-title__main"><svg class="icon"><use href="#icon-headphones"></use></svg> <span id="listenTitle">Прослушка переменных</span></span>
+                <span class="listen-lang listen-lang--sm" id="listenModeSw" title="Что проверяем: полные фразы (текст из таблицы + запись) или переменные (начало + имя + конец)"></span>
                 <span class="constructor-title__sub" id="listenMeta"></span>
             </div>
         </header>
@@ -1501,15 +1502,16 @@
                         <div class="listen-opts">
                             <span class="listen-lang listen-lang--sm" id="listenLangTop" title="Язык (L): пара начало / конец, записи из ru / kz и синтез — строка та же"></span>
                             <label class="listen-opt" title="Автонастройка записи при открытии: срезка по голосу и громкость. Выключено — запись как есть; нужную настройку включите кнопкой «Авто» (A)"><input type="checkbox" id="listenAutoOn" onchange="listenSetAutoOn(this.checked)"> автонастройка</label>
-                            <label class="listen-opt" title="Громкость имени сама подбирается под громкость начала и конца фразы (Фразы_Переменные)"><input type="checkbox" id="listenNorm" onchange="listenSetNorm(this.checked)"> громкость по фразам</label>
-                            <label class="listen-opt" title="Звучит только конец начала и начало продолжения"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
-                            <select class="listen-ctx" id="listenCtx" onchange="listenSetCtx(this.value)" title="Сколько конца начала и начала продолжения звучит рядом с переменной">
+                            <label class="listen-opt" data-lvar title="Громкость имени сама подбирается под громкость начала и конца фразы (Фразы_Переменные)"><input type="checkbox" id="listenNorm" onchange="listenSetNorm(this.checked)"> громкость по фразам</label>
+                            <label class="listen-opt" data-lvar title="Звучит только конец начала и начало продолжения"><input type="checkbox" id="listenShort" onchange="listenSetShort(this.checked)"> кратко</label>
+                            <select class="listen-ctx" data-lvar id="listenCtx" onchange="listenSetCtx(this.value)" title="Сколько конца начала и начала продолжения звучит рядом с переменной">
                                 <option value="500">0,5 с</option><option value="1000">1 с</option><option value="1500">1,5 с</option><option value="2500">2,5 с</option></select>
                         </div>
                     </div>
                     <div class="listen-now">
                         <div class="listen-now__name" id="listenName">—</div>
                         <div class="listen-now__file" id="listenFile"></div>
+                        <div class="listen-phrase" id="listenPhrase"></div>
                     </div>
                     <div class="listen-chain" id="listenChain"></div>
                     <canvas class="listen-asm" id="listenAsmCanvas" title="Как звучит в фразе: начало → имя → конец. Клик — править этот кусок"></canvas>

@@ -864,6 +864,8 @@ let isProcessing = false;
                 { title: 'Резать сырой WAV', icon: 'sliders', src: '#btnLoadAudio', clear: 'project' },
                 { title: 'Настройки нарезки', icon: 'scissors', act: 'cut' },
                 { title: 'Открыть готовые чанки', icon: 'folder', src: '#btnLoadFolder', clear: 'project' },
+                { title: 'Прослушка фраз', icon: 'headphones', run: () => listenStartPhrases(),
+                  desc: 'Папка записей (ru / kz) и таблица фраз: текст из таблицы и запись с этим названием — послушать, подрезать' },
             ],
             vars: [
                 { title: 'Пакетная сборка', icon: 'refresh-cw', src: '.menu-row--var', cls: 'var' },
