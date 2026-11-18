@@ -210,7 +210,7 @@ def test_api_publish_requires_admin_and_built_exe(tmp_path, monkeypatch):
 
 def test_version_file_workflow_and_ui_hooks():
     ver = open(os.path.join(ROOT, 'shift_timer', 'version.py'), encoding='utf-8').read()
-    assert ver.strip().endswith('BUILD = 0') and 'VERSION = "1.0"' in ver
+    assert ver.strip().endswith('BUILD = 0') and 'VERSION = "1.1"' in ver
     wf = open(os.path.join(ROOT, '.github', 'workflows', 'build-shift-timer.yml'), encoding='utf-8').read()
     assert 'version.py' in wf and wf.index('version.py') < wf.index('pyinstaller --noconfirm')    # номер сборки вшивается до pyinstaller
     html = open(os.path.join(ROOT, 'shift_timer', 'ui', 'main.html'), encoding='utf-8').read()
