@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from tasks import TAGS, fmt_dur
 
+STATUS = {"new": 'не начата', "running": 'в работе', "paused": 'на паузе', "done": 'выполнена'}
 MARK_NAMES = {"vacation": "отпуск", "sick": "больничный", "dayoff": "выходной"}
 MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
 
@@ -123,7 +124,7 @@ def export_report(path, kind, summary, rows):
     tk = wb.create_sheet('Задачи')
     header(tk, 1, ['Создана', 'Выполнена', 'Статус', 'Задача', 'Теги', 'Ушло всего', 'Ушло за период', 'Ждали ответа', 'Сейчас ждём', 'Подзадачи', 'Комментарий'])
     for r2, x in enumerate(rows, 2):
-        status = 'выполнена' if x["done"] else ('ждём ответа' if x["waiting_who"] else 'в работе')
+        status = STATUS.get(x.get("state"), 'в работе') if not x["waiting_who"] or x["done"] else 'ждём ответа'
         sub = '\n'.join(('✓ ' if dn else '○ ') + t for t, dn in x["subs"])
         vals = [x["created"], x["finished"], status, x["text"], ', '.join(x["tags"]),
                 timedelta(seconds=x["elapsed_s"]) if x["elapsed_s"] is not None else None, timedelta(seconds=x["period_s"] or 0),
@@ -237,7 +238,7 @@ def export_team(path, kind, start, end, members):
     header(tk, ['Сотрудник', 'Создана', 'Выполнена', 'Статус', 'Задача', 'Теги', 'Ушло всего', 'Ушло за период', 'Ждали ответа', 'Сейчас ждём', 'Подзадачи', 'Комментарий'])
     for m in members:
         for x in m["rows"]:
-            status = 'выполнена' if x["done"] else ('ждём ответа' if x["waiting_who"] else 'в работе')
+            status = STATUS.get(x.get("state"), 'в работе') if not x["waiting_who"] or x["done"] else 'ждём ответа'
             sub = '\n'.join(('✓ ' if dn else '○ ') + t for t, dn in x["subs"])
             tk.append([m["name"], x["created"], x["finished"], status, x["text"], ', '.join(x["tags"]),
                        timedelta(seconds=x["elapsed_s"]) if x["elapsed_s"] is not None else None, timedelta(seconds=x["period_s"] or 0),

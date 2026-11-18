@@ -64,11 +64,25 @@ class TaskStore:
         created = _dt(t.get("created"))
         if created is None:
             return None
-        started = _dt(t.get("started")) or created
         done = t.get("done") is True
         finished = _dt(t.get("finished")) if done else None
-        if done and finished is None:
-            finished = started
+        runs = []
+        if isinstance(t.get("runs"), list):               # периоды работы: старт → стоп (последний может идти)
+            for r in t["runs"]:
+                a, b = (_dt(r.get("from")), _dt(r.get("to"))) if isinstance(r, dict) else (None, None)
+                if a:
+                    runs.append({"from": _iso(a), "to": _iso(b) if b else None})
+        else:                                             # старый формат: шла от «начата» (по умолчанию — со создания) до «выполнена»
+            st = _dt(t.get("started")) or created
+            runs = [{"from": _iso(st), "to": _iso(finished or st) if done else None}]
+        for r in runs[:-1]:
+            r["to"] = r["to"] or r["from"]                # идти может только последний период
+        if done:
+            if finished is None:
+                finished = (_dt(runs[-1]["to"]) if runs and runs[-1]["to"] else None) or created
+            if runs and runs[-1]["to"] is None:
+                runs[-1]["to"] = _iso(finished)           # выполнили — период закрыт
+        started = _dt(runs[0]["from"]) if runs else None
         subs = []
         for s in t.get("subs") if isinstance(t.get("subs"), list) else []:
             if isinstance(s, dict) and isinstance(s.get("id"), int) and isinstance(s.get("text"), str) and s["text"].strip():
@@ -82,7 +96,7 @@ class TaskStore:
                 waits.append({"who": str(w.get("who") or '')[:MAX_WHO], "from": _iso(a), "to": _iso(b) if b else None})
         for w in waits[:-1]:
             w["to"] = w["to"] or w["from"]                # открытым может быть только последнее ожидание
-        return {"id": t["id"], "text": t["text"].strip()[:MAX_TEXT], "created": _iso(created), "started": _iso(started),
+        return {"id": t["id"], "text": t["text"].strip()[:MAX_TEXT], "created": _iso(created), "started": _iso(started) if started else None, "runs": runs,
                 "finished": _iso(finished) if finished else None, "done": done, "hidden": t.get("hidden") is True,
                 "comment": str(t.get("comment") or '')[:MAX_COMMENT], "subs": subs, "files": files, "tags": tags, "waits": waits,
                 "legacy": legacy or t.get("legacy") is True}
@@ -149,10 +163,29 @@ class TaskStore:
         fin = _dt(t["finished"])
         return fin is not None and fin.date() == self._now().date()
 
+    @staticmethod
+    def _runs_dt(t, now):
+        """Периоды работы как пары datetime (идущий заканчивается «сейчас»)."""
+        out = []
+        for r in t["runs"]:
+            a, b = _dt(r["from"]), _dt(r["to"]) if r["to"] else now
+            if a and b:
+                out.append((a, max(a, b)))
+        return out
+
     def _elapsed(self, t, now=None):
-        start = _dt(t["started"])
-        end = _dt(t["finished"]) if t["done"] else (now or self._now())
-        return max(0, int((end - start).total_seconds())) if start and end else 0
+        """Сколько задача была «в работе»: сумма периодов от «В работу» до «Стоп» (паузы не считаются)."""
+        now = now or self._now()
+        return sum(int((b - a).total_seconds()) for a, b in self._runs_dt(t, now))
+
+    @staticmethod
+    def _state(t):
+        """new — не начата, running — идёт, paused — на паузе (стоп), done — выполнена."""
+        if t["done"]:
+            return "done"
+        if t["runs"] and t["runs"][-1]["to"] is None:
+            return "running"
+        return "paused" if t["runs"] else "new"
 
     def _out(self, t, now):
         d = dict(t)
@@ -160,8 +193,10 @@ class TaskStore:
         d["files"] = list(t["files"])
         d["tags"] = list(t["tags"])
         d["waits"] = [dict(w) for w in t["waits"]]
+        d["runs"] = [dict(r) for r in t["runs"]]
         d["elapsed_s"] = self._elapsed(t, now)
-        d["running"] = not t["done"]
+        d["state"] = self._state(t)
+        d["running"] = d["state"] == "running"
         op = self._open_wait(t)
         d["waiting"] = {"who": op["who"], "since": op["from"], "elapsed_s": max(0, int((now - _dt(op["from"])).total_seconds()))} if op else None
         d["wait_s"] = self._wait_s(t, now)
@@ -205,14 +240,34 @@ class TaskStore:
             text = str(text or '').strip()[:MAX_TEXT]
             if text and sum(1 for t in self.items if self._visible(t)) < MAX_PER_DAY:
                 now = _iso(self._now())
-                self.items.append({"id": self._next, "text": text, "created": now, "started": now, "finished": None, "done": False,
+                self.items.append({"id": self._next, "text": text, "created": now, "started": None, "runs": [], "finished": None, "done": False,
                                    "hidden": False, "comment": "", "subs": [], "files": [], "tags": [], "waits": [], "legacy": False})
                 self._next += 1
                 self._save()
             return self._view()
 
+    def start(self, tid):
+        """«В работу»: секундомер пошёл (с этого момента). Выполненная или уже идущая — без изменений."""
+        with self._lock:
+            t = self._find(tid)
+            if t and self._state(t) in ("new", "paused"):
+                now = _iso(self._now())
+                t["runs"].append({"from": now, "to": None})
+                t["started"] = t["started"] or now
+                self._save()
+            return self._view()
+
+    def stop(self, tid):
+        """«Стоп»: секундомер встал, время сохранено. «В работу» продолжит с этого же значения."""
+        with self._lock:
+            t = self._find(tid)
+            if t and self._state(t) == "running":
+                t["runs"][-1]["to"] = _iso(self._now())
+                self._save()
+            return self._view()
+
     def toggle(self, tid, done=None):
-        """Галочка «Выполнено»: фиксирует час и минуту выполнения; снять — задача снова в работе (секундомер идёт дальше)."""
+        """Галочка «Выполнено»: останавливает секундомер и фиксирует час и минуту выполнения; снять — задача на паузе (продолжить — «В работу»)."""
         with self._lock:
             t = self._find(tid)
             if t:
@@ -223,6 +278,8 @@ class TaskStore:
                     op = self._open_wait(t)
                     if want and op:
                         op["to"] = t["finished"]                   # выполнили — ждать больше нечего
+                    if want and t["runs"] and t["runs"][-1]["to"] is None:
+                        t["runs"][-1]["to"] = t["finished"]        # и секундомер встаёт
                     t["legacy"] = False if want else t["legacy"]
                     self._save()
             return self._view()
@@ -236,8 +293,8 @@ class TaskStore:
             return self._view()
 
     def set_times(self, tid, created, started=None, finished=None):
-        """Правка времён: когда создана, с какого времени идёт, когда закончена (минуты — «ГГГГ-ММ-ДДTЧЧ:ММ»).
-        Возвращает {"ok": True, ...вид} или {"error": текст}."""
+        """Правка времён: когда создана, с какого времени идёт (первый запуск), когда закончена (минуты — «ГГГГ-ММ-ДДTЧЧ:ММ»).
+        Пустое «начата» у не начатой задачи — остаётся не начатой. Возвращает {"ok": True, ...вид} или {"error": текст}."""
         with self._lock:
             t = self._find(tid)
             if not t:
@@ -248,7 +305,6 @@ class TaskStore:
                 return {"error": "Укажите, когда задача создана."}
             if started and s is None or finished and f is None:
                 return {"error": "Время — в формате ДД.ММ.ГГГГ ЧЧ:ММ."}
-            s = s or c
             now = self._now()
             if t["done"] and f is None:
                 return {"error": "Укажите, когда задача выполнена (или снимите галочку)."}
@@ -257,9 +313,30 @@ class TaskStore:
             for name, v in (("Создана", c), ("Начата", s), ("Выполнена", f)):
                 if v and v > now.replace(second=59):
                     return {"error": f"{name}: это время ещё не наступило."}
-            if f and f < s:
+            if s and f and f < s:
                 return {"error": "Выполнена раньше, чем начата."}
-            t["created"], t["started"] = _iso(c), _iso(s)
+            runs = [dict(r) for r in t["runs"]]
+            if s:
+                if not runs:
+                    runs = [{"from": _iso(s), "to": _iso(f) if f else None}]            # «с … по …» задним числом / запуск с нужного момента
+                elif len(runs) == 1:
+                    runs[0]["from"] = _iso(s)
+                    if t["done"]:
+                        runs[0]["to"] = _iso(f)
+                else:
+                    runs[0]["from"] = _iso(s)
+                    if t["done"]:
+                        runs[-1]["to"] = _iso(f)
+            elif t["done"] and runs:
+                runs[-1]["to"] = _iso(f)
+            prev = None
+            for r in runs:                                   # периоды не должны вылезать друг за друга
+                a, b = _dt(r["from"]), _dt(r["to"]) if r["to"] else None
+                if (b and b < a) or (prev and a < prev):
+                    return {"error": "Время не сходится с паузами задачи — исправьте «начата» / «выполнена»."}
+                prev = b or a
+            t["created"], t["runs"] = _iso(c), runs
+            t["started"] = runs[0]["from"] if runs else None
             t["finished"] = _iso(f) if f else None
             t["legacy"] = False
             self._save()
@@ -420,20 +497,16 @@ class TaskStore:
             return self._view()
 
     # ---------- журнал, отчёт, Excel ----------
-    def _span(self, t, now):
-        a = _dt(t["started"])
-        b = _dt(t["finished"]) if t["done"] else now
-        return a, b
+    def _overlap(self, t, now, lo, hi):
+        """Сколько секунд работы над задачей пришлось на период [lo, hi)."""
+        return sum(max(0, int((min(b, hi) - max(a, lo)).total_seconds())) for a, b in self._runs_dt(t, now))
 
     def _row(self, t, now, lo=None, hi=None):
         legacy = t["legacy"]
-        a, b = self._span(t, now)
-        part = None
-        if lo is not None and a and b:                   # сколько из времени задачи пришлось на период [lo, hi)
-            part = max(0, int((min(b, hi) - max(a, lo)).total_seconds()))
+        part = self._overlap(t, now, lo, hi) if lo is not None else None   # сколько из времени задачи пришлось на период [lo, hi)
         op = self._open_wait(t)
         return {"id": t["id"], "created": _dt(t["created"]), "started": _dt(t["started"]), "finished": None if legacy else _dt(t["finished"]),
-                "done": t["done"], "text": t["text"], "elapsed_s": None if legacy and t["done"] else self._elapsed(t, now),
+                "done": t["done"], "state": self._state(t), "text": t["text"], "elapsed_s": None if legacy and t["done"] else self._elapsed(t, now),
                 "period_s": part, "tags": list(t["tags"]), "wait_s": self._wait_s(t, now), "waiting_who": (op["who"] or 'ответ') if op else '',
                 "subs": [(s["text"], s["done"]) for s in t["subs"]], "comment": t["comment"], "files": list(t["files"]), "legacy": legacy}
 
@@ -451,9 +524,8 @@ class TaskStore:
             hi = datetime(end.year, end.month, end.day) + timedelta(days=1)
             out = []
             for t in sorted(self.items, key=lambda t: (t["created"], t["id"])):
-                a, b = self._span(t, now)
                 c, f = _dt(t["created"]), _dt(t["finished"]) if t["done"] else None
-                touched = (c and lo <= c < hi) or (f and lo <= f < hi) or (a and b and a < hi and b > lo)
+                touched = (c and lo <= c < hi) or (f and lo <= f < hi) or self._overlap(t, now, lo, hi) > 0 or any(a < hi and b > lo for a, b in self._runs_dt(t, now))
                 if touched:
                     out.append(self._row(t, now, lo, min(hi, now + timedelta(seconds=1)) if hi > now else hi))
             return out
@@ -470,19 +542,19 @@ class TaskStore:
             hi = lo + timedelta(days=1)
             out = []
             for t in sorted(self.items, key=lambda t: (t["created"], t["id"])):
-                a, b = self._span(t, now)
                 c, f = _dt(t["created"]), _dt(t["finished"]) if t["done"] else None
+                ran = any(a < hi and b > lo for a, b in self._runs_dt(t, now))
                 role = []
                 if c and lo <= c < hi:
                     role.append("создана")
                 if f and lo <= f < hi and not t["legacy"]:
                     role.append("выполнена")
-                if not role and a and b and a < hi and b > lo and not t["legacy"]:
+                if not role and ran and not t["legacy"]:
                     role.append("в работе")
                 if role:
                     r = self._row(t, now, lo, min(hi, now) if hi > now else hi)
                     out.append({"id": t["id"], "text": t["text"], "role": role, "done": t["done"], "tags": r["tags"], "elapsed_s": r["elapsed_s"],
-                                "day_s": r["period_s"], "wait_s": r["wait_s"], "waiting_who": r["waiting_who"],
+                                "state": r["state"], "day_s": r["period_s"], "wait_s": r["wait_s"], "waiting_who": r["waiting_who"],
                                 "created": _iso(c) if c else None, "finished": _iso(f) if f else None, "hidden": t["hidden"]})
             return out
 

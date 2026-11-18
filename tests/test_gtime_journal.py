@@ -123,9 +123,11 @@ def test_task_tags_and_waiting(tmp_path):
 def test_tasks_on_day_counts_and_period_rows(tmp_path):
     c, st = make_store(tmp_path, Clock(d=10, h=10))
     a = st.add("долгая")["tasks"][0]["id"]
-    st.add("быстрая")
+    st.start(a)
+    b = [t["id"] for t in st.add("быстрая")["tasks"] if t["text"] == "быстрая"][0]
+    st.start(b)
     c.wall += 3600
-    st.toggle(st.get()["tasks"][1]["id"])                                # «быстрая» выполнена в 11:00
+    st.toggle(b)                                                         # «быстрая» выполнена в 11:00
     c.wall += 86400 * 2                                                  # 12 ноября
     st.toggle(a)                                                         # «долгая» выполнена 12-го
     d10 = {t["text"]: t for t in st.tasks_on_day('2026-11-10')}
@@ -319,3 +321,28 @@ def test_mini_js_has_click_to_toggle():
     src = open(os.path.join(ROOT, 'shift_timer', 'ui', 'mini.js'), encoding='utf-8').read()
     assert "toggle_main" in src and "SKIP" in src and "moved" in src       # клик по окну, кроме кнопок; перетаскивание — не клик
     assert 'main_visible' in open(os.path.join(ROOT, 'shift_timer', 'ui', 'main.js'), encoding='utf-8').read()
+
+
+def test_mini_window_has_no_taskbar_button_hook(tmp_path, monkeypatch):
+    import time as _t
+    from test_shift_timer import FakeWin
+    c, api = make_api_for_taskbar(tmp_path)
+    calls = []
+    monkeypatch.setattr(shift_app, 'hide_taskbar_button', lambda title: calls.append(title) or True)
+    api._mini = FakeWin()
+    api._s["mini_visible"] = True
+    api._apply_mini()                                                          # показали мини-окно — значок в панели задач убирается
+    _t.sleep(0.8)
+    assert calls == [shift_app.MINI_TITLE] and shift_app.MINI_TITLE == 'GTime — мини' and shift_app.TITLE == 'GTime'
+    api._s["mini_visible"] = False
+    api._notice({"id": 1, "kind": "hour", "text": "x"})                        # и когда окно показывается ради уведомления
+    _t.sleep(0.5)
+    assert calls.count(shift_app.MINI_TITLE) == 2
+    if sys.platform != 'win32':
+        monkeypatch.undo()
+        assert shift_app.hide_taskbar_button('любой') is False                 # не Windows — безопасно ничего не делает
+
+
+def make_api_for_taskbar(tmp_path):
+    from test_shift_timer import make_api
+    return make_api(tmp_path)

@@ -955,24 +955,66 @@ def test_tasks_persist_and_ids_not_reused(tmp_path):
     assert not os.path.exists(str(tmp_path / 'tasks.json.tmp'))
 
 
-def test_task_timer_created_started_and_finish_minute(tmp_path):
+def test_new_task_is_not_running_until_started(tmp_path):
     c, st = make_store(tmp_path)
     t = st.add("Ответ от коллеги")["tasks"][0]
-    assert t["created"] == t["started"] == "2026-11-17T09:00:00" and t["elapsed_s"] == 0 and t["running"]
-    c.wall += 3725                                                        # 1 ч 2 мин 5 с
-    assert st.get()["tasks"][0]["elapsed_s"] == 3725
-    v = st.toggle(t["id"])                                                # «Выполнено» фиксирует час и минуту
+    assert t["state"] == "new" and t["started"] is None and t["running"] is False and t["elapsed_s"] == 0
+    assert t["created"] == "2026-11-17T09:00:00"
+    c.wall += 3600
+    assert st.get()["tasks"][0]["elapsed_s"] == 0                        # час прошёл, секундомер не идёт
+    v = st.stop(t["id"])                                                  # стоп у не начатой — ничего не меняет
+    assert v["tasks"][0]["state"] == "new"
+    v = st.start(t["id"])                                                 # «В работу»
     d = v["tasks"][0]
-    assert d["finished"] == "2026-11-17T10:02:05" and d["elapsed_s"] == 3725 and not d["running"]
+    assert d["state"] == "running" and d["started"] == "2026-11-17T10:00:00" and d["running"] and d["elapsed_s"] == 0
     c.wall += 600
-    assert st.get()["tasks"][0]["elapsed_s"] == 3725                      # выполненная — секундомер стоит
-    v = st.toggle(t["id"])                                                # вернули в работу — идёт дальше от начала
-    assert v["tasks"][0]["finished"] is None and v["tasks"][0]["elapsed_s"] == 3725 + 600
+    assert st.get()["tasks"][0]["elapsed_s"] == 600
+    assert st.start(t["id"])["tasks"][0]["runs"] == [{"from": "2026-11-17T10:00:00", "to": None}]       # повторное «В работу» ничего не дублирует
+
+
+def test_task_stop_and_resume_accumulates_only_working_time(tmp_path):
+    c, st = make_store(tmp_path)
+    tid = st.add("долгая")["tasks"][0]["id"]
+    st.start(tid)
+    c.wall += 1200                                                        # 20 минут работы
+    d = st.stop(tid)["tasks"][0]
+    assert d["state"] == "paused" and not d["running"] and d["elapsed_s"] == 1200 and d["runs"][0]["to"] == "2026-11-17T09:20:00"
+    c.wall += 7200                                                        # два часа не работали — время не идёт
+    assert st.get()["tasks"][0]["elapsed_s"] == 1200 and st.get()["tasks"][0]["state"] == "paused"
+    st.start(tid)                                                         # продолжили
+    c.wall += 600
+    d = st.get()["tasks"][0]
+    assert d["elapsed_s"] == 1800 and d["state"] == "running" and d["started"] == "2026-11-17T09:00:00" and len(d["runs"]) == 2    # «начата» — первый запуск
+    v = st.toggle(tid)                                                    # «Выполнено» останавливает секундомер и фиксирует минуту
+    d = v["tasks"][0]
+    assert d["state"] == "done" and d["finished"] == "2026-11-17T11:30:00" and d["elapsed_s"] == 1800 and not d["running"]
+    c.wall += 600
+    assert st.get()["tasks"][0]["elapsed_s"] == 1800
+    d = st.toggle(tid)["tasks"][0]                                        # снять галочку — на паузе, сам не побежит
+    assert d["state"] == "paused" and d["finished"] is None and d["elapsed_s"] == 1800
+    c2 = make_store(tmp_path, c)[1].get()["tasks"][0]                     # и после перезапуска всё на месте
+    assert c2["runs"] == d["runs"] and c2["state"] == "paused"
+
+
+def test_task_done_without_start_has_zero_time_and_old_files_still_run(tmp_path):
+    import json
+    c, st = make_store(tmp_path)
+    tid = st.add("сразу выполнена")["tasks"][0]["id"]
+    d = st.toggle(tid)["tasks"][0]
+    assert d["state"] == "done" and d["elapsed_s"] == 0 and d["started"] is None and d["finished"] == "2026-11-17T09:00:00"
+    old = {"v": 2, "tasks": [{"id": 1, "text": "старая в работе", "created": "2026-11-16T09:00:00", "started": "2026-11-16T09:00:00", "finished": None, "done": False},
+                             {"id": 2, "text": "старая готова", "created": "2026-11-17T08:00:00", "started": "2026-11-17T08:30:00", "finished": "2026-11-17T09:00:00", "done": True}]}
+    (tmp_path / 'old.json').write_text(json.dumps(old, ensure_ascii=False), encoding='utf-8')
+    st2 = make_store(tmp_path, c, 'old.json')[1]
+    by = {t["text"]: t for t in st2.get()["tasks"]}
+    assert by["старая в работе"]["state"] == "running" and by["старая в работе"]["elapsed_s"] == 86400       # прежние задачи продолжают идти, как шли
+    assert by["старая готова"]["state"] == "done" and by["старая готова"]["elapsed_s"] == 1800
 
 
 def test_task_runs_for_days_not_carried_copies(tmp_path):
     c, st = make_store(tmp_path)
-    st.add("ждём согласование")
+    tid = st.add("ждём согласование")["tasks"][0]["id"]
+    st.start(tid)
     c.wall += 86400 + 10 * 3600 + 30 * 60                                 # через 1 день 10 ч 30 мин
     v = st.get()
     assert v["total"] == 1 and v["tasks"][0]["elapsed_s"] == 86400 + 37800 and v["tasks"][0]["created"].startswith("2026-11-17")
@@ -1330,8 +1372,11 @@ def test_excel_tasks_sheet(tmp_path):
     ts.add("Ждём ответ")
     ts.sub_add(a, "шаг 1")
     ts.set_comment(a, "детали")
+    ts.start(a)
     c.wall += 90 * 60 + 20
     ts.toggle(a)
+    b = [t["id"] for t in ts.get()["tasks"] if t["text"] == "Ждём ответ"][0]
+    ts.start(b)
     c.wall += 86400 + 3600 * 3 + 600
     p = tr.export_xlsx(str(tmp_path / 'o.xlsx'), ts.all_rows())
     wb = openpyxl.load_workbook(p)
@@ -1340,7 +1385,7 @@ def test_excel_tasks_sheet(tmp_path):
     done, work = vals[1], vals[2]
     assert done[0] == datetime(2026, 11, 17, 9, 0) and done[2] == datetime(2026, 11, 17, 10, 30, 20) and done[3] == 'выполнена'   # час и минута выполнения
     assert done[5] == timedelta(minutes=90, seconds=20) and done[6] == '1:30:20' and done[7] == '○ шаг 1' and done[8] == 'детали'
-    assert work[3] == 'в работе' and work[2] is None and work[6] == '1 д 4 ч 40 мин'                                                # ждём уже больше суток
+    assert work[3] == 'в работе' and work[2] is None and work[6] == '1 д 3 ч 10 мин'                                                # ждём уже больше суток
 
 
 def test_main_window_size_fits_screen():

@@ -472,3 +472,13 @@ input:disabled{ opacity:.55; }
 .pal [data-p="orange"]{ background:linear-gradient(135deg,#ff9a3c,#ffd27a); } .pal [data-p="teal"]{ background:linear-gradient(135deg,#22d3ee,#67e8f9); }
 .pal [data-p="graphite"]{ background:linear-gradient(135deg,#cbd5e1,#64748b); }
 .row[hidden]{ display:none; }
+
+/* задачи: «В работу» / «Стоп» */
+.tk2-p{ flex:none; height:26px; padding:0 11px; border-radius:99px; font-size:12px; font-weight:650; color:#fff; background:var(--accent); white-space:nowrap; }
+.tk2-p.on{ color:var(--text); background:var(--card-2); box-shadow:inset 0 0 0 1px var(--line); }
+.tm.dim{ color:var(--faint); font-weight:500; }
+.td-timer{ gap:10px; } .td-timer .k{ flex:1; }
+.tk-row{ cursor:pointer; user-select:none; }
+.tk-row .pp{ flex:none; font-style:normal; font-size:11px; width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; color:#fff; background:var(--accent); }
+.tk-row .pp.on{ color:var(--text); background:var(--card-2); box-shadow:inset 0 0 0 1px var(--line); }
+.tm.paused{ color:var(--warn); }

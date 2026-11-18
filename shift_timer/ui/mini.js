@@ -17,7 +17,9 @@ function fitTasks() {
 function renderTasks() {
     if (!TK) return;
     const ts = TK.tasks;                                                               // невыполненные выше (порядок от сервера)
-    $('tkList').innerHTML = ts.length ? ts.map(t => `<button class="tk-row${t.done ? ' done' : ''}" data-id="${t.id}" title="${esc(t.text)}"><i class="ck">${t.done ? CK : ''}</i><span>${esc(t.text)}</span><b class="tm num" data-id="${t.id}">${Shift.dur(taskSec(t))}</b></button>`).join('')
+    $('tkList').innerHTML = ts.length ? ts.map(t => `<div class="tk-row${t.done ? ' done' : ''}" data-id="${t.id}" title="${esc(t.text)}"><i class="ck">${t.done ? CK : ''}</i><span>${esc(t.text)}</span>`
+        + (t.done ? '' : `<em class="pp${t.running ? ' on' : ''}" title="${t.running ? 'Стоп' : 'Начать задачу'}">${t.running ? '⏸' : '▶'}</em>`)
+        + `<b class="tm num${t.state === 'new' ? ' dim' : t.state === 'paused' ? ' paused' : ''}" data-id="${t.id}">${t.state === 'new' ? '—' : Shift.dur(taskSec(t))}</b></div>`).join('')
         : '<div class="tk-empty">Задач пока нет — добавьте ниже</div>';
     setText($('mTaskN'), TK.total ? `${TK.done}/${TK.total}` : '');
     fitTasks();
@@ -25,7 +27,7 @@ function renderTasks() {
 const taskSec = t => t.elapsed_s + (t.running ? (performance.now() - TKAT) / 1000 : 0);
 function tickTasks() {                                                                 // секундомеры идут каждую секунду, список — раз в 3 с
     if (!TK || !tkOpen) return;
-    document.querySelectorAll('#tkList .tm').forEach(el => { const t = TK.tasks.find(x => x.id === +el.dataset.id); if (t) setText(el, Shift.dur(taskSec(t))); });
+    document.querySelectorAll('#tkList .tm').forEach(el => { const t = TK.tasks.find(x => x.id === +el.dataset.id); if (t && t.state !== 'new') setText(el, Shift.dur(taskSec(t))); });
 }
 function setTasks(v) { if (v && v.tasks) { TK = v; TKAT = performance.now(); renderTasks(); } }
 async function loadTasks() { try { setTasks(await pywebview.api.tasks_get()); } catch (e) { /* повторим через 3 с */ } }
@@ -99,7 +101,13 @@ boot(() => {
     $('mClose').onclick = () => save({ mini_visible: false });
     $('mTasks').onclick = () => setTasksOpen(!tkOpen, true);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && tkOpen) { e.preventDefault(); document.activeElement && document.activeElement.blur(); setTasksOpen(false, true); } });
-    $('tkList').onclick = async e => { const r = e.target.closest('.tk-row'); if (r) { setTasks(await pywebview.api.task_toggle(+r.dataset.id)); } };
+    $('tkList').onclick = async e => {
+        const r = e.target.closest('.tk-row');
+        if (!r) return;
+        const id = +r.dataset.id, t = TK && TK.tasks.find(x => x.id === id);
+        if (e.target.closest('.pp')) setTasks(await (t && t.running ? pywebview.api.task_stop(id) : pywebview.api.task_start(id)));      // ▶ / ⏸ — секундомер
+        else setTasks(await pywebview.api.task_toggle(id));                                                                               // остальное — галочка
+    };
     $('tkForm').onsubmit = async e => { e.preventDefault(); const v = $('tkIn').value.trim(); if (!v) return; $('tkIn').value = ''; setTasks(await pywebview.api.task_add(v)); $('tkList').scrollTop = 1e6; };
     if (App.s.mini_tasks) setTasksOpen(true, false);                                   // как оставили в прошлый раз
     $('nb').onclick = hideNotice;

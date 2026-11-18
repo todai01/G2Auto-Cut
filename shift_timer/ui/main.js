@@ -85,18 +85,19 @@ function renderTasksMain() {
         return `<div class="tk2${t.done ? ' done' : ''}" data-id="${t.id}">`
             + `<button class="ck2" data-act="t" title="${t.done ? 'Вернуть в работу' : 'Выполнено'}">${t.done ? CKS : ''}</button>`
             + `<div class="tk2-b" data-act="o"><span class="tk2-t">${escT(t.text)}</span><span class="tk2-m">${escT(meta)}</span>${tg}${wt}</div>`
-            + `<b class="tm num" data-id="${t.id}">${Shift.dur(taskSec(t))}</b><button class="tk2-x" data-act="d" title="Удалить">×</button></div>`;
+            + (t.done ? '' : `<button class="tk2-p${t.running ? ' on' : ''}" data-act="p" title="${t.running ? 'Остановить секундомер' : 'Начать задачу'}">${t.running ? '⏸ Стоп' : '▶ В работу'}</button>`)
+            + `<b class="tm num${t.state === 'new' ? ' dim' : t.state === 'paused' ? ' paused' : ''}" data-id="${t.id}">${t.state === 'new' ? 'не начата' : Shift.dur(taskSec(t))}</b><button class="tk2-x" data-act="d" title="Удалить">×</button></div>`;
     }).join('') : '<div class="empty">Пока пусто. Запишите задачу — секундомер пойдёт сам.</div>';
     tickTasks();
 }
 // секундомеры: сервер присылает «сколько прошло», секунды между опросами идут здесь
 function tickTasks() {
     if (!TKM) return;
-    document.querySelectorAll('.tk2 .tm').forEach(el => { const t = taskById(+el.dataset.id); if (t) setText(el, Shift.dur(taskSec(t))); });
+    document.querySelectorAll('.tk2 .tm').forEach(el => { const t = taskById(+el.dataset.id); if (t && t.state !== 'new') setText(el, Shift.dur(taskSec(t))); });
     document.querySelectorAll('.tk2 .tw').forEach(el => { const t = taskById(+el.dataset.id); if (t && t.waiting) el.innerHTML = waitText(t); });
     const t = tdId !== null && taskById(tdId);
     if (t) {
-        setText($('tdTimer'), Shift.dur(taskSec(t)));
+        setText($('tdTimer'), t.state === 'new' ? '—' : Shift.dur(taskSec(t)));
         const w = $('tdWaitT'); if (w && t.waiting) setText(w, Shift.dur(waitSec(t)));
     }
 }
@@ -113,10 +114,17 @@ function renderTdMeta(t) {
     else if (!t.done) $('tdWait').innerHTML = `<div class="tw-off"><input id="tdWho" maxlength="80" placeholder="От кого ждёте ответа (по желанию)" autocomplete="off"><button class="btn sm" id="tdWaitBtn" type="button">Жду ответа</button></div>${total}`;
     else $('tdWait').innerHTML = total;
 }
+const ST_RU = { new: 'Не начата', running: 'Идёт', paused: 'На паузе', done: 'Завершена' };
+function renderTdRun(t) {
+    setText($('tdState'), ST_RU[t.state] || '');
+    $('tdRun').hidden = t.done;
+    setText($('tdRun'), t.running ? '⏸ Стоп' : (t.state === 'paused' ? '▶ Продолжить' : '▶ В работу'));
+    $('tdRun').classList.toggle('primary', !t.running);
+}
 function renderTdLists() {
     const t = taskById(tdId);
     if (!t) return;
-    renderTdMeta(t);
+    renderTdMeta(t); renderTdRun(t);
     $('tdSubs').innerHTML = t.subs.length ? t.subs.map(s => `<div class="td-row${s.done ? ' done' : ''}" data-id="${s.id}"><button class="ck2 sm" data-a="st">${s.done ? CKS : ''}</button><span>${escT(s.text)}</span><button class="tk2-x on" data-a="sd" title="Удалить">×</button></div>`).join('')
         : '<div class="td-empty">Нет подзадач</div>';
     setText($('tdSubN'), t.subs.length ? `${t.subs.filter(s => s.done).length}/${t.subs.length}` : '');
@@ -394,6 +402,7 @@ boot(() => {
         if (!row || !act) return;
         const id = +row.dataset.id;
         if (act.dataset.act === 't') applyTasks(await pywebview.api.task_toggle(id));
+        else if (act.dataset.act === 'p') { const t = taskById(id); applyTasks(await (t && t.running ? pywebview.api.task_stop(id) : pywebview.api.task_start(id))); }
         else if (act.dataset.act === 'd') applyTasks(await pywebview.api.task_delete(id));
         else if (act.dataset.act === 'o') openTask(id);
     };
@@ -415,6 +424,7 @@ boot(() => {
         e.preventDefault();
         pasteFiles(files);
     });
+    $('tdRun').onclick = () => { const t = taskById(tdId); if (t) tdAct(() => t.running ? pywebview.api.task_stop(tdId) : pywebview.api.task_start(tdId)); };
     $('tdTags').onclick = e => {
         const b = e.target.closest('.chip-b'), t = taskById(tdId);
         if (!b || !t) return;

@@ -144,7 +144,7 @@ async function loadEmp(open) {
     }).join('');
     setText($('emTkN'), r.tasks.length ? String(r.tasks.length) : '');
     $('emTasks').innerHTML = r.tasks.length ? r.tasks.map(x => {
-        const st = x.done ? 'выполнена' : x.waiting_who ? `жду ${x.waiting_who}` : 'в работе', dur = x.elapsed_s != null ? Shift.dur(x.elapsed_s) : '';
+        const st = x.done ? 'выполнена' : x.waiting_who ? `жду ${x.waiting_who}` : ({ new: 'не начата', paused: 'на паузе' }[x.state] || 'в работе'), dur = x.elapsed_s != null ? Shift.dur(x.elapsed_s) : '';
         const body = [`создана ${x.created.slice(8, 10)}.${x.created.slice(5, 7)} ${x.created.slice(11, 16)}`, x.finished ? `выполнена ${x.finished.slice(8, 10)}.${x.finished.slice(5, 7)} ${x.finished.slice(11, 16)}` : '',
                       x.wait_s ? `ждали ответа ${Shift.dur(x.wait_s)}` : '', x.files.length ? `файлы: ${x.files.join(', ')}` : ''].filter(Boolean).map(escT).join(' · ')
             + (x.comment ? `<div class="em-c">${escT(x.comment)}</div>` : '')

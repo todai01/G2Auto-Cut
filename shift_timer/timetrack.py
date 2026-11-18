@@ -89,6 +89,7 @@ def hm_text(sec):
     return f"{sec // 3600:02d}:{sec % 3600 // 60:02d}"
 
 
+TASK_STATUS = {"new": 'не начата', "running": 'в работе', "paused": 'на паузе', "done": 'выполнена'}
 MARKS = {"vacation": "отпуск", "sick": "больничный", "dayoff": "выходной"}
 
 
@@ -699,7 +700,7 @@ class Tracker:
             for r in task_rows:
                 sub = '\n'.join(('✓ ' if d else '○ ') + t for t, d in r["subs"])
                 el = r["elapsed_s"]
-                tk.append([r["created"], r["started"], r["finished"], 'выполнена' if r["done"] else ('ждём ответа' if r.get("waiting_who") else 'в работе'), r["text"],
+                tk.append([r["created"], r["started"], r["finished"], TASK_STATUS.get(r.get("state"), 'в работе') if not r.get("waiting_who") or r["done"] else 'ждём ответа', r["text"],
                            timedelta(seconds=el) if el is not None else None, fmt_dur(el) if el is not None else '', sub,
                            r["comment"], '\n'.join(r["files"]), ', '.join(r.get("tags") or []),
                            timedelta(seconds=r["wait_s"]) if r.get("wait_s") else None, r.get("waiting_who") or ''])

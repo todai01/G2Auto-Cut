@@ -187,7 +187,7 @@
     </div>
     <div class="dlg tall" id="dlgTask" hidden>
       <textarea class="tdt-in" id="tdText" rows="2" maxlength="200" aria-label="Задача"></textarea>
-      <div class="td-timer"><span class="k">Идёт</span><b class="tm num" id="tdTimer">0:00:00</b></div>
+      <div class="td-timer"><span class="k" id="tdState">Не начата</span><button class="btn sm primary" id="tdRun" type="button">▶ В работу</button><b class="tm num" id="tdTimer">—</b></div>
       <div class="chips" id="tdTags"></div>
       <div class="td-wait" id="tdWait"></div>
       <label class="frow"><span>Создана</span><input type="datetime-local" id="tdCreated"></label>

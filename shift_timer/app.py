@@ -240,6 +240,7 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
             def show():                                  # вызов окна идёт в UI-поток: делаем это отдельным потоком, а не под блокировкой журнала
                 try:
                     w.show()
+                    hide_taskbar_button(MINI_TITLE)
                 except Exception:
                     pass
             threading.Thread(target=show, daemon=True).start()
@@ -295,6 +296,14 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
 
     def task_toggle(self, tid, done=None):
         return self._tasks.toggle(tid, done)
+
+    def task_start(self, tid):
+        """«В работу»: секундомер задачи пошёл."""
+        return self._tasks.start(tid)
+
+    def task_stop(self, tid):
+        """«Стоп»: секундомер задачи встал (время сохранено)."""
+        return self._tasks.stop(tid)
 
     def task_edit(self, tid, text):
         return self._tasks.edit(tid, text)
@@ -614,6 +623,7 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
                     w.on_top = self._s["mini_on_top"]
                 w.show()
                 w.on_top = self._s["mini_on_top"]
+                threading.Timer(0.4, lambda: hide_taskbar_button(MINI_TITLE)).start()
             else:
                 w.hide()
         except Exception:
@@ -729,11 +739,13 @@ def run():
     except Exception:
         pass
     x, y = mini_start_pos(webview, s["mini_pos"])
-    api._mini = _window(webview, title=TITLE + ' — мини', url=resource('ui/mini.html'), js_api=api,
+    api._mini = _window(webview, title=MINI_TITLE, url=resource('ui/mini.html'), js_api=api,
                         width=MINI_SIZE[0], height=MINI_SIZE[1], x=x, y=y, resizable=False, frameless=True, easy_drag=False,
                         on_top=s["mini_on_top"], hidden=not s["mini_visible"], text_select=False, background_color=bg)
     try:
         api._mini.events.moved += api._moved
+        api._mini.events.loaded += lambda: hide_taskbar_button(MINI_TITLE)        # у мини-окна нет своего значка в панели задач
+        api._mini.events.shown += lambda: hide_taskbar_button(MINI_TITLE)
     except Exception:
         pass
     api._main_shown = not background
@@ -748,6 +760,42 @@ def run():
     threading.Thread(target=api._t.run, daemon=True).start()   # секундный учёт времени
     webview.start()
     api._t.stop()
+
+
+def hide_taskbar_button(title):
+    """Убрать окно с этим заголовком из панели задач и Alt+Tab (стиль «окно-инструмент»). Только Windows. Мини-окно не должно иметь своего значка:
+    в панели задач остаётся значок главного окна (а когда оно скрыто в трей — никакого)."""
+    if sys.platform != 'win32':
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        u.FindWindowW.argtypes, u.FindWindowW.restype = [wintypes.LPCWSTR, wintypes.LPCWSTR], wintypes.HWND
+        hwnd = u.FindWindowW(None, title)
+        if not hwnd:
+            return False
+        get = getattr(u, 'GetWindowLongPtrW', None) or u.GetWindowLongW
+        setw = getattr(u, 'SetWindowLongPtrW', None) or u.SetWindowLongW
+        get.argtypes, get.restype = [wintypes.HWND, ctypes.c_int], ctypes.c_ssize_t
+        setw.argtypes, setw.restype = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t], ctypes.c_ssize_t
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x00000080, 0x00040000
+        style = get(hwnd, GWL_EXSTYLE)
+        new = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+        if new == style:
+            return True
+        visible = bool(u.IsWindowVisible(hwnd))
+        if visible:
+            u.ShowWindow(hwnd, 0)                         # SW_HIDE: стиль для панели задач применяется при следующем показе
+        setw(hwnd, GWL_EXSTYLE, new)
+        if visible:
+            u.ShowWindow(hwnd, 4)                         # SW_SHOWNOACTIVATE: показать, не отбирая фокус
+        return True
+    except Exception:
+        return False
+
+
+MINI_TITLE = TITLE + ' — мини'
 
 
 def start_watchdog(api, log_path=None, stall_s=20, every=5, limit=3):

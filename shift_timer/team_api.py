@@ -299,7 +299,7 @@ class TeamMixin:
         out_rows = []
         for r in sorted(rows, key=lambda r: (r["done"], r["created"])):
             out_rows.append({"id": r["id"], "text": r["text"], "done": r["done"], "created": _iso(r["created"]), "finished": _iso(r["finished"]) if r["finished"] else None,
-                             "elapsed_s": r["elapsed_s"], "period_s": r["period_s"], "tags": r["tags"], "wait_s": r["wait_s"], "waiting_who": r["waiting_who"],
+                             "state": r["state"], "elapsed_s": r["elapsed_s"], "period_s": r["period_s"], "tags": r["tags"], "wait_s": r["wait_s"], "waiting_who": r["waiting_who"],
                              "subs": [{"text": t, "done": d} for t, d in r["subs"]], "comment": r["comment"], "files": r["files"]})
         return {"login": a["login"], "name": a.get("name"), "updated": snap.get("updated"), "summary": s, "days": by_day, "tasks": out_rows}
 
