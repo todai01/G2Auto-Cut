@@ -251,3 +251,62 @@ def test_from_audacity_other_record_refused(listen):
     listen._listen_aud = rows(listen)['AUDI 100']["path"]
     orig = md5(p)
     assert "error" in listen.listen_from_audacity(p) and md5(p) == orig
+
+
+# ---------- проигрывание цепочки ----------
+def _chain_api(listen, tmp_path):
+    """Играет в стаб-плеере; возвращает (api, список сыгранных файлов)."""
+    played = []
+    listen.player.play = lambda p: played.append((p, open(p, 'rb').read()))
+    listen.player.stop = lambda: None
+    return listen, played
+
+
+def test_play_unique_files_and_latest_wins(listen, tmp_path):
+    import threading
+    from pydub import AudioSegment
+    api, played = _chain_api(listen, tmp_path)
+    p = rows(api)['AUDI 80']["path"]
+    res = []
+
+    def go():
+        res.append(api.listen_play({"path": p}, None, None, None))
+    ts = [threading.Thread(target=go) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert any(r.get("playing") for r in res)
+    for _p, data in played:                                  # каждый запуск — целый читаемый файл
+        assert data[:4] == b'RIFF'
+    names = [pp for pp, _ in played]
+    assert len(set(names)) == len(names)                     # файлы разные — не пишут друг в друга
+    assert all(r.get("playing") or r.get("error") == 'skip' for r in res)
+
+
+def test_play_seek(listen, tmp_path):
+    from pydub import AudioSegment
+    api, played = _chain_api(listen, tmp_path)
+    p = rows(api)['AUDI 80']["path"]
+    full = api.listen_play({"path": p}, None, None, 'var')
+    r = api.listen_play({"path": p}, None, None, 'var', None, 'var', 300)
+    assert r["from"] == 300 and abs(r["duration"] - full["duration"]) < 0.01
+    got = AudioSegment.from_file(played[-1][0])
+    assert abs(len(got) - (full["duration"] * 1000 - 300)) < 30
+    big = api.listen_play({"path": p}, None, None, 'var', None, 'var', 10 ** 6)   # за краем — не тишина, а конец
+    assert 0 < len(AudioSegment.from_file(played[-1][0])) <= 60
+
+
+def test_play_mixed_formats(listen, tmp_path):
+    """Начало и конец другой частоты / каналов / разрядности — цепочка собирается целой, не рваной."""
+    from pydub import AudioSegment
+    api, played = _chain_api(listen, tmp_path)
+    p = rows(api)['AUDI 80']["path"]
+    base = AudioSegment.from_file(p)
+    a = str(tmp_path / 'st.wav')
+    b = str(tmp_path / 'en.wav')
+    base.set_frame_rate(16000).set_channels(2).set_sample_width(3).export(a, format='wav')
+    base.set_frame_rate(48000).set_sample_width(4).export(b, format='wav')
+    r = api.listen_play({"path": p}, {"path": a}, {"path": b}, None)
+    got = AudioSegment.from_file(played[-1][0])
+    want = sum(m["ms"] for m in r["marks"])
+    assert abs(len(got) - want) < 40 and got.channels == 2 and got.sample_width == 2
+    assert got.rms > 0

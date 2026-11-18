@@ -24,6 +24,8 @@ from core.tts_synth import _SynthWorker, clean_wav, synth_collect, preset_pick, 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
 LISTEN_SKIP_DIRS = {'_до_правок', '_синтез'}
 LISTEN_SYNTH_DIR = '_синтез'
+_LISTEN_PLAY_LOCK = threading.Lock()
+_LISTEN_PLAY = {"n": 0, "file": None}      # номер последнего запроса «играть» и его временный файл
 LISTEN_TPL_FILE = '.gvox_listen_tpl.json'       # шаблон срезки — в папке записей
 LISTEN_FLAG_FILE = '.gvox_listen_flags.json'    # «исправить потом» — названия строк
 LISTEN_LANG_DIRS = {'ru': 'ru', 'rus': 'ru', 'рус': 'ru', 'русский': 'ru',
@@ -722,9 +724,14 @@ class ListenMixin:
             return self._listen_seg(p)                           # без правки — файл как есть (из кэша)
         return self._listen_render(p, part.get("ranges"), part.get("gain", 0), part.get("tempo", 1))
 
-    def listen_play(self, var=None, start=None, end=None, only=None, _gen=None):
+    def listen_play(self, var=None, start=None, end=None, only=None, _gen=None, seek_kind=None, seek_ms=0):
         """Конец начала + переменная + начало продолжения (кратко — по LISTEN_CTX_MS),
-        или один кусок (only). Возвращает длительность и где начинается каждый кусок."""
+        или один кусок (only). Возвращает длительность и где начинается каждый кусок.
+        seek_kind / seek_ms — начать с места внутри куска (клик по дорожке): seek_ms — от начала куска
+        после правки (до срезки «кратко»). Длительность и marks — всей цепочки, from — откуда звучит."""
+        with _LISTEN_PLAY_LOCK:                                # свой номер: звучит только последний запрос
+            _LISTEN_PLAY["n"] += 1
+            my = _LISTEN_PLAY["n"]
         self.player.stop()
         ls = self._ls()
         start = start or ({"path": ls["start"]} if ls["start"] else None)
@@ -734,32 +741,56 @@ class ListenMixin:
             chain = [c for c in chain if c[0] == only]
         segs, marks = [], []
         ctx = ls.get("ctx_ms") or self.LISTEN_CTX_MS
+        at = None                                              # где в цепочке кусок, с которого начать
         for kind, part in chain:
             seg = self._listen_part(part) if part else None
             if seg is None:
                 continue
+            cut = 0
             if not only and ls["short"]:
                 if kind == "start" and len(seg) > ctx:
-                    seg = seg[-ctx:]
+                    cut = len(seg) - ctx
+                    seg = seg[-ctx:].fade_in(8)                # срез посреди звука — без щелчка
                 elif kind == "end" and len(seg) > ctx:
-                    seg = seg[:ctx]
+                    seg = seg[:ctx].fade_out(8)
+            if kind == seek_kind:
+                at = (sum(m["ms"] for m in marks), max(0, int(seek_ms or 0) - cut), len(seg))
             segs.append(seg)
             marks.append({"kind": kind, "ms": len(seg)})
         if not segs:
             return {"error": "Нечего играть — нет записи."}
         rate = max(s.frame_rate for s in segs)
         ch = max(s.channels for s in segs)
-        out = AudioSegment.empty().set_frame_rate(rate)
+        out = AudioSegment.empty().set_frame_rate(rate).set_channels(ch).set_sample_width(2)
         for s in segs:
             out += s.set_frame_rate(rate).set_channels(ch).set_sample_width(2)
+        off = 0
+        if at:
+            off = at[0] + min(at[1], max(0, at[2] - 40))
+            off = min(off, max(0, len(out) - 40))
+        play = out[off:] if off > 0 else out
         if _gen is not None and ls.get("go") != _gen:
             return {"error": "skip"}                          # уже перешли на другую строку
-        dst = os.path.join(tempfile.gettempdir(), f"gvox_listen_{os.getpid()}.wav")
-        out.export(dst, format='wav')
-        if _gen is not None and ls.get("go") != _gen:
+        if my != _LISTEN_PLAY["n"]:
+            return {"error": "skip"}                          # пока собирали — пришёл новый запрос
+        dst = os.path.join(tempfile.gettempdir(), f"gvox_listen_{os.getpid()}_{my}.wav")
+        play.export(dst, format='wav')
+        if (_gen is not None and ls.get("go") != _gen) or my != _LISTEN_PLAY["n"]:
+            self._listen_play_rm(dst)
             return {"error": "skip"}
         self.player.play(dst)
-        return {"playing": True, "duration": len(out) / 1000.0, "marks": marks}
+        with _LISTEN_PLAY_LOCK:
+            old, _LISTEN_PLAY["file"] = _LISTEN_PLAY["file"], dst
+        if old and old != dst:
+            self._listen_play_rm(old)                         # прежний файл уже не играет — убрать
+        return {"playing": True, "duration": len(out) / 1000.0, "from": off, "marks": marks}
+
+    @staticmethod
+    def _listen_play_rm(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
     def listen_stop(self):
         self.player.stop()

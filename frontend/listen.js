@@ -422,6 +422,7 @@ function listenEdDown(e) {
         else if (!moved) { lEd.sel = null; lEd.cur = start; }
         else lEd.cur = lEd.sel.a;
         listenEdRender();
+        if (!moved) listenPlayAt(start);                      // простой клик — слушать с этого места
     };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
 }
@@ -565,31 +566,43 @@ function listenPart(t) {
     return p ? { path: p } : null;
 }
 function listenStopHead() { lPlayTok++; if (lPlay && lPlay.raf) cancelAnimationFrame(lPlay.raf); lPlay = null; if (lEd) { lEd.head = null; listenEdDraw(); } lEl('listenPlayBtn').classList.remove('is-playing'); }
-async function listenPlayChain() {
+// seek — {kind, ms}: начать с места внутри куска (клик по дорожке); ms — от начала куска после правки
+async function listenPlayChain(seek) {
     if (!LS) return;
-    if (lPlay) { listenStopHead(); pywebview.api.listen_stop(); return; }
+    if (!seek && lPlay) { listenStopHead(); pywebview.api.listen_stop(); return; }
     lPlayKind = 'chain';
     let tok = ++lPlayTok;
-    let r = await pywebview.api.listen_play(listenPart('var'), listenPart('start'), listenPart('end'), null);
+    let r = await pywebview.api.listen_play(listenPart('var'), listenPart('start'), listenPart('end'), null, null, seek ? seek.kind : null, seek ? seek.ms : 0);
     listenAfterPlay(r, tok);
 }
-async function listenPlayOnly() {
+async function listenPlayOnly(seek) {
     if (!LS || !lEd) return;
-    if (lPlay) { listenStopHead(); pywebview.api.listen_stop(); return; }
+    if (!seek && lPlay) { listenStopHead(); pywebview.api.listen_stop(); return; }
     let p = listenPart(lEd.target);
     lPlayKind = 'only';
     let tok = ++lPlayTok;
-    let r = await pywebview.api.listen_play(lEd.target === 'var' ? p : null, lEd.target === 'start' ? p : null, lEd.target === 'end' ? p : null, lEd.target);
+    let r = await pywebview.api.listen_play(lEd.target === 'var' ? p : null, lEd.target === 'start' ? p : null, lEd.target === 'end' ? p : null, lEd.target, null, seek ? seek.kind : null, seek ? seek.ms : 0);
     listenAfterPlay(r, tok);
+}
+// Клик по дорожке: звучит с этого места (в фразе — или один кусок, если шла «P»); идущий звук заменяется
+function listenPlayAt(srcMs) {
+    if (!LS || !lEd) return;
+    let kept = 0;
+    lEd.ranges.forEach(([a, b]) => { if (srcMs >= b) kept += b - a; else if (srcMs > a) kept += srcMs - a; });
+    let seek = { kind: lEd.target, ms: Math.round(kept / lEd.tempo) };
+    let only = lPlay && lPlayKind === 'only';
+    clearTimeout(lReplayT);
+    listenStopHead(); pywebview.api.listen_stop();
+    only ? listenPlayOnly(seek) : listenPlayChain(seek);
 }
 // Головка на волне правки: где в цепочке звучит правленый кусок
 function listenAfterPlay(r, tok) {
     if (tok !== lPlayTok) { if (r && !r.error) pywebview.api.listen_stop(); return; }
-    if (!r || r.error) { if (r) showToast(r.error); return; }
+    if (!r || r.error) { if (r && r.error !== 'skip') showToast(r.error); return; }
     lEl('listenPlayBtn').classList.add('is-playing');
     let off = 0, mine = null;
     (r.marks || []).forEach(m => { if (lEd && m.kind === lEd.target) mine = { off, ms: m.ms }; off += m.ms; });
-    lPlay = { t0: performance.now(), d: r.duration * 1000, mine };
+    lPlay = { t0: performance.now() - (r.from || 0), d: r.duration * 1000, mine };
     let step = () => {
         if (!lPlay) return;
         let t = performance.now() - lPlay.t0;
