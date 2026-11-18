@@ -19,6 +19,7 @@ import webview
 from pydub import AudioSegment
 
 from core.voice_trim import voice_span
+from utils.wav_io import segment_like, segment_to
 from core.tts_synth import _SynthWorker, clean_wav, synth_collect, preset_pick, SYNTH_PRESET_SEL, SYNTH_SEL, SYNTH_LANG_INDEX
 
 LISTEN_EXTS = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
@@ -763,7 +764,7 @@ class ListenMixin:
         ch = max(s.channels for s in segs)
         out = AudioSegment.empty().set_frame_rate(rate).set_channels(ch).set_sample_width(2)
         for s in segs:
-            out += s.set_frame_rate(rate).set_channels(ch).set_sample_width(2)
+            out += segment_to(s, rate, ch)                     # частота — без «робота» (не set_frame_rate)
         off = 0
         if at:
             off = at[0] + min(at[1], max(0, at[2] - 40))
@@ -809,7 +810,7 @@ class ListenMixin:
             seg = self._listen_render(path, ranges, gain, tempo, src=backup)
             fmt = os.path.splitext(path)[1].lstrip('.').lower() or 'wav'
             src0 = AudioSegment.from_file(backup)                 # формат — как у исходника
-            out = seg.set_frame_rate(src0.frame_rate).set_channels(src0.channels).set_sample_width(src0.sample_width)
+            out = segment_like(seg, src0)
             self._listen_put_audio(path, lambda t: out.export(t, format='mp4' if fmt == 'm4a' else fmt))
             with open(self._listen_meta(path), 'w', encoding='utf-8') as f:
                 json.dump({"ranges": [[int(a), int(b)] for a, b in ranges], "gain": float(gain), "tempo": float(tempo)}, f)
@@ -1074,7 +1075,7 @@ class ListenMixin:
                 a, b = self._loudness(seg), self._loudness(r)
                 if a is not None and b is not None:
                     seg = seg.apply_gain(max(-15.0, min(15.0, b - a)))
-                seg = seg.set_frame_rate(r.frame_rate).set_channels(r.channels).set_sample_width(r.sample_width)
+                seg = segment_like(seg, r)
             seg.export(dst, format='wav')
         except Exception:
             pass
@@ -1376,7 +1377,7 @@ class ListenMixin:
             src0 = AudioSegment.from_file(self._audit_src(path))
             backup = self._audit_backup(path)
             fmt = os.path.splitext(path)[1].lstrip('.').lower() or 'wav'
-            out = seg.set_frame_rate(src0.frame_rate).set_channels(src0.channels).set_sample_width(src0.sample_width)
+            out = segment_like(seg, src0)
             self._listen_keep_original(path, 'до_audacity')
             self._listen_put_audio(path, lambda t: out.export(t, format='mp4' if fmt == 'm4a' else fmt))
             for meta in (self._listen_meta(path), backup + '.json'):

@@ -310,3 +310,31 @@ def test_play_mixed_formats(listen, tmp_path):
     want = sum(m["ms"] for m in r["marks"])
     assert abs(len(got) - want) < 40 and got.channels == 2 and got.sample_width == 2
     assert got.rms > 0
+
+
+def test_play_resample_no_robot(listen, tmp_path):
+    """Переменная и конец 16 кГц, начало 48 кГц: после пересчёта нет металлического шума выше полосы голоса
+    (простая интерполяция pydub оставляет его около −20 дБ — это и есть «робот»)."""
+    import numpy as np
+    from pydub import AudioSegment
+    api, played = _chain_api(listen, tmp_path)
+    rng = np.random.default_rng(1)
+    sr = 16000
+    x = rng.standard_normal(sr * 2)
+    sp = np.fft.rfft(x)
+    sp[np.fft.rfftfreq(len(x), 1 / sr) > 5000] = 0
+    x = np.fft.irfft(sp, len(x))
+    x = x / np.abs(x).max() * 0.5
+    low = AudioSegment(data=(x * 32767).astype('<i2').tobytes(), sample_width=2, frame_rate=sr, channels=1)
+    v = str(tmp_path / 'v16.wav')
+    low.export(v, format='wav')
+    hi = AudioSegment.silent(300, frame_rate=48000)
+    s = str(tmp_path / 's48.wav')
+    hi.export(s, format='wav')
+    api.listen_play({"path": v}, {"path": s}, None, None)
+    got = AudioSegment.from_file(played[-1][0])
+    assert got.frame_rate == 48000
+    a = np.array(got[300:].get_array_of_samples(), dtype=np.float64)
+    spec = np.abs(np.fft.rfft(a * np.hanning(len(a)))) ** 2
+    fr = np.fft.rfftfreq(len(a), 1 / got.frame_rate)
+    assert 10 * np.log10(spec[fr > 8000].sum() / spec[fr < 5000].sum()) < -60

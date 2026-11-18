@@ -207,3 +207,53 @@ def wav_render(dst, pieces):
         return False
     _write_wav(dst, fmt, b''.join(out))
     return True
+
+
+def resample_audio(data, rate, out_rate):
+    """Пересчёт частоты без «робота»: scipy (если есть) или через спектр (FFT).
+    data — float32 [кадры, каналы]. Простая интерполяция (pydub set_frame_rate / audioop.ratecv)
+    оставляет металлический шум — голос звучит роботизированно."""
+    import numpy as np
+    if out_rate == rate or not len(data):
+        return data
+    try:
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(int(out_rate), int(rate))
+        return resample_poly(data, int(out_rate) // g, int(rate) // g, axis=0).astype(np.float32)
+    except Exception:
+        pass
+    n = len(data)
+    m = int(round(n * out_rate / rate))
+    spec = np.fft.rfft(data, axis=0)
+    keep = min(spec.shape[0], m // 2 + 1)
+    out = np.zeros((m // 2 + 1, data.shape[1]), dtype=spec.dtype)
+    out[:keep] = spec[:keep]
+    y = np.fft.irfft(out, n=m, axis=0) * (m / n)
+    f = min(len(y) // 2, int(out_rate * 0.004))               # края — короткое затухание, чтобы не щёлкало
+    if f > 1:
+        ramp = np.linspace(0, 1, f)[:, None]
+        y[:f] *= ramp
+        y[-f:] *= ramp[::-1]
+    return y.astype(np.float32)
+
+
+def segment_to(seg, rate, channels):
+    """AudioSegment → 16 бит, нужной частоты и числа каналов; частоту меняет resample_audio."""
+    import numpy as np
+    from pydub import AudioSegment
+    seg = seg.set_sample_width(2)
+    if seg.frame_rate != rate:
+        x = np.frombuffer(seg.raw_data, '<i2').astype(np.float32).reshape(-1, seg.channels) / 32768.0
+        y = np.clip(resample_audio(x, seg.frame_rate, rate), -1.0, 1.0)
+        seg = AudioSegment(data=np.round(y * 32767).astype('<i2').tobytes(), sample_width=2,
+                           frame_rate=int(rate), channels=seg.channels)
+    return seg.set_channels(channels) if seg.channels != channels else seg
+
+
+def segment_like(seg, ref):
+    """seg — в формате ref (частота, каналы, разрядность). Частота та же — формат меняется как раньше;
+    другая — пересчёт через resample_audio (без «робота»)."""
+    if seg.frame_rate != ref.frame_rate:
+        seg = segment_to(seg, ref.frame_rate, seg.channels)
+    return seg.set_channels(ref.channels).set_sample_width(ref.sample_width)
