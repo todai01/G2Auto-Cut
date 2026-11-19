@@ -116,6 +116,8 @@ button:active{ transform: scale(0.98); }
 .custom-alert-box, .custom-alert-overlay .custom-alert-box{ background: var(--panel); border-radius: 20px; box-shadow: var(--shadow-pop); }
 .toast{ background: var(--panel-raised) !important; box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line) !important;
     -webkit-backdrop-filter: none; backdrop-filter: none; }
+.toast{ color: var(--text) !important; font-weight: 600; }          /* текст светлый: в style.css он тёмно-зелёный — для зелёной плашки */
+.toast .icon, .toast svg{ color: var(--accent-good); flex: none; }
 
 /* ---------- главное меню: заголовок и подписи разделов — как заголовки секций GTime ---------- */
 .home__logo span{ background: linear-gradient(135deg, var(--accent-primary), var(--accent-info)); -webkit-background-clip: text; background-clip: text; color: transparent; }
