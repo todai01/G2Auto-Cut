@@ -1,0 +1,126 @@
+/* ===== GVox — оформление как у GTime (тёмная тема) =====
+   Слой поверх style.css и ios.css: те же токены, что в shift_timer/ui/style.css — фон #0e1116, карточки #171b22
+   с мягкой тенью вместо рамок, скругления 13 / 16, сегменты и кнопки как в GTime, шрифт Segoe UI Variable.
+   Раскладку не трогает. Отключить — убрать строку <link … gtime.css> в index.html (останется iOS-слой). */
+
+:root{
+    --bg: #0e1116;
+    --panel: #171b22;                 /* карточка */
+    --panel-raised: #1e232c;          /* карточка-2: кнопки, поля, подложки */
+    --screen: #0b0e13;                /* утопленные области: волны, дорожки */
+    --border: rgba(255, 255, 255, 0.08);
+    --border-soft: rgba(255, 255, 255, 0.05);
+
+    --text: #f3f5f8;
+    --text-dim: #98a1b0;
+    --text-faint: #667085;
+
+    --accent-primary: #5b8cff;
+    --accent-good: #34d399;
+    --accent-trash: #e5484d;
+    --accent-var: #fbbf24;
+    --accent-mode: #8b8bff;
+    --accent-info: #2dd4b0;
+
+    --tint-primary: rgba(91, 140, 255, 0.15);
+    --tint-good:    rgba(52, 211, 153, 0.15);
+    --tint-trash:   rgba(229, 72, 77, 0.16);
+    --tint-var:     rgba(251, 191, 36, 0.15);
+    --tint-mode:    rgba(139, 139, 255, 0.15);
+    --tint-info:    rgba(45, 212, 176, 0.15);
+
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hi: rgba(255, 255, 255, 0.12);
+    --fill-lo: rgba(255, 255, 255, 0.04);
+    --hairline: rgba(255, 255, 255, 0.08);
+    --line: rgba(255, 255, 255, 0.08);
+    --track: rgba(255, 255, 255, 0.09);
+
+    --radius-sm: 10px;
+    --radius-md: 13px;
+    --radius-lg: 16px;
+
+    --font-ui: "Segoe UI Variable Text", "Segoe UI", "Inter", -apple-system, system-ui, sans-serif;
+
+    --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-screen: inset 0 0 0 1px var(--line);
+    --shadow-pop: 0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+body{ letter-spacing: -0.005em; font-feature-settings: normal; }
+::selection{ background: rgba(91, 140, 255, 0.38); color: #fff; }
+::-webkit-scrollbar{ width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb{ background: var(--track); border: 0; border-radius: 6px; background-clip: border-box; }
+::-webkit-scrollbar-thumb:hover{ background: var(--fill-hi); border: 0; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 28%, transparent);
+}
+button:active{ transform: scale(0.98); }
+
+/* ---------- кнопки: заливка «карточка-2» + тонкая линия, как .btn в GTime ---------- */
+.btn-ghost, .btn-tile, .tts-rbtn{
+    background: var(--panel-raised); box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; letter-spacing: -0.005em;
+}
+.btn-ghost, .tts-rbtn{ border-radius: 11px; }
+.btn-ghost--compact{ border-radius: 9px; }
+.btn-ghost:hover, .btn-tile:hover, .tts-rbtn:hover{ background: var(--panel-raised); filter: brightness(1.1); }
+.btn-ghost--var{ background: var(--tint-var); box-shadow: none; }
+.btn-ghost--info{ background: var(--tint-info); box-shadow: none; }
+.btn-ghost--good{ background: var(--tint-good); box-shadow: none; }
+.btn-ghost--danger, .btn-alert{ background: var(--tint-trash); box-shadow: none; }
+.btn-ghost--var:hover, .btn-ghost--info:hover, .btn-ghost--good:hover, .btn-ghost--danger:hover, .btn-alert:hover{ filter: brightness(1.18); }
+.tts-rbtn--stop, .tts-rbtn--start{ background: var(--tint-trash); box-shadow: none; }
+.tts-rbtn--go{ background: var(--tint-good); box-shadow: none; }
+.tts-rbtn--live.is-on, .tts-rbtn--fast.is-on, .tts-rbtn.is-on{ background: var(--tint-var); box-shadow: none; }
+.custom-alert-btn{ border-radius: 13px; }
+.btn-secondary{ background: var(--panel-raised) !important; box-shadow: inset 0 0 0 1px var(--line) !important; }
+.help-btn, .modal-close{ background: var(--panel-raised); box-shadow: inset 0 0 0 1px var(--line); }
+
+/* ---------- поля ---------- */
+.search-input, select.search-input, textarea{
+    background-color: var(--panel-raised); box-shadow: inset 0 0 0 1px var(--line); border-radius: 10px;
+}
+.search-input:focus{ background-color: var(--panel-raised);
+    box-shadow: inset 0 0 0 1px var(--accent-primary), 0 0 0 3px color-mix(in srgb, var(--accent-primary) 25%, transparent); }
+
+/* ---------- сегменты (RU / KZ, Фразы / Переменные, вкладки): .seg из GTime ---------- */
+.listen-lang, .tts-lang, .listen-tabs{
+    display: inline-flex; padding: 3px; gap: 2px; border: 0; border-radius: 11px; overflow: visible;
+    background: var(--panel-raised); box-shadow: inset 0 0 0 1px var(--line);
+}
+.listen-tabs{ display: flex; }
+.listen-lang button, .tts-lang button, .listen-tabs button{
+    border: 0; border-radius: 8px; padding: 5px 12px; background: transparent; color: var(--text-dim); font-weight: 600; transition: background .15s, color .15s;
+}
+.listen-lang--sm button, .tts-lang button{ padding: 3px 10px; }
+.listen-lang button + button, .tts-lang button + button{ border-left: 0; }
+.listen-lang button.is-on, .tts-lang button.is-on, .listen-tabs button.is-on{
+    background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- карточки: тень вместо рамки ---------- */
+.lp-card, .listen-side, .lp-progress, .tts-rail-wrap, .tts-recbar, .stat-row, .stat-card, .loading-card, .home__rows, .option-card, .audit-path{
+    border-color: transparent;
+}
+.lp-card, .listen-side, .tts-rail-wrap, .tts-recbar, .home__rows{ border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); }
+.stat-card{ background: var(--panel); }
+.stat-row{ border-radius: 12px; }
+.home__rows{ border-radius: 16px; }
+.home__row + .home__row::before{ left: 16px; background: var(--line); height: 1px; }
+.tts-take{ background: var(--panel-raised); }
+.tts-take:hover{ background: #262c37; }
+.audit-path{ background: var(--panel-raised); }
+
+/* ---------- окна и тосты ---------- */
+.custom-alert-overlay{ background: rgba(0, 0, 0, 0.42) !important; -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.custom-alert-box, .custom-alert-overlay .custom-alert-box{ background: var(--panel); border-radius: 20px; box-shadow: var(--shadow-pop); }
+.toast{ background: var(--panel-raised) !important; box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line) !important;
+    -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---------- главное меню: заголовок и подписи разделов — как заголовки секций GTime ---------- */
+.home__logo span{ background: linear-gradient(135deg, var(--accent-primary), var(--accent-info)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.home__title{ font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-dim); }
+.home__icon{ border-radius: 9px; }
+
+/* прогресс-полосы — градиент акцент → бирюза */
+.lp-progress__bar i, #listenProgBar{ background: linear-gradient(90deg, var(--accent-primary), var(--accent-info)); }

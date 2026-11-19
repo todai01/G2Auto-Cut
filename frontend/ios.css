@@ -15,19 +15,19 @@
     --text-dim: #a1a1a8;
     --text-faint: #6a6a70;
 
-    --accent-primary: #0a84ff;
-    --accent-good: #30d158;
-    --accent-trash: #ff453a;
-    --accent-var: #ff9f0a;
+    --accent-primary: #5b8cff;
+    --accent-good: #34d399;
+    --accent-trash: #e5484d;
+    --accent-var: #fbbf24;
     --accent-mode: #7d7aff;
-    --accent-info: #40c8e0;
+    --accent-info: #2dd4b0;
 
-    --tint-primary: rgba(10, 132, 255, 0.14);
-    --tint-good:    rgba(48, 209, 88, 0.14);
-    --tint-trash:   rgba(255, 69, 58, 0.14);
-    --tint-var:     rgba(255, 159, 10, 0.14);
+    --tint-primary: rgba(91, 140, 255, 0.14);
+    --tint-good:    rgba(52, 211, 153, 0.14);
+    --tint-trash:   rgba(229, 72, 77, 0.14);
+    --tint-var:     rgba(251, 191, 36, 0.14);
     --tint-mode:    rgba(125, 122, 255, 0.14);
-    --tint-info:    rgba(64, 200, 224, 0.14);
+    --tint-info:    rgba(45, 212, 176, 0.14);
 
     --fill: rgba(120, 120, 128, 0.24);            /* заливка кнопок и полей */
     --fill-hi: rgba(120, 120, 128, 0.36);
@@ -59,7 +59,7 @@ body{
     letter-spacing: -0.011em;
     font-feature-settings: "cv11", "ss01", "tnum" 0;
 }
-::selection{ background: rgba(10,132,255,0.38); color: #fff; }
+::selection{ background: rgba(91, 140, 255,0.38); color: #fff; }
 
 /* тонкие полосы прокрутки */
 ::-webkit-scrollbar{ width: 8px; height: 8px; }
@@ -69,7 +69,7 @@ body{
 /* нажатие — лёгкое сжатие, без сдвига */
 button:active{ transform: scale(0.97); }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
-    outline: none; box-shadow: 0 0 0 3px rgba(10,132,255,0.45);
+    outline: none; box-shadow: 0 0 0 3px rgba(91, 140, 255,0.45);
 }
 
 kbd{
@@ -88,13 +88,13 @@ kbd{
 .btn-ghost--compact{ height: 26px; padding: 0 10px; border-radius: 7px; font-size: 12px; }
 
 .btn-ghost--var{ background: var(--tint-var); border-color: transparent; }
-.btn-ghost--var:hover{ background: rgba(255,159,10,0.24); border-color: transparent; }
+.btn-ghost--var:hover{ background: rgba(251, 191, 36,0.24); border-color: transparent; }
 .btn-ghost--info{ background: var(--tint-info); border-color: transparent; }
-.btn-ghost--info:hover{ background: rgba(64,200,224,0.24); border-color: transparent; }
+.btn-ghost--info:hover{ background: rgba(45, 212, 176,0.24); border-color: transparent; }
 .btn-ghost--good{ background: var(--tint-good); border-color: transparent; }
-.btn-ghost--good:hover{ background: rgba(48,209,88,0.24); border-color: transparent; }
+.btn-ghost--good:hover{ background: rgba(52, 211, 153,0.24); border-color: transparent; }
 .btn-ghost--danger, .btn-alert{ background: var(--tint-trash); border-color: transparent; }
-.btn-ghost--danger:hover, .btn-alert:hover{ background: rgba(255,69,58,0.24); border-color: transparent; }
+.btn-ghost--danger:hover, .btn-alert:hover{ background: rgba(229, 72, 77,0.24); border-color: transparent; }
 
 .btn-tile{ border-radius: var(--radius-md); background: var(--fill); border-color: transparent; font-weight: 600; }
 .btn-tile:hover{ background: var(--fill-hi); border-color: transparent; }
@@ -121,7 +121,7 @@ kbd{
     background-color: var(--fill-lo); border-color: transparent; border-radius: 10px;
     padding-top: 9px; padding-bottom: 9px; font-size: 13.5px;
 }
-.search-input:focus{ border-color: transparent; box-shadow: 0 0 0 3px rgba(10,132,255,0.4); background-color: var(--fill); }
+.search-input:focus{ border-color: transparent; box-shadow: 0 0 0 3px rgba(91, 140, 255,0.4); background-color: var(--fill); }
 .search-input::placeholder{ color: var(--text-faint); }
 .field-label{ text-transform: none; letter-spacing: -0.005em; font-size: 12.5px; font-weight: 500; color: var(--text-dim); }
 
@@ -189,7 +189,7 @@ input[type=range]::-webkit-slider-thumb{
 .tts-rail-wrap{ border-color: transparent; border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); }
 .tts-take{ border-radius: 10px; border-color: transparent; background: var(--panel-raised); }
 .tts-take:hover{ border-color: transparent; background: #3a3a3c; }
-.tts-take.is-saved{ background: rgba(48,209,88,0.16); }
+.tts-take.is-saved{ background: rgba(52, 211, 153,0.16); }
 .tts-take.is-current{ border-color: transparent; box-shadow: 0 0 0 2px var(--accent-primary); }
 .tts-rail.is-playing .tts-take.is-current{ border-color: transparent; }
 

@@ -27,7 +27,11 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
 - `frontend/index.html`, `script.js` (~10 тыс. строк, один файл), `style.css`, `tutorial.js` (+ `tutorial/*.webm`), `listen.js`.
   Оформление — `frontend/ios.css` (грузится после `style.css`): тёмная тема в стиле iOS — цвета-токены, заливки кнопок вместо рамок,
   окна с размытием, шапка Студии как панель навигации (перестановка через CSS `order`, разметка та же). Новые стили — туда;
-  отключить слой — убрать `<link … ios.css>` в `index.html`. Отступ `body` 18+26 px → высоты экранов `calc(100vh - 44px)`.
+  отключить слой — убрать `<link … ios.css>` в `index.html`.
+  Поверх ios.css — `frontend/gtime.css` (грузится последним): внешний вид как у GTime (`shift_timer/ui/style.css`) — фон #0e1116, карточки #171b22 с тенью вместо рамок,
+  кнопки «карточка-2 + тонкая линия», сегменты `.seg` (RU / KZ, «Фразы / Переменные»), радиусы 13 / 16, шрифт Segoe UI Variable, акценты GTime
+  (синий #5b8cff, зелёный #34d399, красный #e5484d, жёлтый #fbbf24, бирюзовый #2dd4b0 — те же значения прописаны в style.css / ios.css / script.js / listen.js вместо прежних iOS-цветов).
+  Только тёмная тема (светлой, как у GTime, нет). Цвета меняются токенами в `gtime.css`; отключить слой — убрать `<link … gtime.css>`. Отступ `body` 18+26 px → высоты экранов `calc(100vh - 44px)`.
   Главное меню — списком (`HOME_LIST = true` в `script.js`: `homeInit` / `homeRender`, стили `.home*` в `ios.css`): разделы — карточки,
   пункты — строки; данные и действия прежние (`RADIAL_CATS`, `RADIAL_ITEMS`, `radialRun` нажимает скрытые кнопки `.menu-grid`).
   Кольцо осталось в коде: `HOME_LIST = false` возвращает его.
