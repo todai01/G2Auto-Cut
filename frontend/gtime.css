@@ -126,3 +126,6 @@ button:active{ transform: scale(0.98); }
 
 /* прогресс-полосы — градиент акцент → бирюза */
 .lp-progress__bar i, #listenProgBar{ background: linear-gradient(90deg, var(--accent-primary), var(--accent-info)); }
+
+/* Прослушка: край дорожки, выбранный с клавиатуры (NumPad 1 / 3) */
+.lp-edges button.is-on{ background: var(--tint-info); color: var(--accent-info); box-shadow: inset 0 0 0 1px var(--accent-info); }

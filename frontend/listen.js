@@ -326,7 +326,11 @@ function listenEdRender() {
             <button onclick="listenEdUndo()" ${lEd.hist.length ? '' : 'disabled'} title="Отменить шаг (Ctrl+Z)">&#8630;</button>
             <button onclick="listenEdReset()" title="Вся исходная запись, громкость 0, темп 100%">Как было</button></span>
         <span class="lp-group" title="Громкость: + / − на клавиатуре"><span>дБ</span><button onclick="listenKnob('gain', -1)">&minus;</button><b>${lEd.gain > 0 ? '+' : ''}${lEd.gain}</b><button onclick="listenKnob('gain', 1)">+</button></span>
-        <span class="lp-group" title="Темп (без смены высоты)"><span>темп</span><button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
+        <span class="lp-group" title="Темп (без смены высоты): NumPad 8 — быстрее, NumPad 2 — медленнее"><span>темп</span><button onclick="listenKnob('tempo', -0.03)">&minus;</button><b>${Math.round(lEd.tempo * 100)}%</b><button onclick="listenKnob('tempo', 0.03)">+</button></span>
+        <span class="lp-group lp-edges" title="Края дорожки с клавиатуры: NumPad 1 / 3 — выбрать левый / правый край, NumPad 4 / 6 — сдвинуть влево / вправо (шаг 10 мс, Shift — 50 мс), Esc — снять выбор"><span>край</span>
+            <button class="${lEd.edge === 'a' ? 'is-on' : ''}" onclick="listenEdgeSet('a')">левый <kbd>1</kbd></button>
+            <button class="${lEd.edge === 'b' ? 'is-on' : ''}" onclick="listenEdgeSet('b')">правый <kbd>3</kbd></button>
+            <button onclick="listenEdgeStep(-1)" title="Край влево (4)">&#9664;</button><button onclick="listenEdgeStep(1)" title="Край вправо (6)">&#9654;</button></span>
         ${lEd.target === 'var' ? `<span class="lp-group"><button onclick="listenAuto()" title="Срезать по голосу: вдох и шум по краям — прочь, тишина, громкость и темп — по шаблону">Авто <kbd>A</kbd></button>
         <button onclick="listenTplSet()" title="${LS.tpl ? `Сейчас шаблон — «${escapeHtml(LS.tpl.from)}». ` : 'Шаблона нет — первая сохранённая станет им. '}Тишина до / после голоса, громкость и темп этой записи — для остальных">Шаблон из этой</button></span>` : ''}
         ${`<span class="lp-group"><button onclick="listenToAudacity()" title="Запись на экране (с правкой) — в Audacity, чистый проект">В Audacity</button>
@@ -420,11 +424,21 @@ function listenEdDraw() {
         g.fillStyle = 'rgba(90,150,255,.22)'; g.fillRect(s0, 0, s1 - s0, H);
         g.fillStyle = 'rgba(90,150,255,.8)'; g.fillRect(s0, 0, 1, H); g.fillRect(s1 - 1, 0, 1, H);
     }
-    [a0, b1].forEach(t => {                                                               // ручки краёв
-        let px = Math.round(x(t));
-        g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(px - 1, 0, 2, H);
-        g.fillStyle = '#fff'; bar(px - 4, mid - 11, 8, 22);
-        g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(px - 1, mid - 5, 2, 10);
+    let ec = css.getPropertyValue('--accent-info').trim() || '#2dd4b0';
+    [a0, b1].forEach((t, i) => {                                                          // ручки краёв
+        let px = Math.round(x(t)), on = lEd.edge === (i ? 'b' : 'a');
+        if (on) {                                                                         // выбранный клавишей край — цветной, со свечением и подписью
+            g.save(); g.shadowColor = ec; g.shadowBlur = 12; g.fillStyle = ec; g.fillRect(px - 1.5, 0, 3, H); g.restore();
+            g.fillStyle = ec; g.globalAlpha = 0.16; g.fillRect(i ? px - 46 : px, 0, 46, H); g.globalAlpha = 1;
+            g.fillStyle = ec; bar(px - 5, mid - 14, 10, 28);
+            g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(px - 1, mid - 6, 2, 12);
+            g.save(); g.font = '600 10.5px ' + (css.getPropertyValue('--font-ui').trim() || 'sans-serif'); g.textBaseline = 'top'; g.textAlign = i ? 'right' : 'left';
+            g.fillStyle = ec; g.fillText(i ? 'правый край  ◂ 4 · 6 ▸' : 'левый край  ◂ 4 · 6 ▸', i ? px - 8 : px + 8, 4); g.restore();
+        } else {
+            g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(px - 1, 0, 2, H);
+            g.fillStyle = '#fff'; bar(px - 4, mid - 11, 8, 22);
+            g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(px - 1, mid - 5, 2, 10);
+        }
     });
     g.fillStyle = 'rgba(90,150,255,.9)'; g.fillRect(x(lEd.cur) - 0.5, 0, 1, H);
     if (lEd.head !== null) {
@@ -465,6 +479,7 @@ function listenEdDown(e) {
     };
     let up = () => {
         window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+        if (h.edge) lEd.edge = h.edge;                         // мышью взяли край — дальше им же управляют 4 / 6
         if (h.edge && moved) { lEd.hist.push(snap); }
         else if (!moved) { lEd.sel = null; lEd.cur = start; }
         else lEd.cur = lEd.sel.a;
@@ -501,6 +516,27 @@ function listenEdUndo() {
     lEd.ranges = s.r; lEd.gain = s.g; lEd.tempo = s.t; lEd.sel = null; listenEdRender();
 }
 function listenEdReset() { if (!lEd) return; listenPush(); lEd.ranges = [[0, lEd.dur]]; lEd.gain = 0; lEd.tempo = 1; lEd.sel = null; lEd.auto = null; listenEdRender(); }
+// Края дорожки с клавиатуры: 1 / 3 — левый / правый край (подсвечивается на волне), 4 / 6 — сдвиг влево / вправо
+// (левый край вправо — начало срезается, правый влево — конец), шаг 10 мс, Shift — 50 мс. Серия нажатий — один шаг отмены.
+let lEdgeT = 0, lEdgeKey = null;
+function listenEdgeSet(which) {
+    if (!lEd) return;
+    lEd.edge = which; listenEdRender();
+}
+function listenEdgeStep(dir, big) {
+    if (!lEd) return;
+    if (!lEd.edge) { showToast('Сначала выберите край: 1 — левый, 3 — правый', 2600); return; }
+    let ms = big ? 50 : 10, F = lEd.ranges[0], L = lEd.ranges[lEd.ranges.length - 1];
+    let cur = lEd.edge === 'a' ? F[0] : L[1];
+    let next = Math.round(lEd.edge === 'a' ? Math.max(0, Math.min(F[0] + dir * ms, F[1] - 30)) : Math.min(lEd.dur, Math.max(L[1] + dir * ms, L[0] + 30)));
+    if (next === cur) return;
+    let now = performance.now();
+    if (now - lEdgeT > 900 || lEdgeKey !== lEd.edge) listenPush();
+    lEdgeT = now; lEdgeKey = lEd.edge;
+    if (lEd.edge === 'a') F[0] = next; else L[1] = next;
+    listenEdRender();
+    listenReplaySoon();
+}
 function listenKnob(k, d) {
     if (!lEd) return;
     listenPush();
@@ -971,7 +1007,14 @@ function listenKey(e) {
     if (e.code === 'Backspace') { e.preventDefault(); listenFlag(); return; }  // пометить — автопрогон не останавливается
     if (e.code !== 'Enter' && e.code !== 'NumpadEnter') listenAutoPause();     // любая другая клавиша — пауза
     if (e.code === 'KeyR') { e.preventDefault(); listenSynthQuick(); return; }
-    if (e.code === 'Space') { e.preventDefault(); listenPlayChain(); return; }
+    if (e.code === 'Space' || e.code === 'Numpad0') { e.preventDefault(); listenPlayChain(); return; }       // NumPad 0 — как Space
+    // цифровой блок: 8 / 2 — темп; 1 / 3 — выбрать левый / правый край дорожки; 4 / 6 — двигать выбранный край (Shift — крупнее)
+    if (e.code === 'Numpad8') { e.preventDefault(); listenKnob('tempo', 0.03); return; }
+    if (e.code === 'Numpad2') { e.preventDefault(); listenKnob('tempo', -0.03); return; }
+    if (e.code === 'Numpad1') { e.preventDefault(); listenEdgeSet('a'); return; }
+    if (e.code === 'Numpad3') { e.preventDefault(); listenEdgeSet('b'); return; }
+    if (e.code === 'Numpad4') { e.preventDefault(); listenEdgeStep(-1, e.shiftKey); return; }
+    if (e.code === 'Numpad6') { e.preventDefault(); listenEdgeStep(1, e.shiftKey); return; }
     if (e.code === 'KeyP') { e.preventDefault(); listenPlayOnly(); return; }
     if (e.code === 'KeyM') { e.preventDefault(); listenSwap(); return; }
     if (e.code === 'KeyL') { e.preventDefault(); listenLang(({ ru: 'kz', kz: LS.split && LS.mode !== 'phrase' ? 'uni' : 'ru', uni: 'ru' })[LS.lang]); return; }
@@ -984,6 +1027,7 @@ function listenKey(e) {
     if (e.code === 'NumpadAdd' || e.code === 'Equal') { e.preventDefault(); listenKnob('gain', 1); return; }
     if (e.code === 'NumpadSubtract' || e.code === 'Minus') { e.preventDefault(); listenKnob('gain', -1); return; }
     if (e.code === 'Escape' && lEd && lEd.sel) { e.preventDefault(); lEd.sel = null; listenEdRender(); return; }
+    if (e.code === 'Escape' && lEd && lEd.edge) { e.preventDefault(); lEd.edge = null; listenEdRender(); return; }
     if (e.code === 'Digit1') listenTarget('start');
     else if (e.code === 'Digit2') listenTarget('var');
     else if (e.code === 'Digit3') listenTarget('end');
