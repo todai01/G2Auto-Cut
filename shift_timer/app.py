@@ -291,6 +291,9 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
     def tasks_get(self):
         return self._tasks.get()
 
+    def tasks_archive(self, query=''):
+        return self._tasks.archive(query)
+
     def task_add(self, text):
         return self._tasks.add(text)
 

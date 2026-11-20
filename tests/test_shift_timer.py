@@ -1051,6 +1051,23 @@ def test_tasks_clear_done_hides_but_keeps_for_excel(tmp_path):
     assert make_store(tmp_path, None, 'bad.json')[1].get()["total"] == 0
 
 
+def test_tasks_archive_lists_done_search_and_restore(tmp_path):
+    c, st = make_store(tmp_path)
+    for n in ("отчёт по срезке", "звонок", "третья"):
+        st.add(n)
+    a, b = [t["id"] for t in st.get()["tasks"][:2]]
+    st.toggle(a)
+    st.toggle(b)
+    st.clear_done()                                                       # скрыты из списка, но в архиве остаются
+    assert st.get()["total"] == 1
+    arch = st.archive()
+    assert arch["total"] == 2 and {t["text"] for t in arch["tasks"]} == {"отчёт по срезке", "звонок"}
+    assert [t["text"] for t in st.archive("СРЕЗК")["tasks"]] == ["отчёт по срезке"]
+    assert st.archive("нет такого")["tasks"] == []
+    st.toggle(a)                                                          # вернули из архива — снова в списке
+    assert st.archive()["total"] == 1 and any(t["id"] == a for t in st.get()["tasks"])
+
+
 def test_task_set_times_flexible_and_validated(tmp_path):
     c, st = make_store(tmp_path, Clock(h=15, mi=0))
     tid = st.add("отчёт")["tasks"][0]["id"]

@@ -60,17 +60,20 @@ function syncSettings() {
 let TKM = null, TKAT = 0, tkMainTimer = null, tdId = null;
 const escT = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const CKS = '<svg viewBox="0 0 24 24"><path d="M6.5 12.5l3.5 3.5 7.5-8"/></svg>';
-const taskById = id => TKM && TKM.tasks.find(t => t.id === id);
+let ARCH = null, archMode = false, archQ = '';
+const taskById = id => (TKM && TKM.tasks.find(t => t.id === id)) || (ARCH && ARCH.tasks.find(t => t.id === id));
 const taskSec = t => t.elapsed_s + (t.running ? (performance.now() - TKAT) / 1000 : 0);
 const waitSec = t => t.waiting ? t.waiting.elapsed_s + (performance.now() - TKAT) / 1000 : 0;
 const waitText = t => `жду ${escT(t.waiting.who || 'ответа')} · ${Shift.dur(waitSec(t))}`;
 function applyTasks(v) {
     if (!v || !v.tasks) return;
     TKM = v; TKAT = performance.now();
+    if (archMode) { loadArchive(); return; }
     renderTasksMain();
     if (tdId !== null && !taskById(tdId)) closeDlg();                                      // задачу удалили / она скрылась
 }
 function renderTasksMain() {
+    if (archMode) { renderArchive(); return; }
     if (!TKM) return;
     const ts = TKM.tasks;
     setText($('tkCnt'), TKM.total ? `${TKM.done} из ${TKM.total}` : '');
@@ -90,6 +93,35 @@ function renderTasksMain() {
     }).join('') : '<div class="empty">Пока пусто. Запишите задачу — секундомер пойдёт сам.</div>';
     tickTasks();
 }
+// архив: все выполненные задачи, по дням, с поиском
+const ARCH_DAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+function renderArchive() {
+    const ts = ARCH ? ARCH.tasks : [];
+    setText($('tkCnt'), ARCH ? (ARCH.total > ts.length ? `${ts.length} из ${ARCH.total}` : String(ARCH.total)) : '');
+    $('tkBar').style.width = '0%';
+    let day = '', h = '';
+    for (const t of ts) {
+        const fin = t.finished || t.created || '', d = fin.slice(0, 10);
+        if (d !== day) {
+            day = d; const dt = new Date(d + 'T00:00:00');
+            h += `<div class="tk-day">${isNaN(dt) ? 'Без даты' : dt.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) + ', ' + ARCH_DAYS[dt.getDay()]}</div>`;
+        }
+        const meta = [t.finished ? `выполнена в ${t.finished.slice(11, 16)}` : '', t.tags.join(', '), t.subs.length ? `подзадачи ${t.subs.filter(s => s.done).length}/${t.subs.length}` : '',
+                      t.files.length ? `файлов ${t.files.length}` : '', t.comment ? 'есть комментарий' : ''].filter(Boolean).join(' · ');
+        h += `<div class="tk2 done" data-id="${t.id}"><button class="ck2" data-act="t" title="Вернуть в работу">${CKS}</button>`
+            + `<div class="tk2-b" data-act="o"><span class="tk2-t">${escT(t.text)}</span><span class="tk2-m">${escT(meta)}</span></div>`
+            + `<b class="tm num">${t.legacy ? '—' : Shift.dur(t.elapsed_s)}</b><button class="tk2-x" data-act="d" title="Удалить">×</button></div>`;
+    }
+    $('tkMain').innerHTML = h || `<div class="empty">${archQ ? 'Ничего не найдено.' : 'Выполненных задач пока нет.'}</div>`;
+}
+async function loadArchive() { try { ARCH = await pywebview.api.tasks_archive(archQ); if (archMode) renderArchive(); } catch (e) { /* повторим */ } }
+function setArchive(on) {
+    archMode = on; archQ = ''; $('tkSearch').value = '';
+    $('tkSearchForm').hidden = !on; $('tkForm').hidden = on; $('tkClear').hidden = on;
+    setText($('tkArch'), on ? '← К задачам' : 'Архив'); setText($('tkTitle'), on ? 'Архив' : 'Задачи');
+    setText($('tkNote'), on ? 'Все выполненные задачи. Нажмите — детали; галочка возвращает задачу в работу.' : 'Нажмите на задачу — детали, время, файлы. Выполненные скрываются после полуночи.');
+    if (on) { ARCH = null; renderArchive(); loadArchive(); } else renderTasksMain();
+}
 // секундомеры: сервер присылает «сколько прошло», секунды между опросами идут здесь
 function tickTasks() {
     if (!TKM) return;
@@ -101,8 +133,8 @@ function tickTasks() {
         const w = $('tdWaitT'); if (w && t.waiting) setText(w, Shift.dur(waitSec(t)));
     }
 }
-async function loadTasksMain() { try { applyTasks(await pywebview.api.tasks_get()); } catch (e) { /* повторим */ } }
-function startTasksTimer() { clearInterval(tkMainTimer); loadTasksMain(); tkMainTimer = setInterval(loadTasksMain, 3000); }
+async function loadTasksMain() { if (archMode) { loadArchive(); return; } try { applyTasks(await pywebview.api.tasks_get()); } catch (e) { /* повторим */ } }
+function startTasksTimer() { clearInterval(tkMainTimer); loadTasksMain(); tkMainTimer = setInterval(() => { if (!archMode) loadTasksMain(); }, 3000); }
 
 // окно задачи: название, времена, комментарий, подзадачи, файлы
 const tdLocal = iso => (iso || '').slice(0, 16);
@@ -406,6 +438,9 @@ boot(() => {
         else if (act.dataset.act === 'd') applyTasks(await pywebview.api.task_delete(id));
         else if (act.dataset.act === 'o') openTask(id);
     };
+    $('tkArch').onclick = () => setArchive(!archMode);
+    $('tkSearchForm').onsubmit = e => e.preventDefault();
+    $('tkSearch').oninput = () => { archQ = $('tkSearch').value.trim(); loadArchive(); };
     $('tkClear').onclick = async () => applyTasks(await pywebview.api.tasks_clear_done());
     $('tdSave').onclick = saveTask;
     $('tdCancel').onclick = async () => { if (tdId !== null) await pywebview.api.task_comment(tdId, $('tdComment').value); closeDlg(); loadTasksMain(); };

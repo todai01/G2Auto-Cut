@@ -12,6 +12,7 @@ import time
 from datetime import date, datetime, timedelta
 
 MAX_TEXT = 200
+ARCHIVE_MAX = 500                                        # столько выполненных за раз в архиве (поиск сужает)
 MAX_PER_DAY = 200                                        # не больше столько задач за раз в списке (невыполненные + сегодняшние)
 MAX_COMMENT = 8000
 MAX_SUBS = 50
@@ -226,6 +227,17 @@ class TaskStore:
         with self._lock:
             return self._view()
 
+    def archive(self, query=''):
+        """Архив: все выполненные задачи (и скрытые «Убрать выполненные»), новые сверху; query — по названию, комментарию, тегам, подзадачам."""
+        q = str(query or '').strip().lower()
+        with self._lock:
+            now = self._now()
+            ts = [t for t in self.items if t["done"]]
+            if q:
+                ts = [t for t in ts if q in " ".join([t["text"], t["comment"], *t["tags"], *(s["text"] for s in t["subs"])]).lower()]
+            ts.sort(key=lambda t: (t["finished"] or t["created"] or "", t["id"]), reverse=True)
+            return {"tasks": [self._out(t, now) for t in ts[:ARCHIVE_MAX]], "total": len(ts)}
+
     def counts(self):
         with self._lock:
             ts = [t for t in self.items if self._visible(t)]
@@ -281,6 +293,8 @@ class TaskStore:
                     if want and t["runs"] and t["runs"][-1]["to"] is None:
                         t["runs"][-1]["to"] = t["finished"]        # и секундомер встаёт
                     t["legacy"] = False if want else t["legacy"]
+                    if not want:
+                        t["hidden"] = False                        # вернули из архива — снова в списке
                     self._save()
             return self._view()
 
