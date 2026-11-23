@@ -258,9 +258,9 @@ function renderJournal() {
     const today = todayIso(), wk = jrKind === 'week' ? weekOf(jrSel) : null, lead = CAL.days[0].wd;
     let html = '<span></span>'.repeat(lead);
     CAL.days.forEach(d => {
-        // цвет дня по доле нормы: от 95% — зелёный, 75–95% — жёлтый, меньше 75% — красный; сегодня, пока день идёт, — нейтральный
+        // цвет дня по доле нормы: от 93,75% (7:30 при норме 8 ч) — зелёный, 75–93,75% — жёлтый, меньше 75% — красный; сегодня, пока день идёт, — нейтральный
         const ratio = d.norm_s > 0 ? d.worked_s / d.norm_s : 1;
-        const tone = d.record && !d.mark ? (d.today && d.worked_s < d.norm_s ? 'prog' : ratio >= 0.95 ? 'ok' : ratio >= 0.75 ? 'mid' : 'bad') : '';
+        const tone = d.record && !d.mark ? (d.today && d.worked_s < d.norm_s ? 'prog' : ratio >= 0.9375 ? 'ok' : ratio >= 0.75 ? 'mid' : 'bad') : '';
         const cls = ['cal-d', d.today ? 'today' : '', d.wd >= 5 ? 'weekend' : '', d.mark, d.future ? 'future' : '', wk && d.date >= wk[0] && d.date <= wk[1] ? 'inwk' : '', tone].filter(Boolean).join(' ');
         const low = d.tasks_done ? `✓${d.tasks_done}` : '';
         html += `<button class="${cls}" data-d="${d.date}"><b>${+d.date.slice(8)}</b><span class="cw">${d.record ? Shift.hmSec(d.worked_s) : ''}</span><i class="cm">${d.mark ? MARK_SHORT[d.mark] : low}</i></button>`;
