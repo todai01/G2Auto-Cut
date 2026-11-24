@@ -5399,7 +5399,7 @@ let isProcessing = false;
             if (s.cached && !(await showBeautifulConfirm('<b>Эта запись уже распознавалась.</b><br><br>Взять прежнее распознавание '
                 + '(быстро — только выравнивание и нарезка) или распознать заново?', 'Взять прежнее', 'Заново'))) reuse = false;
             rsumEvent({ ...s, run: true, stage: 'start', pct: 0, msg: '', summary: null, elapsed: 0, eta: null, need_model: false });
-            let r = await pywebview.api.rsum_start(reuse);
+            let r = await pywebview.api.rsum_start(reuse, rsumPar);
             if (r && r.error) { rsumEvent(await pywebview.api.rsum_state()); showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             rsumEvent(r);
         }
@@ -5413,6 +5413,13 @@ let isProcessing = false;
         }
         const RSUM_CATS = { million: '1 - 100 млн', hundred_thousand: '100 - 900 тыс', hundred: '100 - 900', thousand: '1 - 99 тыс', tenge: '1 - 100 тенге' };
         const RSUM_LOGICS = { 1: ['million', 'hundred', 'thousand', 'tenge'], 2: ['million', 'hundred_thousand', 'tenge'] };
+        let rsumPar = 1;
+        try { rsumPar = Math.min(3, Math.max(1, +localStorage.getItem('gvox_rsum_par') || 1)); } catch (e) {}
+        function rsumSetPar(n) {
+            rsumPar = n;
+            try { localStorage.setItem('gvox_rsum_par', String(n)); } catch (e) {}
+            document.querySelectorAll('#rsumPar button').forEach(b => b.classList.toggle('is-on', +b.dataset.p === rsumPar));
+        }
         let rsumLogic = 1;
         try { rsumLogic = +localStorage.getItem('gvox_rsum_logic') === 2 ? 2 : 1; } catch (e) {}
         function rsumSetLogic(l) {
@@ -5478,7 +5485,7 @@ let isProcessing = false;
             else if (a) {
                 asr = `запись ${rsumClock(a.pos)} из ${rsumClock(a.dur)} · пачка ${a.pack} из ${a.packs}`
                     + (i.speed ? ` · скорость ×${String(i.speed).replace('.', ',')}` : '')
-                    + (i.workers > 1 ? ` · ${i.workers} пачки параллельно` : '')
+                    + (i.workers > 1 ? ` · ${i.workers} пачки сразу` : ' · 1 пачка')
                     + (st('asr') === 'done' && i.asr_s ? ` · за ${rsumDur(i.asr_s)}` : '');
                 if (st('asr') === 'run' && a.text) asrSub = `Сейчас: «${escapeHtml(a.text.length > 140 ? '…' + a.text.slice(-140) : a.text)}»`;
             }
@@ -5536,6 +5543,8 @@ let isProcessing = false;
             $('rsumSteps').innerHTML = (s.run || s.summary) ? rsumSteps(s) : '';
             $('btnRsumStop').style.display = s.run ? '' : 'none';
             rsumSums(s);
+            rsumSetPar(rsumPar);
+            document.querySelectorAll('#rsumPar button').forEach(b => b.disabled = !!s.run);
             if (s.need_model && !rsumWasNeed) setTimeout(rsumNeedModel, 0);
             rsumWasNeed = !!s.need_model;
             $('rsumMsg').innerText = s.msg || '';

@@ -489,6 +489,9 @@
                     <span id="rsumTable" class="modal-hint" style="margin:0;">Строка 1 — заголовки; строка блока столбцов — фраза, ячейка — ярус</span>
                 </div>
                 <div id="rsumPreview" class="bsynth-preview"></div>
+                <div class="field-row rsum-par"><span class="modal-hint" style="margin:0">Пачек сразу</span>
+                    <div class="listen-lang listen-lang--sm" id="rsumPar"><button data-p="1" onclick="rsumSetPar(1)" title="Одна пачка на все ядра — надёжно">1</button><button data-p="2" onclick="rsumSetPar(2)" title="Две пачки параллельно — на некоторых процессорах быстрее">2</button><button data-p="3" onclick="rsumSetPar(3)" title="Три пачки параллельно">3</button></div>
+                    <span class="modal-hint" style="margin:0">сравните «скорость ×…» в строке «Распознавание»</span></div>
                 <button class="splash-btn" style="width:100%;" id="btnRsumStart" onclick="rsumStart()" disabled>Разобрать</button>
             </div>
             <div id="rsumRun" class="bsynth-run" style="display:none">

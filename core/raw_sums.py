@@ -504,6 +504,21 @@ def rs_snap(db, thr, t, radius=0.25, right=None):
     return (a + k) * RS_FRAME
 
 
+def rs_longest_pause(db, thr, lo, hi, min_len=0.08):
+    """Середина самой длинной паузы (≥ min_len) в [lo, hi] или None."""
+    a, b = max(0, int(lo / RS_FRAME)), min(len(db), int(hi / RS_FRAME))
+    best, s = None, None
+    for i in range(a, b + 1):
+        q = i < b and db[i] < thr
+        if q and s is None:
+            s = i
+        elif not q and s is not None:
+            if (i - s) * RS_FRAME >= min_len and (best is None or i - s > best[1] - best[0]):
+                best = (s, i)
+            s = None
+    return None if best is None else (best[0] + best[1]) / 2 * RS_FRAME
+
+
 def rs_voice_start(db, thr, t, lo, pad=0.06):
     """Начало куска: от t назад (не раньше lo) — до тишины, потом запас pad."""
     i, a = int(t / RS_FRAME), max(0, int(lo / RS_FRAME))
@@ -543,7 +558,7 @@ def rs_cells_bounds(phrase, word_times, j0, db, thr, lo, hi):
     """Слова попытки с временем (j0.., [(нач, кон)]) → куски ячеек [(k ячейки, нач, кон)].
     Внутренние границы — rs_snap; первая — начало речи, последняя — до тишины."""
     cell_of = phrase["cell_of"]
-    spans, wl, wf = {}, {}, {}
+    spans, wl, wf, ls = {}, {}, {}, {}
     for d, (s, e) in enumerate(word_times):
         k = cell_of[j0 + d]
         if k in spans:
@@ -552,6 +567,7 @@ def rs_cells_bounds(phrase, word_times, j0, db, thr, lo, hi):
             spans[k] = [s, e]
             wf[k] = e - s                       # длина первого слова куска
         wl[k] = e - s                           # длина последнего слова куска
+        ls[k] = s                               # начало последнего слова куска
     ks = sorted(spans)
     ends, starts = [], []              # конец куска k и начало куска k+1 (обычно одна и та же точка)
     for a, b in zip(ks, ks[1:]):
@@ -563,10 +579,16 @@ def rs_cells_bounds(phrase, word_times, j0, db, thr, lo, hi):
             ends.append(e)
             starts.append(s)
             continue
-        # «прилипание» не глубже 40 % крайнего слова с каждой стороны и не назад за прошлую границу
-        left = max(0.03, min(0.25, 0.4 * wl[a]))
-        right = max(0.03, min(0.25, 0.4 * wf[b]))
-        c = rs_snap(db, thr, (spans[a][1] + spans[b][0]) / 2, left, right)
+        c = None
+        if not phrase["cells"][a].get("num", True) and phrase["cells"][b].get("num", True):
+            # начальная фраза → первое число: начальная не сохраняется, поэтому режем в самой длинной паузе между её
+            # последним словом и началом числа — хвост «…сти» не уйдёт в кусок с числом (время слов бывает неточным)
+            c = rs_longest_pause(db, thr, ls[a] + 0.1, max(ls[a] + 0.1, spans[b][0] + wf[b] / 2), min_len=0.12)
+        if c is None:
+            # «прилипание» не глубже 40 % крайнего слова с каждой стороны и не назад за прошлую границу
+            left = max(0.03, min(0.25, 0.4 * wl[a]))
+            right = max(0.03, min(0.25, 0.4 * wf[b]))
+            c = rs_snap(db, thr, (spans[a][1] + spans[b][0]) / 2, left, right)
         if starts and c < starts[-1] + 0.1:
             c = max(starts[-1] + 0.1, (spans[a][1] + spans[b][0]) / 2)
         ends.append(c)
@@ -872,6 +894,8 @@ class RsCutter:
         self.written = {}      # r → файлы этого разбора от фразы r
         self.n_fa = 0
         self.fa_cache = {}     # (окно, текст) → время слов от повторного прохода модели
+        self.fa_later = set()  # фразы, нарезанные по ходу без уточнения границ — уточнить в конце
+        self.live = False
         self.workers = 1
         self.rec, self.attempts, self.choice = [], [], {}
         os.makedirs(out_dir, exist_ok=True)
@@ -902,14 +926,22 @@ class RsCutter:
                 hi = rs_voice_end(db, thr, min(dur, max(hi, nxt + 0.2)), min(dur, nxt + 1.0), pad=0.05)
         words = p["words"][j0:j1 + 1]
         got = {j: (rec[i][1], rec[i][2]) for i, j in a["good"] if rs_sim(rec[i][0], p["words"][j]) >= 0.8}
-        ins_inside = [i for i in a.get("ins", []) if i0 < i < i1]
-        # распознанное совпало с таблицей слово в слово — время слов уже есть, модель второй раз не нужна
-        clean = (not guessed and not ins_inside and all(j in got for j in range(j0, j1 + 1))
-                 and all(got[j][1] - got[j][0] >= 0.08 for j in range(j0, j1 + 1)))
+        anyt = {j: (rec[i][1], rec[i][2]) for i, j in a["pairs"]}
+        num0 = next((j for j, k in enumerate(p["cell_of"]) if p["cells"][k].get("num")), 0)   # начало чисел
+        ins_inside = [i for i in a.get("ins", []) if i0 < i < i1 and i > min((ii for ii, j in a["pairs"] if j >= num0), default=i1)]
+        # второй проход модели (30 с её работы на фразу) — только где он правит границы: в числах слово
+        # услышано не тем / запинка / слова нет / время схлопнулось. Расхождение в начальной фразе («сумма» вместо
+        # «суммой», «к платье») — не повод: у слова есть время, а сама фраза не сохраняется.
+        clean = (not guessed and not ins_inside
+                 and all((j in got) if j >= num0 else (j in anyt) for j in range(j0, j1 + 1))
+                 and all(anyt[j][1] - anyt[j][0] >= 0.08 for j in range(j0, j1 + 1)))
         gpi = [rec[i][1] for i, _ in a["pairs"]]
         restart = any(b_ - a_ > 3.0 for a_, b_ in zip(gpi, gpi[1:]))   # долгий провал внутри — пропущенный повтор
         times, weak = None, False
         need_fa = role == 'main' and not clean and not restart and self.model is not None and hi - lo <= RS_ALIGN_MAX
+        if need_fa and self.live:                       # по ходу распознавания модель не отвлекаем — уточним в конце
+            self.fa_later.add(r)
+            need_fa = False
         fa_key = (round(lo, 3), round(hi, 3), tuple(words))
         if plan_only:
             return fa_key if need_fa else None
@@ -1057,9 +1089,12 @@ class RsCutter:
                 continue
             ks = [ch["main"]] + ch["spare"]
             sig = tuple((round(rec[self.attempts[k]["i0"]][1], 2), round(rec[self.attempts[k]["i1"]][2], 2)) for k in ks)
-            if self.sig.get(r) != sig:
+            if self.sig.get(r) != sig or (final and r in self.fa_later):
                 todo.append((r, sig))
-        self._prefetch_fa(todo)
+        self.live = not final
+        if final:
+            self.fa_later.clear()
+            self._prefetch_fa(todo)
         for n, (r, sig) in enumerate(todo):
             if self.stop():
                 return False
@@ -1321,8 +1356,9 @@ class RawSumsMixin:
         st["result"], st["out"], st["msg"] = None, None, ''
         return self.rsum_state()
 
-    def rsum_start(self, reuse_asr=True):
+    def rsum_start(self, reuse_asr=True, par=1):
         st = self._rsum()
+        st["par"] = max(1, min(4, int(par or 1)))
         if st["run"]:
             return {"error": "Разбор уже идёт."}
         if not st["audio"] or not os.path.exists(st["audio"]):
@@ -1336,15 +1372,16 @@ class RawSumsMixin:
         return self.rsum_state()
 
     @staticmethod
-    def _rsum_split():
-        """Ядра → (параллельных пачек, потоков на пачку). Две-три пачки сразу по 2 ядра быстрее, чем одна на все
-        ядра (замер: 4 ядра — 68 с против 126 с на 3 минутах). Гиперпотоки не считаем."""
+    def _rsum_split(par=1):
+        """Ядра → (пачек сразу, потоков на пачку). По умолчанию одна пачка на все физические ядра: на Windows с
+        процессором без быстрых int8-инструкций три пачки сразу оказались в разы медленнее (×0,14 против ×0,4).
+        par 2–3 — параллельно (в песочнице было на 10–60 % быстрее); выбирается в окне."""
         cores = os.cpu_count() or 2
         phys = cores // 2 if cores >= 8 else cores
-        workers = max(1, min(4, phys // 2))
+        workers = max(1, min(int(par or 1), phys))
         return workers, max(1, phys // workers)
 
-    def _rsum_model(self):
+    def _rsum_model(self, par=1):
         """Своя копия large-v3-turbo с несколькими потоками (модель KZ в Студии — однопоточная, её не трогаем).
         Модели в папке нет — как раньше: общий слот KZ (скачать / указать папку)."""
         path = self._auto_check_model_path('kz')
@@ -1353,7 +1390,7 @@ class RawSumsMixin:
             if m is not None:
                 self._rsum_workers = 1
             return m, err
-        workers, threads = self._rsum_split()
+        workers, threads = self._rsum_split(par)
         key = (path, workers, threads)
         if getattr(self, '_rsum_model_key', None) == key and getattr(self, '_rsum_model_obj', None) is not None:
             return self._rsum_model_obj, None
@@ -1370,7 +1407,7 @@ class RawSumsMixin:
     def _rsum_boot(self, reuse_asr):
         st = self._rsum()
         try:
-            model, err = self._rsum_model()                  # large-v3-turbo: на 8 кГц small путает числа
+            model, err = self._rsum_model(st.get("par", 1))   # large-v3-turbo: на 8 кГц small путает числа
         except Exception as e:
             model, err = None, str(e)
         if err is not None:
