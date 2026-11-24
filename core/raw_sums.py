@@ -1839,6 +1839,48 @@ class RawSumsMixin:
         return {"ok": True, "sheet": sheet, "copied": copied, "exist": exist, "nowhere": nowhere, "updated": updated,
                 "dir": os.path.join(wd, 'Значения', sheet)}
 
+    def rsum_open_studio(self):
+        """«Открыть в Студии»: всё готово одной кнопкой. Открытый проект Студии с этой таблицей или с листом сумм —
+        работаем в нём; иначе (другой проект — он сохраняется как есть и закрывается) — проект «<запись>_Студия»
+        рядом с записью: таблица разбора, куски — в «Значения/…» (что уже есть — не трогаем). Возвращает tts_state."""
+        st = self._rsum()
+        if not st.get("table") or not os.path.exists(st["table"]):
+            return {"error": "Выберите таблицу."}
+        if getattr(self, '_tts_rec', None):
+            return {"error": "В Студии идёт запись — сначала остановите её (R)."}
+        tt = self._tts()
+        same = bool(tt.get("excel_path")) and os.path.normcase(os.path.abspath(tt["excel_path"])) == \
+            os.path.normcase(os.path.abspath(st["table"]))
+        if not (tt.get("work_dir") and os.path.isdir(tt["work_dir"]) and (same or self._rsum_studio_sheet())):
+            base = st.get("audio") or st["table"]
+            root = os.path.join(os.path.dirname(base), rs_safe_name(os.path.splitext(os.path.basename(base))[0]) + '_Студия')
+            os.makedirs(root, exist_ok=True)
+            if tt.get("work_dir") and os.path.normcase(os.path.abspath(tt["work_dir"])) != os.path.normcase(root):
+                r = self.tts_reset()                       # прежний проект сохраняется на диске как есть
+                if r.get("error"):
+                    return r
+            self._tts_attach_folder(root)                  # там уже был проект — подтягиваем его
+            r = self.tts_load_excel(st["table"])
+            if r.get("error"):
+                return r
+            if r.get("choose_sheet"):
+                pend = getattr(self, '_tts_pending', None)
+                sheet = next((x["title"] for x in r["choose_sheet"] if x.get("title") == "(только переменные)"),
+                             r["choose_sheet"][0]["title"])
+                r = self.tts_load_excel(st["table"], sheet)
+                if r.get("error"):
+                    return r
+        copied = None
+        if st.get("out") and os.path.isdir(st["out"]) and self._rsum_cat_files():
+            copied = self.rsum_to_studio()
+        self.__dict__.pop('_tts_claims_cache', None)
+        self._tts_save()
+        res = self.tts_state()
+        res["rsum_open"] = {"dir": self._tts().get("work_dir"),
+                            "copied": (copied or {}).get("copied", 0), "exist": (copied or {}).get("exist", 0),
+                            "updated": (copied or {}).get("updated", 0)}
+        return res
+
     def rsum_listen(self, logic, cat):
         """«Прослушка сумм»: значения класса cat звучат в сумме логики logic — между кусками остальных
         классов (для них берётся меньшее значение, обычно «один миллион», «сто», «одна тенге»).

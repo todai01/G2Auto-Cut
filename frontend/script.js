@@ -5478,6 +5478,15 @@ let isProcessing = false;
                 + (r.nowhere ? `<br>Нет такого значения в таблице проекта: ${r.nowhere}` : '')
                 + `<br><br><span class="tts-dim">${escapeHtml(r.dir)}</span>`);
         }
+        async function rsumOpenStudio() {
+            let r = await pywebview.api.rsum_open_studio();
+            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+            closeRsum();
+            openTtsScreen(r);
+            let o = r.rsum_open || {};
+            showToast(`Студия: ${o.dir || ''}` + (o.copied || o.updated ? ` · эталонов из разбора +${o.copied + o.updated}` : '')
+                + (o.exist ? ` · уже были: ${o.exist}` : ''), 6000);
+        }
         async function rsumStop() {
             await pywebview.api.rsum_stop();
             rsumEvent(await pywebview.api.rsum_state());
@@ -5546,6 +5555,7 @@ let isProcessing = false;
                 : '';
             let btn = $('btnRsumStart');
             btn.disabled = !(s.audio && t) || s.run;
+            document.getElementById('btnRsumStudio').disabled = !t;
             btn.innerHTML = s.run ? '<span class="bsynth-spin"></span> Идёт разбор…' : 'Разобрать';
             let show = s.run || s.summary || s.msg;
             $('rsumRun').style.display = show ? '' : 'none';

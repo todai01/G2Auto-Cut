@@ -481,3 +481,29 @@ def test_studio_reads_free_sums_table(tmp_path):
     assert a._tts_sum_rows(sh, 1)[:2] == [1_151_001, 2_252_002]          # 1 млн + (100 + 51) тыс + 1
     assert a._tts_sum_rows(sh, 2)[0] == 1_100_001
     assert a._tts_value_file('sum_ru', 'thousand_ru', '51').endswith(os.path.join('Значения', 'sum_ru', 'thousand_ru', '51.wav'))
+
+
+def test_open_studio_ready_project(tmp_path):
+    """«Открыть в Студии»: проект рядом с записью, таблица разбора, куски — в эталонах; чужой открытый проект
+    сохраняется как был и не портится; повторное нажатие ничего не дублирует."""
+    from harness import Api
+    a, st = _sums_api(tmp_path)
+    xl = _free_table(tmp_path / 'суммы.xlsx')
+    st["table"] = xl
+    # открыт другой проект (своя таблица без сумм) — он не должен пострадать
+    other = tmp_path / 'другой'
+    os.makedirs(other)
+    tt = a._tts()
+    tt["work_dir"], tt["excel_path"] = str(other), str(tmp_path / 'чужая.xlsx')
+    a._tts_save()
+    other_state = (other / 'tts_project.json').read_bytes()
+    r = a.rsum_open_studio()
+    assert not r.get("error"), r
+    root = os.path.join(str(tmp_path), 'запись_Студия')
+    assert os.path.normpath(r["rsum_open"]["dir"]) == root
+    assert (other / 'tts_project.json').read_bytes() == other_state
+    assert a._tts()["excel_path"] == xl and 'sum_ru' in a._tts()["var_sheets"]
+    assert r["rsum_open"]["copied"] > 0
+    assert os.path.exists(os.path.join(root, 'Значения', 'sum_ru', 'million_ru', '1.wav'))
+    r2 = a.rsum_open_studio()                          # ещё раз — тот же проект, ничего не копируется заново
+    assert os.path.normpath(r2["rsum_open"]["dir"]) == root and r2["rsum_open"]["copied"] == 0

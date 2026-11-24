@@ -493,7 +493,10 @@
                     <div class="listen-lang listen-lang--sm" id="rsumMode"><button data-m="bg" onclick="rsumSetMode('bg')" title="Ядер на 2 меньше и приоритет ниже: Студия и прослушка работают без заиканий, разбор медленнее примерно на треть">Фон</button><button data-m="max" onclick="rsumSetMode('max')" title="Все ядра и обычный приоритет: быстрее, но остальная программа может подтормаживать">Максимум</button></div>
                     <label class="rsum-studio" title="Готовые куски по ходу разбора копируются в открытый проект Студии (Значения/&lt;лист сумм&gt;/…); что уже есть в проекте — не трогается"><input type="checkbox" id="rsumToStudio" onchange="try { localStorage.setItem('gvox_rsum_studio', this.checked ? '1' : '0') } catch (e) {}"> сразу в проект Студии</label>
                 </div>
-                <button class="splash-btn" style="width:100%;" id="btnRsumStart" onclick="rsumStart()" disabled>Разобрать</button>
+                <div class="rsum-go">
+                    <button class="splash-btn" id="btnRsumStart" onclick="rsumStart()" disabled>Разобрать</button>
+                    <button class="custom-alert-btn" id="btnRsumStudio" onclick="rsumOpenStudio()" disabled title="Студия с этой таблицей: проект рядом с записью (или открытый с листом сумм), готовые куски — уже в эталонах">Открыть в Студии</button>
+                </div>
             </div>
             <div id="rsumRun" class="bsynth-run" style="display:none">
                 <div class="bsynth-run__head"><b id="rsumStage"></b><span id="rsumPct" class="tts-dim"></span></div>
