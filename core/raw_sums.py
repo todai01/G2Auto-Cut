@@ -639,17 +639,37 @@ def rs_packs(win, max_len=RS_PACK_MAX, gap=RS_PACK_GAP):
     return packs
 
 
-def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None):
+def _rs_words_of(segs, conv):
+    out = []
+    for x in segs:
+        if any(h in x.text.lower() for h in _HALLU):
+            continue
+        for w in (x.words or []):
+            r = conv(float(w.start), float(w.end))
+            if r:
+                out.append((w.word.strip(), r[0], r[1], float(w.probability)))
+    return out
+
+
+def _rs_asr(model, audio):
+    return model.transcribe(audio, language='ru', word_timestamps=True, beam_size=5, condition_on_previous_text=False,
+                            vad_filter=False, no_speech_threshold=None, initial_prompt=RS_PROMPT)[0]
+
+
+def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pack=None):
     """Вся запись → слова [(слово, нач, кон, вероятность)]. Окна по паузам (rs_windows) склеены в пачки
-    через тишину (rs_packs); время слов переводится обратно в время записи."""
+    через тишину (rs_packs); время слов переводится обратно в время записи. «Резиновое» слово (дольше
+    RS_WORD_MAX — whisper спрятал в нём кусок речи, обычно пропущенный повтор) — его окно распознаётся
+    заново отдельно, сразу в своей пачке. on_pack(info) — после каждой пачки (слова на сейчас, позиция, текст)."""
     import numpy as np
     dur = len(a16) / 16000
     if db is None:
         db, thr = rs_envelope(a16, 16000)
     win = rs_windows(db, thr, dur)
+    packs = rs_packs(win)
     gap = np.zeros(int(RS_PACK_GAP * 16000), np.float32)
     out = []
-    for pk in rs_packs(win):
+    for n, pk in enumerate(packs):
         parts, offs, pos = [], [], 0.0
         for a, b in pk:
             seg = a16[int(a * 16000):int(b * 16000)]
@@ -659,50 +679,31 @@ def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None):
             offs.append((pos, pos + len(seg) / 16000, a))
             parts.append(seg)
             pos += len(seg) / 16000
-        segs, _ = model.transcribe(np.concatenate(parts), language='ru', word_timestamps=True, beam_size=5,
-                                   condition_on_previous_text=False, vad_filter=False,
-                                   no_speech_threshold=None, initial_prompt=RS_PROMPT)
-        for x in segs:
-            if any(h in x.text.lower() for h in _HALLU):
+
+        def conv(ws, we):
+            mid = (ws + we) / 2
+            p0, p1, a = min(offs, key=lambda q: 0 if q[0] <= mid < q[1] else min(abs(mid - q[0]), abs(mid - q[1])))
+            s_, e_ = a + min(max(0.0, ws - p0), p1 - p0), a + min(max(0.0, we - p0), p1 - p0)
+            return (s_, e_) if e_ - s_ >= 0.03 else None    # нулевые — «досказанная» подсказка
+        got = _rs_words_of(_rs_asr(model, np.concatenate(parts)), conv)
+        for a, b in pk:
+            if not any(w[2] - w[1] > RS_WORD_MAX and a <= (w[1] + w[2]) / 2 < b for w in got):
                 continue
-            for w in (x.words or []):
-                ws, we = float(w.start), float(w.end)
-                mid = (ws + we) / 2
-                o = min(offs, key=lambda q: 0 if q[0] <= mid < q[1] else min(abs(mid - q[0]), abs(mid - q[1])))
-                p0, p1, a = o
-                out.append((w.word.strip(), a + min(max(0.0, ws - p0), p1 - p0), a + min(max(0.0, we - p0), p1 - p0),
-                            float(w.probability), 99.0))
+            wa, wb = max(0.0, a - 1.5), min(dur, b + 1.5)
+            new = _rs_words_of(_rs_asr(model, a16[int(wa * 16000):int(wb * 16000)]),
+                               lambda ws, we: (wa + ws, wa + we) if a <= wa + (ws + we) / 2 < b and we - ws >= 0.03 else None)
+            if new:
+                got = [w for w in got if not (a <= (w[1] + w[2]) / 2 < b)] + new
+        got.sort(key=lambda w: w[1])
+        out += got
         if progress:
-            progress(min(0.97, pk[-1][1] / max(dur, 1e-6)))
+            progress(min(1.0, pk[-1][1] / max(dur, 1e-6)))
+        if on_pack:
+            on_pack({"pack": n + 1, "packs": len(packs), "pos": pk[-1][1], "dur": dur, "words": out,
+                     "text": ' '.join(w[0] for w in got)})
         if stop and stop():
             break
-    out = rs_merge_windows(out)
-    # «резиновое» слово (дольше RS_WORD_MAX) — whisper спрятал в нём кусок речи, обычно пропущенный повтор:
-    # такое окно распознаём заново отдельно (в одиночном окне он пишет дословно)
-    bad = sorted({k for k, (a, b) in enumerate(win)
-                  for w in out if w[2] - w[1] > RS_WORD_MAX and a <= (w[1] + w[2]) / 2 < b})
-    for k in bad:
-        if stop and stop():
-            break
-        a, b = win[k]
-        wa, wb = max(0.0, a - 1.5), min(dur, b + 1.5)
-        segs, _ = model.transcribe(a16[int(wa * 16000):int(wb * 16000)], language='ru', word_timestamps=True,
-                                   beam_size=5, condition_on_previous_text=False, vad_filter=False,
-                                   no_speech_threshold=None, initial_prompt=RS_PROMPT)
-        new = []
-        for x in segs:
-            if any(h in x.text.lower() for h in _HALLU):
-                continue
-            for w in (x.words or []):
-                ws, we = wa + float(w.start), wa + float(w.end)
-                if a <= (ws + we) / 2 < b and we - ws >= 0.03:
-                    new.append((w.word.strip(), ws, we, float(w.probability)))
-        if new:
-            out = [w for w in out if not (a <= (w[1] + w[2]) / 2 < b)] + new
-            out.sort(key=lambda w: w[1])
-    if progress:
-        progress(1.0)
-    return out
+    return [w[:4] for w in out]
 
 
 def rs_merge_windows(words):
@@ -754,39 +755,36 @@ def rs_text_sim(heard, words):
 
 
 # ---------------------------------------------------------------- весь разбор
-def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None):
-    """Разбор записи: распознать → выровнять → нарезать → проверить. Пишет файлы в out_dir.
-    log(dict) — ход работы. rec_words — готовое распознавание (повторный разбор без распознавания).
-    Возвращает итог {"pieces": [...], "phrases": [...], "missing": [...], "rec": [...]}."""
-    from utils.wav_io import wav_slice, slice_or_export
-    log = log or (lambda d: None)
-    stop = stop or (lambda: False)
-    phrases = table["phrases"]
-    x, sr = rs_load_audio(wav_path)
-    dur = len(x) / sr
-    a16 = rs_to16k(x, sr)
-    db, thr = rs_envelope(a16, 16000)
-    if rec_words is None:
-        log({"stage": "asr", "pct": 0})
-        rec_words = rs_transcribe(model, a16, lambda p: log({"stage": "asr", "pct": round(p * 100)}), stop, db, thr)
-    if stop():
-        return None
-    rec = rs_rec_words(rec_words)
-    log({"stage": "align", "pct": 0})
-    attempts = rs_align(rec, phrases)
-    choice = rs_choose(attempts, phrases)
+RS_SETTLE = 25.0     # фраза «готова» к нарезке, когда распознавание ушло дальше её конца на столько секунд
+RS_LIVE_STEP = 45.0  # во время распознавания нарезка — не чаще, чем раз в столько секунд записи
 
-    # окна попыток: от конца предыдущего слова до начала следующего
-    cand, phr_out = [], []
-    todo = [(r, k, role) for r, ch in sorted(choice.items())
-            for k, role in [(ch["main"], 'main')] + [(s_, 'spare') for s_ in ch["spare"]]]
-    os.makedirs(out_dir, exist_ok=True)
-    n_fa = 0
-    for n, (r, k, role) in enumerate(todo):
-        if stop():
-            return None
-        log({"stage": "cut", "pct": round(n * 100 / max(1, len(todo)))})
-        a, p = attempts[k], phrases[r]
+
+class RsCutter:
+    """Нарезка по ходу распознавания: process() режет фразы, которые уже закончились (распознавание ушло
+    дальше, диктор читает следующие строки), и сразу пишет куски в папку — их можно слушать, не дожидаясь
+    конца. Фраза, у которой после повторного выравнивания поменялись попытки, режется заново (свои же файлы
+    этого разбора перезаписываются). finish() — итог и отчёты."""
+
+    def __init__(self, model, wav_path, table, out_dir, a16, db, thr, log=None, stop=None):
+        self.model, self.wav, self.out = model, wav_path, out_dir
+        self.phrases = table["phrases"]
+        self.a16, self.db, self.thr = a16, db, thr
+        self.dur = len(a16) / 16000
+        self.log = log or (lambda d: None)
+        self.stop = stop or (lambda: False)
+        self.sig = {}          # r → чем резали (времена попыток)
+        self.cands = {}        # r → куски фразы (все, в т. ч. не сохраняемые)
+        self.phr = {}          # r → целая основная фраза
+        self.keep = {}         # (столбец, текст) → кусок, который сохранён основным
+        self.written = {}      # r → файлы этого разбора от фразы r
+        self.n_fa = 0
+        self.rec, self.attempts, self.choice = [], [], {}
+        os.makedirs(out_dir, exist_ok=True)
+
+    # ---- одна попытка → куски
+    def _cut_attempt(self, r, k, role):
+        rec, db, thr, dur = self.rec, self.db, self.thr, self.dur
+        a, p = self.attempts[k], self.phrases[r]
         i0, i1 = a["i0"], a["i1"]
         lo = max(rec[i0 - 1][2] if i0 > 0 else 0.0, rec[i0][1] - 0.5, 0.0)
         hi = min(dur, rec[i1][2] + 1.2)
@@ -814,10 +812,10 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
         gpi = [rec[i][1] for i, _ in a["pairs"]]
         restart = any(b_ - a_ > 3.0 for a_, b_ in zip(gpi, gpi[1:]))   # долгий провал внутри — пропущенный повтор
         times, weak = None, False
-        if role == 'main' and not clean and not restart and model is not None and hi - lo <= RS_ALIGN_MAX:
+        if role == 'main' and not clean and not restart and self.model is not None and hi - lo <= RS_ALIGN_MAX:
             try:
-                times = rs_force_align(model, a16, lo, hi, words)
-                n_fa += 1
+                times = rs_force_align(self.model, self.a16, lo, hi, words)
+                self.n_fa += 1
             except Exception:
                 times = None
         if not times:                                   # время распознанных слов
@@ -837,35 +835,38 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
         if role == 'main':
             fs, fe = bounds[0][1], bounds[-1][2]
             fname = rs_safe_name(f'стр {p["row"]} (блок {p["block"] + 1})') + '.wav'
-            phr_out.append({"r": r, "row": p["row"], "block": p["block"], "start": round(fs, 3), "end": round(fe, 3),
-                            "file": os.path.join('_фразы', fname), "complete": a["complete"],
-                            "spares": len(choice[r]["spare"])})
+            self.phr[r] = {"r": r, "row": p["row"], "block": p["block"], "start": round(fs, 3), "end": round(fe, 3),
+                           "file": os.path.join('_фразы', fname), "complete": a["complete"],
+                           "spares": len(self.choice[r]["spare"])}
+        out = []
         for kc, s_, e in bounds:
             c = p["cells"][kc]
             h_text, h_sim = heard.get(kc, ('', 0.0))
-            cand.append({"r": r, "kc": kc, "row": p["row"], "block": p["block"], "col": c["col"], "tier": c["tier"],
-                         "text": c["text"], "num": c.get("num", True), "file": None,
-                         "start": round(s_, 3), "end": round(e, 3),
-                         "role": role, "heard": h_text, "sim": round(h_sim, 2), "weak": weak,
-                         "complete": a["complete"] or bool(guessed), "guess": kc in guessed_cells,
-                         "check": None, "check_sim": None})
-    for pc in cand:                                     # что распознано внутри границ куска
+            pc = {"r": r, "kc": kc, "row": p["row"], "block": p["block"], "col": c["col"], "tier": c["tier"],
+                  "text": c["text"], "num": c.get("num", True), "file": None,
+                  "start": round(s_, 3), "end": round(e, 3),
+                  "role": role, "heard": h_text, "sim": round(h_sim, 2), "weak": weak,
+                  "complete": a["complete"] or bool(guessed), "guess": kc in guessed_cells}
+            self._judge(pc)
+            out.append(pc)
+        return out
+
+    def _judge(self, pc):
         ia, ib = int(pc["start"] / RS_FRAME), int(pc["end"] / RS_FRAME)
-        voiced = float((db[ia:ib] >= thr).sum()) * RS_FRAME
+        voiced = float((self.db[ia:ib] >= self.thr).sum()) * RS_FRAME
         vow = sum(pc["text"].count(v) for v in 'аеёиоуыэюя')
-        pc["long"] = voiced > 0.6 + 0.32 * max(1, vow)   # голоса больше, чем нужно на эти слова — внутри лишнее
-        got_w = [w for w, s_, e in rec if pc["start"] <= (s_ + e) / 2 < pc["end"]]
+        long_ = voiced > 0.6 + 0.32 * max(1, vow)      # голоса больше, чем нужно на эти слова — внутри лишнее
+        got_w = [w for w, s_, e in self.rec if pc["start"] <= (s_ + e) / 2 < pc["end"]]
         pc["check"] = ' '.join(got_w)
         pc["check_sim"] = round(rs_text_sim(got_w, pc["text"].split()), 2)
-    for pc in cand:
         why = []
         if pc["sim"] < 0.8 and not pc["guess"]:
             why.append(f'распознано «{pc["heard"] or "—"}»')
-        if pc["check_sim"] is not None and pc["check_sim"] < RS_OK_SIM:
+        if pc["check_sim"] < RS_OK_SIM:
             why.append(f'в границах куска: «{pc["check"] or "—"}»')
         if pc["guess"]:
             why.append('не распознано — граница по звуку, проверить')
-        if pc["long"]:
+        if long_:
             why.append('кусок длиннее обычного — внутри, похоже, повтор или лишнее')
         if pc["weak"]:
             why.append('границы приблизительные')
@@ -873,45 +874,157 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
             why.append('фраза дочитана не полностью')
         pc["why"] = '; '.join(why)
         pc["ok"] = not why
-    # что сохраняем: только числа (начальные фразы — нет); значение столбца — один раз:
-    # первое уверенное прочтение (иначе первое), повторы («сто» после «девятьсот») и их запасные — нет
-    keep = {}
-    for pc in cand:
-        if pc["role"] != 'main' or not pc["num"]:
-            continue
-        key = (pc["col"], pc["text"])
-        if key not in keep or (pc["ok"] and not keep[key]["ok"]):
-            keep[key] = pc
-    chosen = {(pc["r"], pc["kc"]) for pc in keep.values()}
-    pieces, spare_n = [], {}
-    for pc in cand:
-        if (pc["r"], pc["kc"]) not in chosen or not pc["num"]:
-            continue
-        if pc["role"] == 'spare' and not pc["ok"]:
-            continue                                    # запасной, где распознано не то, — мусор
-        base = rs_safe_name(pc["text"])
-        if pc["role"] == 'main':
-            rel_dir = rs_safe_name(pc["tier"])
-        else:
-            rel_dir = os.path.join('_запасные', rs_safe_name(pc["tier"]))
-            spare_n[(rel_dir, base)] = spare_n.get((rel_dir, base), 0) + 1
-            base = f'{base} — попытка {spare_n[(rel_dir, base)]}'
-        os.makedirs(os.path.join(out_dir, rel_dir), exist_ok=True)
-        pc["file"] = os.path.join(rel_dir, base + '.wav')
-        slice_or_export(wav_path, os.path.join(out_dir, pc["file"]), pc["start"] * 1000, pc["end"] * 1000)
-        pieces.append(pc)
-    if phr_out:
-        os.makedirs(os.path.join(out_dir, '_фразы'), exist_ok=True)
-    for ph in phr_out:
-        slice_or_export(wav_path, os.path.join(out_dir, ph["file"]), ph["start"] * 1000, ph["end"] * 1000)
-    got_r = set(choice)
-    missing = [{"row": p["row"], "block": p["block"], "text": ' | '.join(c["text"] for c in p["cells"])}
-               for p in phrases if p["id"] not in got_r]
-    res = {"pieces": pieces, "phrases": phr_out, "missing": missing, "rec": rec_words,
-           "attempts": len(attempts), "dur": round(dur, 1), "aligned": n_fa,
-           "skipped_repeats": sum(1 for pc in cand if pc["role"] == 'main' and pc["num"]
-                                  and (pc["r"], pc["kc"]) not in chosen)}
-    rs_write_reports(out_dir, res)
+
+    # ---- файлы
+    def _write(self, rel, s_, e):
+        from utils.wav_io import slice_or_export
+        os.makedirs(os.path.dirname(os.path.join(self.out, rel)), exist_ok=True)
+        slice_or_export(self.wav, os.path.join(self.out, rel), s_ * 1000, e * 1000)
+
+    def _drop_files(self, r):
+        """Свои файлы фразы r (резали заново) — убрать; основной кусок, который сохранён от другой фразы, не трогаем."""
+        for rel in self.written.pop(r, []):
+            if any(pc["file"] == rel and pc["r"] != r for pc in self.keep.values()):
+                continue
+            try:
+                os.remove(os.path.join(self.out, rel))
+            except OSError:
+                pass
+        for key in [k for k, pc in self.keep.items() if pc["r"] == r]:
+            del self.keep[key]
+
+    def _save_phrase(self, r):
+        """Сохранить куски фразы r: только числа; значение столбца — один раз (первое уверенное прочтение);
+        запасные — только у сохранённого значения и только уверенные."""
+        files = self.written.setdefault(r, [])
+        ph = self.phr.get(r)
+        if ph:
+            self._write(ph["file"], ph["start"], ph["end"])
+            files.append(ph["file"])
+        chosen = set()
+        for pc in self.cands[r]:
+            if pc["role"] != 'main' or not pc["num"]:
+                continue
+            key = (pc["col"], pc["text"])
+            old = self.keep.get(key)
+            if old is None or (pc["ok"] and not old["ok"]):
+                if old is not None:                       # лучшее прочтение позже — прежнее и его запасные убираем
+                    self._forget(old)
+                pc["file"] = os.path.join(rs_safe_name(pc["tier"]), rs_safe_name(pc["text"]) + '.wav')
+                self._write(pc["file"], pc["start"], pc["end"])
+                files.append(pc["file"])
+                self.keep[key] = pc
+                chosen.add(pc["kc"])
+        n_sp = {}
+        for pc in self.cands[r]:
+            if pc["role"] != 'spare' or pc["kc"] not in chosen or not pc["ok"] or not pc["num"]:
+                continue
+            n_sp[pc["kc"]] = n_sp.get(pc["kc"], 0) + 1
+            pc["file"] = os.path.join('_запасные', rs_safe_name(pc["tier"]),
+                                      f'{rs_safe_name(pc["text"])} — попытка {n_sp[pc["kc"]]}.wav')
+            self._write(pc["file"], pc["start"], pc["end"])
+            files.append(pc["file"])
+
+    def _forget(self, old):
+        r = old["r"]
+        for pc in self.cands.get(r, []):
+            if pc["kc"] == old["kc"] and pc["file"]:
+                if pc["role"] == 'spare':
+                    try:
+                        os.remove(os.path.join(self.out, pc["file"]))
+                    except OSError:
+                        pass
+                if pc["file"] in self.written.get(r, []):
+                    self.written[r].remove(pc["file"])
+                pc["file"] = None
+
+    # ---- проход
+    def process(self, rec_words, upto=None, final=False):
+        """Выровнять всё распознанное и нарезать «готовые» фразы. upto — докуда дошло распознавание."""
+        self.rec = rs_rec_words(rec_words)
+        self.attempts = rs_align(self.rec, self.phrases)
+        self.choice = rs_choose(self.attempts, self.phrases)
+        rec = self.rec
+        ends = {r: max(rec[self.attempts[k]["i1"]][2] for k in [ch["main"]] + ch["spare"]) for r, ch in self.choice.items()}
+        todo = []
+        for r, ch in sorted(self.choice.items()):
+            if not final and not (upto is not None and ends[r] < upto - RS_SETTLE
+                                  and any(e > ends[r] for rr, e in ends.items() if rr != r)):
+                continue
+            ks = [ch["main"]] + ch["spare"]
+            sig = tuple((round(rec[self.attempts[k]["i0"]][1], 2), round(rec[self.attempts[k]["i1"]][2], 2)) for k in ks)
+            if self.sig.get(r) != sig:
+                todo.append((r, sig))
+        for n, (r, sig) in enumerate(todo):
+            if self.stop():
+                return False
+            p = self.phrases[r]
+            self.log({"cut": {"n": n + 1, "of": len(todo), "row": p["row"], "block": p["block"] + 1,
+                              "text": ' '.join(c["text"] for c in p["cells"])}})
+            ch = self.choice[r]
+            if r in self.sig:
+                self._drop_files(r)
+            cands = self._cut_attempt(r, ch["main"], 'main')
+            for k in ch["spare"]:
+                cands += self._cut_attempt(r, k, 'spare')
+            self.cands[r] = cands
+            self._save_phrase(r)
+            self.sig[r] = sig
+        if final:                                         # фразы, которые при последнем выравнивании пропали
+            for r in [r for r in list(self.sig) if r not in self.choice]:
+                self._drop_files(r)
+                self.sig.pop(r, None)
+                self.cands.pop(r, None)
+                self.phr.pop(r, None)
+        self.log({"live": self.stats()})
+        return True
+
+    def stats(self):
+        main = [pc for pc in self.keep.values()]
+        return {"found": len(self.choice), "phrases": len(self.phrases), "done": len(self.sig),
+                "pieces": len(main), "bad": sum(1 for pc in main if not pc["ok"]),
+                "spares": sum(1 for r in self.cands for pc in self.cands[r] if pc["role"] == 'spare' and pc["file"])}
+
+    def finish(self, rec_words):
+        pieces = [pc for r in sorted(self.cands) for pc in self.cands[r] if pc["file"]]
+        missing = [{"row": p["row"], "block": p["block"], "text": ' | '.join(c["text"] for c in p["cells"])}
+                   for p in self.phrases if p["id"] not in self.choice]
+        main_num = [pc for r in self.cands for pc in self.cands[r] if pc["role"] == 'main' and pc["num"]]
+        res = {"pieces": pieces, "phrases": [self.phr[r] for r in sorted(self.phr)], "missing": missing,
+               "rec": rec_words, "attempts": len(self.attempts), "dur": round(self.dur, 1), "aligned": self.n_fa,
+               "skipped_repeats": sum(1 for pc in main_num if not pc["file"])}
+        rs_write_reports(self.out, res)
+        return res
+
+
+def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None):
+    """Разбор записи: распознать → выровнять → нарезать. Куски пишутся в out_dir по ходу распознавания.
+    log(dict) — ход работы: {"stage", "pct"} и подробности {"asr": …}, {"cut": …}, {"live": …}.
+    rec_words — готовое распознавание (повторный разбор без распознавания).
+    Возвращает итог {"pieces": [...], "phrases": [...], "missing": [...], "rec": [...]} или None (остановлено)."""
+    log = log or (lambda d: None)
+    stop = stop or (lambda: False)
+    x, sr = rs_load_audio(wav_path)
+    a16 = rs_to16k(x, sr)
+    db, thr = rs_envelope(a16, 16000)
+    cut = RsCutter(model, wav_path, table, out_dir, a16, db, thr, log, stop)
+    if rec_words is None:
+        log({"stage": "asr", "pct": 0})
+        last = {"pos": 0.0}
+
+        def on_pack(info):
+            log({"stage": "asr", "pct": round(info["pos"] * 100 / max(info["dur"], 1e-6)),
+                 "asr": {k: info[k] for k in ("pack", "packs", "pos", "dur", "text")}})
+            if info["pos"] - last["pos"] >= RS_LIVE_STEP and info["pos"] < info["dur"]:
+                last["pos"] = info["pos"]
+                cut.process(info["words"], upto=info["pos"])
+        rec_words = rs_transcribe(model, a16, None, stop, db, thr, on_pack)
+    if stop():
+        return None
+    log({"stage": "cut", "pct": 0})
+    if not cut.process(rec_words, final=True):
+        return None
+    res = cut.finish(rec_words)
     log({"stage": "done", "pct": 100})
     return res
 
@@ -991,7 +1104,7 @@ class RawSumsMixin:
         if st is None:
             st = self._rsum_st = {"audio": None, "table": None, "tdata": None, "run": False, "stage": None,
                                   "pct": 0, "msg": '', "out": None, "result": None, "stop": False,
-                                  "need_model": False, "started": None, "stage_t": None}
+                                  "need_model": False, "started": None, "stage_t": None, "ended": None, "info": {}}
         return st
 
     def rsum_state(self):
@@ -1017,14 +1130,24 @@ class RawSumsMixin:
                        "bad_list": [{"file": p["file"], "text": p["text"], "row": p["row"], "block": p["block"] + 1,
                                      "tier": p["tier"], "why": p["why"]} for p in bad]}
         now = time.time()
-        elapsed = round(now - st["started"]) if st.get("started") else None
+        elapsed = round((st.get("ended") or now) - st["started"]) if st.get("started") else None
+        info = dict(st.get("info") or {})
         eta = None
-        if st["run"] and st.get("stage_t") and 3 <= (st["pct"] or 0) < 100:
+        asr = info.get("asr")
+        if st["run"] and st["stage"] == 'asr' and asr and info.get("asr_t0") and asr["pos"] > 20:
+            spent = now - info["asr_t0"]
+            speed = asr["pos"] / max(spent, 1e-6)               # секунд записи за секунду работы
+            info["speed"] = round(speed, 2)
+            eta = round((asr["dur"] - asr["pos"]) / speed + 0.08 * asr["dur"] / max(speed, 0.2))   # + нарезка остатка
+        elif st["run"] and st["stage"] == 'cut' and info.get("cut") and st.get("stage_t"):
+            c = info["cut"]
             spent = now - st["stage_t"]
-            eta = round(spent * (100 - st["pct"]) / st["pct"])
+            if c["n"] >= 3:
+                eta = round(spent * (c["of"] - c["n"]) / c["n"])
+        info.pop("asr_t0", None)
         return {"audio": st["audio"], "table": table, "run": st["run"], "stage": st["stage"], "pct": st["pct"],
                 "msg": st["msg"], "out": st["out"], "summary": summary, "need_model": st.get("need_model", False),
-                "elapsed": elapsed, "eta": eta, "stopping": bool(st["run"] and st["stop"]),
+                "elapsed": elapsed, "eta": eta, "stopping": bool(st["run"] and st["stop"]), "info": info,
                 "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"])))}
 
     def rsum_pick_audio(self):
@@ -1069,7 +1192,7 @@ class RawSumsMixin:
             return {"error": "Выберите таблицу."}
         # модель грузится в потоке (первый раз — десятки секунд): окно сразу видит «Загрузка модели»
         st.update(run=True, stop=False, stage='model', pct=0, msg='', result=None, need_model=False,
-                  out=rs_out_dir(st["audio"]), started=time.time(), stage_t=time.time())
+                  out=rs_out_dir(st["audio"]), started=time.time(), stage_t=time.time(), ended=None, info={})
         threading.Thread(target=self._rsum_boot, args=(bool(reuse_asr),), daemon=True).start()
         return self.rsum_state()
 
@@ -1100,37 +1223,41 @@ class RawSumsMixin:
                     rec = [tuple(w) for w in json.load(f)]
             except Exception:
                 rec = None
+        info = st["info"]
+        info["model_s"] = round(time.time() - st["started"], 1)
+        info["cached"] = rec is not None
 
         def log(d):
-            if d.get("stage") != st["stage"]:
-                st["stage_t"] = time.time()
-            st["stage"], st["pct"] = d.get("stage"), d.get("pct", 0)
+            if "stage" in d:
+                if d["stage"] != st["stage"]:
+                    st["stage_t"] = time.time()
+                    if d["stage"] == 'asr':
+                        info["asr_t0"] = time.time()
+                    if d["stage"] == 'cut':
+                        info["asr_s"] = round(time.time() - info.get("asr_t0", time.time()))
+                st["stage"], st["pct"] = d["stage"], d.get("pct", 0)
+            for k in ("asr", "cut", "live"):
+                if k in d:
+                    info[k] = d[k]
+            if "cut" in d and st["stage"] == 'cut':
+                st["pct"] = round(d["cut"]["n"] * 100 / max(1, d["cut"]["of"]))
 
         try:
-            if rec is None:
-                x, sr = rs_load_audio(st["audio"])
-                a16 = rs_to16k(x, sr)
-                db, thr = rs_envelope(a16, 16000)
-                log({"stage": "asr", "pct": 0})
-                rec = rs_transcribe(model, a16, lambda p: log({"stage": "asr", "pct": round(p * 100)}),
-                                    lambda: st["stop"], db, thr)
-                if st["stop"]:
-                    st["msg"] = 'Остановлено.'
-                    return
-                if cache:
-                    os.makedirs(RS_CACHE_DIR, exist_ok=True)
-                    with open(cache + '.tmp', 'w', encoding='utf-8') as f:
-                        json.dump(rec, f, ensure_ascii=False)
-                    os.replace(cache + '.tmp', cache)
             res = rs_run(model, st["audio"], st["tdata"], st["out"], log=log, stop=lambda: st["stop"], rec_words=rec)
             if res is None:
-                st["msg"] = 'Остановлено.'
+                st["msg"] = 'Остановлено. Готовые куски остались в папке.'
                 return
+            if rec is None and cache:
+                os.makedirs(RS_CACHE_DIR, exist_ok=True)
+                with open(cache + '.tmp', 'w', encoding='utf-8') as f:
+                    json.dump(res["rec"], f, ensure_ascii=False)
+                os.replace(cache + '.tmp', cache)
             st["result"] = res
         except Exception as e:
             st["msg"] = f'Ошибка: {e}'
         finally:
             st["run"] = False
+            st["ended"] = time.time()
 
     def rsum_stop(self):
         self._rsum()["stop"] = True

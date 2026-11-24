@@ -217,3 +217,43 @@ def test_repeated_value_in_column_saved_once(tmp_path):
     assert len(files) == 7 and res["skipped_repeats"] == 2
     assert os.listdir(os.path.join(out, 'C сотни')) == ['_проверка.xlsx', 'сто.wav'] or \
         sorted(os.listdir(os.path.join(out, 'C сотни'))) == ['_проверка.xlsx', 'сто.wav']
+
+
+def test_live_cutting_same_files_as_single_pass(tmp_path):
+    """Нарезка по ходу распознавания (куски сразу в папке) даёт ровно те же файлы, что разовая в конце:
+    ничего лишнего не остаётся, ничего не пропадает; фразы с повтором после «готовности» режутся заново."""
+    from core.raw_sums import RsCutter, rs_envelope
+    table = rs_read_grid(GRID)
+    seq = ['сумма к оплате один миллион две тысячи одна тенге', 'сумма к оплате два миллиона',
+           'сумма к оплате два миллиона три тысячи два тенге', 'сумма к оплате три миллиона пять тысяч три тенге']
+    rec, words_t, t = [], [], 0.5
+    for s in seq:
+        for w in s.split():
+            rec.append((w, t, t + 0.35, 1.0))
+            words_t.append((t, t + 0.35))
+            t += 0.55
+        t += 12.0                                  # длинные паузы — чтобы фразы «созревали» по ходу
+    wav = tmp_path / 'запись.wav'
+    x = tone_track(words_t)
+    write_wav16(str(wav), x)
+
+    def files(d):
+        return sorted(os.path.relpath(os.path.join(r, f), d) for r, _, fs in os.walk(d) for f in fs if f.endswith('.wav'))
+    a16 = rs_to16k_for_test(x)
+    db, thr = rs_envelope(a16, 16000)
+    live = RsCutter(None, str(wav), table, str(tmp_path / 'live'), a16, db, thr)
+    seen = []
+    for k in range(1, len(rec) + 1):                # слова приходят по одному, как из распознавания
+        live.process(rec[:k], upto=rec[k - 1][2])
+        seen.append(len(files(str(tmp_path / 'live'))))
+    assert max(seen[:-5]) > 0                         # куски появились задолго до конца
+    live.process(rec, final=True)
+    live.finish(rec)
+    single = rs_run(None, str(wav), table, str(tmp_path / 'one'), rec_words=rec)
+    assert files(str(tmp_path / 'live')) == files(str(tmp_path / 'one'))
+    assert len(single["pieces"]) == len([f for f in files(str(tmp_path / 'one')) if not f.startswith('_фразы')])
+
+
+def rs_to16k_for_test(x):
+    from core.raw_sums import rs_to16k
+    return rs_to16k(x, 8000)

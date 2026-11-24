@@ -305,3 +305,10 @@ input[type=range]::-webkit-slider-thumb{
     background-size: 34px 34px; animation: rsumStripe .8s linear infinite; opacity: .85; transition: none; }
 @keyframes rsumStripe{ from{ background-position: 0 0; } to{ background-position: 34px 0; } }
 #btnRsumStart .bsynth-spin, #rsumStage .bsynth-spin{ display: inline-block; vertical-align: -2px; margin-right: 6px; }
+.rsum-steps{ display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin-top: 2px; }
+.rsum-step{ display: flex; gap: 10px; align-items: flex-start; }
+.rsum-step > i{ flex: 0 0 auto; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); }
+.rsum-step--done > i{ background: var(--accent-good); border-color: var(--accent-good); }
+.rsum-step--run > i{ border-color: var(--accent-info); border-right-color: transparent; animation: bsspin .8s linear infinite; }
+.rsum-step--wait{ opacity: .5; }
+.rsum-step__sub{ color: var(--text-dim); margin-top: 2px; word-break: break-word; }

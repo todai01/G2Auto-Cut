@@ -5376,7 +5376,7 @@ let isProcessing = false;
 
         // ---------- Разбор сырой записи сумм (core/raw_sums.py) ----------
         let rsumSt = null, rsumTimer = null, rsumBusy = false;
-        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', done: 'Готово' };
+        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание и нарезка', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', done: 'Готово' };
         let rsumWasNeed = false;
         async function openRsum() {
             document.getElementById('rsumOverlay').style.display = 'flex';
@@ -5415,6 +5415,38 @@ let isProcessing = false;
             await pywebview.api.rsum_stop();
             rsumEvent(await pywebview.api.rsum_state());
         }
+        function rsumClock(sec) {
+            sec = Math.max(0, Math.round(sec || 0));
+            let h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, x = sec % 60;
+            return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+        }
+        function rsumSteps(s) {
+            // шаги разбора: ✓ готово, ● идёт, ○ впереди — и что именно сейчас в работе
+            let i = s.info || {}, order = ['model', 'asr', 'cut', 'done'];
+            let at = s.run ? Math.max(0, order.indexOf(s.stage === 'start' ? 'model' : s.stage)) : 4;
+            let a = i.asr, c = i.cut, l = i.live;
+            let st = k => k === 'cut' && s.run && s.stage === 'asr' && l ? 'run'      // нарезка идёт вместе с распознаванием
+                : order.indexOf(k) < at ? 'done' : order.indexOf(k) === at ? 'run' : 'wait';
+            let row = (k, title, detail, sub) => `<div class="rsum-step rsum-step--${st(k)}"><i></i><div><b>${title}</b>`
+                + (detail ? ` <span class="tts-dim">${detail}</span>` : '') + (sub ? `<div class="rsum-step__sub">${sub}</div>` : '') + `</div></div>`;
+            let model = st('model') === 'run' ? 'загружаю large-v3-turbo' : (i.model_s != null ? `загружена за ${rsumDur(i.model_s)}` : '');
+            let asr = '', asrSub = '';
+            if (i.cached) asr = 'взято прежнее распознавание этой записи';
+            else if (a) {
+                asr = `запись ${rsumClock(a.pos)} из ${rsumClock(a.dur)} · пачка ${a.pack} из ${a.packs}`
+                    + (i.speed ? ` · скорость ×${String(i.speed).replace('.', ',')}` : '')
+                    + (st('asr') === 'done' && i.asr_s ? ` · за ${rsumDur(i.asr_s)}` : '');
+                if (st('asr') === 'run' && a.text) asrSub = `Сейчас: «${escapeHtml(a.text.length > 140 ? '…' + a.text.slice(-140) : a.text)}»`;
+            }
+            let live = l ? `фраз найдено ${l.found} из ${l.phrases} · нарезано ${l.done} · кусков ${l.pieces}`
+                + (l.spares ? ` · запасных ${l.spares}` : '') + (l.bad ? ` · <span class="clone-bad">проверить ${l.bad}</span>` : '') : '';
+            let cutSub = c && s.run ? `${s.stage === 'cut' ? 'Режу' : 'Последняя'}: блок ${c.block}, стр ${c.row} — ${escapeHtml(c.text)}` + (s.stage === 'cut' ? ` (${c.n} из ${c.of})` : '') : '';
+            return row('model', 'Модель', model)
+                + row('asr', 'Распознавание', asr, asrSub)
+                + row('cut', s.stage === 'asr' ? 'Нарезка по ходу' : 'Нарезка', live, cutSub
+                    + (s.run && l && l.pieces ? `${cutSub ? '<br>' : ''}Готовые куски уже в папке — их можно слушать` : ''))
+                + row('done', 'Итог и отчёт', st('done') === 'done' ? 'разбор.xlsx, _проверка.xlsx в папках ярусов' : '');
+        }
         function rsumDur(sec) {
             sec = Math.max(0, Math.round(sec || 0));
             let m = Math.floor(sec / 60), s = sec % 60;
@@ -5450,11 +5482,12 @@ let isProcessing = false;
                 ? `<span class="bsynth-spin"></span> ${s.stopping ? 'Останавливаю' : (RSUM_STAGE[s.stage] || 'Работаю')}…`
                 : (s.summary ? 'Готово' : '');
             $('rsumPct').innerText = s.run
-                ? [s.pct && !busy ? `${s.pct}%` : '', s.elapsed != null ? `идёт ${rsumDur(s.elapsed)}` : '',
+                ? [s.elapsed != null ? `идёт ${rsumDur(s.elapsed)}` : '',
                    s.eta != null ? `осталось ~${rsumDur(s.eta)}` : (s.stage === 'model' ? 'первый раз — до минуты' : '')].filter(Boolean).join(' · ')
                 : (s.summary && s.elapsed != null ? `за ${rsumDur(s.elapsed)}` : '');
             $('rsumBar').parentElement.classList.toggle('rsum-busy', !!busy);
             $('rsumBar').style.width = (busy ? 100 : s.run ? (s.pct || 0) : (s.summary ? 100 : 0)) + '%';
+            $('rsumSteps').innerHTML = (s.run || s.summary) ? rsumSteps(s) : '';
             $('btnRsumStop').style.display = s.run ? '' : 'none';
             if (s.need_model && !rsumWasNeed) setTimeout(rsumNeedModel, 0);
             rsumWasNeed = !!s.need_model;
