@@ -472,6 +472,38 @@
         </div>
     </div>
 
+    <!-- Разбор сырой записи сумм: один длинный дубль по таблице → куски по ярусам (распознавание + выравнивание) -->
+    <div id="rsumOverlay" class="custom-alert-overlay">
+        <div class="custom-alert-box modal--lg">
+            <div class="modal-head">
+                <h3 class="modal-title">Разбор записи сумм</h3>
+                <button class="modal-close" onclick="closeRsum()" title="Закрыть (разбор продолжится)">&times;</button>
+            </div>
+            <div class="clone-step">
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="rsumPickAudio()">Запись…</button>
+                    <span id="rsumAudio" class="modal-hint" style="margin:0;">Один длинный дубль, прочитанный по таблице</span>
+                </div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="rsumPickTable()">Таблица…</button>
+                    <span id="rsumTable" class="modal-hint" style="margin:0;">Строка 1 — заголовки; строка блока столбцов — фраза, ячейка — ярус</span>
+                </div>
+                <div id="rsumPreview" class="bsynth-preview"></div>
+                <button class="splash-btn" style="width:100%;" id="btnRsumStart" onclick="rsumStart()" disabled>Разобрать</button>
+            </div>
+            <div id="rsumRun" class="bsynth-run" style="display:none">
+                <div class="bsynth-run__head"><b id="rsumStage"></b><span id="rsumPct" class="tts-dim"></span></div>
+                <div class="bsynth-bar"><i id="rsumBar"></i></div>
+                <div id="rsumMsg" class="clone-bad"></div>
+                <div id="rsumSummary"></div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" id="btnRsumStop" onclick="pywebview.api.rsum_stop()">Остановить</button>
+                    <button class="custom-alert-btn" onclick="pywebview.api.rsum_open_folder()">Открыть папку</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Сопоставить укороченные имена файлов с полными из Excel и разложить по языкам -->
     <div id="renameMatchOverlay" class="custom-alert-overlay">
         <div class="custom-alert-box modal--md">

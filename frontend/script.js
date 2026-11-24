@@ -873,6 +873,9 @@ let isProcessing = false;
                 { title: 'Конструктор', icon: 'sliders', src: '.menu-row--info' },
                 { title: 'Прослушка', icon: 'headphones', run: () => listenStart(),
                   desc: 'Записи переменных по таблице — послушать в фразе, подрезать, при нужде синтезировать' },
+
+                { title: 'Разбор записи сумм', icon: 'scissors', run: () => openRsum(),
+                  desc: 'Один длинный дубль, прочитанный по таблице, → куски по ярусам: распознавание и выравнивание по тексту' },
             ],
         };
         const RADIAL_CAT_KEY = 'gvox_radial_cat';
@@ -5369,6 +5372,84 @@ let isProcessing = false;
             let r = await pywebview.api.bsynth_retry_failed();
             if (r && r.error) { showToast(r.error); return; }
             bsynthEvent(r);
+        }
+
+        // ---------- Разбор сырой записи сумм (core/raw_sums.py) ----------
+        let rsumSt = null, rsumTimer = null, rsumBusy = false;
+        const RSUM_STAGE = { prep: 'Подготовка', asr: 'Распознавание', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', done: 'Готово' };
+        async function openRsum() {
+            document.getElementById('rsumOverlay').style.display = 'flex';
+            rsumEvent(await pywebview.api.rsum_state());
+        }
+        function closeRsum() { document.getElementById('rsumOverlay').style.display = 'none'; }
+        async function rsumPickAudio() {
+            let r = await pywebview.api.rsum_pick_audio();
+            if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            rsumEvent(r);
+        }
+        async function rsumPickTable() {
+            let r = await pywebview.api.rsum_pick_table();
+            if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            rsumEvent(r);
+        }
+        async function rsumStart() {
+            let s = rsumSt, reuse = true;
+            if (s && s.cached && !(await showBeautifulConfirm('<b>Эта запись уже распознавалась.</b><br><br>Взять прежнее распознавание '
+                + '(быстро — только выравнивание и нарезка) или распознать заново?', 'Взять прежнее', 'Заново'))) reuse = false;
+            let r = await pywebview.api.rsum_start(reuse);
+            if (r && r.error === 'need_model') {
+                if (await showBeautifulConfirm('Нужна модель распознавания large-v3-turbo (та же, что для казахского). '
+                    + 'Указать папку с уже скачанной моделью?', 'Указать папку', 'Отмена')) {
+                    let m = await pywebview.api.sum_auto_check_pick_model('kz');
+                    if (m && m.error && m.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(m.error));
+                    else if (m && !m.error) rsumStart();
+                }
+                return;
+            }
+            if (r && r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            rsumEvent(r);
+        }
+        function rsumPoll() {
+            if (rsumTimer) return;
+            rsumTimer = setInterval(async () => {
+                if (rsumBusy) return;
+                rsumBusy = true;
+                try { rsumEvent(await pywebview.api.rsum_state()); } finally { rsumBusy = false; }
+            }, 800);
+        }
+        function rsumEvent(s) {
+            if (!s) return;
+            rsumSt = s;
+            let $ = id => document.getElementById(id);
+            $('rsumAudio').innerText = s.audio || 'Один длинный дубль, прочитанный по таблице';
+            let t = s.table;
+            $('rsumTable').innerText = t ? `${t.path} · лист «${t.sheet}»` : 'Строка 1 — заголовки; строка блока столбцов — фраза, ячейка — ярус';
+            $('rsumPreview').innerHTML = t
+                ? `<div class="tts-dim">Фраз: <b>${t.phrases}</b> в ${t.blocks} ${t.blocks === 1 ? 'блоке' : 'блоках'} · ярусы: ${t.tiers.map(escapeHtml).join(' · ')}`
+                    + (t.skipped.length ? ` · пропущено строк: ${t.skipped.length}` : '') + `</div>`
+                    + `<table>${t.preview.map(p => `<tr><th>${p.block}:${p.row}</th>${p.cells.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</table>`
+                : '';
+            $('btnRsumStart').disabled = !(s.audio && t) || s.run;
+            let show = s.run || s.summary || s.msg;
+            $('rsumRun').style.display = show ? '' : 'none';
+            $('rsumStage').innerText = s.run ? (RSUM_STAGE[s.stage] || 'Работаю') + '…' : (s.summary ? 'Готово' : '');
+            $('rsumPct').innerText = s.run ? `${s.pct || 0}%` : '';
+            $('rsumBar').style.width = (s.run ? (s.pct || 0) : (s.summary ? 100 : 0)) + '%';
+            $('btnRsumStop').style.display = s.run ? '' : 'none';
+            $('rsumMsg').innerText = s.msg || '';
+            let m = s.summary;
+            $('rsumSummary').innerHTML = m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`
+                + ` · <span class="${m.bad ? 'clone-bad' : ''}">проверить: <b>${m.bad}</b></span>`
+                + (m.missing_n ? ` · <span class="clone-bad">не найдено фраз: ${m.missing_n}</span>` : '') + `</div>`
+                + `<div class="tts-dim">${escapeHtml(s.out || '')} — проверка в «Прослушке фраз»: эта папка и «_проверка.xlsx»</div>`
+                + (m.bad_list.length ? `<div class="rsum-list">${m.bad_list.map(b =>
+                    `<div class="rsum-bad"><button class="custom-alert-btn" onclick="pywebview.api.rsum_play(${escapeHtml(JSON.stringify(b.file))})">▶</button>`
+                    + `<span><b>${escapeHtml(b.text)}</b> <span class="tts-dim">блок ${b.block}, стр ${b.row} · ${escapeHtml(b.tier)}</span><br>${escapeHtml(b.why)}</span></div>`).join('')}</div>` : '')
+                + (m.missing_n ? `<details class="rsum-miss"><summary>Не найдено в записи (${m.missing_n})</summary>${m.missing.map(x =>
+                    `<div>блок ${x.block + 1}, стр ${x.row}: ${escapeHtml(x.text)}</div>`).join('')}</details>` : '')
+                : '';
+            if (s.run) rsumPoll();
+            else if (rsumTimer) { clearInterval(rsumTimer); rsumTimer = null; }
         }
 
         function openConverter() {

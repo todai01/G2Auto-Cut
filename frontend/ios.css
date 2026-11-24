@@ -294,3 +294,10 @@ input[type=range]::-webkit-slider-thumb{
 .stage-listen[data-lmode="phrase"] .listen-asm,
 .stage-listen[data-lmode="phrase"] [data-lvar]{ display: none !important; }
 .listen-lang--sm#listenModeSw{ margin-top: 4px; }
+
+/* Разбор записи сумм */
+.rsum-list{ max-height: 300px; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.rsum-bad{ display: flex; gap: 10px; align-items: flex-start; padding: 6px 8px; border-radius: 10px; background: rgba(229, 72, 77, .12); font-size: 13px; }
+.rsum-bad .custom-alert-btn{ flex: 0 0 auto; width: auto; min-width: 34px; padding: 4px 10px; }
+.rsum-bad > span{ flex: 1 1 auto; }
+.rsum-miss{ margin-top: 8px; font-size: 13px; max-height: 200px; overflow: auto; }
