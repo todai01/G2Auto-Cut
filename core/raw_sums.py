@@ -668,7 +668,7 @@ def rs_windows(db, thr, dur):
 
 
 RS_PACK_MAX, RS_PACK_GAP = 27.0, 1.0
-RS_WORD_MAX = 1.6    # слово дольше — подозрительное (см. rs_transcribe)
+RS_WORD_MAX = 1.6    # слово дольше и с лишним голосом внутри — подозрительное (см. rs_transcribe)
 
 
 def rs_packs(win, max_len=RS_PACK_MAX, gap=RS_PACK_GAP):
@@ -686,6 +686,11 @@ def rs_packs(win, max_len=RS_PACK_MAX, gap=RS_PACK_GAP):
     if cur:
         packs.append(cur)
     return packs
+
+
+def rs_clock(sec):
+    sec = int(max(0, sec))
+    return f'{sec // 60}:{sec % 60:02d}'
 
 
 def _rs_words_of(segs, conv):
@@ -735,9 +740,21 @@ def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pa
             s_, e_ = a + min(max(0.0, ws - p0), p1 - p0), a + min(max(0.0, we - p0), p1 - p0)
             return (s_, e_) if e_ - s_ >= 0.03 else None    # нулевые — «досказанная» подсказка
         got = _rs_words_of(_rs_asr(model, np.concatenate(parts)), conv)
-        for a, b in pk:
-            if not any(w[2] - w[1] > RS_WORD_MAX and a <= (w[1] + w[2]) / 2 < b for w in got):
-                continue
+
+        def hides_speech(w):
+            # «резиновое» слово: длинное И внутри голоса больше, чем нужно на это слово (паузу модель тоже
+            # приписывает слову — из-за одной паузы окно не перепроверяем)
+            if w[2] - w[1] <= RS_WORD_MAX:
+                return False
+            ia, ib = int(w[1] / RS_FRAME), int(w[2] / RS_FRAME)
+            voiced = float((db[ia:ib] >= thr).sum()) * RS_FRAME
+            vow = sum(rs_norm(w[0]).count(v) for v in 'аеёиоуыэюя')
+            return voiced > 0.8 + 0.32 * max(1, vow)
+        redo = [(a, b) for a, b in pk if any(hides_speech(w) and a <= (w[1] + w[2]) / 2 < b for w in got)]
+        for m, (a, b) in enumerate(redo):
+            if on_pack:
+                on_pack({"pack": n + 1, "packs": len(packs), "pos": a, "dur": dur, "words": None,
+                         "text": f'перепроверяю окно {rs_clock(a)}–{rs_clock(b)}: в растянутом слове спрятана речь'})
             wa, wb = max(0.0, a - 1.5), min(dur, b + 1.5)
             new = _rs_words_of(_rs_asr(model, a16[int(wa * 16000):int(wb * 16000)]),
                                lambda ws, we: (wa + ws, wa + we) if a <= wa + (ws + we) / 2 < b and we - ws >= 0.03 else None)
@@ -1073,6 +1090,8 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
         def on_pack(info):
             log({"stage": "asr", "pct": round(info["pos"] * 100 / max(info["dur"], 1e-6)),
                  "asr": {k: info[k] for k in ("pack", "packs", "pos", "dur", "text")}})
+            if info["words"] is None:
+                return
             if info["pos"] - last["pos"] >= RS_LIVE_STEP and info["pos"] < info["dur"]:
                 last["pos"] = info["pos"]
                 cut.process(info["words"], upto=info["pos"])
