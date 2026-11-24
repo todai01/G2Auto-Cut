@@ -148,13 +148,16 @@ def test_run_writes_pieces_without_touching_source(tmp_path):
     res = rs_run(None, str(wav), table, out, rec_words=rec)      # без модели: границы по распознанным словам
     assert md5(str(wav)) == before                               # исходник не тронут
     main = [p for p in res["pieces"] if p["role"] == 'main']
-    assert len(main) == 8 and len([p for p in res["pieces"] if p["role"] == 'spare']) == 2
-    assert os.path.exists(os.path.join(out, 'C тысячи', 'две тысячи.wav'))
+    # начальная фраза «сумма к оплате» не сохраняется: 2 фразы × 3 числовых яруса
+    assert len(main) == 6 and not any('оплате' in p["text"] for p in res["pieces"])
+    assert len([p for p in res["pieces"] if p["role"] == 'spare']) == 1      # «два миллиона» из оборванной
     for p in res["pieces"]:
         assert os.path.getsize(os.path.join(out, p["file"])) > 44
     assert os.path.exists(os.path.join(out, 'B миллионы', 'один миллион.wav'))
+    assert os.path.exists(os.path.join(out, 'C тысячи', 'две тысячи.wav'))
     assert os.path.exists(os.path.join(out, '_запасные', 'B миллионы', 'два миллиона — попытка 1.wav'))
-    for f in ('разбор.xlsx', '_проверка.xlsx', 'разбор.json'):
+    assert not os.path.exists(os.path.join(out, 'A Начало'))
+    for f in ('разбор.xlsx', 'разбор.json', os.path.join('B миллионы', '_проверка.xlsx')):
         assert os.path.exists(os.path.join(out, f))
     assert {m["row"] for m in res["missing"]} == {4, 2, 5}       # не прочитано — в списке «не найдено»
     # повторный разбор не перезаписывает прежнюю папку
@@ -189,3 +192,28 @@ def test_start_answers_at_once_while_model_loads(tmp_path):
         time.sleep(0.05)
     s = a.rsum_state()
     assert not s["run"] and s["msg"] == 'нет модели'
+
+
+def test_repeated_value_in_column_saved_once(tmp_path):
+    """«сто» в столбце сотен после «девятьсот» — вспомогательное: сохраняется одно, без копий и запасных."""
+    grid = [['Начало', 'миллионы', 'сотни', 'тенге'],
+            ['Сумма к оплате', 'один миллион', 'сто', 'одна тенге'],
+            ['Сумма к оплате', 'два миллиона', 'сто', 'два тенге'],
+            ['Сумма к оплате', 'три миллиона', 'сто', 'три тенге']]
+    table = rs_read_grid(grid)
+    rec, words_t, t = [], [], 0.5
+    for p in table["phrases"]:
+        for w in p["words"]:
+            rec.append((w, t, t + 0.35, 1.0))
+            words_t.append((t, t + 0.35))
+            t += 0.55
+        t += 1.0
+    wav = tmp_path / 'запись.wav'
+    write_wav16(str(wav), tone_track(words_t))
+    out = rs_out_dir(str(wav))
+    res = rs_run(None, str(wav), table, out, rec_words=rec)
+    files = sorted(p["file"] for p in res["pieces"])
+    assert [f for f in files if 'сто' in f] == [os.path.join('C сотни', 'сто.wav')]
+    assert len(files) == 7 and res["skipped_repeats"] == 2
+    assert os.listdir(os.path.join(out, 'C сотни')) == ['_проверка.xlsx', 'сто.wav'] or \
+        sorted(os.listdir(os.path.join(out, 'C сотни'))) == ['_проверка.xlsx', 'сто.wav']

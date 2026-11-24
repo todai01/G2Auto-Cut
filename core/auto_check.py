@@ -214,7 +214,9 @@ class AutoCheckMixin:
         if kz:
             # Крупная модель: одна очередь и одно ядро в запасе под запись и
             # прослушку (у них теперь большой буфер — этого хватает).
-            workers, threads = 1, max(2, cores - 1)
+            # Потоков — по физическим ядрам: CTranslate2 на «гиперпотоках» не быстрее, а медленнее
+            # (6 ядер / 12 потоков: 11 потоков дают заметное торможение).
+            workers, threads = 1, max(2, cores // 2 if cores >= 8 else cores - 1)
         else:
             workers = 2 if cores >= 4 else 1
             threads = max(1, cores // workers)

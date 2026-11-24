@@ -5461,9 +5461,10 @@ let isProcessing = false;
             $('rsumMsg').innerText = s.msg || '';
             let m = s.summary;
             $('rsumSummary').innerHTML = m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`
+                + (m.repeats ? ` · повторов не сохранено: ${m.repeats}` : '')
                 + ` · <span class="${m.bad ? 'clone-bad' : ''}">проверить: <b>${m.bad}</b></span>`
                 + (m.missing_n ? ` · <span class="clone-bad">не найдено фраз: ${m.missing_n}</span>` : '') + `</div>`
-                + `<div class="tts-dim">${escapeHtml(s.out || '')} — проверка в «Прослушке фраз»: эта папка и «_проверка.xlsx»</div>`
+                + `<div class="tts-dim">${escapeHtml(s.out || '')} — проверка в «Прослушке фраз»: папка яруса и «_проверка.xlsx» в ней</div>`
                 + (m.bad_list.length ? `<div class="rsum-list">${m.bad_list.map(b =>
                     `<div class="rsum-bad"><button class="custom-alert-btn" onclick="pywebview.api.rsum_play(${escapeHtml(JSON.stringify(b.file))})">▶</button>`
                     + `<span><b>${escapeHtml(b.text)}</b> <span class="tts-dim">блок ${b.block}, стр ${b.row} · ${escapeHtml(b.tier)}</span><br>${escapeHtml(b.why)}</span></div>`).join('')}</div>` : '')

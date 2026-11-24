@@ -50,6 +50,7 @@ RS_BEAM = 14.0       # отсечение слабых вариантов
 RS_OK_SIM = 0.6      # кусок, распознанный отдельно, похож на текст ячейки — уверенный
 RS_ALIGN_MAX = 28.0  # окно принудительного выравнивания (whisper — 30 с)
 RS_FRAME = 0.01      # шаг огибающей громкости, с
+RS_GAP_SPLIT = 0.9   # пауза между словами соседних кусков дольше — режем по краям слов, не посередине
 
 
 def rs_norm(w):
@@ -184,7 +185,8 @@ def rs_read_grid(grid):
                     continue
                 tier = f'{_col_letter(c)} {cur_head.get(c) or ""}'.strip()
                 tiers[_col_letter(c)] = tier
-                cells.append({"col": _col_letter(c), "tier": tier, "text": ' '.join(words), "words": words})
+                cells.append({"col": _col_letter(c), "tier": tier, "text": ' '.join(words), "words": words,
+                              "num": all(w in _LEX_SET for w in words)})     # не число — начальная фраза, не сохраняется
             if len(cells) < 2:
                 if cells:
                     skipped.append({"row": r + 1, "block": b, "text": ' | '.join(x["text"] for x in cells)})
@@ -500,28 +502,37 @@ def rs_cells_bounds(phrase, word_times, j0, db, thr, lo, hi):
             wf[k] = e - s                       # длина первого слова куска
         wl[k] = e - s                           # длина последнего слова куска
     ks = sorted(spans)
-    cuts = []
+    ends, starts = [], []              # конец куска k и начало куска k+1 (обычно одна и та же точка)
     for a, b in zip(ks, ks[1:]):
+        gap = spans[b][0] - spans[a][1]
+        if gap > RS_GAP_SPLIT:
+            # между словами долгая пауза — там, скорее всего, пропущенный повтор: режем по краям слов
+            e = rs_voice_end(db, thr, spans[a][1], min(spans[b][0], spans[a][1] + 0.5))
+            s = max(e, rs_voice_start(db, thr, spans[b][0], max(e, spans[b][0] - 0.5)))
+            ends.append(e)
+            starts.append(s)
+            continue
         # «прилипание» не глубже 40 % крайнего слова с каждой стороны и не назад за прошлую границу
         left = max(0.03, min(0.25, 0.4 * wl[a]))
         right = max(0.03, min(0.25, 0.4 * wf[b]))
         c = rs_snap(db, thr, (spans[a][1] + spans[b][0]) / 2, left, right)
-        if cuts and c < cuts[-1] + 0.1:
-            c = max(cuts[-1] + 0.1, (spans[a][1] + spans[b][0]) / 2)
-        cuts.append(c)
+        if starts and c < starts[-1] + 0.1:
+            c = max(starts[-1] + 0.1, (spans[a][1] + spans[b][0]) / 2)
+        ends.append(c)
+        starts.append(c)
     first_s = spans[ks[0]][0]
     first_e = spans[ks[0]][1]
     start = rs_first_onset(db, thr, lo, max(lo, first_e - 0.15))
     start = rs_voice_start(db, thr, max(start, min(first_s, first_e)), lo) if start <= lo else max(lo, start - 0.06)
-    i, lim = int(start / RS_FRAME) + 6, int(min(first_e, cuts[0] if cuts else first_e) / RS_FRAME)
+    i, lim = int(start / RS_FRAME) + 6, int(min(first_e, ends[0] if ends else first_e) / RS_FRAME)
     while i < lim and i < len(db) and db[i] < thr:          # тишина в начале куска — до голоса, с запасом
         i += 1
     start = max(start, i * RS_FRAME - 0.06)
     end = rs_voice_end(db, thr, spans[ks[-1]][1], hi)
-    edges = [start] + cuts + [end]
+    lefts, rights = [start] + starts, ends + [end]
     out = []
     for n, k in enumerate(ks):
-        s, e = edges[n], edges[n + 1]
+        s, e = lefts[n], rights[n]
         if e - s < 0.08:
             e = s + 0.08
         out.append((k, s, e))
@@ -576,7 +587,7 @@ def rs_to16k(x, sr):
 
 RS_PROMPT = ('Сумма задолженности, сумма задолженности... ой, прошу прощения. '
              'Сумма задолженности два миллиона пятьдесят две тысячи двести два тенге.')
-RS_WIN_MIN, RS_WIN_MAX, RS_WIN_GAP, RS_WIN_OVERLAP = 4.0, 12.0, 0.25, 1.5
+RS_WIN_MIN, RS_WIN_MAX, RS_WIN_GAP = 4.0, 12.0, 0.25
 _HALLU = ('субтитр', 'продолжение следует', 'спасибо за просмотр', 'dimatorzok', 'редактор', 'подписывайтесь')
 
 
@@ -607,32 +618,91 @@ def rs_windows(db, thr, dur):
     return win
 
 
+RS_PACK_MAX, RS_PACK_GAP = 27.0, 1.0
+RS_WORD_MAX = 1.6    # слово дольше — подозрительное (см. rs_transcribe)
+
+
+def rs_packs(win, max_len=RS_PACK_MAX, gap=RS_PACK_GAP):
+    """Окна 4–12 с → пачки для одного прохода модели (она всегда считает 30 с): окна подряд,
+    между ними 1 с тишины. Каждое окно по-прежнему отдельная «фраза» — whisper пишет дословно,
+    а модель работает в 3–4 раза реже."""
+    packs, cur, size = [], [], 0.0
+    for a, b in win:
+        need = (b - a) + (gap if cur else 0.0)
+        if cur and size + need > max_len:
+            packs.append(cur)
+            cur, size, need = [], 0.0, b - a
+        cur.append((a, b))
+        size += need
+    if cur:
+        packs.append(cur)
+    return packs
+
+
 def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None):
-    """Вся запись → слова [(слово, нач, кон, вероятность)] короткими окнами с перекрытием.
-    Числа whisper пишет то словами, то цифрами — rs_rec_words приводит к словам."""
+    """Вся запись → слова [(слово, нач, кон, вероятность)]. Окна по паузам (rs_windows) склеены в пачки
+    через тишину (rs_packs); время слов переводится обратно в время записи."""
+    import numpy as np
     dur = len(a16) / 16000
     if db is None:
         db, thr = rs_envelope(a16, 16000)
     win = rs_windows(db, thr, dur)
+    gap = np.zeros(int(RS_PACK_GAP * 16000), np.float32)
     out = []
-    for n, (a, b) in enumerate(win):
-        # окно с запасом по краям: whisper теряет слова у самого края окна; берём только слова «своей» середины
-        wa, wb = max(0.0, a - RS_WIN_OVERLAP), min(dur, b + RS_WIN_OVERLAP)
-        segs, _ = model.transcribe(a16[int(wa * 16000):int(wb * 16000)], language='ru', word_timestamps=True,
-                                   beam_size=5, condition_on_previous_text=False, vad_filter=False,
+    for pk in rs_packs(win):
+        parts, offs, pos = [], [], 0.0
+        for a, b in pk:
+            seg = a16[int(a * 16000):int(b * 16000)]
+            if parts:
+                parts.append(gap)
+                pos += RS_PACK_GAP
+            offs.append((pos, pos + len(seg) / 16000, a))
+            parts.append(seg)
+            pos += len(seg) / 16000
+        segs, _ = model.transcribe(np.concatenate(parts), language='ru', word_timestamps=True, beam_size=5,
+                                   condition_on_previous_text=False, vad_filter=False,
                                    no_speech_threshold=None, initial_prompt=RS_PROMPT)
         for x in segs:
             if any(h in x.text.lower() for h in _HALLU):
                 continue
             for w in (x.words or []):
-                s, e = wa + float(w.start), wa + float(w.end)
-                cen = min(s - wa if wa > 0 else 99.0, wb - e if wb < dur else 99.0)
-                out.append((w.word.strip(), s, e, float(w.probability), cen))
+                ws, we = float(w.start), float(w.end)
+                mid = (ws + we) / 2
+                o = min(offs, key=lambda q: 0 if q[0] <= mid < q[1] else min(abs(mid - q[0]), abs(mid - q[1])))
+                p0, p1, a = o
+                out.append((w.word.strip(), a + min(max(0.0, ws - p0), p1 - p0), a + min(max(0.0, we - p0), p1 - p0),
+                            float(w.probability), 99.0))
         if progress:
-            progress(min(1.0, b / max(dur, 1e-6)))
+            progress(min(0.97, pk[-1][1] / max(dur, 1e-6)))
         if stop and stop():
             break
-    return rs_merge_windows(out)
+    out = rs_merge_windows(out)
+    # «резиновое» слово (дольше RS_WORD_MAX) — whisper спрятал в нём кусок речи, обычно пропущенный повтор:
+    # такое окно распознаём заново отдельно (в одиночном окне он пишет дословно)
+    bad = sorted({k for k, (a, b) in enumerate(win)
+                  for w in out if w[2] - w[1] > RS_WORD_MAX and a <= (w[1] + w[2]) / 2 < b})
+    for k in bad:
+        if stop and stop():
+            break
+        a, b = win[k]
+        wa, wb = max(0.0, a - 1.5), min(dur, b + 1.5)
+        segs, _ = model.transcribe(a16[int(wa * 16000):int(wb * 16000)], language='ru', word_timestamps=True,
+                                   beam_size=5, condition_on_previous_text=False, vad_filter=False,
+                                   no_speech_threshold=None, initial_prompt=RS_PROMPT)
+        new = []
+        for x in segs:
+            if any(h in x.text.lower() for h in _HALLU):
+                continue
+            for w in (x.words or []):
+                ws, we = wa + float(w.start), wa + float(w.end)
+                if a <= (ws + we) / 2 < b and we - ws >= 0.03:
+                    new.append((w.word.strip(), ws, we, float(w.probability)))
+        if new:
+            out = [w for w in out if not (a <= (w[1] + w[2]) / 2 < b)] + new
+            out.sort(key=lambda w: w[1])
+    if progress:
+        progress(1.0)
+    return out
 
 
 def rs_merge_windows(words):
@@ -707,15 +777,11 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
     choice = rs_choose(attempts, phrases)
 
     # окна попыток: от конца предыдущего слова до начала следующего
-    pieces, phr_out = [], []
-    names_used = {}
-    texts_all = {}
-    for p in phrases:
-        for c in p["cells"]:
-            texts_all.setdefault(c["text"], set()).add((c["col"], p["row"]))
+    cand, phr_out = [], []
     todo = [(r, k, role) for r, ch in sorted(choice.items())
-            for k, role in [(ch["main"], 'main')] + [(s, 'spare') for s in ch["spare"]]]
+            for k, role in [(ch["main"], 'main')] + [(s_, 'spare') for s_ in ch["spare"]]]
     os.makedirs(out_dir, exist_ok=True)
+    n_fa = 0
     for n, (r, k, role) in enumerate(todo):
         if stop():
             return None
@@ -740,60 +806,58 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
                 j1 = L - 1
                 hi = rs_voice_end(db, thr, min(dur, max(hi, nxt + 0.2)), min(dur, nxt + 1.0), pad=0.05)
         words = p["words"][j0:j1 + 1]
-        times = None
-        if hi - lo <= RS_ALIGN_MAX:
+        got = {j: (rec[i][1], rec[i][2]) for i, j in a["good"] if rs_sim(rec[i][0], p["words"][j]) >= 0.8}
+        ins_inside = [i for i in a.get("ins", []) if i0 < i < i1]
+        # распознанное совпало с таблицей слово в слово — время слов уже есть, модель второй раз не нужна
+        clean = (not guessed and not ins_inside and all(j in got for j in range(j0, j1 + 1))
+                 and all(got[j][1] - got[j][0] >= 0.08 for j in range(j0, j1 + 1)))
+        gpi = [rec[i][1] for i, _ in a["pairs"]]
+        restart = any(b_ - a_ > 3.0 for a_, b_ in zip(gpi, gpi[1:]))   # долгий провал внутри — пропущенный повтор
+        times, weak = None, False
+        if role == 'main' and not clean and not restart and model is not None and hi - lo <= RS_ALIGN_MAX:
             try:
                 times = rs_force_align(model, a16, lo, hi, words)
+                n_fa += 1
             except Exception:
                 times = None
-        weak = False
-        if not times:                                   # запасной путь — время распознанных слов
-            weak = True
-            got = {j: (rec[i][1], rec[i][2]) for i, j in a["pairs"]}
+        if not times:                                   # время распознанных слов
+            weak = role == 'main' and not clean
+            gp = {j: (rec[i][1], rec[i][2]) for i, j in a["pairs"]}
             times, last = [], lo
             for j in range(j0, j1 + 1):
-                s, e = got.get(j, (last, last))
-                times.append((s, e, 0.0))
-                last = e
-        got = {j: (rec[i][1], rec[i][2]) for i, j in a["good"]}
-        times = [(got[j0 + d][0], got[j0 + d][1], 0.0) if e - s < 0.1 and (j0 + d) in got else (s, e, pr)
-                 for d, (s, e, pr) in enumerate(times)]   # слово сжалось в ноль — время из распознавания
-        bounds = rs_cells_bounds(p, [(s, e) for s, e, _ in times], j0, db, thr, lo, hi)
+                s_, e_ = gp.get(j, (last, last))
+                times.append((s_, e_, 0.0))
+                last = e_
+        gg = {j: (rec[i][1], rec[i][2]) for i, j in a["good"]}
+        times = [(gg[j0 + d][0], gg[j0 + d][1], 0.0) if e - s_ < 0.1 and (j0 + d) in gg else (s_, e, pr)
+                 for d, (s_, e, pr) in enumerate(times)]   # слово сжалось в ноль — время из распознавания
+        bounds = rs_cells_bounds(p, [(s_, e) for s_, e, _ in times], j0, db, thr, lo, hi)
         guessed_cells = {p["cell_of"][j] for j in guessed}
         heard = rs_cell_heard(rec, p, a)
         if role == 'main':
-            phr_dir = os.path.join(out_dir, '_фразы')
-            os.makedirs(phr_dir, exist_ok=True)
             fs, fe = bounds[0][1], bounds[-1][2]
             fname = rs_safe_name(f'стр {p["row"]} (блок {p["block"] + 1})') + '.wav'
-            slice_or_export(wav_path, os.path.join(phr_dir, fname), fs * 1000, fe * 1000)
             phr_out.append({"r": r, "row": p["row"], "block": p["block"], "start": round(fs, 3), "end": round(fe, 3),
                             "file": os.path.join('_фразы', fname), "complete": a["complete"],
                             "spares": len(choice[r]["spare"])})
-        for kc, s, e in bounds:
+        for kc, s_, e in bounds:
             c = p["cells"][kc]
-            uniq = len(texts_all.get(c["text"], ())) <= 1
-            base = rs_safe_name(c["text"] if uniq else f'{c["text"]} ({c["col"]}{p["row"]})')
-            if role == 'main':
-                rel_dir = rs_safe_name(c["tier"])
-            else:
-                rel_dir = os.path.join('_запасные', rs_safe_name(c["tier"]))
-                names_used[(rel_dir, base)] = names_used.get((rel_dir, base), 0) + 1
-                base = f'{base} — попытка {names_used[(rel_dir, base)]}'
-            os.makedirs(os.path.join(out_dir, rel_dir), exist_ok=True)
-            rel = os.path.join(rel_dir, base + '.wav')
-            slice_or_export(wav_path, os.path.join(out_dir, rel), s * 1000, e * 1000)
             h_text, h_sim = heard.get(kc, ('', 0.0))
-            pieces.append({"r": r, "row": p["row"], "block": p["block"], "col": c["col"], "tier": c["tier"],
-                           "text": c["text"], "file": rel, "start": round(s, 3), "end": round(e, 3),
-                           "role": role, "heard": h_text, "sim": round(h_sim, 2), "weak": weak,
-                           "complete": a["complete"] or bool(guessed), "guess": kc in guessed_cells,
-                           "check": None, "check_sim": None})
-    for pc in pieces:                                   # что распознано внутри границ куска
-        got = [w for w, s, e in rec if pc["start"] <= (s + e) / 2 < pc["end"]]
-        pc["check"] = ' '.join(got)
-        pc["check_sim"] = round(rs_text_sim(got, pc["text"].split()), 2)
-    for pc in pieces:
+            cand.append({"r": r, "kc": kc, "row": p["row"], "block": p["block"], "col": c["col"], "tier": c["tier"],
+                         "text": c["text"], "num": c.get("num", True), "file": None,
+                         "start": round(s_, 3), "end": round(e, 3),
+                         "role": role, "heard": h_text, "sim": round(h_sim, 2), "weak": weak,
+                         "complete": a["complete"] or bool(guessed), "guess": kc in guessed_cells,
+                         "check": None, "check_sim": None})
+    for pc in cand:                                     # что распознано внутри границ куска
+        ia, ib = int(pc["start"] / RS_FRAME), int(pc["end"] / RS_FRAME)
+        voiced = float((db[ia:ib] >= thr).sum()) * RS_FRAME
+        vow = sum(pc["text"].count(v) for v in 'аеёиоуыэюя')
+        pc["long"] = voiced > 0.6 + 0.32 * max(1, vow)   # голоса больше, чем нужно на эти слова — внутри лишнее
+        got_w = [w for w, s_, e in rec if pc["start"] <= (s_ + e) / 2 < pc["end"]]
+        pc["check"] = ' '.join(got_w)
+        pc["check_sim"] = round(rs_text_sim(got_w, pc["text"].split()), 2)
+    for pc in cand:
         why = []
         if pc["sim"] < 0.8 and not pc["guess"]:
             why.append(f'распознано «{pc["heard"] or "—"}»')
@@ -801,24 +865,59 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
             why.append(f'в границах куска: «{pc["check"] or "—"}»')
         if pc["guess"]:
             why.append('не распознано — граница по звуку, проверить')
+        if pc["long"]:
+            why.append('кусок длиннее обычного — внутри, похоже, повтор или лишнее')
         if pc["weak"]:
             why.append('границы приблизительные')
         if not pc["complete"] and pc["role"] == 'main':
             why.append('фраза дочитана не полностью')
         pc["why"] = '; '.join(why)
         pc["ok"] = not why
+    # что сохраняем: только числа (начальные фразы — нет); значение столбца — один раз:
+    # первое уверенное прочтение (иначе первое), повторы («сто» после «девятьсот») и их запасные — нет
+    keep = {}
+    for pc in cand:
+        if pc["role"] != 'main' or not pc["num"]:
+            continue
+        key = (pc["col"], pc["text"])
+        if key not in keep or (pc["ok"] and not keep[key]["ok"]):
+            keep[key] = pc
+    chosen = {(pc["r"], pc["kc"]) for pc in keep.values()}
+    pieces, spare_n = [], {}
+    for pc in cand:
+        if (pc["r"], pc["kc"]) not in chosen or not pc["num"]:
+            continue
+        if pc["role"] == 'spare' and not pc["ok"]:
+            continue                                    # запасной, где распознано не то, — мусор
+        base = rs_safe_name(pc["text"])
+        if pc["role"] == 'main':
+            rel_dir = rs_safe_name(pc["tier"])
+        else:
+            rel_dir = os.path.join('_запасные', rs_safe_name(pc["tier"]))
+            spare_n[(rel_dir, base)] = spare_n.get((rel_dir, base), 0) + 1
+            base = f'{base} — попытка {spare_n[(rel_dir, base)]}'
+        os.makedirs(os.path.join(out_dir, rel_dir), exist_ok=True)
+        pc["file"] = os.path.join(rel_dir, base + '.wav')
+        slice_or_export(wav_path, os.path.join(out_dir, pc["file"]), pc["start"] * 1000, pc["end"] * 1000)
+        pieces.append(pc)
+    if phr_out:
+        os.makedirs(os.path.join(out_dir, '_фразы'), exist_ok=True)
+    for ph in phr_out:
+        slice_or_export(wav_path, os.path.join(out_dir, ph["file"]), ph["start"] * 1000, ph["end"] * 1000)
     got_r = set(choice)
     missing = [{"row": p["row"], "block": p["block"], "text": ' | '.join(c["text"] for c in p["cells"])}
                for p in phrases if p["id"] not in got_r]
     res = {"pieces": pieces, "phrases": phr_out, "missing": missing, "rec": rec_words,
-           "attempts": len(attempts), "dur": round(dur, 1)}
+           "attempts": len(attempts), "dur": round(dur, 1), "aligned": n_fa,
+           "skipped_repeats": sum(1 for pc in cand if pc["role"] == 'main' and pc["num"]
+                                  and (pc["r"], pc["kc"]) not in chosen)}
     rs_write_reports(out_dir, res)
     log({"stage": "done", "pct": 100})
     return res
 
 
 def rs_write_reports(out_dir, res):
-    """разбор.xlsx (всё), _проверка.xlsx (A — текст, B — файл: «Прослушка фраз»), разбор.json."""
+    """разбор.xlsx (всё), <ярус>/_проверка.xlsx (A — текст, B — файл: «Прослушка фраз»), разбор.json."""
     import openpyxl
     from openpyxl.styles import Font, PatternFill
     red = PatternFill('solid', fgColor='F8D7DA')
@@ -842,15 +941,18 @@ def rs_write_reports(out_dir, res):
         for m in res["missing"]:
             ws2.append([m["block"] + 1, m["row"], m["text"]])
     wb.save(os.path.join(out_dir, 'разбор.xlsx'))
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Проверка'
+    by_tier = {}
     for pc in res["pieces"]:
-        if pc["role"] != 'main':
-            continue
-        name = os.path.splitext(os.path.basename(pc["file"]))[0]
-        ws.append([('⚠ ' if not pc["ok"] else '') + pc["text"] + (f' — {pc["why"]}' if pc["why"] else ''), name])
-    wb.save(os.path.join(out_dir, '_проверка.xlsx'))
+        if pc["role"] == 'main':
+            by_tier.setdefault(os.path.dirname(pc["file"]), []).append(pc)
+    for d, lst in by_tier.items():                    # в папке яруса: «Прослушка фраз» — эта папка и эта таблица
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Проверка'
+        for pc in lst:
+            name = os.path.splitext(os.path.basename(pc["file"]))[0]
+            ws.append([('⚠ ' if not pc["ok"] else '') + pc["text"] + (f' — {pc["why"]}' if pc["why"] else ''), name])
+        wb.save(os.path.join(out_dir, d, '_проверка.xlsx'))
     keep = {k: v for k, v in res.items() if k != 'rec'}
     with open(os.path.join(out_dir, 'разбор.json'), 'w', encoding='utf-8') as f:
         json.dump(keep, f, ensure_ascii=False, indent=1)
@@ -909,6 +1011,7 @@ class RawSumsMixin:
             main = [p for p in res["pieces"] if p["role"] == 'main']
             bad = [p for p in main if not p["ok"]]
             summary = {"pieces": len(main), "spares": len(res["pieces"]) - len(main), "bad": len(bad),
+                       "repeats": res.get("skipped_repeats", 0),
                        "phrases": len(res["phrases"]), "missing": res["missing"][:200],
                        "missing_n": len(res["missing"]), "dur": res.get("dur"),
                        "bad_list": [{"file": p["file"], "text": p["text"], "row": p["row"], "block": p["block"] + 1,
