@@ -617,6 +617,9 @@ if __name__ == '__main__':
     _unblock_downloaded()
     if '--selftest' in sys.argv:
         sys.exit(_selftest())
+    if '--rsum-worker' in sys.argv:            # «Разбор записи сумм» — отдельный фоновый процесс, без окна
+        from core.raw_sums import rs_worker_main
+        sys.exit(rs_worker_main(sys.argv[sys.argv.index('--rsum-worker') + 1]))
     api = Api()
 
     html_path = resource_path('frontend/index.html')

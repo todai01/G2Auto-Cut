@@ -320,3 +320,5 @@ input[type=range]::-webkit-slider-thumb{
 .rsum-plus{ opacity: .5; }
 .rsum-sums__hint{ width: 100%; font-size: 12px; }
 .rsum-sums__head .custom-alert-btn{ width: auto; flex: 0 0 auto; padding: 6px 14px; }
+.rsum-par{ align-items: center; gap: 14px; }
+.rsum-studio{ display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }

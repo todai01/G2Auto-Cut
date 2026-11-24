@@ -311,9 +311,23 @@ def test_to_studio_copies_without_overwriting(tmp_path):
     assert r["copied"] == 10 and r["exist"] == 1 and r["nowhere"] == 1      # тысяча 3 — в таблице проекта нет
     assert mine.read_bytes() == b'RIFF-my-own-take'                         # своё не тронуто
     assert md5(str(wd / 'Значения' / 'sum_ru' / 'thousand_ru' / '1.wav')) == md5(os.path.join(st["out"], '1 - 99 тыс', '1.wav'))
-    assert before == {f: md5(os.path.join(r_, f)) for r_, _, fs in os.walk(st["out"]) for f in fs}   # разбор не тронут
+    after = {f: md5(os.path.join(r_, f)) for r_, _, fs in os.walk(st["out"]) for f in fs if f != '.в_проект.json'}
+    assert before == after                                                   # разбор не тронут
     r2 = a.rsum_to_studio()                                                  # повтор — ничего нового
-    assert r2["copied"] == 0 and r2["exist"] == 11
+    assert r2["copied"] == 0 and r2["exist"] == 11 and r2["updated"] == 0
+    # кусок перерезали (новый файл в разборе) — наша прежняя копия в проекте обновляется…
+    src = os.path.join(st["out"], '1 - 100 тенге', '1.wav')
+    with open(src, 'ab') as f:
+        f.write(b'\0\0')
+    # …а файл, который в проекте кто-то правил, — нет
+    edited = wd / 'Значения' / 'sum_ru' / 'tenge_ru' / '2.wav'
+    with open(os.path.join(st["out"], '1 - 100 тенге', '2.wav'), 'ab') as f:
+        f.write(b'\0\0')
+    edited.write_bytes(b'RIFF-edited-by-hand')
+    r3 = a.rsum_to_studio()
+    assert r3["updated"] == 1
+    assert md5(str(wd / 'Значения' / 'sum_ru' / 'tenge_ru' / '1.wav')) == md5(src)
+    assert edited.read_bytes() == b'RIFF-edited-by-hand' and mine.read_bytes() == b'RIFF-my-own-take'
 
 
 def test_listen_sums_opens_assembly_with_context(tmp_path):
@@ -357,3 +371,72 @@ def test_transcribe_parallel_same_words_in_order():
     par = rs_transcribe(FakeModel(), a16, workers=3)
     assert len(one) == 40 and [w[:3] for w in one] == [w[:3] for w in par]
     assert all(abs(w[1] - s) < 0.08 for w, (s, e) in zip(one, words_t))      # время — время записи
+
+
+def test_transcribe_resumes_from_part_file(tmp_path):
+    """Распознавание прервали — по файлу пачек продолжается с того же места: готовые пачки модель не считает заново,
+    итог тот же, что без перерыва."""
+    from types import SimpleNamespace as NS
+    from core.raw_sums import rs_transcribe, rs_envelope, rs_to16k
+
+    class Counting:
+        calls = 0
+
+        def transcribe(self, audio, **kw):
+            Counting.calls += 1
+            db, thr = rs_envelope(audio, 16000)
+            words, s = [], None
+            for i, v in enumerate(list(db >= thr) + [False]):
+                if v and s is None:
+                    s = i
+                elif not v and s is not None:
+                    words.append(NS(word=' сто', start=s * 0.01, end=i * 0.01, probability=0.9))
+                    s = None
+            return [NS(text=' '.join(w.word for w in words), words=words)], None
+    words_t, t = [], 0.5
+    for k in range(60):
+        words_t.append((t, t + 0.4))
+        t += 0.7 + (1.2 if k % 5 == 4 else 0)
+    a16 = rs_to16k(tone_track(words_t), 8000)
+    full = rs_transcribe(Counting(), a16)
+    n_full, Counting.calls = Counting.calls, 0
+    part = str(tmp_path / 'rec.part')
+    seen = []
+
+    def stop():
+        return len(seen) >= 2                           # остановили после двух пачек
+    rs_transcribe(Counting(), a16, stop=stop, on_pack=lambda i: i["words"] is not None and seen.append(1), part=part)
+    first = Counting.calls
+    with open(part, 'a', encoding='utf-8') as f:
+        f.write('{"n": 9, "win": [[0')                   # недописанная строка (выключили компьютер) — не мешает
+    Counting.calls = 0
+    resumed = rs_transcribe(Counting(), a16, part=part)
+    assert [w[:3] for w in resumed] == [w[:3] for w in full]
+    assert Counting.calls == n_full - 2 and first >= 2
+
+
+def test_worker_main_runs_and_resumes(tmp_path, monkeypatch):
+    """Отдельный процесс разбора (здесь — в этом же процессе): пишет ход в state, куски в папку, распознавание в кэш."""
+    import json as _json
+    import core.raw_sums as R
+    from types import SimpleNamespace as NS
+
+    class Fake:
+        def transcribe(self, audio, **kw):
+            return [NS(text='', words=[])], None
+    a, st = _sums_api(tmp_path)
+    xl = tmp_path / 't.xlsx'
+    wb = openpyxl.Workbook()
+    for row in [['Начало', 'миллионы', 'тенге'], ['Сумма к оплате', 'один миллион', 'одна тенге']]:
+        wb.active.append(row)
+    wb.save(xl)
+    monkeypatch.setattr(R, '_rs_load_model', lambda path, threads: Fake())
+    job = {"wav": st["audio"], "table": str(xl), "out": str(tmp_path / 'out'), "model": 'x', "threads": 2,
+           "cache": str(tmp_path / 'c.json'), "part": str(tmp_path / 'c.json.part'), "reuse": True,
+           "state": str(tmp_path / 'state.json'), "stop": str(tmp_path / 'stop')}
+    (tmp_path / 'job.json').write_text(_json.dumps(job, ensure_ascii=False), encoding='utf-8')
+    assert R.rs_worker_main(str(tmp_path / 'job.json')) == 0
+    state = _json.loads((tmp_path / 'state.json').read_text(encoding='utf-8'))
+    assert state["done"] and not state["error"] and state["stage"] == 'done'
+    assert os.path.exists(job["cache"]) and not os.path.exists(job["part"])
+    assert os.path.exists(os.path.join(job["out"], 'разбор.json'))

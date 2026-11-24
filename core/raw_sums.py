@@ -779,7 +779,28 @@ def _rs_pack_words(model, a16, db, thr, pk, dur, note=None):
     return got
 
 
-def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pack=None, workers=1):
+def _rs_part_load(path, packs):
+    """Готовые пачки прошлого (прерванного) распознавания: {номер: слова}, только если окна те же."""
+    done = {}
+    if not path or not os.path.exists(path):
+        return done
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue                                   # недописанная строка (выключили на полуслове)
+                n = d.get("n")
+                if isinstance(n, int) and 0 <= n < len(packs) and \
+                        [[round(a, 3), round(b, 3)] for a, b in packs[n]] == d.get("win"):
+                    done[n] = [tuple(w) for w in d.get("words", [])]
+    except OSError:
+        pass
+    return done
+
+
+def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pack=None, workers=1, part=None):
     """Вся запись → слова [(слово, нач, кон, вероятность)]. Окна по паузам (rs_windows) склеены в пачки через тишину
     (rs_packs); время слов — время записи.
     workers > 1 — пачки считаются параллельно (у модели должно быть столько же num_workers).
@@ -791,24 +812,42 @@ def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pa
     win = rs_windows(db, thr, dur)
     packs = rs_packs(win)
     out = []
+    done = _rs_part_load(part, packs)          # part — файл «по пачкам»: распознавание продолжается с места остановки
+    if done and on_pack:
+        on_pack({"pack": len(done), "packs": len(packs), "pos": packs[max(done)][-1][1], "dur": dur, "words": None,
+                 "text": f'продолжаю: уже распознано {len(done)} пачек из {len(packs)}', "resumed": len(done)})
 
-    def note(text, pos):
-        if on_pack:
-            on_pack({"pack": len(out), "packs": len(packs), "pos": pos, "dur": dur, "words": None, "text": text})
-    job = lambda pk: None if (stop and stop()) else _rs_pack_words(model, a16, db, thr, pk, dur, note)
-    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as ex:
-        for n, got in enumerate(ex.map(job, packs)):
-            if got is None:
-                break
-            out += got
-            pos = packs[n][-1][1]
-            if progress:
-                progress(min(1.0, pos / max(dur, 1e-6)))
+    def job(nk):
+        n, pk = nk
+        if n in done:
+            return done[n]
+
+        def note(text, pos):
             if on_pack:
-                on_pack({"pack": n + 1, "packs": len(packs), "pos": pos, "dur": dur, "words": out,
-                         "text": ' '.join(w[0] for w in got)})
-            if stop and stop():
-                break
+                on_pack({"pack": n + 1, "packs": len(packs), "pos": pos, "dur": dur, "words": None, "text": text})
+        return None if (stop and stop()) else _rs_pack_words(model, a16, db, thr, pk, dur, note)
+    pf = open(part, 'a', encoding='utf-8') if part else None
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, int(workers))) as ex:
+            for n, got in enumerate(ex.map(job, enumerate(packs))):
+                if got is None:
+                    break
+                if pf and n not in done:
+                    pf.write(json.dumps({"n": n, "win": [[round(a, 3), round(b, 3)] for a, b in packs[n]],
+                                         "words": [list(w[:4]) for w in got]}, ensure_ascii=False) + '\n')
+                    pf.flush()
+                out += got
+                pos = packs[n][-1][1]
+                if progress:
+                    progress(min(1.0, pos / max(dur, 1e-6)))
+                if on_pack:
+                    on_pack({"pack": n + 1, "packs": len(packs), "pos": pos, "dur": dur, "words": out,
+                             "text": ' '.join(w[0] for w in got)})
+                if stop and stop():
+                    break
+    finally:
+        if pf:
+            pf.close()
     return [w[:4] for w in out]
 
 
@@ -1166,7 +1205,7 @@ class RsCutter:
         return res
 
 
-def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None, workers=1):
+def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None, workers=1, part=None):
     """Разбор записи: распознать → выровнять → нарезать. Куски пишутся в out_dir по ходу распознавания.
     log(dict) — ход работы: {"stage", "pct"} и подробности {"asr": …}, {"cut": …}, {"live": …}.
     rec_words — готовое распознавание (повторный разбор без распознавания).
@@ -1184,13 +1223,14 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None,
 
         def on_pack(info):
             log({"stage": "asr", "pct": round(info["pos"] * 100 / max(info["dur"], 1e-6)),
-                 "asr": {k: info[k] for k in ("pack", "packs", "pos", "dur", "text")}})
+                 "asr": {k: info[k] for k in ("pack", "packs", "pos", "dur", "text")},
+                 **({"resumed": info["resumed"]} if info.get("resumed") else {})})
             if info["words"] is None:
                 return
             if info["pos"] - last["pos"] >= RS_LIVE_STEP and info["pos"] < info["dur"]:
                 last["pos"] = info["pos"]
                 cut.process(info["words"], upto=info["pos"])
-        rec_words = rs_transcribe(model, a16, None, stop, db, thr, on_pack, workers)
+        rec_words = rs_transcribe(model, a16, None, stop, db, thr, on_pack, workers, part)
     if stop():
         return None
     log({"stage": "cut", "pct": 0})
@@ -1243,6 +1283,93 @@ def rs_write_reports(out_dir, res):
         json.dump(keep, f, ensure_ascii=False, indent=1)
     with open(os.path.join(out_dir, '.распознавание.json'), 'w', encoding='utf-8') as f:
         json.dump(res["rec"], f, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------- отдельный процесс разбора
+def rs_apply_log(state, d, now=None):
+    """Ход работы (log из rs_run) → state {"stage", "pct", "stage_t", "info"} — общее для процесса и окна."""
+    now = now or time.time()
+    info = state.setdefault("info", {})
+    if "stage" in d:
+        if d["stage"] != state.get("stage"):
+            state["stage_t"] = now
+            if d["stage"] == 'asr':
+                info["asr_t0"] = now
+            if d["stage"] == 'cut':
+                info["asr_s"] = round(now - info.get("asr_t0", now))
+        state["stage"], state["pct"] = d["stage"], d.get("pct", 0)
+    for k in ("asr", "cut", "live", "fa", "resumed"):
+        if k in d:
+            info[k] = d[k]
+    if "cut" in d and state.get("stage") == 'cut':
+        state["pct"] = round(d["cut"]["n"] * 100 / max(1, d["cut"]["of"]))
+
+
+def _rs_load_model(path, threads):
+    from faster_whisper import WhisperModel
+    from core.auto_check import fix_feature_size
+    m = WhisperModel(path, device='cpu', compute_type='int8', cpu_threads=int(threads), num_workers=1)
+    fix_feature_size(m)
+    return m
+
+
+def rs_worker_main(job_path):
+    """Разбор в отдельном процессе (GVox.exe --rsum-worker <job.json>): окно не ждёт, у процесса пониженный приоритет —
+    Студия и прослушка не заикаются. Ход — в файл state (окно его читает), стоп — файл stop (дописывается пачка).
+    Распознавание пишется по пачкам (part): после остановки / закрытия программы продолжается с того же места."""
+    import traceback
+    with open(job_path, 'r', encoding='utf-8') as f:
+        job = json.load(f)
+    state = {"stage": 'model', "pct": 0, "stage_t": time.time(), "info": {}, "done": False, "error": None,
+             "pid": os.getpid()}
+    last = [0.0]
+
+    def write(force=False):
+        if not force and time.time() - last[0] < 0.4:
+            return
+        last[0] = time.time()
+        try:
+            with open(job["state"] + '.tmp', 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False)
+            os.replace(job["state"] + '.tmp', job["state"])
+        except OSError:
+            pass
+    stop = lambda: os.path.exists(job["stop"])
+    write(True)
+    try:
+        t0 = time.time()
+        model = _rs_load_model(job["model"], job["threads"])
+        state["info"]["model_s"] = round(time.time() - t0, 1)
+        table = rs_read_table(job["table"])
+        rec = None
+        if job.get("reuse") and job.get("cache") and os.path.exists(job["cache"]):
+            with open(job["cache"], 'r', encoding='utf-8') as f:
+                rec = [tuple(w) for w in json.load(f)]
+        state["info"]["cached"] = rec is not None
+        part = job.get("part")
+        if part and not job.get("reuse") and os.path.exists(part):
+            os.remove(part)                                    # «заново» — прежние пачки не берём
+
+        def log(d):
+            rs_apply_log(state, d)
+            write()
+        res = rs_run(model, job["wav"], table, job["out"], log, stop, rec, 1, part)
+        if res is None:
+            state["stopped"] = True
+        else:
+            if rec is None and job.get("cache"):
+                os.makedirs(os.path.dirname(job["cache"]), exist_ok=True)
+                with open(job["cache"] + '.tmp', 'w', encoding='utf-8') as f:
+                    json.dump(res["rec"], f, ensure_ascii=False)
+                os.replace(job["cache"] + '.tmp', job["cache"])
+                if part and os.path.exists(part):
+                    os.remove(part)
+            state["done"] = True
+    except Exception as e:
+        state["error"] = f'{e}'
+        state["trace"] = traceback.format_exc()[-3000:]
+    write(True)
+    return 0
 
 
 # ---------------------------------------------------------------- окно GVox
@@ -1322,7 +1449,9 @@ class RawSumsMixin:
                 "msg": st["msg"], "out": st["out"], "summary": summary, "need_model": st.get("need_model", False),
                 "elapsed": elapsed, "eta": eta, "stopping": bool(st["run"] and st["stop"]), "info": info,
                 "cats": {c: len(v) for c, v in self._rsum_cat_files().items()} if st["out"] else {},
-                "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"])))}
+                "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]))),
+                "partial": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]) + '.part')),
+                "studio_ok": self._rsum_studio_sheet() is not None}
 
     def rsum_pick_audio(self):
         import webview
@@ -1356,9 +1485,13 @@ class RawSumsMixin:
         st["result"], st["out"], st["msg"] = None, None, ''
         return self.rsum_state()
 
-    def rsum_start(self, reuse_asr=True, par=1):
+    def rsum_start(self, reuse_asr=True, mode='bg', to_studio=False):
+        """mode: 'bg' — фон (ядер на 2 меньше, приоритет ниже: Студия и прослушка не заикаются), 'max' — все ядра.
+        to_studio — готовые куски по ходу копировать в открытый проект Студии."""
         st = self._rsum()
-        st["par"] = max(1, min(4, int(par or 1)))
+        st["mode"] = 'max' if mode == 'max' else 'bg'
+        st["to_studio"] = bool(to_studio)
+        st["par"] = 1
         if st["run"]:
             return {"error": "Разбор уже идёт."}
         if not st["audio"] or not os.path.exists(st["audio"]):
@@ -1404,8 +1537,25 @@ class RawSumsMixin:
         self._rsum_model_obj, self._rsum_model_key, self._rsum_workers = m, key, workers
         return m, None
 
+    @staticmethod
+    def _rsum_threads(mode):
+        """Потоков модели: физические ядра (гиперпотоки ей не помогают); «фон» — на 2 меньше, для Студии."""
+        cores = os.cpu_count() or 2
+        phys = cores // 2 if cores >= 8 else cores
+        return phys if mode == 'max' else max(2, phys - 2)
+
     def _rsum_boot(self, reuse_asr):
         st = self._rsum()
+        path = self._auto_check_model_path('kz')
+        if path:                                       # модель на диске — разбор отдельным фоновым процессом
+            try:
+                self._rsum_bg(path, reuse_asr)
+            except Exception as e:
+                st["msg"] = f'Ошибка: {e}'
+            finally:
+                st["run"] = False
+                st["ended"] = time.time()
+            return
         try:
             model, err = self._rsum_model(st.get("par", 1))   # large-v3-turbo: на 8 кГц small путает числа
         except Exception as e:
@@ -1469,6 +1619,109 @@ class RawSumsMixin:
             st["run"] = False
             st["ended"] = time.time()
 
+    def _rsum_cmd(self, job):
+        import sys
+        if getattr(sys, 'frozen', False):
+            return [sys.executable, '--rsum-worker', job]
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # из исходников — только модуль разбора (весь main.py с окном и Audacity процессу не нужен)
+        return [sys.executable, '-c', 'import sys; sys.path.insert(0, sys.argv[1]); from core.raw_sums import rs_worker_main; '
+                'sys.exit(rs_worker_main(sys.argv[2]))', root, job]
+
+    def _rsum_bg(self, model_path, reuse_asr):
+        """Разбор отдельным процессом (rs_worker_main): окно читает его ход из файла, стоп — файлом."""
+        import subprocess
+        import tempfile
+        import uuid
+        st = self._rsum()
+        jd = os.path.join(tempfile.gettempdir(), 'gvox_rsum_jobs', uuid.uuid4().hex[:12])
+        os.makedirs(jd, exist_ok=True)
+        cache = _rs_cache_file(st["audio"])
+        threads = self._rsum_threads(st.get("mode"))
+        job = {"wav": st["audio"], "table": st["table"], "out": st["out"], "model": model_path, "threads": threads,
+               "cache": cache, "part": (cache + '.part') if cache else None, "reuse": bool(reuse_asr),
+               "state": os.path.join(jd, 'state.json'), "stop": os.path.join(jd, 'stop')}
+        with open(os.path.join(jd, 'job.json'), 'w', encoding='utf-8') as f:
+            json.dump(job, f, ensure_ascii=False)
+        if cache:
+            os.makedirs(os.path.dirname(cache), exist_ok=True)
+        flags = 0
+        if os.name == 'nt':
+            flags = 0x08000000 | (0x00004000 if st.get("mode") != 'max' else 0)   # без окна; фон — BELOW_NORMAL
+        logf = open(os.path.join(jd, 'worker.log'), 'w', encoding='utf-8')
+        proc = subprocess.Popen(self._rsum_cmd(os.path.join(jd, 'job.json')), stdout=logf, stderr=logf,
+                                stdin=subprocess.DEVNULL, creationflags=flags)
+        st["proc"] = proc
+        st["info"].update(threads=threads, bg=st.get("mode") != 'max', workers=1)
+        stop_t, last_studio, state = None, 0.0, {}
+        try:
+            while True:
+                alive = proc.poll() is None
+                try:
+                    with open(job["state"], 'r', encoding='utf-8') as f:
+                        state = json.load(f)
+                except (OSError, ValueError):
+                    pass
+                if state:
+                    st["stage"], st["pct"] = state.get("stage") or st["stage"], state.get("pct", st["pct"])
+                    st["stage_t"] = state.get("stage_t") or st["stage_t"]
+                    keep = {k: st["info"][k] for k in ("threads", "bg", "workers", "studio") if k in st["info"]}
+                    st["info"] = {**state.get("info", {}), **keep}
+                if st["stop"] and stop_t is None:
+                    open(job["stop"], 'w').close()                 # дописать текущую пачку и выйти
+                    stop_t = time.time()
+                if stop_t and alive and time.time() - stop_t > 60:
+                    proc.terminate()
+                if st.get("to_studio") and time.time() - last_studio > 5:
+                    last_studio = time.time()
+                    self._rsum_studio_tick()
+                if not alive:
+                    break
+                time.sleep(0.5)
+        finally:
+            logf.close()
+            st.pop("proc", None)
+        if st.get("to_studio"):
+            self._rsum_studio_tick()
+        if state.get("done"):
+            try:
+                with open(os.path.join(st["out"], 'разбор.json'), 'r', encoding='utf-8') as f:
+                    st["result"] = json.load(f)
+            except (OSError, ValueError) as e:
+                st["msg"] = f'Разбор закончен, но отчёт не прочитался: {e}'
+        elif state.get("error"):
+            st["msg"] = f'Ошибка: {state["error"]}'
+        elif state.get("stopped") or st["stop"]:
+            st["msg"] = 'Остановлено. Распознанное сохранено — «Разобрать» продолжит с этого места.'
+        else:
+            try:
+                with open(os.path.join(jd, 'worker.log'), 'r', encoding='utf-8', errors='replace') as f:
+                    tail = f.read()[-600:]
+            except OSError:
+                tail = ''
+            st["msg"] = 'Процесс разбора закрылся неожиданно. Распознанное сохранено — «Разобрать» продолжит.' + \
+                        (f'\n{tail}' if tail else '')
+
+    def _rsum_studio_tick(self):
+        """«Сразу в проект Студии»: новые куски — в проект; Студия перечитывает значения."""
+        try:
+            r = self.rsum_to_studio(auto=True)
+        except Exception:
+            return
+        if r.get("error"):
+            self._rsum()["info"]["studio_err"] = r["error"]
+            return
+        n = r.get("copied", 0) + r.get("updated", 0)
+        info = self._rsum()["info"]
+        info["studio"] = info.get("studio", 0) + n
+        if n:
+            self.__dict__.pop('_tts_claims_cache', None)
+            try:
+                import webview
+                webview.windows[0].evaluate_js(f"rsumStudioFill({int(n)})")
+            except Exception:
+                pass
+
     def rsum_stop(self):
         self._rsum()["stop"] = True
         return {"ok": True}
@@ -1512,9 +1765,17 @@ class RawSumsMixin:
                     out.setdefault(cat, {})[int(m.group(1))] = os.path.join(p, f)
         return out
 
-    def rsum_to_studio(self):
+    def _rsum_studio_sheet(self):
+        tt = self._tts() if hasattr(self, '_tts') else {}
+        if not tt.get("work_dir"):
+            return None
+        return next((k for k, sh in (tt.get("var_sheets") or {}).items() if self._tts_is_sum_sheet(sh)
+                     and not any(re.search(r'_(kz|kk)$', c["key"]) for c in sh["categories"])), None)
+
+    def rsum_to_studio(self, auto=False):
         """Копии кусков в открытый проект Студии: «Значения/<лист сумм RU>/<класс>/<значение>.wav» —
-        имя как значение в таблице проекта. Что в проекте уже есть — не трогаем."""
+        имя как значение в таблице проекта. Что в проекте уже есть — не трогаем; исключение — файл, который
+        скопировал сам разбор и с тех пор его никто не менял (кусок перерезали — обновляем). Учёт — «.в_проект.json»."""
         import shutil
         files = self._rsum_cat_files()
         if not files:
@@ -1525,7 +1786,18 @@ class RawSumsMixin:
                       and not any(re.search(r'_(kz|kk)$', c["key"]) for c in sh["categories"])), None)
         if not wd or not sheet:
             return {"error": "Откройте в Студии проект, в таблице которого есть лист сумм RU (<sum_ru> с <million_ru>, <tenge_ru>…)."}
-        copied, exist, nowhere = 0, 0, 0
+        copied, exist, nowhere, updated = 0, 0, 0, 0
+        st = self._rsum()
+        man_path = os.path.join(st["out"] or '', '.в_проект.json')
+        try:
+            with open(man_path, 'r', encoding='utf-8') as f:
+                manifest = json.load(f)
+        except (OSError, ValueError):
+            manifest = {}
+
+        def md5(p):
+            with open(p, 'rb') as f:
+                return hashlib.md5(f.read()).hexdigest()
         for c in sheets[sheet]["categories"]:
             base = re.sub(r'_(ru|kz|kk)$', '', c["key"])
             have = files.get(base) or {}
@@ -1539,16 +1811,32 @@ class RawSumsMixin:
                     nowhere += 1
                     continue
                 dst = self._tts_value_file(sheet, c["key"], idx[n])
+                src_md5 = md5(src)
                 if os.path.exists(dst):
-                    exist += 1
+                    mine = manifest.get(dst)
+                    if mine and mine != src_md5 and md5(dst) == mine:     # наша копия, кусок перерезали — обновить
+                        shutil.copy2(src, dst + '.tmp')
+                        os.replace(dst + '.tmp', dst)
+                        manifest[dst] = src_md5
+                        updated += 1
+                    else:
+                        exist += 1
                     continue
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(src, dst + '.tmp')
                 os.replace(dst + '.tmp', dst)
+                manifest[dst] = src_md5
                 copied += 1
         used = {re.sub(r'_(ru|kz|kk)$', '', c["key"]) for c in sheets[sheet]["categories"]}
         nowhere += sum(len(v) for k, v in files.items() if k not in used)
-        return {"ok": True, "sheet": sheet, "copied": copied, "exist": exist, "nowhere": nowhere,
+        if copied or updated:
+            try:
+                with open(man_path + '.tmp', 'w', encoding='utf-8') as f:
+                    json.dump(manifest, f, ensure_ascii=False)
+                os.replace(man_path + '.tmp', man_path)
+            except OSError:
+                pass
+        return {"ok": True, "sheet": sheet, "copied": copied, "exist": exist, "nowhere": nowhere, "updated": updated,
                 "dir": os.path.join(wd, 'Значения', sheet)}
 
     def rsum_listen(self, logic, cat):
