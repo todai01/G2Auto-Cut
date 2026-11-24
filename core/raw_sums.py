@@ -888,7 +888,8 @@ class RawSumsMixin:
         st = getattr(self, '_rsum_st', None)
         if st is None:
             st = self._rsum_st = {"audio": None, "table": None, "tdata": None, "run": False, "stage": None,
-                                  "pct": 0, "msg": '', "out": None, "result": None, "stop": False}
+                                  "pct": 0, "msg": '', "out": None, "result": None, "stop": False,
+                                  "need_model": False, "started": None, "stage_t": None}
         return st
 
     def rsum_state(self):
@@ -912,8 +913,15 @@ class RawSumsMixin:
                        "missing_n": len(res["missing"]), "dur": res.get("dur"),
                        "bad_list": [{"file": p["file"], "text": p["text"], "row": p["row"], "block": p["block"] + 1,
                                      "tier": p["tier"], "why": p["why"]} for p in bad]}
+        now = time.time()
+        elapsed = round(now - st["started"]) if st.get("started") else None
+        eta = None
+        if st["run"] and st.get("stage_t") and 3 <= (st["pct"] or 0) < 100:
+            spent = now - st["stage_t"]
+            eta = round(spent * (100 - st["pct"]) / st["pct"])
         return {"audio": st["audio"], "table": table, "run": st["run"], "stage": st["stage"], "pct": st["pct"],
-                "msg": st["msg"], "out": st["out"], "summary": summary,
+                "msg": st["msg"], "out": st["out"], "summary": summary, "need_model": st.get("need_model", False),
+                "elapsed": elapsed, "eta": eta, "stopping": bool(st["run"] and st["stop"]),
                 "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"])))}
 
     def rsum_pick_audio(self):
@@ -956,15 +964,28 @@ class RawSumsMixin:
             return {"error": "Выберите запись."}
         if not st["tdata"]:
             return {"error": "Выберите таблицу."}
-        model, err = self._auto_check_model('kz')        # large-v3-turbo: на 8 кГц small путает числа
+        # модель грузится в потоке (первый раз — десятки секунд): окно сразу видит «Загрузка модели»
+        st.update(run=True, stop=False, stage='model', pct=0, msg='', result=None, need_model=False,
+                  out=rs_out_dir(st["audio"]), started=time.time(), stage_t=time.time())
+        threading.Thread(target=self._rsum_boot, args=(bool(reuse_asr),), daemon=True).start()
+        return self.rsum_state()
+
+    def _rsum_boot(self, reuse_asr):
+        st = self._rsum()
+        try:
+            model, err = self._auto_check_model('kz')        # large-v3-turbo: на 8 кГц small путает числа
+        except Exception as e:
+            model, err = None, str(e)
         if err is not None:
             from core.auto_check import NEED_MODEL
-            if err is NEED_MODEL:
-                return {"error": "need_model"}
-            return {"error": err}
-        st.update(run=True, stop=False, stage='prep', pct=0, msg='', result=None, out=rs_out_dir(st["audio"]))
-        threading.Thread(target=self._rsum_worker, args=(model, bool(reuse_asr)), daemon=True).start()
-        return self.rsum_state()
+            st["need_model"] = err is NEED_MODEL
+            st["msg"] = '' if err is NEED_MODEL else str(err)
+            st["run"] = False
+            return
+        if st["stop"]:
+            st["msg"], st["run"] = 'Остановлено.', False
+            return
+        self._rsum_worker(model, reuse_asr)
 
     def _rsum_worker(self, model, reuse_asr):
         st = self._rsum()
@@ -978,6 +999,8 @@ class RawSumsMixin:
                 rec = None
 
         def log(d):
+            if d.get("stage") != st["stage"]:
+                st["stage_t"] = time.time()
             st["stage"], st["pct"] = d.get("stage"), d.get("pct", 0)
 
         try:
@@ -985,7 +1008,7 @@ class RawSumsMixin:
                 x, sr = rs_load_audio(st["audio"])
                 a16 = rs_to16k(x, sr)
                 db, thr = rs_envelope(a16, 16000)
-                st["stage"] = 'asr'
+                log({"stage": "asr", "pct": 0})
                 rec = rs_transcribe(model, a16, lambda p: log({"stage": "asr", "pct": round(p * 100)}),
                                     lambda: st["stop"], db, thr)
                 if st["stop"]:

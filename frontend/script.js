@@ -5376,7 +5376,8 @@ let isProcessing = false;
 
         // ---------- Разбор сырой записи сумм (core/raw_sums.py) ----------
         let rsumSt = null, rsumTimer = null, rsumBusy = false;
-        const RSUM_STAGE = { prep: 'Подготовка', asr: 'Распознавание', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', done: 'Готово' };
+        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', done: 'Готово' };
+        let rsumWasNeed = false;
         async function openRsum() {
             document.getElementById('rsumOverlay').style.display = 'flex';
             rsumEvent(await pywebview.api.rsum_state());
@@ -5394,20 +5395,30 @@ let isProcessing = false;
         }
         async function rsumStart() {
             let s = rsumSt, reuse = true;
-            if (s && s.cached && !(await showBeautifulConfirm('<b>Эта запись уже распознавалась.</b><br><br>Взять прежнее распознавание '
+            if (!s || s.run) return;
+            if (s.cached && !(await showBeautifulConfirm('<b>Эта запись уже распознавалась.</b><br><br>Взять прежнее распознавание '
                 + '(быстро — только выравнивание и нарезка) или распознать заново?', 'Взять прежнее', 'Заново'))) reuse = false;
+            rsumEvent({ ...s, run: true, stage: 'start', pct: 0, msg: '', summary: null, elapsed: 0, eta: null, need_model: false });
             let r = await pywebview.api.rsum_start(reuse);
-            if (r && r.error === 'need_model') {
-                if (await showBeautifulConfirm('Нужна модель распознавания large-v3-turbo (та же, что для казахского). '
-                    + 'Указать папку с уже скачанной моделью?', 'Указать папку', 'Отмена')) {
-                    let m = await pywebview.api.sum_auto_check_pick_model('kz');
-                    if (m && m.error && m.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(m.error));
-                    else if (m && !m.error) rsumStart();
-                }
-                return;
-            }
-            if (r && r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            if (r && r.error) { rsumEvent(await pywebview.api.rsum_state()); showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             rsumEvent(r);
+        }
+        async function rsumNeedModel() {
+            if (await showBeautifulConfirm('Нужна модель распознавания large-v3-turbo (та же, что для казахского). '
+                + 'Указать папку с уже скачанной моделью?', 'Указать папку', 'Отмена')) {
+                let m = await pywebview.api.sum_auto_check_pick_model('kz');
+                if (m && m.error && m.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(m.error));
+                else if (m && !m.error) rsumStart();
+            }
+        }
+        async function rsumStop() {
+            await pywebview.api.rsum_stop();
+            rsumEvent(await pywebview.api.rsum_state());
+        }
+        function rsumDur(sec) {
+            sec = Math.max(0, Math.round(sec || 0));
+            let m = Math.floor(sec / 60), s = sec % 60;
+            return m ? `${m} мин ${String(s).padStart(2, '0')} с` : `${s} с`;
         }
         function rsumPoll() {
             if (rsumTimer) return;
@@ -5429,13 +5440,24 @@ let isProcessing = false;
                     + (t.skipped.length ? ` · пропущено строк: ${t.skipped.length}` : '') + `</div>`
                     + `<table>${t.preview.map(p => `<tr><th>${p.block}:${p.row}</th>${p.cells.map(c => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</table>`
                 : '';
-            $('btnRsumStart').disabled = !(s.audio && t) || s.run;
+            let btn = $('btnRsumStart');
+            btn.disabled = !(s.audio && t) || s.run;
+            btn.innerHTML = s.run ? '<span class="bsynth-spin"></span> Идёт разбор…' : 'Разобрать';
             let show = s.run || s.summary || s.msg;
             $('rsumRun').style.display = show ? '' : 'none';
-            $('rsumStage').innerText = s.run ? (RSUM_STAGE[s.stage] || 'Работаю') + '…' : (s.summary ? 'Готово' : '');
-            $('rsumPct').innerText = s.run ? `${s.pct || 0}%` : '';
-            $('rsumBar').style.width = (s.run ? (s.pct || 0) : (s.summary ? 100 : 0)) + '%';
+            let busy = s.run && (['start', 'model', 'prep', 'align'].includes(s.stage) || !s.pct);
+            $('rsumStage').innerHTML = s.run
+                ? `<span class="bsynth-spin"></span> ${s.stopping ? 'Останавливаю' : (RSUM_STAGE[s.stage] || 'Работаю')}…`
+                : (s.summary ? 'Готово' : '');
+            $('rsumPct').innerText = s.run
+                ? [s.pct && !busy ? `${s.pct}%` : '', s.elapsed != null ? `идёт ${rsumDur(s.elapsed)}` : '',
+                   s.eta != null ? `осталось ~${rsumDur(s.eta)}` : (s.stage === 'model' ? 'первый раз — до минуты' : '')].filter(Boolean).join(' · ')
+                : (s.summary && s.elapsed != null ? `за ${rsumDur(s.elapsed)}` : '');
+            $('rsumBar').parentElement.classList.toggle('rsum-busy', !!busy);
+            $('rsumBar').style.width = (busy ? 100 : s.run ? (s.pct || 0) : (s.summary ? 100 : 0)) + '%';
             $('btnRsumStop').style.display = s.run ? '' : 'none';
+            if (s.need_model && !rsumWasNeed) setTimeout(rsumNeedModel, 0);
+            rsumWasNeed = !!s.need_model;
             $('rsumMsg').innerText = s.msg || '';
             let m = s.summary;
             $('rsumSummary').innerHTML = m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`

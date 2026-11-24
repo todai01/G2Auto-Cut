@@ -163,3 +163,29 @@ def test_run_writes_pieces_without_touching_source(tmp_path):
     assert out2 != out and out2.endswith('_куски_2')
     rs_run(None, str(wav), table, out2, rec_words=rec)
     assert snap == {f: md5(os.path.join(r, f)) for r, _, fs in os.walk(out) for f in fs}
+
+
+def test_start_answers_at_once_while_model_loads(tmp_path):
+    """«Разобрать» отвечает сразу: модель грузится в потоке, окно видит этап «model» и время."""
+    import time
+    from harness import Api
+    xl = tmp_path / 'таблица.xlsx'
+    wb = openpyxl.Workbook()
+    for row in GRID:
+        wb.active.append(row)
+    wb.save(xl)
+    wav = tmp_path / 'запись.wav'
+    write_wav16(str(wav), np.zeros(8000, np.float32))
+    a = Api()
+    assert not a.rsum_load_table(str(xl)).get("error")
+    a._rsum()["audio"] = str(wav)
+    a._auto_check_model = lambda lang=None: (time.sleep(0.5), (None, 'нет модели'))[1]
+    t = time.time()
+    s = a.rsum_start()
+    assert time.time() - t < 0.3 and s["run"] and s["stage"] == 'model' and s["elapsed"] is not None
+    for _ in range(50):
+        if not a.rsum_state()["run"]:
+            break
+        time.sleep(0.05)
+    s = a.rsum_state()
+    assert not s["run"] and s["msg"] == 'нет модели'
