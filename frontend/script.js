@@ -7366,6 +7366,8 @@ let isProcessing = false;
             if (!st || st.error === 'cancel') return null;
             if (st.error) { showBeautifulAlert('⚠️ ' + escapeHtml(st.error)); return null; }
             if (st.auto_head) showToast(`Лист «${st.auto_head}» без шапки: A — фразы, B — названия аудио`, 4000);
+            if (st.free_sums) showToast(`Лист «${st.free_sums.title}» — таблица сумм без тегов: `
+                + st.free_sums.cats.map(c => `${c.label.replace(/ RU$/, '')} ${c.count}`).join(' · ') + ' (значения числами)', 6000);
             return await ttsScopeDialog(st);
         }
 

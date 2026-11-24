@@ -163,6 +163,40 @@ def _auto_head(rows):
     return ('<phrase>', '<name_phrase>'), (0 if is_head else -1)
 
 
+FREE_SUM_CATS = ('million', 'hundred_thousand', 'hundred', 'thousand', 'tenge')
+
+
+def _free_sums_sheet(title, rows):
+    """Свободная таблица сумм (как в «Разборе записи сумм»: строка 1 — заголовки, блоки столбцов через пустой
+    столбец, ячейка — ярус: «один миллион | пятьдесят одна | тысяча | сто | одна тенге») → лист сумм RU
+    в формате Студии: категории <million_ru>, <hundred_ru>, <thousand_ru>, <hundred_thousand_ru>, <tenge_ru>,
+    значения — числами («пятьдесят одна тысяча» → 51, «сто тысяч» → 100 в сотнях тысяч). Не похоже — None."""
+    from core.raw_sums import rs_read_grid
+    try:
+        grid = rs_read_grid([list(r) for r in rows])
+    except Exception:
+        return None
+    vals = {c: set() for c in FREE_SUM_CATS}
+    order, seen = [], set()
+    for p in grid["phrases"]:
+        for c in p["cells"]:
+            cat = c.get("cat")
+            if not cat:
+                continue
+            vals[cat[0]].add(cat[1])
+            key = (f'{cat[0]}_ru', str(cat[1]))
+            if key not in seen:
+                seen.add(key)
+                order.append([key[0], key[1], p["row"]])
+    n_cells = sum(len(v) for v in vals.values())
+    if not (vals["million"] and vals["tenge"]) or n_cells < 5:
+        return None
+    cats = [{"key": f'{c}_ru', "label": var_label(f'{c}_ru'), "values": [str(v) for v in sorted(vals[c])]}
+            for c in FREE_SUM_CATS if vals[c]]
+    return {"title": title, "label": var_label('sum_ru'), "categories": cats, "order": order, "free": True,
+            "free_phrases": sorted({' '.join(c["words"]) for p in grid["phrases"] for c in p["cells"] if not c.get("num")})}
+
+
 def parse_tts_workbook(path):
     """Разбирает таблицу. {phrase_sheets: [...], var_sheets: {...}}."""
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
@@ -187,6 +221,10 @@ def parse_tts_workbook(path):
                 sh = _parse_phrase_sheet(ws.title, rows, auto[1], head=auto[0])
                 sh["auto_head"] = True
                 sheets.append(sh)
+                continue
+            free = _free_sums_sheet(ws.title, rows)    # свободная таблица сумм (как в «Разборе записи сумм»)
+            if free and 'sum_ru' not in var_sheets:
+                var_sheets['sum_ru'] = free
             continue
         cats = []
         seen_by = {key: set() for _c, key in cols}
@@ -1070,6 +1108,11 @@ class TtsFlowMixin:
         res["analysis"] = self.tts_table_analysis()
         if chosen.get("auto_head"):
             res["auto_head"] = chosen["title"]            # шапки не было — A фразы, B имена
+        free = next((v for v in parsed["var_sheets"].values() if v.get("free")), None)
+        if free:
+            res["free_sums"] = {"title": free["title"], "cats": [{"label": c["label"], "count": len(c["values"])}
+                                                                 for c in free["categories"]],
+                                "phrases": free.get("free_phrases", [])}
         return res
 
     # ---------------- «только переменные»: разбор таблицы ----------------

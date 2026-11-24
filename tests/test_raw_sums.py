@@ -440,3 +440,44 @@ def test_worker_main_runs_and_resumes(tmp_path, monkeypatch):
     assert state["done"] and not state["error"] and state["stage"] == 'done'
     assert os.path.exists(job["cache"]) and not os.path.exists(job["part"])
     assert os.path.exists(os.path.join(job["out"], 'разбор.json'))
+
+
+def _free_table(path):
+    """Свободная таблица сумм (синтетика) — как в «Разборе записи сумм»."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Сумма к оплате', '1-50 миллионов', '51-100 к', None, '100-900', '1-50 тенге', None, None,
+               'Сумма к оплате', '100-900'])
+    rows = [('один миллион', 'пятьдесят одна', 'тысяча', 'сто', 'одна тенге', 'двадцать тенге'),
+            ('два миллиона', 'пятьдесят две', 'тысячи', 'двесте', 'два тенге', 'двадцать одна тенге'),
+            ('три миллиона', 'пятьдесят три', 'тысячи', 'триста', 'три тенге', 'двадцать два тенге')]
+    for m, t, tw, h, tg, t2 in rows:
+        ws.append([' С суммой задолженности', m, t, tw, h, tg, None, None, 'Сумма к оплате', h, t2])
+    ws.append([None] * 8 + ['Сумма к оплате', 'сто тысяч', 'пятьдесят одна тенге'])
+    wb.save(path)
+    return str(path)
+
+
+def test_studio_reads_free_sums_table(tmp_path):
+    """Студия понимает свободную таблицу сумм: лист <sum_ru> с классами Студии и числами, «только переменные»,
+    суммы по логикам 1 и 2, эталоны — Значения/sum_ru/<класс>/<число>.wav (туда же кладёт «В проект Студии»)."""
+    from harness import Api
+    from core.tts_flow import parse_tts_workbook
+    xl = _free_table(tmp_path / 'суммы.xlsx')
+    p = parse_tts_workbook(xl)
+    sh = p["var_sheets"]["sum_ru"]
+    got = {c["key"]: c["values"] for c in sh["categories"]}
+    assert got == {'million_ru': ['1', '2', '3'], 'hundred_thousand_ru': ['100'], 'hundred_ru': ['100', '200', '300'],
+                   'thousand_ru': ['51', '52', '53'], 'tenge_ru': ['1', '2', '3', '20', '21', '22', '51']}
+    a = Api()
+    st = a._tts()
+    st["work_dir"] = str(tmp_path / 'проект')
+    os.makedirs(st["work_dir"])
+    r = a.tts_load_excel(xl)
+    assert not r.get("error"), r
+    assert r["free_sums"]["phrases"] == ['с суммой задолженности', 'сумма к оплате']
+    assert a._tts()["vars_only"] and a._tts_is_sum_sheet(a._tts()["var_sheets"]["sum_ru"])
+    sh = a._tts()["var_sheets"]["sum_ru"]
+    assert a._tts_sum_rows(sh, 1)[:2] == [1_151_001, 2_252_002]          # 1 млн + (100 + 51) тыс + 1
+    assert a._tts_sum_rows(sh, 2)[0] == 1_100_001
+    assert a._tts_value_file('sum_ru', 'thousand_ru', '51').endswith(os.path.join('Значения', 'sum_ru', 'thousand_ru', '51.wav'))
