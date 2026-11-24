@@ -710,65 +710,81 @@ def _rs_asr(model, audio):
                             vad_filter=False, no_speech_threshold=None, initial_prompt=RS_PROMPT)[0]
 
 
-def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pack=None):
-    """Вся запись → слова [(слово, нач, кон, вероятность)]. Окна по паузам (rs_windows) склеены в пачки
-    через тишину (rs_packs); время слов переводится обратно в время записи. «Резиновое» слово (дольше
-    RS_WORD_MAX — whisper спрятал в нём кусок речи, обычно пропущенный повтор) — его окно распознаётся
-    заново отдельно, сразу в своей пачке. on_pack(info) — после каждой пачки (слова на сейчас, позиция, текст)."""
+def _rs_pack_words(model, a16, db, thr, pk, dur, note=None):
+    """Одна пачка: склеить окна через 1 с тишины, распознать, перевести время слов в время записи;
+    окно с «резиновым» словом, где спрятана речь, — заново отдельно. (Сжимать паузы внутри окна пробовали —
+    модель от этого считает дольше и теряет оборванные попытки.)"""
     import numpy as np
+    parts, offs, pos = [], [], 0.0
+    for a, b in pk:
+        if parts:
+            parts.append(np.zeros(int(RS_PACK_GAP * 16000), np.float32))
+            pos += RS_PACK_GAP
+        seg = a16[int(a * 16000):int(b * 16000)]
+        offs.append((pos, pos + len(seg) / 16000, a))
+        parts.append(seg)
+        pos += len(seg) / 16000
+
+    def conv(ws, we):
+        mid = (ws + we) / 2
+        p0, p1, a_ = min(offs, key=lambda q: 0 if q[0] <= mid < q[1] else min(abs(mid - q[0]), abs(mid - q[1])))
+        s_, e_ = a_ + min(max(0.0, ws - p0), p1 - p0), a_ + min(max(0.0, we - p0), p1 - p0)
+        return (s_, e_) if e_ - s_ >= 0.03 else None    # нулевые — «досказанная» подсказка
+    got = _rs_words_of(_rs_asr(model, np.concatenate(parts)), conv)
+
+    def hides_speech(w):
+        # «резиновое» слово: длинное И внутри голоса больше, чем нужно на это слово (паузу модель тоже
+        # приписывает слову — из-за одной паузы окно не перепроверяем)
+        if w[2] - w[1] <= RS_WORD_MAX:
+            return False
+        ia, ib = int(w[1] / RS_FRAME), int(w[2] / RS_FRAME)
+        voiced = float((db[ia:ib] >= thr).sum()) * RS_FRAME
+        vow = sum(rs_norm(w[0]).count(v) for v in 'аеёиоуыэюя')
+        return voiced > 0.8 + 0.32 * max(1, vow)
+    for a, b in pk:
+        if not any(hides_speech(w) and a <= (w[1] + w[2]) / 2 < b for w in got):
+            continue
+        if note:
+            note(f'перепроверяю окно {rs_clock(a)}–{rs_clock(b)}: в растянутом слове спрятана речь', a)
+        wa, wb = max(0.0, a - 1.5), min(dur, b + 1.5)
+        new = _rs_words_of(_rs_asr(model, a16[int(wa * 16000):int(wb * 16000)]),
+                           lambda ws, we: (wa + ws, wa + we) if a <= wa + (ws + we) / 2 < b and we - ws >= 0.03 else None)
+        if new:
+            got = [w for w in got if not (a <= (w[1] + w[2]) / 2 < b)] + new
+    got.sort(key=lambda w: w[1])
+    return got
+
+
+def rs_transcribe(model, a16, progress=None, stop=None, db=None, thr=None, on_pack=None, workers=1):
+    """Вся запись → слова [(слово, нач, кон, вероятность)]. Окна по паузам (rs_windows) склеены в пачки через тишину
+    (rs_packs); время слов — время записи.
+    workers > 1 — пачки считаются параллельно (у модели должно быть столько же num_workers).
+    on_pack(info) — после каждой пачки (слова на сейчас, позиция, текст); words=None — только сообщение."""
+    from concurrent.futures import ThreadPoolExecutor
     dur = len(a16) / 16000
     if db is None:
         db, thr = rs_envelope(a16, 16000)
     win = rs_windows(db, thr, dur)
     packs = rs_packs(win)
-    gap = np.zeros(int(RS_PACK_GAP * 16000), np.float32)
     out = []
-    for n, pk in enumerate(packs):
-        parts, offs, pos = [], [], 0.0
-        for a, b in pk:
-            seg = a16[int(a * 16000):int(b * 16000)]
-            if parts:
-                parts.append(gap)
-                pos += RS_PACK_GAP
-            offs.append((pos, pos + len(seg) / 16000, a))
-            parts.append(seg)
-            pos += len(seg) / 16000
 
-        def conv(ws, we):
-            mid = (ws + we) / 2
-            p0, p1, a = min(offs, key=lambda q: 0 if q[0] <= mid < q[1] else min(abs(mid - q[0]), abs(mid - q[1])))
-            s_, e_ = a + min(max(0.0, ws - p0), p1 - p0), a + min(max(0.0, we - p0), p1 - p0)
-            return (s_, e_) if e_ - s_ >= 0.03 else None    # нулевые — «досказанная» подсказка
-        got = _rs_words_of(_rs_asr(model, np.concatenate(parts)), conv)
-
-        def hides_speech(w):
-            # «резиновое» слово: длинное И внутри голоса больше, чем нужно на это слово (паузу модель тоже
-            # приписывает слову — из-за одной паузы окно не перепроверяем)
-            if w[2] - w[1] <= RS_WORD_MAX:
-                return False
-            ia, ib = int(w[1] / RS_FRAME), int(w[2] / RS_FRAME)
-            voiced = float((db[ia:ib] >= thr).sum()) * RS_FRAME
-            vow = sum(rs_norm(w[0]).count(v) for v in 'аеёиоуыэюя')
-            return voiced > 0.8 + 0.32 * max(1, vow)
-        redo = [(a, b) for a, b in pk if any(hides_speech(w) and a <= (w[1] + w[2]) / 2 < b for w in got)]
-        for m, (a, b) in enumerate(redo):
-            if on_pack:
-                on_pack({"pack": n + 1, "packs": len(packs), "pos": a, "dur": dur, "words": None,
-                         "text": f'перепроверяю окно {rs_clock(a)}–{rs_clock(b)}: в растянутом слове спрятана речь'})
-            wa, wb = max(0.0, a - 1.5), min(dur, b + 1.5)
-            new = _rs_words_of(_rs_asr(model, a16[int(wa * 16000):int(wb * 16000)]),
-                               lambda ws, we: (wa + ws, wa + we) if a <= wa + (ws + we) / 2 < b and we - ws >= 0.03 else None)
-            if new:
-                got = [w for w in got if not (a <= (w[1] + w[2]) / 2 < b)] + new
-        got.sort(key=lambda w: w[1])
-        out += got
-        if progress:
-            progress(min(1.0, pk[-1][1] / max(dur, 1e-6)))
+    def note(text, pos):
         if on_pack:
-            on_pack({"pack": n + 1, "packs": len(packs), "pos": pk[-1][1], "dur": dur, "words": out,
-                     "text": ' '.join(w[0] for w in got)})
-        if stop and stop():
-            break
+            on_pack({"pack": len(out), "packs": len(packs), "pos": pos, "dur": dur, "words": None, "text": text})
+    job = lambda pk: None if (stop and stop()) else _rs_pack_words(model, a16, db, thr, pk, dur, note)
+    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as ex:
+        for n, got in enumerate(ex.map(job, packs)):
+            if got is None:
+                break
+            out += got
+            pos = packs[n][-1][1]
+            if progress:
+                progress(min(1.0, pos / max(dur, 1e-6)))
+            if on_pack:
+                on_pack({"pack": n + 1, "packs": len(packs), "pos": pos, "dur": dur, "words": out,
+                         "text": ' '.join(w[0] for w in got)})
+            if stop and stop():
+                break
     return [w[:4] for w in out]
 
 
@@ -853,11 +869,15 @@ class RsCutter:
         self.keep = {}         # (столбец, текст) → кусок, который сохранён основным
         self.written = {}      # r → файлы этого разбора от фразы r
         self.n_fa = 0
+        self.fa_cache = {}     # (окно, текст) → время слов от повторного прохода модели
+        self.workers = 1
         self.rec, self.attempts, self.choice = [], [], {}
         os.makedirs(out_dir, exist_ok=True)
 
     # ---- одна попытка → куски
-    def _cut_attempt(self, r, k, role):
+    def _cut_attempt(self, r, k, role, plan_only=False):
+        """Попытка → куски. plan_only — только узнать, нужен ли повторный проход модели (окно и текст),
+        чтобы process() сделал такие проходы параллельно (это самое долгое в нарезке)."""
         rec, db, thr, dur = self.rec, self.db, self.thr, self.dur
         a, p = self.attempts[k], self.phrases[r]
         i0, i1 = a["i0"], a["i1"]
@@ -887,12 +907,19 @@ class RsCutter:
         gpi = [rec[i][1] for i, _ in a["pairs"]]
         restart = any(b_ - a_ > 3.0 for a_, b_ in zip(gpi, gpi[1:]))   # долгий провал внутри — пропущенный повтор
         times, weak = None, False
-        if role == 'main' and not clean and not restart and self.model is not None and hi - lo <= RS_ALIGN_MAX:
-            try:
-                times = rs_force_align(self.model, self.a16, lo, hi, words)
-                self.n_fa += 1
-            except Exception:
-                times = None
+        need_fa = role == 'main' and not clean and not restart and self.model is not None and hi - lo <= RS_ALIGN_MAX
+        fa_key = (round(lo, 3), round(hi, 3), tuple(words))
+        if plan_only:
+            return fa_key if need_fa else None
+        if need_fa:
+            if fa_key in self.fa_cache:
+                times = self.fa_cache[fa_key]
+            else:
+                try:
+                    times = rs_force_align(self.model, self.a16, lo, hi, words)
+                    self.n_fa += 1
+                except Exception:
+                    times = None
         if not times:                                   # время распознанных слов
             weak = role == 'main' and not clean
             gp = {j: (rec[i][1], rec[i][2]) for i, j in a["pairs"]}
@@ -1030,6 +1057,7 @@ class RsCutter:
             sig = tuple((round(rec[self.attempts[k]["i0"]][1], 2), round(rec[self.attempts[k]["i1"]][2], 2)) for k in ks)
             if self.sig.get(r) != sig:
                 todo.append((r, sig))
+        self._prefetch_fa(todo)
         for n, (r, sig) in enumerate(todo):
             if self.stop():
                 return False
@@ -1054,6 +1082,35 @@ class RsCutter:
         self.log({"live": self.stats()})
         return True
 
+    def _prefetch_fa(self, todo):
+        """Повторные проходы модели для всех фраз пачки — параллельно (self.workers), результат — в fa_cache."""
+        if self.model is None:
+            return
+        reqs = []
+        for r, _sig in todo:
+            ch = self.choice[r]
+            key = self._cut_attempt(r, ch["main"], 'main', plan_only=True)
+            if key and key not in self.fa_cache and key not in reqs:
+                reqs.append(key)
+        if not reqs:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+
+        def one(key):
+            if self.stop():
+                return key, None
+            try:
+                return key, rs_force_align(self.model, self.a16, key[0], key[1], list(key[2]))
+            except Exception:
+                return key, None
+        done = 0
+        with ThreadPoolExecutor(max_workers=max(1, self.workers)) as ex:
+            for key, times in ex.map(one, reqs):
+                done += 1
+                self.n_fa += 1
+                self.fa_cache[key] = times
+                self.log({"fa": {"n": done, "of": len(reqs)}})
+
     def stats(self):
         main = [pc for pc in self.keep.values()]
         return {"found": len(self.choice), "phrases": len(self.phrases), "done": len(self.sig),
@@ -1072,7 +1129,7 @@ class RsCutter:
         return res
 
 
-def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None):
+def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None, workers=1):
     """Разбор записи: распознать → выровнять → нарезать. Куски пишутся в out_dir по ходу распознавания.
     log(dict) — ход работы: {"stage", "pct"} и подробности {"asr": …}, {"cut": …}, {"live": …}.
     rec_words — готовое распознавание (повторный разбор без распознавания).
@@ -1083,6 +1140,7 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
     a16 = rs_to16k(x, sr)
     db, thr = rs_envelope(a16, 16000)
     cut = RsCutter(model, wav_path, table, out_dir, a16, db, thr, log, stop)
+    cut.workers = max(1, int(workers))
     if rec_words is None:
         log({"stage": "asr", "pct": 0})
         last = {"pos": 0.0}
@@ -1095,7 +1153,7 @@ def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None)
             if info["pos"] - last["pos"] >= RS_LIVE_STEP and info["pos"] < info["dur"]:
                 last["pos"] = info["pos"]
                 cut.process(info["words"], upto=info["pos"])
-        rec_words = rs_transcribe(model, a16, None, stop, db, thr, on_pack)
+        rec_words = rs_transcribe(model, a16, None, stop, db, thr, on_pack, workers)
     if stop():
         return None
     log({"stage": "cut", "pct": 0})
@@ -1275,10 +1333,42 @@ class RawSumsMixin:
         threading.Thread(target=self._rsum_boot, args=(bool(reuse_asr),), daemon=True).start()
         return self.rsum_state()
 
+    @staticmethod
+    def _rsum_split():
+        """Ядра → (параллельных пачек, потоков на пачку). Две-три пачки сразу по 2 ядра быстрее, чем одна на все
+        ядра (замер: 4 ядра — 68 с против 126 с на 3 минутах). Гиперпотоки не считаем."""
+        cores = os.cpu_count() or 2
+        phys = cores // 2 if cores >= 8 else cores
+        workers = max(1, min(4, phys // 2))
+        return workers, max(1, phys // workers)
+
+    def _rsum_model(self):
+        """Своя копия large-v3-turbo с несколькими потоками (модель KZ в Студии — однопоточная, её не трогаем).
+        Модели в папке нет — как раньше: общий слот KZ (скачать / указать папку)."""
+        path = self._auto_check_model_path('kz')
+        if not path:
+            m, err = self._auto_check_model('kz')
+            if m is not None:
+                self._rsum_workers = 1
+            return m, err
+        workers, threads = self._rsum_split()
+        key = (path, workers, threads)
+        if getattr(self, '_rsum_model_key', None) == key and getattr(self, '_rsum_model_obj', None) is not None:
+            return self._rsum_model_obj, None
+        from faster_whisper import WhisperModel
+        from core.auto_check import fix_feature_size
+        try:
+            m = WhisperModel(path, device='cpu', compute_type='int8', cpu_threads=threads, num_workers=workers)
+        except Exception as e:
+            return None, f"Не удалось загрузить модель из папки «{path}».\n\n{e}"
+        fix_feature_size(m)
+        self._rsum_model_obj, self._rsum_model_key, self._rsum_workers = m, key, workers
+        return m, None
+
     def _rsum_boot(self, reuse_asr):
         st = self._rsum()
         try:
-            model, err = self._auto_check_model('kz')        # large-v3-turbo: на 8 кГц small путает числа
+            model, err = self._rsum_model()                  # large-v3-turbo: на 8 кГц small путает числа
         except Exception as e:
             model, err = None, str(e)
         if err is not None:
@@ -1315,14 +1405,16 @@ class RawSumsMixin:
                     if d["stage"] == 'cut':
                         info["asr_s"] = round(time.time() - info.get("asr_t0", time.time()))
                 st["stage"], st["pct"] = d["stage"], d.get("pct", 0)
-            for k in ("asr", "cut", "live"):
+            for k in ("asr", "cut", "live", "fa"):
                 if k in d:
                     info[k] = d[k]
             if "cut" in d and st["stage"] == 'cut':
                 st["pct"] = round(d["cut"]["n"] * 100 / max(1, d["cut"]["of"]))
 
         try:
-            res = rs_run(model, st["audio"], st["tdata"], st["out"], log=log, stop=lambda: st["stop"], rec_words=rec)
+            info["workers"] = getattr(self, '_rsum_workers', 1)
+            res = rs_run(model, st["audio"], st["tdata"], st["out"], log=log, stop=lambda: st["stop"], rec_words=rec,
+                         workers=info["workers"])
             if res is None:
                 st["msg"] = 'Остановлено. Готовые куски остались в папке.'
                 return

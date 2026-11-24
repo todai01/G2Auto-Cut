@@ -325,3 +325,35 @@ def test_listen_sums_opens_assembly_with_context(tmp_path):
     ctx = os.path.dirname(a._ls()["pick"]["ru"]["start"])
     assert not ctx.startswith(st["out"])                                    # контекст — во временной папке
     assert a.rsum_listen(2, 'hundred').get("error")                         # во 2-й логике сотен нет
+
+
+def test_transcribe_parallel_same_words_in_order():
+    """Пачки параллельно (workers=3) — те же слова, в том же порядке и с тем же временем, что по одной."""
+    import threading
+    import time as _t
+    from types import SimpleNamespace as NS
+    from core.raw_sums import rs_transcribe, rs_envelope
+
+    class FakeModel:
+        """«Распознаёт» каждый звучащий кусок пачки словом «сто», время — по громкости (как настоящая)."""
+        def transcribe(self, audio, **kw):
+            _t.sleep(0.01 * (threading.get_ident() % 3))     # потоки заканчивают вразнобой
+            db, thr = rs_envelope(audio, 16000)
+            words, s = [], None
+            for i, v in enumerate(list(db >= thr) + [False]):
+                if v and s is None:
+                    s = i
+                elif not v and s is not None:
+                    words.append(NS(word=' сто', start=s * 0.01, end=i * 0.01, probability=0.9))
+                    s = None
+            return [NS(text=' '.join(w.word for w in words), words=words)], None
+    words_t, t = [], 0.5
+    for k in range(40):
+        words_t.append((t, t + 0.4))
+        t += 0.7 + (1.2 if k % 5 == 4 else 0)
+    from core.raw_sums import rs_to16k
+    a16 = rs_to16k(tone_track(words_t), 8000)
+    one = rs_transcribe(FakeModel(), a16, workers=1)
+    par = rs_transcribe(FakeModel(), a16, workers=3)
+    assert len(one) == 40 and [w[:3] for w in one] == [w[:3] for w in par]
+    assert all(abs(w[1] - s) < 0.08 for w, (s, e) in zip(one, words_t))      # время — время записи

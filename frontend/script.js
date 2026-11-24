@@ -5478,12 +5478,15 @@ let isProcessing = false;
             else if (a) {
                 asr = `запись ${rsumClock(a.pos)} из ${rsumClock(a.dur)} · пачка ${a.pack} из ${a.packs}`
                     + (i.speed ? ` · скорость ×${String(i.speed).replace('.', ',')}` : '')
+                    + (i.workers > 1 ? ` · ${i.workers} пачки параллельно` : '')
                     + (st('asr') === 'done' && i.asr_s ? ` · за ${rsumDur(i.asr_s)}` : '');
                 if (st('asr') === 'run' && a.text) asrSub = `Сейчас: «${escapeHtml(a.text.length > 140 ? '…' + a.text.slice(-140) : a.text)}»`;
             }
             let live = l ? `фраз найдено ${l.found} из ${l.phrases} · нарезано ${l.done} · кусков ${l.pieces}`
                 + (l.spares ? ` · запасных ${l.spares}` : '') + (l.bad ? ` · <span class="clone-bad">проверить ${l.bad}</span>` : '') : '';
-            let cutSub = c && s.run ? `${s.stage === 'cut' ? 'Режу' : 'Последняя'}: блок ${c.block}, стр ${c.row} — ${escapeHtml(c.text)}` + (s.stage === 'cut' ? ` (${c.n} из ${c.of})` : '') : '';
+            let f = i.fa, fa = s.run && s.stage === 'cut' && f && f.n < f.of
+                ? `Уточняю границы там, где распознанное не совпало с таблицей: ${f.n} из ${f.of}<br>` : '';
+            let cutSub = fa + (c && s.run ? `${s.stage === 'cut' ? 'Режу' : 'Последняя'}: блок ${c.block}, стр ${c.row} — ${escapeHtml(c.text)}` + (s.stage === 'cut' ? ` (${c.n} из ${c.of})` : '') : '');
             return row('model', 'Модель', model)
                 + row('asr', 'Распознавание', asr, asrSub)
                 + row('cut', s.stage === 'asr' ? 'Нарезка по ходу' : 'Нарезка', live, cutSub
