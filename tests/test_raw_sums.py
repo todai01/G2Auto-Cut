@@ -153,12 +153,12 @@ def test_run_writes_pieces_without_touching_source(tmp_path):
     assert len([p for p in res["pieces"] if p["role"] == 'spare']) == 1      # «два миллиона» из оборванной
     for p in res["pieces"]:
         assert os.path.getsize(os.path.join(out, p["file"])) > 44
-    assert os.path.exists(os.path.join(out, 'Миллионы', '1.wav'))              # классы сумм, имя — число
-    assert os.path.exists(os.path.join(out, 'Тысячи', '2.wav'))
-    assert os.path.exists(os.path.join(out, 'Тенге', '1.wav'))
-    assert os.path.exists(os.path.join(out, '_запасные', 'Миллионы', '2 — попытка 1.wav'))
+    assert os.path.exists(os.path.join(out, '1 - 100 млн', '1.wav'))              # классы сумм, имя — число
+    assert os.path.exists(os.path.join(out, '1 - 99 тыс', '2.wav'))
+    assert os.path.exists(os.path.join(out, '1 - 100 тенге', '1.wav'))
+    assert os.path.exists(os.path.join(out, '_запасные', '1 - 100 млн', '2 — попытка 1.wav'))
     assert not os.path.exists(os.path.join(out, 'A Начало'))
-    for f in ('разбор.xlsx', 'разбор.json', os.path.join('Миллионы', '_проверка.xlsx')):
+    for f in ('разбор.xlsx', 'разбор.json', os.path.join('1 - 100 млн', '_проверка.xlsx')):
         assert os.path.exists(os.path.join(out, f))
     assert {m["row"] for m in res["missing"]} == {4, 2, 5}       # не прочитано — в списке «не найдено»
     # повторный разбор не перезаписывает прежнюю папку
@@ -214,9 +214,9 @@ def test_repeated_value_in_column_saved_once(tmp_path):
     out = rs_out_dir(str(wav))
     res = rs_run(None, str(wav), table, out, rec_words=rec)
     files = sorted(p["file"] for p in res["pieces"])
-    assert [f for f in files if f.startswith('Сотни')] == [os.path.join('Сотни', '100.wav')]
+    assert [f for f in files if f.startswith('100 - 900')] == [os.path.join('100 - 900', '100.wav')]
     assert len(files) == 7 and res["skipped_repeats"] == 2
-    assert sorted(os.listdir(os.path.join(out, 'Сотни'))) == ['100.wav', '_проверка.xlsx']
+    assert sorted(os.listdir(os.path.join(out, '100 - 900'))) == ['100.wav', '_проверка.xlsx']
 
 def test_live_cutting_same_files_as_single_pass(tmp_path):
     """Нарезка по ходу распознавания (куски сразу в папке) даёт ровно те же файлы, что разовая в конце:
@@ -310,7 +310,7 @@ def test_to_studio_copies_without_overwriting(tmp_path):
     r = a.rsum_to_studio()
     assert r["copied"] == 10 and r["exist"] == 1 and r["nowhere"] == 1      # тысяча 3 — в таблице проекта нет
     assert mine.read_bytes() == b'RIFF-my-own-take'                         # своё не тронуто
-    assert md5(str(wd / 'Значения' / 'sum_ru' / 'thousand_ru' / '1.wav')) == md5(os.path.join(st["out"], 'Тысячи', '1.wav'))
+    assert md5(str(wd / 'Значения' / 'sum_ru' / 'thousand_ru' / '1.wav')) == md5(os.path.join(st["out"], '1 - 99 тыс', '1.wav'))
     assert before == {f: md5(os.path.join(r_, f)) for r_, _, fs in os.walk(st["out"]) for f in fs}   # разбор не тронут
     r2 = a.rsum_to_studio()                                                  # повтор — ничего нового
     assert r2["copied"] == 0 and r2["exist"] == 11

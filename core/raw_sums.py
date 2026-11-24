@@ -142,8 +142,10 @@ _RS_VAL = {w: v for v, ws in (
     (400, 'четыреста'), (500, 'пятьсот'), (600, 'шестьсот'), (700, 'семьсот'), (800, 'восемьсот'), (900, 'девятьсот'))
     for w in ws.split()}
 RS_CATS = ('million', 'hundred_thousand', 'hundred', 'thousand', 'tenge')          # классы сумм как в Студии
-RS_CAT_DIRS = {'million': 'Миллионы', 'hundred_thousand': 'Сотни тысяч', 'hundred': 'Сотни',
-               'thousand': 'Тысячи', 'tenge': 'Тенге'}
+# папки классов — как ярусы сумм в Студии (TtsFlowMixin.SUM_TIER_DIRS); имя файла — число:
+# «один миллион» → 1, «пятьдесят одна тысяча» → 51, «сто» → 100, «сто тысяч» → 100, «одна тенге» → 1
+RS_CAT_DIRS = {'million': '1 - 100 млн', 'hundred_thousand': '100 - 900 тыс', 'hundred': '100 - 900',
+               'thousand': '1 - 99 тыс', 'tenge': '1 - 100 тенге'}
 RS_LOGICS = {1: ('million', 'hundred', 'thousand', 'tenge'), 2: ('million', 'hundred_thousand', 'tenge')}
 RS_CAT_SHORT = {'million': 'млн', 'hundred_thousand': 'тыс', 'hundred': '', 'thousand': 'тыс', 'tenge': 'тенге'}
 
@@ -838,7 +840,7 @@ def rs_text_sim(heard, words):
 
 # ---------------------------------------------------------------- весь разбор
 def rs_piece_rel(pc):
-    """Где лежит основной кусок: класс суммы — «Тысячи/51.wav» (как ищут «Прослушка» и Студия),
+    """Где лежит основной кусок: класс суммы — «1 - 99 тыс/51.wav» (как ищут «Прослушка» и Студия),
     иначе — по столбцу таблицы «<столбец заголовок>/<текст>.wav»."""
     if pc.get("cat"):
         cat, n = pc["cat"]

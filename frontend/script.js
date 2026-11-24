@@ -5411,7 +5411,7 @@ let isProcessing = false;
                 else if (m && !m.error) rsumStart();
             }
         }
-        const RSUM_CATS = { million: 'Миллионы', hundred_thousand: 'Сотни тысяч', hundred: 'Сотни', thousand: 'Тысячи', tenge: 'Тенге' };
+        const RSUM_CATS = { million: '1 - 100 млн', hundred_thousand: '100 - 900 тыс', hundred: '100 - 900', thousand: '1 - 99 тыс', tenge: '1 - 100 тенге' };
         const RSUM_LOGICS = { 1: ['million', 'hundred', 'thousand', 'tenge'], 2: ['million', 'hundred_thousand', 'tenge'] };
         let rsumLogic = 1;
         try { rsumLogic = +localStorage.getItem('gvox_rsum_logic') === 2 ? 2 : 1; } catch (e) {}
@@ -5430,7 +5430,7 @@ let isProcessing = false;
             let tiers = RSUM_LOGICS[rsumLogic];
             document.getElementById('rsumCats').innerHTML = tiers.map((c, k) => {
                 let n = cats[c] || 0;
-                let ctx = tiers.filter(t => t !== c).map(t => RSUM_CATS[t].toLowerCase()).join(', ');
+                let ctx = tiers.filter(t => t !== c).map(t => RSUM_CATS[t]).join(', ');
                 return `<button class="custom-alert-btn rsum-cat" ${n ? '' : 'disabled'} onclick="rsumListen('${c}')" `
                     + `title="Прослушка: каждое значение — в сумме между кусками «${ctx}»">${RSUM_CATS[c]} <span class="tts-dim">${n}</span></button>`
                     + (k < tiers.length - 1 ? '<span class="rsum-plus">+</span>' : '');
