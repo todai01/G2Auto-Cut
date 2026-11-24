@@ -153,11 +153,12 @@ def test_run_writes_pieces_without_touching_source(tmp_path):
     assert len([p for p in res["pieces"] if p["role"] == 'spare']) == 1      # «два миллиона» из оборванной
     for p in res["pieces"]:
         assert os.path.getsize(os.path.join(out, p["file"])) > 44
-    assert os.path.exists(os.path.join(out, 'B миллионы', 'один миллион.wav'))
-    assert os.path.exists(os.path.join(out, 'C тысячи', 'две тысячи.wav'))
-    assert os.path.exists(os.path.join(out, '_запасные', 'B миллионы', 'два миллиона — попытка 1.wav'))
+    assert os.path.exists(os.path.join(out, 'Миллионы', '1.wav'))              # классы сумм, имя — число
+    assert os.path.exists(os.path.join(out, 'Тысячи', '2.wav'))
+    assert os.path.exists(os.path.join(out, 'Тенге', '1.wav'))
+    assert os.path.exists(os.path.join(out, '_запасные', 'Миллионы', '2 — попытка 1.wav'))
     assert not os.path.exists(os.path.join(out, 'A Начало'))
-    for f in ('разбор.xlsx', 'разбор.json', os.path.join('B миллионы', '_проверка.xlsx')):
+    for f in ('разбор.xlsx', 'разбор.json', os.path.join('Миллионы', '_проверка.xlsx')):
         assert os.path.exists(os.path.join(out, f))
     assert {m["row"] for m in res["missing"]} == {4, 2, 5}       # не прочитано — в списке «не найдено»
     # повторный разбор не перезаписывает прежнюю папку
@@ -213,11 +214,9 @@ def test_repeated_value_in_column_saved_once(tmp_path):
     out = rs_out_dir(str(wav))
     res = rs_run(None, str(wav), table, out, rec_words=rec)
     files = sorted(p["file"] for p in res["pieces"])
-    assert [f for f in files if 'сто' in f] == [os.path.join('C сотни', 'сто.wav')]
+    assert [f for f in files if f.startswith('Сотни')] == [os.path.join('Сотни', '100.wav')]
     assert len(files) == 7 and res["skipped_repeats"] == 2
-    assert os.listdir(os.path.join(out, 'C сотни')) == ['_проверка.xlsx', 'сто.wav'] or \
-        sorted(os.listdir(os.path.join(out, 'C сотни'))) == ['_проверка.xlsx', 'сто.wav']
-
+    assert sorted(os.listdir(os.path.join(out, 'Сотни'))) == ['100.wav', '_проверка.xlsx']
 
 def test_live_cutting_same_files_as_single_pass(tmp_path):
     """Нарезка по ходу распознавания (куски сразу в папке) даёт ровно те же файлы, что разовая в конце:
@@ -257,3 +256,72 @@ def test_live_cutting_same_files_as_single_pass(tmp_path):
 def rs_to16k_for_test(x):
     from core.raw_sums import rs_to16k
     return rs_to16k(x, 8000)
+
+
+def test_cell_cat_like_studio():
+    from core.raw_sums import rs_cell_cat
+    assert rs_cell_cat('пятьдесят одна тысяча'.split()) == ('thousand', 51)
+    assert rs_cell_cat('сто тысяч'.split()) == ('hundred_thousand', 100)
+    assert rs_cell_cat(['сто']) == ('hundred', 100)
+    assert rs_cell_cat('пятьдесят пять миллионов'.split()) == ('million', 55)
+    assert rs_cell_cat(['миллион']) == ('million', 1)
+    assert rs_cell_cat('ноль тенге'.split()) == ('tenge', 0)
+    assert rs_cell_cat(['тенге']) is None and rs_cell_cat('сумма к оплате'.split()) is None
+
+
+def _sums_api(tmp_path):
+    """Api с готовым разбором: 3 суммы (логика 1: миллионы, сотни, тысячи, тенге)."""
+    from harness import Api
+    grid = [['Начало', 'миллионы', 'сотни', 'тысячи', None, 'тенге'],
+            ['Сумма к оплате', 'один миллион', 'сто', 'одна', 'тысяча', 'одна тенге'],
+            ['Сумма к оплате', 'два миллиона', 'двести', 'две', 'тысячи', 'два тенге'],
+            ['Сумма к оплате', 'три миллиона', 'триста', 'три', 'тысячи', 'три тенге']]
+    table = rs_read_grid(grid)
+    rec, words_t, t = [], [], 0.5
+    for p in table["phrases"]:
+        for w in p["words"]:
+            rec.append((w, t, t + 0.35, 1.0))
+            words_t.append((t, t + 0.35))
+            t += 0.55
+        t += 1.0
+    wav = tmp_path / 'запись.wav'
+    write_wav16(str(wav), tone_track(words_t))
+    a = Api()
+    st = a._rsum()
+    st["audio"], st["out"] = str(wav), rs_out_dir(str(wav))
+    st["result"] = rs_run(None, str(wav), table, st["out"], rec_words=rec)
+    return a, st
+
+
+def test_to_studio_copies_without_overwriting(tmp_path):
+    a, st = _sums_api(tmp_path)
+    wd = tmp_path / 'проект'
+    tt = a._tts()
+    tt["work_dir"] = str(wd)
+    tt["var_sheets"] = {'sum_ru': {"categories": [
+        {"key": 'million_ru', "label": 'м', "values": ['1', '2', '3']},
+        {"key": 'hundred_ru', "label": 'с', "values": ['100', '200', '300']},
+        {"key": 'thousand_ru', "label": 'т', "values": ['1', '2']},
+        {"key": 'tenge_ru', "label": 'тг', "values": ['1', '2', '3']}]}}
+    mine = wd / 'Значения' / 'sum_ru' / 'million_ru' / '2.wav'      # уже записанное в проекте
+    os.makedirs(mine.parent)
+    mine.write_bytes(b'RIFF-my-own-take')
+    before = {f: md5(os.path.join(r, f)) for r, _, fs in os.walk(st["out"]) for f in fs}
+    r = a.rsum_to_studio()
+    assert r["copied"] == 10 and r["exist"] == 1 and r["nowhere"] == 1      # тысяча 3 — в таблице проекта нет
+    assert mine.read_bytes() == b'RIFF-my-own-take'                         # своё не тронуто
+    assert md5(str(wd / 'Значения' / 'sum_ru' / 'thousand_ru' / '1.wav')) == md5(os.path.join(st["out"], 'Тысячи', '1.wav'))
+    assert before == {f: md5(os.path.join(r_, f)) for r_, _, fs in os.walk(st["out"]) for f in fs}   # разбор не тронут
+    r2 = a.rsum_to_studio()                                                  # повтор — ничего нового
+    assert r2["copied"] == 0 and r2["exist"] == 11
+
+
+def test_listen_sums_opens_assembly_with_context(tmp_path):
+    a, st = _sums_api(tmp_path)
+    r = a.rsum_listen(1, 'thousand')
+    assert not r.get("error"), r
+    assert r["rsum"]["start"].startswith('начало (1 млн, 100') and r["rsum"]["end"].startswith('конец (1 тенге')
+    assert [row["name"] for row in r["rows"]][:3] == ['1', '2', '3']
+    ctx = os.path.dirname(a._ls()["pick"]["ru"]["start"])
+    assert not ctx.startswith(st["out"])                                    # контекст — во временной папке
+    assert a.rsum_listen(2, 'hundred').get("error")                         # во 2-й логике сотен нет

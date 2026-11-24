@@ -133,6 +133,54 @@ def rs_canon(text):
     return words
 
 
+_RS_VAL = {w: v for v, ws in (
+    (0, 'ноль'), (1, 'один одна'), (2, 'два две'), (3, 'три'), (4, 'четыре'), (5, 'пять'), (6, 'шесть'), (7, 'семь'),
+    (8, 'восемь'), (9, 'девять'), (10, 'десять'), (11, 'одиннадцать'), (12, 'двенадцать'), (13, 'тринадцать'),
+    (14, 'четырнадцать'), (15, 'пятнадцать'), (16, 'шестнадцать'), (17, 'семнадцать'), (18, 'восемнадцать'),
+    (19, 'девятнадцать'), (20, 'двадцать'), (30, 'тридцать'), (40, 'сорок'), (50, 'пятьдесят'), (60, 'шестьдесят'),
+    (70, 'семьдесят'), (80, 'восемьдесят'), (90, 'девяносто'), (100, 'сто'), (200, 'двести'), (300, 'триста'),
+    (400, 'четыреста'), (500, 'пятьсот'), (600, 'шестьсот'), (700, 'семьсот'), (800, 'восемьсот'), (900, 'девятьсот'))
+    for w in ws.split()}
+RS_CATS = ('million', 'hundred_thousand', 'hundred', 'thousand', 'tenge')          # классы сумм как в Студии
+RS_CAT_DIRS = {'million': 'Миллионы', 'hundred_thousand': 'Сотни тысяч', 'hundred': 'Сотни',
+               'thousand': 'Тысячи', 'tenge': 'Тенге'}
+RS_LOGICS = {1: ('million', 'hundred', 'thousand', 'tenge'), 2: ('million', 'hundred_thousand', 'tenge')}
+RS_CAT_SHORT = {'million': 'млн', 'hundred_thousand': 'тыс', 'hundred': '', 'thousand': 'тыс', 'tenge': 'тенге'}
+
+
+def _rs_num(words):
+    """Слова до 999 → число (None — не число)."""
+    if not words or any(w not in _RS_VAL for w in words):
+        return None
+    return sum(_RS_VAL[w] for w in words)
+
+
+def rs_cell_cat(words):
+    """Ячейка → (класс суммы, число) как в Студии или None: «пятьдесят одна тысяча» → ('thousand', 51),
+    «сто тысяч» → ('hundred_thousand', 100), «сто» → ('hundred', 100), «одна тенге» → ('tenge', 1),
+    «миллион» → ('million', 1). Начальная фраза, «тенге» без числа — None."""
+    if not words:
+        return None
+    last, head = words[-1], words[:-1]
+    if last == 'тенге':
+        n = _rs_num(head)
+        return ('tenge', n) if n is not None else None
+    if last.startswith('миллион'):
+        n = _rs_num(head) if head else 1
+        return ('million', n) if n else None
+    if last.startswith('тысяч'):
+        n = _rs_num(head) if head else 1
+        if not n:
+            return None
+        if n % 100 == 0:
+            return ('hundred_thousand', n)
+        return ('thousand', n)
+    n = _rs_num(words)
+    if n and n % 100 == 0 and n <= 900:
+        return ('hundred', n)
+    return None
+
+
 def _is_label(text):
     """Заголовок внутри таблицы («100-900 к», «Дополнительно»): цифры — точно заголовок."""
     return bool(re.search(r'\d', str(text)))
@@ -182,11 +230,12 @@ def rs_read_grid(grid):
                     # «тысяча / тысячи / тысяч» отдельной ячейкой — часть куска слева: «пятьдесят одна тысяча»
                     cells[-1]["words"] = cells[-1]["words"] + words
                     cells[-1]["text"] = ' '.join(cells[-1]["words"])
+                    cells[-1]["cat"] = rs_cell_cat(cells[-1]["words"])
                     continue
                 tier = f'{_col_letter(c)} {cur_head.get(c) or ""}'.strip()
                 tiers[_col_letter(c)] = tier
                 cells.append({"col": _col_letter(c), "tier": tier, "text": ' '.join(words), "words": words,
-                              "num": all(w in _LEX_SET for w in words)})     # не число — начальная фраза, не сохраняется
+                              "num": all(w in _LEX_SET for w in words), "cat": rs_cell_cat(words)})
             if len(cells) < 2:
                 if cells:
                     skipped.append({"row": r + 1, "block": b, "text": ' | '.join(x["text"] for x in cells)})
@@ -755,6 +804,15 @@ def rs_text_sim(heard, words):
 
 
 # ---------------------------------------------------------------- весь разбор
+def rs_piece_rel(pc):
+    """Где лежит основной кусок: класс суммы — «Тысячи/51.wav» (как ищут «Прослушка» и Студия),
+    иначе — по столбцу таблицы «<столбец заголовок>/<текст>.wav»."""
+    if pc.get("cat"):
+        cat, n = pc["cat"]
+        return os.path.join(RS_CAT_DIRS[cat], f'{n}.wav')
+    return os.path.join(rs_safe_name(pc["tier"]), rs_safe_name(pc["text"]) + '.wav')
+
+
 RS_SETTLE = 25.0     # фраза «готова» к нарезке, когда распознавание ушло дальше её конца на столько секунд
 RS_LIVE_STEP = 45.0  # во время распознавания нарезка — не чаще, чем раз в столько секунд записи
 
@@ -843,7 +901,7 @@ class RsCutter:
             c = p["cells"][kc]
             h_text, h_sim = heard.get(kc, ('', 0.0))
             pc = {"r": r, "kc": kc, "row": p["row"], "block": p["block"], "col": c["col"], "tier": c["tier"],
-                  "text": c["text"], "num": c.get("num", True), "file": None,
+                  "text": c["text"], "num": c.get("num", True), "file": None, "cat": c.get("cat"),
                   "start": round(s_, 3), "end": round(e, 3),
                   "role": role, "heard": h_text, "sim": round(h_sim, 2), "weak": weak,
                   "complete": a["complete"] or bool(guessed), "guess": kc in guessed_cells}
@@ -905,12 +963,12 @@ class RsCutter:
         for pc in self.cands[r]:
             if pc["role"] != 'main' or not pc["num"]:
                 continue
-            key = (pc["col"], pc["text"])
+            key = tuple(pc["cat"]) if pc.get("cat") else (pc["col"], pc["text"])
             old = self.keep.get(key)
             if old is None or (pc["ok"] and not old["ok"]):
                 if old is not None:                       # лучшее прочтение позже — прежнее и его запасные убираем
                     self._forget(old)
-                pc["file"] = os.path.join(rs_safe_name(pc["tier"]), rs_safe_name(pc["text"]) + '.wav')
+                pc["file"] = rs_piece_rel(pc)
                 self._write(pc["file"], pc["start"], pc["end"])
                 files.append(pc["file"])
                 self.keep[key] = pc
@@ -920,8 +978,8 @@ class RsCutter:
             if pc["role"] != 'spare' or pc["kc"] not in chosen or not pc["ok"] or not pc["num"]:
                 continue
             n_sp[pc["kc"]] = n_sp.get(pc["kc"], 0) + 1
-            pc["file"] = os.path.join('_запасные', rs_safe_name(pc["tier"]),
-                                      f'{rs_safe_name(pc["text"])} — попытка {n_sp[pc["kc"]]}.wav')
+            d_, n_ = os.path.split(rs_piece_rel(pc))
+            pc["file"] = os.path.join('_запасные', d_, f'{os.path.splitext(n_)[0]} — попытка {n_sp[pc["kc"]]}.wav')
             self._write(pc["file"], pc["start"], pc["end"])
             files.append(pc["file"])
 
@@ -1125,6 +1183,7 @@ class RawSumsMixin:
             bad = [p for p in main if not p["ok"]]
             summary = {"pieces": len(main), "spares": len(res["pieces"]) - len(main), "bad": len(bad),
                        "repeats": res.get("skipped_repeats", 0),
+                       "cats": {c: len(v) for c, v in self._rsum_cat_files().items()},
                        "phrases": len(res["phrases"]), "missing": res["missing"][:200],
                        "missing_n": len(res["missing"]), "dur": res.get("dur"),
                        "bad_list": [{"file": p["file"], "text": p["text"], "row": p["row"], "block": p["block"] + 1,
@@ -1148,6 +1207,7 @@ class RawSumsMixin:
         return {"audio": st["audio"], "table": table, "run": st["run"], "stage": st["stage"], "pct": st["pct"],
                 "msg": st["msg"], "out": st["out"], "summary": summary, "need_model": st.get("need_model", False),
                 "elapsed": elapsed, "eta": eta, "stopping": bool(st["run"] and st["stop"]), "info": info,
+                "cats": {c: len(v) for c, v in self._rsum_cat_files().items()} if st["out"] else {},
                 "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"])))}
 
     def rsum_pick_audio(self):
@@ -1286,3 +1346,105 @@ class RawSumsMixin:
         except Exception as e:
             return {"error": str(e)}
         return {"ok": True}
+
+    # ---- куски как суммы: в проект Студии и «Прослушка сумм» ----
+    def _rsum_cat_files(self):
+        """{класс: {число: путь}} — основные куски разбора по классам сумм."""
+        st = self._rsum()
+        out = {}
+        for cat, d in RS_CAT_DIRS.items():
+            p = os.path.join(st["out"] or '', d)
+            if not os.path.isdir(p):
+                continue
+            for f in os.listdir(p):
+                m = re.fullmatch(r'(\d+)\.wav', f, re.I)
+                if m:
+                    out.setdefault(cat, {})[int(m.group(1))] = os.path.join(p, f)
+        return out
+
+    def rsum_to_studio(self):
+        """Копии кусков в открытый проект Студии: «Значения/<лист сумм RU>/<класс>/<значение>.wav» —
+        имя как значение в таблице проекта. Что в проекте уже есть — не трогаем."""
+        import shutil
+        files = self._rsum_cat_files()
+        if not files:
+            return {"error": "Кусков по классам сумм пока нет."}
+        tt = self._tts() if hasattr(self, '_tts') else {}
+        wd, sheets = tt.get("work_dir"), tt.get("var_sheets") or {}
+        sheet = next((k for k, sh in sheets.items() if self._tts_is_sum_sheet(sh)
+                      and not any(re.search(r'_(kz|kk)$', c["key"]) for c in sh["categories"])), None)
+        if not wd or not sheet:
+            return {"error": "Откройте в Студии проект, в таблице которого есть лист сумм RU (<sum_ru> с <million_ru>, <tenge_ru>…)."}
+        copied, exist, nowhere = 0, 0, 0
+        for c in sheets[sheet]["categories"]:
+            base = re.sub(r'_(ru|kz|kk)$', '', c["key"])
+            have = files.get(base) or {}
+            idx = {}
+            for v in c["values"]:
+                dg = re.sub(r'\D', '', str(v))
+                if dg:
+                    idx.setdefault(int(dg), v)
+            for n, src in have.items():
+                if n not in idx:
+                    nowhere += 1
+                    continue
+                dst = self._tts_value_file(sheet, c["key"], idx[n])
+                if os.path.exists(dst):
+                    exist += 1
+                    continue
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst + '.tmp')
+                os.replace(dst + '.tmp', dst)
+                copied += 1
+        used = {re.sub(r'_(ru|kz|kk)$', '', c["key"]) for c in sheets[sheet]["categories"]}
+        nowhere += sum(len(v) for k, v in files.items() if k not in used)
+        return {"ok": True, "sheet": sheet, "copied": copied, "exist": exist, "nowhere": nowhere,
+                "dir": os.path.join(wd, 'Значения', sheet)}
+
+    def rsum_listen(self, logic, cat):
+        """«Прослушка сумм»: значения класса cat звучат в сумме логики logic — между кусками остальных
+        классов (для них берётся меньшее значение, обычно «один миллион», «сто», «одна тенге»).
+        Открывается обычный экран «Прослушки» (сборка переменной): правка, «Сохранить», «_до_правок» — как всегда."""
+        import tempfile
+        from pydub import AudioSegment
+        st = self._rsum()
+        logic = 2 if int(logic) == 2 else 1
+        tiers = RS_LOGICS[logic]
+        if cat not in tiers:
+            return {"error": "Этого класса нет в выбранной логике."}
+        files = self._rsum_cat_files()
+        if not files.get(cat):
+            return {"error": f"Кусков «{RS_CAT_DIRS[cat]}» пока нет."}
+        k = tiers.index(cat)
+        ctx_dir = os.path.join(tempfile.gettempdir(), 'gvox_rsum_ctx',
+                               hashlib.md5(f'{st["out"]}|{logic}|{cat}'.encode('utf-8')).hexdigest()[:12])
+        os.makedirs(ctx_dir, exist_ok=True)
+        for f in os.listdir(ctx_dir):                      # прошлый контекст этого класса — заново
+            try:
+                os.remove(os.path.join(ctx_dir, f))
+            except OSError:
+                pass
+
+        def build(part, which):
+            segs, label = [], []
+            for t in part:
+                have = files.get(t) or {}
+                if not have:
+                    continue
+                n = min(have)
+                segs.append(AudioSegment.from_file(have[n]))
+                label.append(f'{n} {RS_CAT_SHORT[t]}'.strip())
+            if not segs:
+                return None
+            path = os.path.join(ctx_dir, f'{which} ({", ".join(label)}).wav')
+            sum(segs[1:], segs[0]).export(path, format='wav')
+            return path
+        start, end = build(tiers[:k], 'начало'), build(tiers[k + 1:], 'конец')
+        if not start and not end:
+            return {"error": "Для суммы не хватает кусков других классов."}
+        r = self.listen_setup_assembly(ctx_dir, start, end, os.path.join(st["out"], RS_CAT_DIRS[cat]))
+        if isinstance(r, dict) and not r.get("error"):
+            r["rsum"] = {"logic": logic, "cat": RS_CAT_DIRS[cat],
+                         "start": os.path.splitext(os.path.basename(start))[0] if start else None,
+                         "end": os.path.splitext(os.path.basename(end))[0] if end else None}
+        return r

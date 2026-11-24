@@ -497,6 +497,13 @@
                 <div id="rsumSteps" class="rsum-steps"></div>
                 <div id="rsumMsg" class="clone-bad"></div>
                 <div id="rsumSummary"></div>
+                <div id="rsumSums" class="rsum-sums" style="display:none">
+                    <div class="rsum-sums__head"><b>Суммы</b>
+                        <div class="listen-lang listen-lang--sm" id="rsumLogic"><button data-l="1" onclick="rsumSetLogic(1)" title="Миллионы + сотни + тысячи + тенге (1 101 001)">Логика 1</button><button data-l="2" onclick="rsumSetLogic(2)" title="Миллионы + сотни тысяч + тенге (1 100 001)">Логика 2</button></div>
+                        <button class="custom-alert-btn" onclick="rsumToStudio()" title="Копии кусков в открытый проект Студии: Значения/&lt;лист сумм&gt;/&lt;класс&gt;/&lt;число&gt;.wav (что уже есть — не трогается)">В проект Студии</button>
+                    </div>
+                    <div id="rsumCats" class="rsum-cats"></div>
+                </div>
                 <div class="field-row">
                     <button class="custom-alert-btn" id="btnRsumStop" onclick="rsumStop()">Остановить</button>
                     <button class="custom-alert-btn" onclick="pywebview.api.rsum_open_folder()">Открыть папку</button>

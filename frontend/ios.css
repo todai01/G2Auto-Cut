@@ -312,3 +312,11 @@ input[type=range]::-webkit-slider-thumb{
 .rsum-step--run > i{ border-color: var(--accent-info); border-right-color: transparent; animation: bsspin .8s linear infinite; }
 .rsum-step--wait{ opacity: .5; }
 .rsum-step__sub{ color: var(--text-dim); margin-top: 2px; word-break: break-word; }
+.rsum-sums{ margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.06); display: flex; flex-direction: column; gap: 8px; }
+.rsum-sums__head{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rsum-sums__head .listen-lang{ margin-right: auto; }
+.rsum-cats{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rsum-cat{ width: auto; }
+.rsum-plus{ opacity: .5; }
+.rsum-sums__hint{ width: 100%; font-size: 12px; }
+.rsum-sums__head .custom-alert-btn{ width: auto; flex: 0 0 auto; padding: 6px 14px; }

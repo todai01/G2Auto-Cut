@@ -5411,6 +5411,49 @@ let isProcessing = false;
                 else if (m && !m.error) rsumStart();
             }
         }
+        const RSUM_CATS = { million: 'Миллионы', hundred_thousand: 'Сотни тысяч', hundred: 'Сотни', thousand: 'Тысячи', tenge: 'Тенге' };
+        const RSUM_LOGICS = { 1: ['million', 'hundred', 'thousand', 'tenge'], 2: ['million', 'hundred_thousand', 'tenge'] };
+        let rsumLogic = 1;
+        try { rsumLogic = +localStorage.getItem('gvox_rsum_logic') === 2 ? 2 : 1; } catch (e) {}
+        function rsumSetLogic(l) {
+            rsumLogic = l === 2 ? 2 : 1;
+            try { localStorage.setItem('gvox_rsum_logic', String(rsumLogic)); } catch (e) {}
+            if (rsumSt) rsumEvent(rsumSt);
+        }
+        function rsumSums(s) {
+            // «Суммы»: класс логики → «Прослушка» (значения класса в сумме между кусками остальных классов)
+            let box = document.getElementById('rsumSums'), cats = s.cats || {};
+            let any = Object.values(cats).some(n => n > 0);
+            box.style.display = any ? '' : 'none';
+            if (!any) return;
+            document.querySelectorAll('#rsumLogic button').forEach(b => b.classList.toggle('is-on', +b.dataset.l === rsumLogic));
+            let tiers = RSUM_LOGICS[rsumLogic];
+            document.getElementById('rsumCats').innerHTML = tiers.map((c, k) => {
+                let n = cats[c] || 0;
+                let ctx = tiers.filter(t => t !== c).map(t => RSUM_CATS[t].toLowerCase()).join(', ');
+                return `<button class="custom-alert-btn rsum-cat" ${n ? '' : 'disabled'} onclick="rsumListen('${c}')" `
+                    + `title="Прослушка: каждое значение — в сумме между кусками «${ctx}»">${RSUM_CATS[c]} <span class="tts-dim">${n}</span></button>`
+                    + (k < tiers.length - 1 ? '<span class="rsum-plus">+</span>' : '');
+            }).join('') + `<div class="tts-dim rsum-sums__hint">Нажмите класс — «Прослушка» его значений в сумме, правка как обычно`
+                + (s.run ? ' · куски, нарезанные позже, появятся при следующем открытии' : '') + `</div>`;
+        }
+        async function rsumListen(cat) {
+            let r = await pywebview.api.rsum_listen(rsumLogic, cat);
+            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+            closeRsum();
+            LS = r;
+            listenOpen();
+            let x = r.rsum || {};
+            showToast(`${x.cat}: ${r.rows.length} значений · логика ${x.logic} · ${x.start || ''}${x.start && x.end ? ' → … → ' : ''}${x.end || ''}`, 6000);
+        }
+        async function rsumToStudio() {
+            let r = await pywebview.api.rsum_to_studio();
+            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+            showBeautifulAlert(`<b>В проект Студии — лист «${escapeHtml(r.sheet)}»</b><br><br>Скопировано: <b>${r.copied}</b>`
+                + (r.exist ? `<br>Уже было в проекте (не тронуто): ${r.exist}` : '')
+                + (r.nowhere ? `<br>Нет такого значения в таблице проекта: ${r.nowhere}` : '')
+                + `<br><br><span class="tts-dim">${escapeHtml(r.dir)}</span>`);
+        }
         async function rsumStop() {
             await pywebview.api.rsum_stop();
             rsumEvent(await pywebview.api.rsum_state());
@@ -5489,6 +5532,7 @@ let isProcessing = false;
             $('rsumBar').style.width = (busy ? 100 : s.run ? (s.pct || 0) : (s.summary ? 100 : 0)) + '%';
             $('rsumSteps').innerHTML = (s.run || s.summary) ? rsumSteps(s) : '';
             $('btnRsumStop').style.display = s.run ? '' : 'none';
+            rsumSums(s);
             if (s.need_model && !rsumWasNeed) setTimeout(rsumNeedModel, 0);
             rsumWasNeed = !!s.need_model;
             $('rsumMsg').innerText = s.msg || '';
