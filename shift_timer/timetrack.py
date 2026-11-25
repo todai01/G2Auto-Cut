@@ -400,11 +400,11 @@ class Tracker:
 
     # ---------- данные для окон ----------
     def _break(self, d):
-        """Перерывы без обеда и студии: от прихода до ухода минус отработанное, обед и студия."""
+        """Перерывы без обеда: от прихода до ухода минус отработанное (студия уже в нём) и обед."""
         a, l = to_sec(d.get("arrival")), to_sec(d.get("leave"))
         if a is None or l is None or l < a:
             return 0
-        return max(0, (l - a) - d["worked"] - self._lunch_s(d, datetime.fromtimestamp(self._clock())) - self._studio_s(d))
+        return max(0, (l - a) - d["worked"] - self._lunch_s(d, datetime.fromtimestamp(self._clock())))
 
     def snapshot(self):
         with self._lock:
@@ -617,7 +617,7 @@ class Tracker:
 
     def set_event_kind(self, iso, idx, kind):
         """Исправить тип уже закончившегося события: блокировка / пауза → «обед» (забыли нажать «Обед») или «студия» (ушли на запись) и обратно.
-        На рабочее время это не влияет (блокировка и так не считается работой) — меняется, что видно в «Обед» и «Перерывы»."""
+        Обед на рабочее время не влияет; «студия» — работа: её время прибавляется к «Отработано» (и вычитается, если отметку сняли)."""
         with self._lock:
             if kind not in ("lock", "sleep", "lunch", "studio"):
                 return {"error": "Неизвестный тип."}
@@ -627,6 +627,10 @@ class Tracker:
             ev = day["events"][idx]
             if ev["unlock"] is None:
                 return {"error": "Это событие ещё идёт — дождитесь его окончания."}
+            a, b = parse_dt(ev["lock"]), parse_dt(ev["unlock"])
+            dur = max(0.0, (b - a).total_seconds()) if a and b else 0.0
+            # студия — работа: пока заблокирован, часы не шли, поэтому при отметке время добавляется к отработанному, при снятии — вычитается
+            day["worked"] = max(0.0, day["worked"] + dur * ((kind == "studio") - (ev["kind"] == "studio")))
             ev["kind"] = kind
             self._strip_inside_lunch(day)
             self.save()

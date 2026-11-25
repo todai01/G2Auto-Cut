@@ -1206,7 +1206,7 @@ def test_mark_lock_as_studio_is_not_a_break(tmp_path):
     assert tr.set_event_kind('2026-11-17', 0, 'studio') == {"ok": True}
     after = tr.snapshot()
     assert after["break_s"] < 10 and after["lunch"]["done_s"] == 0 and after["events_n"] == 0     # не перерыв и не обед
-    assert after["worked_s"] == worked
+    assert abs(after["worked_s"] - (worked + 1800)) <= 5                                          # студия — работа: плюсуется к отработанному
     info = tr.day_info('2026-11-17')
     assert abs(info["studio_s"] - 1800) <= 5 and info["break_s"] < 10 and info["lunch_s"] == 0
     assert info["events"][0]["kind"] == "studio"
@@ -1215,6 +1215,12 @@ def test_mark_lock_as_studio_is_not_a_break(tmp_path):
         assert tr2.day_info('2026-11-17')["events"][0]["kind"] == "studio"                      # переживает перезапуск
     assert tr.set_event_kind('2026-11-17', 0, 'lock') == {"ok": True}
     assert tr.snapshot()["break_s"] >= 1790 and tr.day_info('2026-11-17')["studio_s"] == 0
+    assert abs(tr.snapshot()["worked_s"] - worked) <= 5                                           # снятие отметки вернуло отработанное
+    tr.set_event_kind('2026-11-17', 0, 'studio')
+    tr.set_event_kind('2026-11-17', 0, 'studio')                                                  # повтор не прибавляет второй раз
+    assert abs(tr.snapshot()["worked_s"] - (worked + 1800)) <= 5
+    tr.set_event_kind('2026-11-17', 0, 'lunch')                                                   # студия → обед: не работа
+    assert abs(tr.snapshot()["worked_s"] - worked) <= 5
 
 
 def test_mark_lock_as_lunch_moves_it_from_breaks_to_lunch(tmp_path):
