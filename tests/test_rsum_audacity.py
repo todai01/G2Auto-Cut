@@ -10,7 +10,7 @@ from test_raw_sums import _sums_api, md5, tone_track, write_wav16
 class FakeAudacity:
     """Отвечает как Audacity на GetInfo; Import2 / NewLabelTrack добавляют дорожку."""
     def __init__(self):
-        self.cmds, self.tracks = [], 0
+        self.cmds, self.tracks, self.new_ok, self.opened = [], 0, True, []
 
     def send_command(self, cmd, auto_start=False, timeout=20):
         self.cmds.append(cmd)
@@ -18,7 +18,8 @@ class FakeAudacity:
             return '[' + ','.join('{}' for _ in range(self.tracks)) + ']'
         if cmd.startswith('Import2:') or cmd == 'NewLabelTrack:':
             self.tracks += 1
-        if cmd == 'RemoveTracks:':
+        if cmd == 'New:' and self.new_ok:
+            self.opened.append(self.tracks)                     # прежний проект остаётся как был
             self.tracks = 0
         if cmd.startswith('SaveProject2:'):
             p = cmd.split('Filename="', 1)[1].rstrip('"')
@@ -51,11 +52,12 @@ def test_to_audacity_builds_tracks_and_keeps_pieces(tmp_path, monkeypatch):
     st["ctx_start"] = str(s)
     before = {p: md5(p) for p in glob.glob(os.path.join(out, '**', '*.wav'), recursive=True)}
     fake = FakeAudacity()
+    fake.tracks = 4                                             # в Audacity уже открыт чужой проект
     a.audacity = fake
     monkeypatch.setattr(a, '_ensure_audacity_ready', lambda: True, raising=False)
-    monkeypatch.setattr(a, '_block_if_audacity_ambiguous', lambda: False, raising=False)
     r = a.rsum_to_audacity()
     assert r.get("ok"), r
+    assert fake.opened == [4] and 'RemoveTracks:' not in fake.cmds and 'SelectAll:' not in fake.cmds
     assert [t["name"] for t in r["tracks"]] == ['Сборка', '1 - 100 млн', '100 - 900', '1 - 99 тыс', '1 - 100 тенге']
     assert [t["n"] for t in r["tracks"]] == [1, 3, 3, 3, 3]
     names = [c for c in fake.cmds if c.startswith('SetTrack:')]
@@ -65,6 +67,19 @@ def test_to_audacity_builds_tracks_and_keeps_pieces(tmp_path, monkeypatch):
     assert len(labels) == 13 and labels[-1] == 'SetLabel: Label=12 Text="3"'
     assert r["project"] and os.path.exists(r["project"]) and r["project"].endswith('.aup3')
     assert {p: md5(p) for p in before} == before                                 # куски не тронуты
+
+
+def test_to_audacity_no_new_project_touches_nothing(tmp_path, monkeypatch):
+    """Новый проект не открылся — ничего не импортируем и не трогаем в открытом."""
+    a, st = _sums_api(tmp_path)
+    fake = FakeAudacity()
+    fake.tracks, fake.new_ok = 3, False
+    a.audacity = fake
+    monkeypatch.setattr(a, '_ensure_audacity_ready', lambda: True, raising=False)
+    monkeypatch.setattr('core.rsum_audacity.time.sleep', lambda s: None)
+    r = a.rsum_to_audacity()
+    assert r.get("error") and fake.tracks == 3
+    assert not any(c.startswith(('Import2', 'Remove', 'SplitDelete', 'SaveProject')) for c in fake.cmds)
 
 
 def test_to_audacity_without_pieces(tmp_path):

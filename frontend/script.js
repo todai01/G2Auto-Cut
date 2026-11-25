@@ -5469,8 +5469,6 @@ let isProcessing = false;
                     + '(«1 - 100 млн», «100 - 900», «1 - 99 тыс»… — как после разбора)?', 'Указать папку', 'Отмена'))) return;
                 if (!(await rsumPickOut())) return;
             }
-            if (!(await showBeautifulConfirm('<b>В Audacity</b><br><br>Текущий проект в Audacity очистится (несохранённое в нём пропадёт). '
-                + 'Новый проект сохранится в папку кусков.', 'Собрать', 'Отмена'))) return;
             let btn = document.getElementById('btnRsumAud'), was = btn.innerHTML;
             btn.disabled = true; btn.innerHTML = '<span class="bsynth-spin"></span> Собираю…';
             let r;

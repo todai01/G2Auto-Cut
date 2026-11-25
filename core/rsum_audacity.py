@@ -97,8 +97,6 @@ class RsumAudacityMixin:
         tracks = aud_plan(st.get("out"), st.get("ctx_start"), st.get("ctx_end"))
         if not any(t["name"] != 'Сборка' for t in tracks):
             return {"error": "Кусков по классам сумм нет: разберите запись или укажите готовую папку."}
-        if hasattr(self, '_block_if_audacity_ambiguous') and self._block_if_audacity_ambiguous():
-            return {"error": "Открыто несколько окон Audacity — закройте лишние и нажмите ещё раз."}
         if not self._ensure_audacity_ready():
             return {"error": "Audacity не отвечает. Откройте его вручную и нажмите ещё раз."}
         self.player.stop()
@@ -116,8 +114,15 @@ class RsumAudacityMixin:
         except Exception as e:
             return {"error": f"Не получилось подготовить звук: {e}"}
         a = self.audacity
-        a.send_command('SelectAll:')
-        a.send_command('RemoveTracks:')
+        # новый чистый проект — открытые в Audacity не трогаем; команды дальше идут в новое (активное) окно
+        a.send_command('New:')
+        for _ in range(50):
+            if self._aud_tracks_n() == 0:
+                break
+            time.sleep(0.1)
+        else:
+            return {"error": "Audacity не открыл новый проект (команда «New»). Открытые проекты не тронуты — "
+                             "откройте в Audacity «Файл → Создать» и нажмите ещё раз."}
         a.send_command(f'SetProject: Rate={int(rate)}')
         labels, summary = 0, []
         for t, path, spots in rendered:
