@@ -5454,6 +5454,13 @@ let isProcessing = false;
             if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             rsumEvent(r);
         }
+        async function rsumPickCtx(which) {
+            let r = await pywebview.api.rsum_pick_ctx(which);
+            if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            rsumEvent(r);
+        }
+        async function rsumClearCtx(which) { rsumEvent(await pywebview.api.rsum_clear_ctx(which)); }
+        async function rsumClearPhrases() { rsumEvent(await pywebview.api.rsum_clear_phrases()); }
         async function rsumPickOut() {
             let r = await pywebview.api.rsum_pick_out();
             if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return false; }
@@ -5543,7 +5550,11 @@ let isProcessing = false;
             let btn = $('btnRsumStart');
             btn.disabled = !(s.audio && t) || s.run;
             document.getElementById('btnRsumBuild').disabled = !(s.ready || s.summary || s.out) || s.run;
-            $('rsumPhr').innerText = s.phr_audio ? s.phr_audio + (s.phr_ready ? ' · фразы нарезаны' : '') : 'Необязательно: запись начальных фраз («Сумма к оплате»…) — нарежутся под суммы';
+            $('rsumPhr').innerHTML = s.phr_audio ? escapeHtml(s.phr_audio.split(/[\\/]/).pop()) + (s.phr_ready ? ' · нарезаны' : '')
+                + ` <a href="#" onclick="rsumClearPhrases(); return false;" title="Не резать запись фраз">✕</a>` : '';
+            let ctxLine = (k, empty) => s[k] ? `${escapeHtml(s[k])} <a href="#" onclick="rsumClearCtx('${k === 'ctx_end' ? 'end' : 'start'}'); return false;" title="Убрать">✕</a>` : empty;
+            $('rsumStartF').innerHTML = ctxLine('ctx_start', 'Начальная фраза (start) — аудиофайл, звучит перед суммой');
+            $('rsumEndF').innerHTML = ctxLine('ctx_end', 'Конечная фраза (end) — аудиофайл, звучит после суммы; необязательно');
             btn.innerHTML = s.run ? '<span class="bsynth-spin"></span> Идёт разбор…' : 'Разобрать';
             let show = s.run || s.summary || s.msg || s.ready;
             $('rsumRun').style.display = show ? '' : 'none';

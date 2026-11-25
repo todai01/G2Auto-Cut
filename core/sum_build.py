@@ -477,11 +477,29 @@ class SumBuildMixin:
         self._sb_save()
         return {"dir": dst_root, "pieces": n, "ctx": ctx, "state": self.sb_state()}
 
-    def sb_night(self, out, table, progress=None):
-        """После разбора (ночью): открыть, начальные фразы из записи фраз, авто-настройка, готовые файлы."""
+    def sb_use_ctx(self, start=None, end=None):
+        """Свои файлы начала и конца (выбраны в окне разбора) — для всех строк: начало вместо нарезанных
+        из записи фраз (свои начала, выбранные вручную в «Сборке» для отдельных фраз, остаются)."""
+        st = self._sbs()
+        cfg, changed = st["cfg"], False
+        if start and os.path.exists(start) and cfg["starts"].get('') != start:
+            auto = os.path.normcase(os.path.join(st["out"], RS_PHR_DIR))
+            for k in [k for k, p in cfg["starts"].items() if p and os.path.normcase(p).startswith(auto)]:
+                del cfg["starts"][k]
+            cfg["starts"][''] = start
+            changed = True
+        if end and os.path.exists(end) and cfg.get("end") != end:
+            cfg["end"] = end
+            changed = True
+        if changed:
+            self._sb_save()
+
+    def sb_night(self, out, table, progress=None, start=None, end=None):
+        """После разбора (ночью): открыть, начало и конец, авто-настройка, готовые файлы."""
         r = self.sb_load(out, table)
         if r.get("error"):
             raise RuntimeError(r["error"])
+        self.sb_use_ctx(start, end)
         self.sb_auto(progress)                    # прогресс: авто-настройка — первая половина, файлы — вторая
         e = self.sb_export(progress)
         return {"pieces": e["pieces"], "ctx": e["ctx"], "dir": e["dir"]}
@@ -494,7 +512,11 @@ class SumBuildMixin:
             return {"error": "Кусков пока нет: разберите запись или укажите готовую папку."}
         if rs.get("run"):
             return {"error": "Разбор ещё идёт — дождитесь конца."}
-        return self.sb_load(rs["out"], rs.get("table"))
+        r = self.sb_load(rs["out"], rs.get("table"))
+        if not r.get("error") and (rs.get("ctx_start") or rs.get("ctx_end")):
+            self.sb_use_ctx(rs.get("ctx_start"), rs.get("ctx_end"))
+            r = self.sb_state()
+        return r
 
     def sb_pick(self):
         """Выбрать папку кусков (после разбора); таблицу — из «сборка.json» или спросить."""

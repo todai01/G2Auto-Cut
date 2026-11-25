@@ -489,9 +489,14 @@
                     <span id="rsumTable" class="modal-hint" style="margin:0;">Строка 1 — заголовки; строка блока столбцов — фраза, ячейка — ярус</span>
                 </div>
                 <div class="field-row">
-                    <button class="custom-alert-btn" onclick="rsumPickPhrases()">Фразы…</button>
-                    <span id="rsumPhr" class="modal-hint" style="margin:0;">Необязательно: запись начальных фраз («Сумма к оплате»…) — нарежутся под суммы</span>
+                    <button class="custom-alert-btn" onclick="rsumPickCtx('start')">Начало…</button>
+                    <span id="rsumStartF" class="modal-hint" style="margin:0;">Начальная фраза (start) — аудиофайл, звучит перед суммой</span>
                 </div>
+                <div class="field-row">
+                    <button class="custom-alert-btn" onclick="rsumPickCtx('end')">Конец…</button>
+                    <span id="rsumEndF" class="modal-hint" style="margin:0;">Конечная фраза (end) — аудиофайл, звучит после суммы; необязательно</span>
+                </div>
+                <div class="rsum-phr-alt"><a href="#" onclick="rsumPickPhrases(); return false;" title="Длинная запись, где прочитаны только начальные фразы таблицы: программа сама нарежет их по таблице">или нарезать начальные фразы из записи фраз…</a> <span id="rsumPhr" class="tts-dim"></span></div>
                 <div id="rsumPreview" class="bsynth-preview"></div>
                 <div class="field-row rsum-par">
                     <div class="listen-lang listen-lang--sm" id="rsumMode"><button data-m="bg" onclick="rsumSetMode('bg')" title="Ядер на 2 меньше и приоритет ниже: Студия и прослушка работают без заиканий, разбор медленнее примерно на треть">Фон</button><button data-m="max" onclick="rsumSetMode('max')" title="Все ядра и обычный приоритет: быстрее, но остальная программа может подтормаживать">Максимум</button></div>

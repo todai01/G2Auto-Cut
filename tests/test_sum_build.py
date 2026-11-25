@@ -161,3 +161,33 @@ def test_worker_cuts_phrases_only(tmp_path, monkeypatch):
     state = json.loads((tmp_path / 'state.json').read_text(encoding='utf-8'))
     assert state["done"] and not state["error"] and state["info"]["phr"]["of"] == 1
     assert _snap(st["out"]) == before
+
+
+def test_start_end_files_from_rsum_window(tmp_path):
+    """«Начало…» / «Конец…» в окне разбора: свои файлы — в «Сборку сумм» для всех строк и в готовые файлы;
+    при следующем выборе записи подтягиваются из «сборка.json»."""
+    import harness
+    a, st = _sums_api(tmp_path)
+    xl = _table(tmp_path)
+    s_f, e_f = tmp_path / 'start.wav', tmp_path / 'end.wav'
+    write_wav16(str(s_f), tone_track([(0.1, 0.6)]))
+    write_wav16(str(e_f), tone_track([(0.1, 0.4)]))
+    a2 = harness.Api()
+    harness.DIALOG.append([st["audio"]])
+    a2.rsum_pick_audio()
+    a2.rsum_load_table(xl)
+    harness.DIALOG.append([str(s_f)])
+    a2.rsum_pick_ctx('start')
+    harness.DIALOG.append([str(e_f)])
+    r = a2.rsum_pick_ctx('end')
+    assert r["ctx_start"] == str(s_f) and r["ctx_end"] == str(e_f)
+    s = a2.sb_open_rsum()
+    assert s["start_any"] == 'start.wav' and s["end"] == 'end.wav'
+    kinds = [x["kind"] for x in a2.sb_row(s["rows"][0]["id"])["segs"]]
+    assert kinds[0] == 'start' and kinds[-1] == 'end'
+    e = a2.sb_export()
+    assert e["ctx"] == 2 and os.path.exists(os.path.join(st["out"], SB_OUT, 'Фразы_Переменные', 'end.wav'))
+    a3 = harness.Api()
+    harness.DIALOG.append([st["audio"]])
+    r3 = a3.rsum_pick_audio()
+    assert r3["ctx_start"] == str(s_f) and r3["ctx_end"] == str(e_f)

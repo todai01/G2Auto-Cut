@@ -1557,7 +1557,7 @@ class RawSumsMixin:
                 "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]))),
                 "partial": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]) + '.part')),
                 "ready": sum(len(v) for v in self._rsum_cat_files().values()) if st["out"] and not st["run"] else 0,
-                "phr_audio": st.get("phr_audio"),
+                "phr_audio": st.get("phr_audio"), "ctx_start": st.get("ctx_start"), "ctx_end": st.get("ctx_end"),
                 "phr_ready": bool(st["out"] and os.path.isdir(os.path.join(st["out"], RS_PHR_DIR))),
                 "starts": rs_start_texts(t) if t else []}
 
@@ -1570,6 +1570,38 @@ class RawSumsMixin:
         st = self._rsum()
         st["audio"] = picked if isinstance(picked, str) else picked[0]
         st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]), ''
+        self._rsum_ctx_from_out()
+        return self.rsum_state()
+
+    def _rsum_ctx_from_out(self):
+        """Прежняя папка кусков уже со «сборка.json» — её начало и конец показываем сразу (если своих не выбрали)."""
+        st = self._rsum()
+        try:
+            with open(os.path.join(st["out"], 'сборка.json'), 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+        except (OSError, ValueError, TypeError):
+            return
+        s, e = (cfg.get("starts") or {}).get(''), cfg.get("end")
+        if not st.get("ctx_start") and s and os.path.exists(s):
+            st["ctx_start"] = s
+        if not st.get("ctx_end") and e and os.path.exists(e):
+            st["ctx_end"] = e
+
+    def rsum_pick_ctx(self, which):
+        """Свой файл начальной ('start') или конечной ('end') фразы — для всех сумм («Сборка», готовые файлы)."""
+        import webview
+        st = self._rsum()
+        cur = st.get("ctx_start") or st.get("ctx_end") or st.get("audio") or st.get("table") or ''
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN, directory=os.path.dirname(cur) if cur else '',
+            file_types=('Аудио (*.wav;*.mp3;*.flac;*.ogg;*.m4a)', 'Все файлы (*.*)'))
+        if not picked:
+            return {"error": "cancel"}
+        st["ctx_end" if which == 'end' else "ctx_start"] = picked if isinstance(picked, str) else picked[0]
+        return self.rsum_state()
+
+    def rsum_clear_ctx(self, which):
+        self._rsum()["ctx_end" if which == 'end' else "ctx_start"] = None
         return self.rsum_state()
 
     def rsum_pick_out(self):
@@ -1588,6 +1620,7 @@ class RawSumsMixin:
         if st["run"]:
             return {"error": "Идёт разбор."}
         st["out"], st["result"] = folder, None
+        self._rsum_ctx_from_out()
         return self.rsum_state()
 
     def rsum_pick_table(self):
@@ -1609,6 +1642,7 @@ class RawSumsMixin:
                              "заполнено хотя бы две ячейки."}
         st["table"], st["tdata"] = path, t
         st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]) if st["audio"] else None, ''
+        self._rsum_ctx_from_out()
         return self.rsum_state()
 
     def rsum_start(self, reuse_asr=True, mode='bg', night=True, only_phrases=False):
@@ -1841,7 +1875,8 @@ class RawSumsMixin:
             return
         st["stage"], st["pct"], st["stage_t"] = 'tune', 0, time.time()
         try:
-            r = self.sb_night(st["out"], st["table"], progress=lambda n, of: st.update(pct=round(n * 100 / max(1, of))))
+            r = self.sb_night(st["out"], st["table"], progress=lambda n, of: st.update(pct=round(n * 100 / max(1, of))),
+                              start=st.get("ctx_start"), end=st.get("ctx_end"))
             st["info"]["tune"] = r
         except Exception as e:
             st["msg"] = f'Авто-настройка не удалась: {e}'
