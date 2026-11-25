@@ -1426,6 +1426,26 @@ def rs_out_dir(wav_path):
     return out
 
 
+def rs_prev_out(wav_path):
+    """Готовая папка кусков этой записи (после прежнего разбора; её могли уже рассортировать руками):
+    «<запись>_куски», «_куски_2»… — самая свежая, где есть куски по классам сумм. Нет — None."""
+    if not wav_path:
+        return None
+    base = os.path.splitext(wav_path)[0] + '_куски'
+    best = None
+    for n in range(1, 100):
+        d = base if n == 1 else f'{base}_{n}'
+        if not os.path.isdir(d):
+            if n > 1:
+                break
+            continue
+        if any(rs_sum_files(rs_find_sum_dirs(d)).values()):
+            t = os.path.getmtime(d)
+            if best is None or t >= best[0]:
+                best = (t, d)
+    return best[1] if best else None
+
+
 def _rs_cache_file(wav_path):
     try:
         st = os.stat(wav_path)
@@ -1491,7 +1511,8 @@ class RawSumsMixin:
                 "cats": {c: len(v) for c, v in self._rsum_cat_files().items()} if st["out"] else {},
                 "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]))),
                 "partial": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]) + '.part')),
-                "studio_ok": self._rsum_studio_sheet() is not None}
+                "studio_ok": self._rsum_studio_sheet() is not None,
+                "ready": sum(len(v) for v in self._rsum_cat_files().values()) if st["out"] and not st["run"] else 0}
 
     def rsum_pick_audio(self):
         import webview
@@ -1501,7 +1522,25 @@ class RawSumsMixin:
             return {"error": "cancel"}
         st = self._rsum()
         st["audio"] = picked if isinstance(picked, str) else picked[0]
-        st["result"], st["out"], st["msg"] = None, None, ''
+        st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]), ''
+        return self.rsum_state()
+
+    def rsum_pick_out(self):
+        """Указать готовую папку кусков вручную (её перенесли / переименовали): папки классов
+        «1 - 100 млн»… или «million_ru»… — внутри, до 3 уровней."""
+        import webview
+        st = self._rsum()
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER,
+                                                       directory=os.path.dirname(st["audio"] or st["table"] or '') or '')
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked if isinstance(picked, str) else picked[0]
+        if not any(rs_sum_files(rs_find_sum_dirs(folder)).values()):
+            return {"error": "В этой папке нет кусков сумм: нужны папки «1 - 100 млн», «100 - 900», «1 - 99 тыс», "
+                             "«100 - 900 тыс», «1 - 100 тенге» с файлами-числами (как после разбора)."}
+        if st["run"]:
+            return {"error": "Идёт разбор."}
+        st["out"], st["result"] = folder, None
         return self.rsum_state()
 
     def rsum_pick_table(self):
@@ -1522,7 +1561,7 @@ class RawSumsMixin:
             return {"error": "В таблице не нашлось фраз: нужна строка заголовков и строки, где в блоке столбцов "
                              "заполнено хотя бы две ячейки."}
         st["table"], st["tdata"] = path, t
-        st["result"], st["out"], st["msg"] = None, None, ''
+        st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]) if st["audio"] else None, ''
         return self.rsum_state()
 
     def rsum_start(self, reuse_asr=True, mode='bg', to_studio=False):
@@ -1796,8 +1835,7 @@ class RawSumsMixin:
         st = self._rsum()
         if not st.get("out") or not os.path.isdir(st["out"]):
             return {}
-        return rs_sum_files({c: os.path.join(st["out"], d) for c, d in RS_CAT_DIRS.items()
-                             if os.path.isdir(os.path.join(st["out"], d))})
+        return rs_sum_files(rs_find_sum_dirs(st["out"]))
 
     def _rsum_studio_sheet(self):
         tt = self._tts() if hasattr(self, '_tts') else {}
@@ -1881,6 +1919,8 @@ class RawSumsMixin:
         st = self._rsum()
         if not st.get("table") or not os.path.exists(st["table"]):
             return {"error": "Выберите таблицу."}
+        if st["run"] is False and not self._rsum_cat_files():
+            return {"need_out": True, "error": "Кусков пока нет: разберите запись или укажите готовую папку кусков."}
         if getattr(self, '_tts_rec', None):
             return {"error": "В Студии идёт запись — сначала остановите её (R)."}
         tt = self._tts()
@@ -1921,8 +1961,7 @@ class RawSumsMixin:
     def rsum_listen(self, logic, cat):
         """«Прослушка сумм» из окна разбора — по папке разбора."""
         st = self._rsum()
-        dirs = {c: os.path.join(st["out"] or '', d) for c, d in RS_CAT_DIRS.items()
-                if st.get("out") and os.path.isdir(os.path.join(st["out"], d))}
+        dirs = rs_find_sum_dirs(st["out"]) if st.get("out") and os.path.isdir(st["out"]) else {}
         return self._sums_listen(st["out"], dirs, logic, cat)
 
     # ---- «Прослушка сумм»: готовая папка → значения класса в сумме (логика 1 / 2), правка как обычно ----

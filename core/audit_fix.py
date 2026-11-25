@@ -283,6 +283,8 @@ class AuditFixMixin:
         for u in self._tts_row_units(sheet):
             if not str(u.get("cat", '')).startswith('sum_l') or u["id"] in have:
                 continue
+            if not any(self._tts_tier_own(u, x) for x in u["tiers"]):
+                continue                            # строка логики 2 без «сотен тысяч» — ей нечего давать
             paths = [self._tts_tier_path(u, x) for x in u["tiers"]]
             miss = [x for x, p in zip(u["tiers"], paths) if not os.path.exists(p)]
             if paths and not miss:

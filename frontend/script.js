@@ -5400,6 +5400,13 @@ let isProcessing = false;
         async function rsumStart() {
             let s = rsumSt, reuse = true;
             if (!s || s.run) return;
+            if (s.ready && !s.summary) {
+                // куски этой записи уже нарезаны (и, может, рассортированы) — модель не нужна
+                let open = await showBeautifulConfirm(`<b>Куски этой записи уже есть: ${s.ready}.</b><br><br>`
+                    + `<span class="tts-dim">${escapeHtml(s.out || '')}</span><br><br>Открыть их в Студии (модель не нужна, папка не меняется) `
+                    + 'или разобрать запись заново в новую папку?', 'Открыть в Студии', 'Разобрать заново');
+                if (open) { rsumOpenStudio(); return; }
+            }
             if (s.partial) {
                 if (!(await showBeautifulConfirm('<b>Разбор этой записи был прерван.</b><br><br>Продолжить с места остановки '
                     + '(готовые пачки распознавания не считаются заново) или начать сначала?', 'Продолжить', 'Сначала'))) reuse = false;
@@ -5484,13 +5491,26 @@ let isProcessing = false;
                 + (r.partial ? `<br>Строк, где нет части кусков (встанут на ленту, когда появятся): ${r.partial}` : '')
                 + `<br><br><span class="tts-dim">${escapeHtml(r.dir)}</span>`);
         }
+        async function rsumPickOut() {
+            let r = await pywebview.api.rsum_pick_out();
+            if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return false; }
+            rsumEvent(r);
+            return true;
+        }
         async function rsumOpenStudio() {
             let r = await pywebview.api.rsum_open_studio();
+            if (r && r.need_out) {
+                if (!(await showBeautifulConfirm('<b>Готовых кусков этой записи не нашлось.</b><br><br>Указать папку с кусками '
+                    + '(«1 - 100 млн», «100 - 900», «1 - 99 тыс»… — как после разбора)?', 'Указать папку', 'Отмена'))) return;
+                if (!(await rsumPickOut())) return;
+                r = await pywebview.api.rsum_open_studio();
+            }
             if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
             closeRsum();
             openTtsScreen(r);
             let o = r.rsum_open || {};
-            showToast((o.rows ? `На ленте строк сумм: +${o.rows} — выберите дубль, «Сборка» покажет куски` : `Студия: ${o.dir || ''}`)
+            if (o.takes) setTimeout(() => { try { ttsShowAssembly(); } catch (e) {} }, 400);   // сразу «Сборка» выбранного дубля
+            showToast((o.rows ? `На ленте строк сумм: +${o.rows} — «Сборка»: края, Enter — сохранить, ↓ — следующая` : `Студия: ${o.dir || ''}`)
                 + (o.copied || o.updated ? ` · эталонов из разбора +${o.copied + o.updated}` : '')
                 + (o.partial ? ` · ждут кусков: ${o.partial} строк (нет: ${Object.entries(o.lack || {}).map(([k, n]) => k + ' ' + n).join(', ')})` : ''), 9000);
         }
@@ -5564,7 +5584,7 @@ let isProcessing = false;
             btn.disabled = !(s.audio && t) || s.run;
             document.getElementById('btnRsumStudio').disabled = !t;
             btn.innerHTML = s.run ? '<span class="bsynth-spin"></span> Идёт разбор…' : 'Разобрать';
-            let show = s.run || s.summary || s.msg;
+            let show = s.run || s.summary || s.msg || s.ready;
             $('rsumRun').style.display = show ? '' : 'none';
             let busy = s.run && (['start', 'model', 'prep', 'align'].includes(s.stage) || !s.pct);
             $('rsumStage').innerHTML = s.run
@@ -5589,7 +5609,10 @@ let isProcessing = false;
             rsumWasNeed = !!s.need_model;
             $('rsumMsg').innerText = s.msg || '';
             let m = s.summary;
-            $('rsumSummary').innerHTML = m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`
+            $('rsumSummary').innerHTML = !m && s.ready && !s.run
+                ? `<div>Готовые куски: <b>${s.ready}</b> — «Открыть в Студии» возьмёт их (модель не нужна) · `
+                    + `<a href="#" onclick="rsumPickOut(); return false;">другая папка…</a></div><div class="tts-dim">${escapeHtml(s.out || '')}</div>`
+                : m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`
                 + (m.repeats ? ` · повторов не сохранено: ${m.repeats}` : '')
                 + ` · <span class="${m.bad ? 'clone-bad' : ''}">проверить: <b>${m.bad}</b></span>`
                 + (m.missing_n ? ` · <span class="clone-bad">не найдено фраз: ${m.missing_n}</span>` : '') + `</div>`

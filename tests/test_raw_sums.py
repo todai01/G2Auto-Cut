@@ -564,3 +564,54 @@ def test_listen_sums_from_ready_folder(tmp_path):
     harness.DIALOG.append([str(tmp_path)])
     a.listen_pick_folder()                                 # обычная папка — режим сумм снимается
     assert a.listen_state()["sums"] is None
+
+
+def test_ready_pieces_open_studio_without_model(tmp_path):
+    """Запись уже разобрана (куски рассортированы): выбор записи и таблицы находит прежнюю папку кусков,
+    «Открыть в Студии» берёт их без модели и ставит строки сумм на ленту; папка кусков не меняется."""
+    import harness
+    a, st = _sums_api(tmp_path)
+    out = st["out"]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for row in [['Начало', 'миллионы', 'сотни', 'тысячи', None, 'тенге'],
+                ['Сумма к оплате', 'один миллион', 'сто', 'одна', 'тысяча', 'одна тенге'],
+                ['Сумма к оплате', 'два миллиона', 'двести', 'две', 'тысячи', 'два тенге'],
+                ['Сумма к оплате', 'три миллиона', 'триста', 'три', 'тысячи', 'три тенге']]:
+        ws.append(row)
+    xl = str(tmp_path / 'таблица.xlsx')
+    wb.save(xl)
+    snap = {os.path.relpath(p, out): os.path.getmtime(p) for p in glob.glob(os.path.join(out, '**', '*'), recursive=True)}
+    a2 = harness.Api()                                  # новый запуск программы: окно ничего не помнит
+    harness.DIALOG.append([st["audio"]])
+    s = a2.rsum_pick_audio()
+    assert os.path.normpath(s["out"]) == os.path.normpath(out) and s["ready"] > 0
+    s = a2.rsum_load_table(xl)
+    assert os.path.normpath(s["out"]) == os.path.normpath(out) and s["ready"] > 0
+    r = a2.rsum_open_studio()
+    assert not r.get("error"), r
+    assert r["rsum_open"]["rows"] == 3 and len(a2._tts()["takes"]) == 3
+    assert not a2._rsum()["run"] and getattr(a2, '_rsum_model_obj', None) is None
+    for rel, t in snap.items():                         # куски на месте и не тронуты
+        assert os.path.getmtime(os.path.join(out, rel)) == t
+
+
+def test_open_studio_asks_folder_when_no_pieces(tmp_path):
+    import harness
+    a, st = _sums_api(tmp_path)
+    out = st["out"]
+    xl = _free_table(tmp_path / 'суммы.xlsx')
+    other = tmp_path / 'новая' / 'запись.wav'
+    os.makedirs(other.parent)
+    shutil.copy2(st["audio"], other)
+    a2 = harness.Api()
+    harness.DIALOG.append([str(other)])
+    a2.rsum_pick_audio()
+    a2.rsum_load_table(xl)
+    assert a2.rsum_open_studio().get("need_out")
+    harness.DIALOG.append([str(tmp_path / 'новая')])
+    assert a2.rsum_pick_out().get("error")              # там кусков нет
+    harness.DIALOG.append([out])
+    assert a2.rsum_pick_out()["ready"] > 0
+    r = a2.rsum_open_studio()
+    assert not r.get("error") and r["rsum_open"]["copied"] > 0
