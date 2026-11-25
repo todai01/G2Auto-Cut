@@ -75,6 +75,52 @@ async function listenModeSet(m) {
     listenOpen();
 }
 
+// ----- «Прослушка сумм»: готовая папка с кусками (после разбора или Значения Студии) → класс в сумме, логика 1 / 2 -----
+const LSUM_CATS = { million: '1 - 100 млн', hundred_thousand: '100 - 900 тыс', hundred: '100 - 900', thousand: '1 - 99 тыс', tenge: '1 - 100 тенге' };
+const LSUM_LOGICS = { 1: ['million', 'hundred', 'thousand', 'tenge'], 2: ['million', 'hundred_thousand', 'tenge'] };
+async function listenSumsStart() {
+    let ok = await showBeautifulAlert('<b>Прослушка сумм</b><br><br>Выберите <b>готовую папку с кусками сумм</b>: папку после «Разбора записи сумм» '
+        + '(«1 - 100 млн», «100 - 900», «1 - 99 тыс», «100 - 900 тыс», «1 - 100 тенге») или проект Студии / его «Значения». '
+        + 'Каждое значение звучит внутри суммы — логика 1 или 2, правка как обычно.');
+    if (!ok) return;
+    LS = await pywebview.api.listen_mode('var');
+    let r = await pywebview.api.listen_sums_pick();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    let logic = 1;
+    try { logic = +localStorage.getItem('gvox_rsum_logic') === 2 ? 2 : 1; } catch (e) {}
+    await listenSumsGo(logic, null, true);
+}
+async function listenSumsGo(logic, cat, fresh) {
+    if (!fresh && !(await listenLeave())) return;
+    let r = await pywebview.api.listen_sums_open(logic, cat);
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
+    try { localStorage.setItem('gvox_rsum_logic', String(r.sums.logic)); } catch (e) {}
+    listenAutoSet(false); listenStopHead(); pywebview.api.listen_stop();
+    LS = r; lEd = null;
+    listenOpen();
+    showToast(`${r.sums.cat_name}: ${r.rows.length} значений · логика ${r.sums.logic}`, 3500);
+}
+async function listenSumsFolder() {
+    if (!(await listenLeave())) return;
+    let r = await pywebview.api.listen_sums_pick();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    await listenSumsGo(LS && LS.sums ? LS.sums.logic : 1, null, true);
+}
+function listenSumsRender() {
+    let box = lEl('listenSums'), s = LS && LS.sums;
+    if (!box) return;
+    box.style.display = s ? '' : 'none';
+    if (!s) return;
+    let tiers = LSUM_LOGICS[s.logic];
+    box.innerHTML = `<span class="listen-lang listen-lang--sm">${[1, 2].map(l =>
+            `<button type="button" class="${s.logic === l ? 'is-on' : ''}" onclick="listenSumsGo(${l}, '${s.cat}')" title="${l === 1 ? 'Миллионы + сотни + тысячи + тенге' : 'Миллионы + сотни тысяч + тенге'}">Логика ${l}</button>`).join('')}</span>`
+        + tiers.map((c, k) => `<button type="button" class="listen-sums__cat ${c === s.cat ? 'is-on' : ''}" ${(s.cats[c] || 0) ? '' : 'disabled'}
+            onclick="listenSumsGo(${s.logic}, '${c}')">${LSUM_CATS[c]} <i>${s.cats[c] || 0}</i></button>` + (k < tiers.length - 1 ? '<span class="listen-sums__plus">+</span>' : '')).join('')
+        + `<button type="button" class="listen-sums__dir" onclick="listenSumsFolder()" title="${escapeHtml(s.folder)}">папка: ${escapeHtml(s.folder_name)}</button>`;
+}
+
 function listenOpen() {
     showStage('stage5-listen');
     if (lEl('listenGap')) lEl('listenGap').value = String(lAutoGap);
@@ -108,11 +154,12 @@ function listenRender(light) {
     if (!LS) return;
     let phr = LS.mode === 'phrase';
     lEl('stage5-listen').dataset.lmode = LS.mode || 'var';
-    lEl('listenTitle').innerText = phr ? 'Прослушка фраз' : 'Прослушка переменных';
+    lEl('listenTitle').innerText = phr ? 'Прослушка фраз' : LS.sums ? 'Прослушка сумм' : 'Прослушка переменных';
     lEl('listenModeSw').innerHTML = listenModeBtns();
     lEl('listenPickFolder').title = phr ? 'Папка с записями фраз (внутри можно ru и kz)' : 'Папка с записями переменных';
     lEl('listenPickTable').title = phr ? 'Таблица с фразами: текст и название файла' : 'Таблица с названиями переменных';
     lEl('listenLangTop').innerHTML = listenLangBtns();
+    listenSumsRender();
     lEl('listenMeta').innerText = (phr ? [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, listenLangName(LS.lang)]
         : [LS.folder_name && `папка «${LS.folder_name}» · ${LS.files} записей`, listenLangName(LS.lang),
         LS.start ? `начало: ${LS.start}` : 'начало: нет', LS.end ? `конец: ${LS.end}` : 'конец: нет']).filter(Boolean).join(' · ');

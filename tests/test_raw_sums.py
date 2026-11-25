@@ -507,3 +507,33 @@ def test_open_studio_ready_project(tmp_path):
     assert os.path.exists(os.path.join(root, 'Значения', 'sum_ru', 'million_ru', '1.wav'))
     r2 = a.rsum_open_studio()                          # ещё раз — тот же проект, ничего не копируется заново
     assert os.path.normpath(r2["rsum_open"]["dir"]) == root and r2["rsum_open"]["copied"] == 0
+
+
+def test_listen_sums_from_ready_folder(tmp_path):
+    """«Прослушка сумм» по готовой папке: и папка разбора, и «Значения» проекта Студии; переключение логики и класса;
+    обычная сборка переменной после этого — без режима сумм."""
+    import shutil
+    import harness
+    from core.raw_sums import rs_find_sum_dirs
+    a, st = _sums_api(tmp_path)
+    # проект Студии: Значения/sum_ru/<класс>_ru/<число>.wav (+ казахский лист — его не берём)
+    vals = tmp_path / 'проект' / 'Значения'
+    for cat, d in (('million_ru', '1 - 100 млн'), ('hundred_ru', '100 - 900'), ('thousand_ru', '1 - 99 тыс'),
+                   ('tenge_ru', '1 - 100 тенге'), ('million_kz', '1 - 100 млн')):
+        shutil.copytree(os.path.join(st["out"], d), vals / 'sum_ru' / cat if cat.endswith('_ru') else vals / 'sum_kz' / cat)
+    dirs = rs_find_sum_dirs(str(tmp_path / 'проект'))
+    assert set(dirs) == {'million', 'hundred', 'thousand', 'tenge'} and all('_kz' not in d for d in dirs.values())
+    assert set(rs_find_sum_dirs(st["out"])) == {'million', 'hundred', 'thousand', 'tenge'}
+    harness.DIALOG.append([str(tmp_path / 'проект')])
+    r = a.listen_sums_pick()
+    assert r["cats"] == {'million': 3, 'hundred': 3, 'thousand': 3, 'tenge': 3}
+    r = a.listen_sums_open(1, 'tenge')
+    assert not r.get("error"), r
+    assert r["sums"]["cat"] == 'tenge' and [x["name"] for x in r["rows"]] == ['1', '2', '3']
+    assert r["sums"]["start"].startswith('начало (1 млн, 100, 1 тыс')
+    assert a.listen_state()["sums"]["logic"] == 1
+    r2 = a.listen_sums_open(2, 'hundred')                  # во 2-й логике сотен нет — первый класс, где есть куски
+    assert r2["sums"]["cat"] == 'million' and r2["sums"]["logic"] == 2
+    harness.DIALOG.append([str(tmp_path)])
+    a.listen_pick_folder()                                 # обычная папка — режим сумм снимается
+    assert a.listen_state()["sums"] is None

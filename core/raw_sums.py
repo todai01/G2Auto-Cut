@@ -1372,6 +1372,46 @@ def rs_worker_main(job_path):
     return 0
 
 
+def rs_find_sum_dirs(folder, depth=3):
+    """Папки классов сумм в выбранной папке (и до depth уровней ниже): как после разбора («1 - 100 млн», «1 - 99 тыс»…)
+    или как в проекте Студии («Значения/sum_ru/million_ru»…). Казахские (_kz) не берём. {класс: папка}."""
+    names = {v.lower(): k for k, v in RS_CAT_DIRS.items()}
+    names.update({f'{k}_ru': k for k in RS_CAT_DIRS})
+    names.update({k: k for k in RS_CAT_DIRS})
+    found = {}
+
+    def walk(d, lvl):
+        try:
+            subs = sorted(e for e in os.listdir(d) if os.path.isdir(os.path.join(d, e)))
+        except OSError:
+            return
+        for e in subs:
+            if e.startswith('_') or e.startswith('.'):
+                continue                                      # _запасные, _до_правок, служебные
+            cat = names.get(e.lower())
+            if cat and cat not in found:
+                found[cat] = os.path.join(d, e)
+            elif lvl < depth:
+                walk(os.path.join(d, e), lvl + 1)
+    walk(folder, 1)
+    return found
+
+
+def rs_sum_files(dirs):
+    """{класс: {число: путь}} — файлы «<число>.wav» в папках классов."""
+    out = {}
+    for cat, d in dirs.items():
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for f in names:
+            m = re.fullmatch(r'(\d+)\.wav', f, re.I)
+            if m:
+                out.setdefault(cat, {})[int(m.group(1))] = os.path.join(d, f)
+    return out
+
+
 # ---------------------------------------------------------------- окно GVox
 RS_CACHE_DIR = os.path.join(os.path.expanduser('~'), '.gvox', 'rsum_cache')
 
@@ -1754,16 +1794,10 @@ class RawSumsMixin:
     def _rsum_cat_files(self):
         """{класс: {число: путь}} — основные куски разбора по классам сумм."""
         st = self._rsum()
-        out = {}
-        for cat, d in RS_CAT_DIRS.items():
-            p = os.path.join(st["out"] or '', d)
-            if not os.path.isdir(p):
-                continue
-            for f in os.listdir(p):
-                m = re.fullmatch(r'(\d+)\.wav', f, re.I)
-                if m:
-                    out.setdefault(cat, {})[int(m.group(1))] = os.path.join(p, f)
-        return out
+        if not st.get("out") or not os.path.isdir(st["out"]):
+            return {}
+        return rs_sum_files({c: os.path.join(st["out"], d) for c, d in RS_CAT_DIRS.items()
+                             if os.path.isdir(os.path.join(st["out"], d))})
 
     def _rsum_studio_sheet(self):
         tt = self._tts() if hasattr(self, '_tts') else {}
@@ -1882,22 +1916,58 @@ class RawSumsMixin:
         return res
 
     def rsum_listen(self, logic, cat):
-        """«Прослушка сумм»: значения класса cat звучат в сумме логики logic — между кусками остальных
-        классов (для них берётся меньшее значение, обычно «один миллион», «сто», «одна тенге»).
-        Открывается обычный экран «Прослушки» (сборка переменной): правка, «Сохранить», «_до_правок» — как всегда."""
+        """«Прослушка сумм» из окна разбора — по папке разбора."""
+        st = self._rsum()
+        dirs = {c: os.path.join(st["out"] or '', d) for c, d in RS_CAT_DIRS.items()
+                if st.get("out") and os.path.isdir(os.path.join(st["out"], d))}
+        return self._sums_listen(st["out"], dirs, logic, cat)
+
+    # ---- «Прослушка сумм»: готовая папка → значения класса в сумме (логика 1 / 2), правка как обычно ----
+    def listen_sums_pick(self):
+        """Выбрать готовую папку с кусками сумм (папка разбора или проект Студии / «Значения»)."""
+        import webview
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        folder = picked if isinstance(picked, str) else picked[0]
+        dirs = rs_find_sum_dirs(folder)
+        files = rs_sum_files(dirs)
+        if not files:
+            return {"error": "В этой папке нет кусков сумм: нужны папки классов с файлами-числами — "
+                             "«1 - 100 млн», «100 - 900», «1 - 99 тыс», «100 - 900 тыс», «1 - 100 тенге» (как после разбора) "
+                             "или «million_ru», «thousand_ru»… (Значения проекта Студии)."}
+        self._lsums = {"folder": folder, "dirs": dirs}
+        return {"folder": folder, "cats": {c: len(v) for c, v in files.items()}}
+
+    def listen_sums_open(self, logic=1, cat=None):
+        """Открыть класс выбранной папки в «Прослушке». cat=None — первый класс логики, где есть куски."""
+        ss = getattr(self, '_lsums', None)
+        if not ss:
+            return {"error": "Сначала выберите папку с кусками сумм."}
+        logic = 2 if int(logic or 1) == 2 else 1
+        files = rs_sum_files(ss["dirs"])
+        if cat not in RS_LOGICS[logic] or not files.get(cat):
+            cat = next((c for c in RS_LOGICS[logic] if files.get(c)), None)
+        if not cat:
+            return {"error": f"Для логики {logic} в папке нет кусков."}
+        return self._sums_listen(ss["folder"], ss["dirs"], logic, cat)
+
+    def _sums_listen(self, folder, dirs, logic, cat):
+        """Значения класса cat звучат в сумме логики logic — между кусками остальных классов (для них берётся
+        меньшее значение: «один миллион», «сто», «одна тенге»). Открывается обычный экран «Прослушки» (сборка
+        переменной): правка, «Сохранить», «_до_правок» — как всегда; склейка начала и конца — во временной папке."""
         import tempfile
         from pydub import AudioSegment
-        st = self._rsum()
         logic = 2 if int(logic) == 2 else 1
         tiers = RS_LOGICS[logic]
         if cat not in tiers:
             return {"error": "Этого класса нет в выбранной логике."}
-        files = self._rsum_cat_files()
+        files = rs_sum_files(dirs)
         if not files.get(cat):
             return {"error": f"Кусков «{RS_CAT_DIRS[cat]}» пока нет."}
         k = tiers.index(cat)
         ctx_dir = os.path.join(tempfile.gettempdir(), 'gvox_rsum_ctx',
-                               hashlib.md5(f'{st["out"]}|{logic}|{cat}'.encode('utf-8')).hexdigest()[:12])
+                               hashlib.md5(f'{folder}|{logic}|{cat}'.encode('utf-8')).hexdigest()[:12])
         os.makedirs(ctx_dir, exist_ok=True)
         for f in os.listdir(ctx_dir):                      # прошлый контекст этого класса — заново
             try:
@@ -1922,9 +1992,15 @@ class RawSumsMixin:
         start, end = build(tiers[:k], 'начало'), build(tiers[k + 1:], 'конец')
         if not start and not end:
             return {"error": "Для суммы не хватает кусков других классов."}
-        r = self.listen_setup_assembly(ctx_dir, start, end, os.path.join(st["out"], RS_CAT_DIRS[cat]))
+        r = self.listen_setup_assembly(ctx_dir, start, end, dirs[cat])
         if isinstance(r, dict) and not r.get("error"):
-            r["rsum"] = {"logic": logic, "cat": RS_CAT_DIRS[cat],
-                         "start": os.path.splitext(os.path.basename(start))[0] if start else None,
-                         "end": os.path.splitext(os.path.basename(end))[0] if end else None}
+            info = {"logic": logic, "cat": cat, "cat_name": RS_CAT_DIRS[cat], "folder": folder,
+                    "folder_name": os.path.basename(os.path.normpath(folder)),
+                    "cats": {c: len(v) for c, v in files.items()},
+                    "start": os.path.splitext(os.path.basename(start))[0] if start else None,
+                    "end": os.path.splitext(os.path.basename(end))[0] if end else None}
+            self._lsums = {"folder": folder, "dirs": dirs}
+            self._ls()["sums"] = info
+            r["sums"] = info
+            r["rsum"] = {"logic": logic, "cat": RS_CAT_DIRS[cat], "start": info["start"], "end": info["end"]}
         return r
