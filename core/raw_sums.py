@@ -1870,8 +1870,9 @@ class RawSumsMixin:
                 os.replace(man_path + '.tmp', man_path)
             except OSError:
                 pass
+        rail = self.tts_rail_sums(sheet, jump=not auto) if hasattr(self, 'tts_rail_sums') else {}
         return {"ok": True, "sheet": sheet, "copied": copied, "exist": exist, "nowhere": nowhere, "updated": updated,
-                "dir": os.path.join(wd, 'Значения', sheet)}
+                "rows": rail.get("rows", 0), "partial": rail.get("partial", 0), "lack": rail.get("lack") or {}, "dir": os.path.join(wd, 'Значения', sheet)}
 
     def rsum_open_studio(self):
         """«Открыть в Студии»: всё готово одной кнопкой. Открытый проект Студии с этой таблицей или с листом сумм —
@@ -1912,7 +1913,9 @@ class RawSumsMixin:
         res = self.tts_state()
         res["rsum_open"] = {"dir": self._tts().get("work_dir"),
                             "copied": (copied or {}).get("copied", 0), "exist": (copied or {}).get("exist", 0),
-                            "updated": (copied or {}).get("updated", 0)}
+                            "updated": (copied or {}).get("updated", 0), "rows": (copied or {}).get("rows", 0),
+                            "partial": (copied or {}).get("partial", 0), "lack": (copied or {}).get("lack") or {},
+                            "takes": len(self._tts()["takes"])}
         return res
 
     def rsum_listen(self, logic, cat):

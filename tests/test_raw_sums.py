@@ -1,3 +1,5 @@
+import shutil
+import glob
 """Разбор сырой записи сумм (core/raw_sums.py) — только синтетика: выдуманная таблица, тоны вместо речи.
 Модель распознавания не нужна: распознанные слова подаются готовыми, выравнивание без модели — по ним."""
 import hashlib
@@ -505,8 +507,33 @@ def test_open_studio_ready_project(tmp_path):
     assert a._tts()["excel_path"] == xl and 'sum_ru' in a._tts()["var_sheets"]
     assert r["rsum_open"]["copied"] > 0
     assert os.path.exists(os.path.join(root, 'Значения', 'sum_ru', 'million_ru', '1.wav'))
-    r2 = a.rsum_open_studio()                          # ещё раз — тот же проект, ничего не копируется заново
+    # строки сумм, у которых есть все куски, — на ленте готовыми дублями с границами ярусов
+    tt = a._tts()
+    # в «записи» тысячи 1–3, в таблице 51–53: целиком ни одна строка не собралась — ждут кусков, лента пустая
+    assert r["rsum_open"]["rows"] == 0 and r["rsum_open"]["partial"] > 0 and not tt["takes"]
+    assert r["rsum_open"]["lack"]
+    vals = os.path.join(root, 'Значения', 'sum_ru')
+    src = os.path.join(vals, 'million_ru', '1.wav')
+    for cat, names in (('thousand_ru', (51, 52, 53)), ('tenge_ru', (20, 21, 22, 51)), ('hundred_thousand_ru', (100,))):
+        os.makedirs(os.path.join(vals, cat), exist_ok=True)
+        for n in names:
+            shutil.copy2(src, os.path.join(vals, cat, f'{n}.wav'))
+    rr = a.tts_rail_sums()
+    takes = [t for t in tt["takes"] if t.get("unit") is not None]
+    assert rr["rows"] == len(takes) == 14 and rr["partial"] == 0
+    units = [tt["units"][t["unit"]] for t in takes]
+    assert all(str(u["cat"]).startswith('sum_l') for u in units)
+    for t, u in zip(takes, units):
+        assert os.path.exists(os.path.join(root, t["file"])) and len(t["tier_clips"]) == len(u["tiers"])
+        if u.get("logic") == 2:                            # логика 2 не перезаписывает миллионы и тенге
+            assert all(u["tiers"][int(k)]["tier"] == 'hundred_thousand' for k in t["tier_write"])
+    marks = a.tts_tier_marks(tt["takes"].index(takes[0]))
+    assert marks.get("tiers") and not marks.get("error"), marks
+    before = {p: os.path.getmtime(p) for p in glob.glob(os.path.join(root, 'Значения', '**', '*.wav'), recursive=True)}
+    r2 = a.rsum_open_studio()                          # ещё раз — тот же проект, ничего не копируется и не дублируется
     assert os.path.normpath(r2["rsum_open"]["dir"]) == root and r2["rsum_open"]["copied"] == 0
+    assert r2["rsum_open"]["rows"] == 0 and len(a._tts()["takes"]) == len(tt["takes"])
+    assert {p: os.path.getmtime(p) for p in before} == before
 
 
 def test_listen_sums_from_ready_folder(tmp_path):

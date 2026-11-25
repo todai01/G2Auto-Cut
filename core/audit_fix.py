@@ -224,6 +224,88 @@ class AuditFixMixin:
     VARS_AUDIO = ('.wav', '.mp3', '.ogg', '.flac', '.m4a')
     VARS_GAP_MS = 400
 
+    def _tts_rail_glue(self, plans, failed, own=None, jump=True):
+        """Строки на ленту дублями из готовых файлов: plans = [(строка, два_языка, [файлы ярусов])].
+        Файлы склеиваются через паузу в «Чанки/NNNN.wav», границы ярусов — сразу на местах (tier_clips).
+        own(строка, k) — какие ярусы дубль перезапишет по Enter (по умолчанию — все)."""
+        from core.tts_flow import TTS_CHUNKS_DIR
+        st = self._tts()
+        wd = st["work_dir"]
+        n = max([t.get("chunk", 0) for t in st["takes"]] + [0])
+        added = 0
+        os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
+        for u, is_bil, paths in plans:
+            try:
+                segs = [AudioSegment.from_file(p) for p in paths]
+                rate = segs[0].frame_rate
+                audio = AudioSegment.silent(300, frame_rate=rate)
+                gap = AudioSegment.silent(self.VARS_GAP_MS, frame_rate=rate)
+                spans = []
+                for sg in segs:
+                    a = len(audio)
+                    audio += sg.set_frame_rate(rate).set_channels(1).set_sample_width(2)
+                    spans.append((a, len(audio)))
+                    audio += gap
+                audio += AudioSegment.silent(200, frame_rate=rate)
+                n += 1
+                rel = os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav")
+                audio.export(os.path.join(wd, rel), format="wav")
+            except Exception as e:
+                failed.append(f"{u['name']}: {e}")
+                continue
+            take = {"file": rel, "start_ms": 0, "ms": len(audio), "orig": [0, len(audio)], "raw": os.path.join(wd, rel),
+                    "heard": "(из папки)", "listened": False, "chunk": n, "unit": u["id"], "score": 1.0, "status": "manual"}
+            if is_bil:
+                take["bil"] = True
+            st["takes"].append(take)
+            try:
+                _rms, length = self._tts_take_frames(take)
+            except Exception:
+                length = len(audio)
+            take["tier_len"] = length
+            take["tier_clips"] = [{"a": int(a), "b": int(b), "pre": 0, "post": 0, "tempo": 1.0, "gain": 0.0} for a, b in spans]
+            take["tier_write"] = {str(k): True for k in range(len(spans)) if own is None or own(u, k)}
+            added += 1
+        if added and jump:
+            st["index"] = len(st["takes"]) - added
+        return added
+
+    def tts_rail_sums(self, sheet=None, jump=True):
+        """Строки сумм (логика 1 и 2), у которых все ярусы уже есть в «Значения», — на ленту дублями
+        (без диалога): «Сборка» покажет их с началом и концом фразы, края правятся, Enter сохраняет.
+        Строки, у которых дубль уже есть, не трогаются."""
+        st = self._tts()
+        if not st.get("work_dir") or not os.path.isdir(st["work_dir"]):
+            return {"error": "Сначала откройте проект Студии.", "rows": 0}
+        self._tts_ensure_value_units()
+        have = {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
+        plans, partial, lack = [], 0, {}
+        for u in self._tts_row_units(sheet):
+            if not str(u.get("cat", '')).startswith('sum_l') or u["id"] in have:
+                continue
+            paths = [self._tts_tier_path(u, x) for x in u["tiers"]]
+            miss = [x for x, p in zip(u["tiers"], paths) if not os.path.exists(p)]
+            if paths and not miss:
+                plans.append((u, False, paths))
+            elif len(miss) < len(paths):
+                partial += 1                        # части кусков нет — строка встанет, когда они появятся
+                for x in miss:
+                    lack.setdefault(x["label"], set()).add(str(x["value"]))
+        plans.sort(key=lambda p: (p[0].get("logic") or 0, p[0]["id"]))
+        first = {}                                  # эталон перезаписывает только первая строка, где он встречается
+        for u, _b, paths in plans:
+            for k, p in enumerate(paths):
+                if self._tts_tier_own(u, u["tiers"][k]):
+                    first.setdefault(p, (u["id"], k))
+        own = lambda u, k: first.get(self._tts_tier_path(u, u["tiers"][k])) == (u["id"], k)
+        failed = []
+        added = self._tts_rail_glue(plans, failed, own=own, jump=jump) if plans else 0
+        if added:
+            self.__dict__.pop('_tts_claims_cache', None)
+            self._tts_save()
+        return {"rows": added, "partial": partial, "failed": failed[:10],
+                "lack": {k: len(v) for k, v in lack.items()}}
+
     def tts_import_vars(self):
         """Папка с готовыми (нарезанными) значениями переменных — файл на значение, имя = значение;
         внутри могут лежать подпапки ru и kz. Копии — на свои места в «Значения», а строки таблицы,
@@ -304,43 +386,7 @@ class AuditFixMixin:
             elif all(b[0] and b[1] for b in bil):
                 plans.append((u, True, [f for b in bil for f in b]))
 
-        n = max([t.get("chunk", 0) for t in st["takes"]] + [0])
-        added = 0
-        os.makedirs(os.path.join(wd, TTS_CHUNKS_DIR), exist_ok=True)
-        for u, is_bil, paths in plans:
-            try:
-                segs = [AudioSegment.from_file(p) for p in paths]
-                rate = segs[0].frame_rate
-                audio = AudioSegment.silent(300, frame_rate=rate)
-                gap = AudioSegment.silent(self.VARS_GAP_MS, frame_rate=rate)
-                spans = []
-                for sg in segs:
-                    a = len(audio)
-                    audio += sg.set_frame_rate(rate).set_channels(1).set_sample_width(2)
-                    spans.append((a, len(audio)))
-                    audio += gap
-                audio += AudioSegment.silent(200, frame_rate=rate)
-                n += 1
-                rel = os.path.join(TTS_CHUNKS_DIR, f"{n:04d}.wav")
-                audio.export(os.path.join(wd, rel), format="wav")
-            except Exception as e:
-                failed.append(f"{u['name']}: {e}")
-                continue
-            take = {"file": rel, "start_ms": 0, "ms": len(audio), "orig": [0, len(audio)], "raw": os.path.join(wd, rel),
-                    "heard": "(из папки)", "listened": False, "chunk": n, "unit": u["id"], "score": 1.0, "status": "manual"}
-            if is_bil:
-                take["bil"] = True
-            st["takes"].append(take)
-            try:
-                _rms, length = self._tts_take_frames(take)
-            except Exception:
-                length = len(audio)
-            take["tier_len"] = length
-            take["tier_clips"] = [{"a": int(a), "b": int(b), "pre": 0, "post": 0, "tempo": 1.0, "gain": 0.0} for a, b in spans]
-            take["tier_write"] = {str(k): True for k in range(len(spans))}
-            added += 1
-        if added:
-            st["index"] = len(st["takes"]) - added
+        added = self._tts_rail_glue(plans, failed)
         st["import_dir"] = src
         self.__dict__.pop('_tts_claims_cache', None)
         self._tts_prompt_fix()

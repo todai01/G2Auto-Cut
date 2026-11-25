@@ -5480,6 +5480,8 @@ let isProcessing = false;
             showBeautifulAlert(`<b>В проект Студии — лист «${escapeHtml(r.sheet)}»</b><br><br>Скопировано: <b>${r.copied}</b>`
                 + (r.exist ? `<br>Уже было в проекте (не тронуто): ${r.exist}` : '')
                 + (r.nowhere ? `<br>Нет такого значения в таблице проекта: ${r.nowhere}` : '')
+                + (r.rows ? `<br>На ленту — строк сумм: <b>${r.rows}</b>` : '')
+                + (r.partial ? `<br>Строк, где нет части кусков (встанут на ленту, когда появятся): ${r.partial}` : '')
                 + `<br><br><span class="tts-dim">${escapeHtml(r.dir)}</span>`);
         }
         async function rsumOpenStudio() {
@@ -5488,8 +5490,9 @@ let isProcessing = false;
             closeRsum();
             openTtsScreen(r);
             let o = r.rsum_open || {};
-            showToast(`Студия: ${o.dir || ''}` + (o.copied || o.updated ? ` · эталонов из разбора +${o.copied + o.updated}` : '')
-                + (o.exist ? ` · уже были: ${o.exist}` : ''), 6000);
+            showToast((o.rows ? `На ленте строк сумм: +${o.rows} — выберите дубль, «Сборка» покажет куски` : `Студия: ${o.dir || ''}`)
+                + (o.copied || o.updated ? ` · эталонов из разбора +${o.copied + o.updated}` : '')
+                + (o.partial ? ` · ждут кусков: ${o.partial} строк (нет: ${Object.entries(o.lack || {}).map(([k, n]) => k + ' ' + n).join(', ')})` : ''), 9000);
         }
         async function rsumStop() {
             await pywebview.api.rsum_stop();
