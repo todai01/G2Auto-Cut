@@ -6314,8 +6314,14 @@ let isProcessing = false;
             if (warn.length && !await showBeautifulConfirm(`⚠️ <b>Аудит ещё не чистый</b><br><br>${warn.join('<br>')}<br><br>Всё равно собрать финальную папку из того, что есть?`, 'Собрать', 'Отмена')) return;
             let r = await pywebview.api.audit_final_folder();
             if (!r || r.error) { if (r && r.error !== 'cancel') showToast(r.error); return; }
-            let lines = [`«${escapeHtml(r.perm_dir)}»: <b>${r.perm}</b> ${plural(r.perm, 'файл', 'файла', 'файлов')}`,
-                         `«${escapeHtml(r.var_dir)}»: <b>${r.var}</b> ${plural(r.var, 'файл', 'файла', 'файлов')}`];
+            let lines = [];
+            if (r.perm_dir) {
+                let L = r.langs || {};
+                lines.push(`«${escapeHtml(r.perm_dir)}»: <b>${r.perm}</b> ${plural(r.perm, 'файл', 'файла', 'файлов')}`
+                    + ` <span class="tts-dim">(ru ${L.ru || 0} · kz ${L.kz || 0}${L[''] ? ` · без языка в названии ${L['']}` : ''})</span>`);
+            }
+            if (r.var_dir) lines.push(`«${escapeHtml(r.var_dir)}»: <b>${r.var}</b> ${plural(r.var, 'файл', 'файла', 'файлов')}`);
+            else lines.push('<span class="tts-dim">переменных нет — папку не создавал</span>');
             if (r.missing) lines.push(`<span class="tts-dim">без недостающих: ${r.missing}</span>`);
             if (r.clash.length) lines.push(`одинаковые имена в разных папках (взят первый): ${r.clash.map(escapeHtml).join(', ')}`);
             if (r.failed.length) lines.push(`ошибки: ${r.failed.map(escapeHtml).join('<br>')}`);
@@ -6485,23 +6491,21 @@ let isProcessing = false;
             let note = voice && f.fixed ? `<div class="audit-file__heard">распознано: «${escapeHtml(f.heard || '—')}» · исправлено вами</div>` : '';
             if (voice && f.phrase) note += `<div class="audit-file__heard">фраза: «${escapeHtml(f.phrase)}»</div>`;
             // по названиям: текст фразы из таблицы (по названию файла) — видно и правится в своей ячейке
+            // текст — крупно, как в Студии; не редактируется, но выделяется и копируется (название — тоже)
             if (!voice && f.phrase) return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + f.phrase).toLowerCase())}">
                 ${btns}
                 <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
-                <textarea class="audit-file__text audit-file__phrase" data-k="${k}" rows="1" title="Текст фразы — исправленный запишется в ту же ячейку таблицы Excel"
-                    onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.blur(); } if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
-                    oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"
-                    onchange="auditPhraseFix(${k}, this.value)">${escapeHtml(f.phrase)}</textarea>
+                <div class="audit-file__phrase is-big">${escapeHtml(f.phrase)}</div>
                 <span></span>
             </div>`;
             return `<div class="audit-file" data-q="${escapeHtml((f.filename + ' ' + (f.text || '') + ' ' + (f.match || '')).toLowerCase())}">
                 ${btns}
                 <span class="audit-file__name" title="${escapeHtml(f.path)}">${escapeHtml(f.filename)}</span>
-                ${editable
+                ${editable && voice
                     ? `<input class="audit-file__text" data-k="${k}" value="${escapeHtml(f.text || '')}" placeholder="${voice ? 'что сказано — впишите' : 'текст фразы'}"
                          onkeydown="if (event.key === 'Enter') this.blur(); if (event.key === 'Escape') { this.value = this.defaultValue; this.blur(); }"
                          onchange="auditFix(${k}, this.value)" title="${voice ? 'Исправьте, если распознано неверно — сверка пересчитается' : 'Исправленный текст запишется в таблицу Excel'}">`
-                    : `<span class="audit-file__text is-ro">${escapeHtml(f.text || '')}</span>`}
+                    : `<span class="audit-file__text is-ro is-big">${escapeHtml(f.text || '')}</span>`}
                 ${badge}${note}
             </div>`;
         }

@@ -129,3 +129,10 @@ button:active{ transform: scale(0.98); }
 
 /* Прослушка: край дорожки, выбранный с клавиатуры (NumPad 1 / 3) */
 .lp-edges button.is-on{ background: var(--tint-info); color: var(--accent-info); box-shadow: inset 0 0 0 1px var(--accent-info); }
+
+/* Аудит: текст фразы крупно, как в Студии; не редактируется, но выделяется и копируется — как и название файла */
+.audit-file__phrase.is-big, .audit-file__text.is-big{
+    font-size: 19px; font-weight: 600; line-height: 1.45; letter-spacing: -0.01em; color: var(--text);
+    white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; cursor: text; padding: 4px 0;
+}
+.audit-file__name, .audit-line__name, .audit-line__text{ user-select: text; -webkit-user-select: text; cursor: text; }

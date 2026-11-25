@@ -482,6 +482,13 @@ class AuditFixMixin:
         return {"dest": dest, "copied": copied, "same": same, "kept": kept, "failed": failed[:10],
                 "folders": sorted({g["rel_dir"] for g in res.get("groups") or [] if g.get("rel_dir")})}
 
+    @staticmethod
+    def _audit_name_lang(filename):
+        """Язык фразы по названию файла: «…_ru», «kz_…», «…-kk-…» (слово ru / kz / kk между не-буквами); нет — ''."""
+        stem = os.path.splitext(os.path.basename(filename))[0].lower()
+        m = re.search(r'(?<![a-zа-яё])(ru|kz|kk)(?![a-zа-яё])', stem)
+        return ('kz' if m.group(1) in ('kz', 'kk') else 'ru') if m else ''
+
     def audit_final_folder(self):
         """Финальная папка сдачи по результату аудита: «Финал_<дата>/» с двумя
         папками — «Перманентные_<дата>» (все фразы и кусочки фраз с
@@ -503,9 +510,8 @@ class AuditFixMixin:
             root = os.path.join(base, f"Финал_{date} ({n})")
             n += 1
         perm, var = os.path.join(root, f"Перманентные_{date}"), os.path.join(root, f"Переменные_{date}")
-        os.makedirs(perm)
-        os.makedirs(var)
-        n_perm = n_var = 0
+        n_perm = n_var = 0                                     # папки создаются по мере файлов: пустую не оставляем
+        langs = {"ru": 0, "kz": 0, "": 0}
         clash, failed, seen = [], [], {}
         for f in res.get("files") or []:
             rel = (f.get("rel") or '').replace('\\', '/')
@@ -521,8 +527,9 @@ class AuditFixMixin:
                     lang = 'kz' if lm and lm.group(1) in ('kz', 'kk') else 'ru'
                     dst = os.path.join(os.path.dirname(dst), f"{ab}_{lang}{os.path.splitext(parts[-1])[1]}")
             else:
-                dst = os.path.join(perm, parts[-1])
-                key = parts[-1].lower()
+                lang = self._audit_name_lang(parts[-1])        # язык — по названию файла (…_ru / …_kz)
+                dst = os.path.join(perm, lang or 'без_языка', parts[-1])
+                key = (lang, parts[-1].lower())
                 if key in seen:                                # одно имя из двух папок — оставляем первый
                     if os.path.normcase(seen[key]) != os.path.normcase(f["path"]):
                         clash.append(parts[-1])
@@ -535,10 +542,17 @@ class AuditFixMixin:
                     n_var += 1
                 else:
                     n_perm += 1
+                    langs[lang] += 1
             except OSError as e:
                 failed.append(f"{f['filename']}: {e}")
-        return {"dest": root, "perm": n_perm, "var": n_var, "perm_dir": os.path.basename(perm),
-                "var_dir": os.path.basename(var), "missing": res.get("missing_count", 0),
+        if not n_perm and not n_var:                           # нечего собирать — пустую «Финал_…» не оставляем
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+            return {"error": "В результате аудита нет найденных записей — собирать нечего.", "failed": failed[:10]}
+        return {"dest": root, "perm": n_perm, "var": n_var, "perm_dir": os.path.basename(perm) if n_perm else None,
+                "var_dir": os.path.basename(var) if n_var else None, "langs": langs, "missing": res.get("missing_count", 0),
                 "duplicates": res.get("duplicates_count", 0), "clash": clash[:10], "failed": failed[:10]}
 
     def audit_rerun(self):
