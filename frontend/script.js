@@ -5509,7 +5509,9 @@ let isProcessing = false;
             closeRsum();
             openTtsScreen(r);
             let o = r.rsum_open || {};
-            if (o.takes) setTimeout(() => { try { ttsShowAssembly(); } catch (e) {} }, 400);   // сразу «Сборка» выбранного дубля
+            // начало и конец фразы (Фразы_Переменные) — спросить один раз на лист, потом сразу «Сборка» выбранного дубля
+            if (o.sheet) { try { await ttsVarCtxAsk(o.sheet); } catch (e) {} }
+            if (o.takes) setTimeout(() => { try { ttsShowAssembly(); } catch (e) {} }, 400);
             showToast((o.rows ? `На ленте строк сумм: +${o.rows} — «Сборка»: края, Enter — сохранить, ↓ — следующая` : `Студия: ${o.dir || ''}`)
                 + (o.copied || o.updated ? ` · эталонов из разбора +${o.copied + o.updated}` : '')
                 + (o.partial ? ` · ждут кусков: ${o.partial} строк (нет: ${Object.entries(o.lack || {}).map(([k, n]) => k + ' ' + n).join(', ')})` : ''), 9000);

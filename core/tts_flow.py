@@ -1222,7 +1222,10 @@ class TtsFlowMixin:
             return {"error": "Откройте в суфлёре лист переменных."}
         wd = st.get("work_dir")
         d = None
-        for cand in ([os.path.join(wd, 'Фразы_Переменные'), os.path.join(wd, 'Проверенные')] if wd else []):
+        prev = [v for c in (st.get("var_ctx") or {}).values() for v in (c or {}).values() if v and os.path.exists(v)]
+        rs = getattr(self, '_rsum_st', None) or {}
+        for cand in ([os.path.join(wd, 'Фразы_Переменные'), os.path.join(wd, 'Проверенные')] if wd else []) + \
+                [os.path.dirname(p) for p in prev] + ([os.path.dirname(rs["audio"])] if rs.get("audio") else []):
             if os.path.isdir(cand):
                 d = cand
                 break
@@ -3053,7 +3056,7 @@ class TtsFlowMixin:
         return d
 
     def _tts_disk_key(self, path, extra):
-        _p, mt, sz = self._file_sig(path)
+        _p, mt, sz = self._file_sig(path)[:3]
         wd = self._tts().get("work_dir") or ''
         try:
             rel = os.path.relpath(path, wd)

@@ -594,6 +594,18 @@ def test_ready_pieces_open_studio_without_model(tmp_path):
     assert not a2._rsum()["run"] and getattr(a2, '_rsum_model_obj', None) is None
     for rel, t in snap.items():                         # куски на месте и не тронуты
         assert os.path.getmtime(os.path.join(out, rel)) == t
+    # начало и конец фразы (Фразы_Переменные) — «Сборка» ставит их вокруг кусков
+    ctx = tmp_path / 'Фразы_Переменные'
+    os.makedirs(ctx)
+    for n in ('начало', 'конец'):
+        shutil.copy2(st["audio"], ctx / f'{n}.wav')
+    harness.DIALOG.append([str(ctx / 'начало.wav')])
+    harness.DIALOG.append([str(ctx / 'конец.wav')])
+    a2.tts_var_ctx_pick('start', 'sum_ru')
+    info = a2.tts_var_ctx_pick('end', 'sum_ru')["info"]
+    assert info["start"] == 'начало.wav' and info["end"] == 'конец.wav'
+    m = a2.tts_tier_marks(0)
+    assert m.get("tiers") and not m.get("error"), m
 
 
 def test_open_studio_asks_folder_when_no_pieces(tmp_path):

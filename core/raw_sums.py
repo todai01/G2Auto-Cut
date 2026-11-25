@@ -1953,7 +1953,7 @@ class RawSumsMixin:
         res = self.tts_state()
         res["rsum_open"] = {"dir": self._tts().get("work_dir"),
                             "copied": (copied or {}).get("copied", 0), "exist": (copied or {}).get("exist", 0),
-                            "updated": (copied or {}).get("updated", 0), "rows": (copied or {}).get("rows", 0),
+                            "updated": (copied or {}).get("updated", 0), "rows": (copied or {}).get("rows", 0), "sheet": self._rsum_studio_sheet(),
                             "partial": (copied or {}).get("partial", 0), "lack": (copied or {}).get("lack") or {},
                             "takes": len(self._tts()["takes"])}
         return res
