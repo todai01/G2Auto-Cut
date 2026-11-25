@@ -415,3 +415,42 @@ def test_phrase_table_without_header(api, dialog, tmp_path):
     api.listen_pick_table()
     rows = api.listen_state()["rows"]
     assert [(r["name"], r["text"]) for r in rows] == [('a1', 'Привет, мир')] and rows[0]["path"]
+
+
+# ---------- Аудит: финальная папка ----------
+def _audit_res(tmp_path, files):
+    out = []
+    for rel in files:
+        p = tmp_path / 'src' / rel
+        wav(str(p))
+        out.append({"rel": rel, "path": str(p), "filename": p.name})
+    return {"mode": "studio", "scan_dir": str(tmp_path / 'src'), "files": out, "missing_count": 0, "duplicates_count": 0}
+
+
+def test_final_folder_split_by_lang_and_no_empty_vars(api, dialog, tmp_path):
+    api._audit_res = _audit_res(tmp_path, ['Проверенные/hello_ru.wav', 'Проверенные/hello_kz.wav',
+                                           'Фразы_Переменные/pay_ru_1.wav', 'Проверенные/plain.wav'])
+    dest = tmp_path / 'out'
+    dest.mkdir()
+    dialog(str(dest))
+    r = api.audit_final_folder()
+    assert r["perm"] == 4 and r["var"] == 0 and r["var_dir"] is None and r["langs"] == {"ru": 2, "kz": 1, "": 1}
+    root = tmp_path / 'out' / os.path.basename(r["dest"])
+    names = sorted(os.listdir(root))
+    assert len(names) == 1 and names[0].startswith('Перманентные_')                 # папки «Переменные_…» нет
+    perm = root / names[0]
+    assert sorted(os.listdir(perm)) == ['kz', 'ru', 'без_языка']
+    assert os.listdir(perm / 'kz') == ['hello_kz.wav'] and sorted(os.listdir(perm / 'ru')) == ['hello_ru.wav', 'pay_ru_1.wav']
+
+
+def test_final_folder_with_vars_and_nothing_found(api, dialog, tmp_path):
+    api._audit_res = _audit_res(tmp_path, ['Значения/sum_ru/million_ru/5.wav'])
+    dest = tmp_path / 'out'
+    dest.mkdir()
+    dialog(str(dest))
+    r = api.audit_final_folder()
+    assert r["var"] == 1 and r["perm"] == 0 and r["perm_dir"] is None            # пустой «Перманентные_…» тоже не создаётся
+    api._audit_res = {"mode": "studio", "scan_dir": str(tmp_path), "files": [], "missing_count": 3}
+    dialog(str(dest))
+    r = api.audit_final_folder()
+    assert r.get("error") and len(os.listdir(dest)) == 1                            # новая пустая «Финал_…» не осталась
