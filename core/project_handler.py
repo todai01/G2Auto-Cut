@@ -372,8 +372,9 @@ class ProjectMixin:
         return self._scan_and_load_folder(chunks_dir, 'Chunks')
 
     def get_recent_projects(self):
-        """Список недавних проектов для стартового экрана."""
-        return recent_projects.list_recent()
+        """Список недавних проектов для стартового экрана — только проекты Студии (старый рабочий экран
+        с монтажным столом из меню убран; его проекты сюда не попадают)."""
+        return [it for it in recent_projects.list_recent() if self.tts_is_project(it.get('path'))]
 
     def clear_recent_projects(self):
         """Очистить список недавних проектов — только список, папки целы."""

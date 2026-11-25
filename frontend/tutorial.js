@@ -103,15 +103,7 @@ const TUTORIAL = [
                   'Дальше — экран отбора: Space — слушать, Enter — сохранить.'],
           open: () => { let b = document.querySelector('.menu-grid .menu-row--var'); if (b) b.click(); } },
     ] },
-    { section: 'Нарезка записи', items: [
-        { id: 'cut_wav', title: 'Резать сырой WAV', sub: 'Текст из Excel + длинная запись',
-          steps: ['Новый проект → «Загрузить текст»: отметьте колонку с текстом — видно, сколько фраз получится.',
-                  '«Резать сырой WAV» — программа замерит шум и речь и подберёт паузу, чтобы кусков было как фраз в таблице.',
-                  'Быстрые варианты паузы показывают, сколько кусков выйдет. «Нарезать» → «Обычный режим».',
-                  'Отбор: Space — слушать, Q / E — фраза, A / D — дубль, Z — в «Проверенные», C — в «Переменные».',
-                  '«Открыть готовые чанки» — продолжить с уже нарезанной папкой.'],
-          open: () => { let b = document.querySelector('.menu-grid #btnLoadExcel'); if (b) b.click(); } },
-    ] },
+    // раздел «Нарезка записи» (старый рабочий экран) убран из меню и обучения
     { section: 'Утилиты', items: [
         { id: 'rename_match', title: 'Названия по Excel', sub: 'Разложить файлы по ru / kz',
           steps: ['Утилиты → Названия по Excel → таблица и папка с файлами.',
@@ -247,7 +239,7 @@ function tutContextTopic() {
     if (shown('stage4-tts')) return ttsTutTopic();
     if (shown('stage3-constructor')) return 'constructor';
     if (shown('stage5-listen')) return 'listen';
-    if (shown('stage2-workspace')) return 'cut_wav';
+    if (shown('stage2-workspace')) return 'vars_batch';           // старый экран теперь открывает только пакетная сборка
     return null;
 }
 document.addEventListener('keydown', e => {

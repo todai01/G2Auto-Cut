@@ -860,10 +860,12 @@ let isProcessing = false;
         const RADIAL_ITEMS = {
             new: [
                 { title: 'Студия записи', icon: 'mic', src: '#btnTts' },
-                { title: 'Загрузить текст', icon: 'file-text', src: '#btnLoadExcel', clear: 'excel' },
-                { title: 'Резать сырой WAV', icon: 'sliders', src: '#btnLoadAudio', clear: 'project' },
-                { title: 'Настройки нарезки', icon: 'scissors', act: 'cut' },
-                { title: 'Открыть готовые чанки', icon: 'folder', src: '#btnLoadFolder', clear: 'project' },
+                // «Загрузить текст», «Резать сырой WAV», «Настройки нарезки», «Открыть готовые чанки» — старый рабочий экран
+                // (монтажный стол) из меню убраны; кнопки остались в скрытой .menu-grid — вернуть: строки ниже.
+                // { title: 'Загрузить текст', icon: 'file-text', src: '#btnLoadExcel', clear: 'excel' },
+                // { title: 'Резать сырой WAV', icon: 'sliders', src: '#btnLoadAudio', clear: 'project' },
+                // { title: 'Настройки нарезки', icon: 'scissors', act: 'cut' },
+                // { title: 'Открыть готовые чанки', icon: 'folder', src: '#btnLoadFolder', clear: 'project' },
                 { title: 'Прослушка фраз', icon: 'headphones', run: () => listenStartPhrases(),
                   desc: 'Папка записей (ru / kz) и таблица фраз: текст из таблицы и запись с этим названием — послушать, подрезать' },
             ],
