@@ -500,11 +500,10 @@
                 <div id="rsumPreview" class="bsynth-preview"></div>
                 <div class="field-row rsum-par">
                     <div class="listen-lang listen-lang--sm" id="rsumMode"><button data-m="bg" onclick="rsumSetMode('bg')" title="Ядер на 2 меньше и приоритет ниже: Студия и прослушка работают без заиканий, разбор медленнее примерно на треть">Фон</button><button data-m="max" onclick="rsumSetMode('max')" title="Все ядра и обычный приоритет: быстрее, но остальная программа может подтормаживать">Максимум</button></div>
-                    <label class="rsum-studio" title="После разбора — «Авто-настройка» (края по голосу, паузы как в чтении, громкость) и готовые файлы в «_готово»: запустили на ночь — утром суммы готовы"><input type="checkbox" id="rsumNight" checked onchange="try { localStorage.setItem('gvox_rsum_night', this.checked ? '1' : '0') } catch (e) {}"> по окончании — авто-настройка и готовые файлы</label>
                 </div>
                 <div class="rsum-go">
                     <button class="splash-btn" id="btnRsumStart" onclick="rsumStart()" disabled>Разобрать</button>
-                    <button class="custom-alert-btn" id="btnRsumBuild" onclick="rsumOpenBuild()" disabled title="Готовые куски этой записи: суммы целиком с начальной фразой, запасные варианты, стыки, готовые файлы">Сборка сумм</button>
+                    <button class="custom-alert-btn" id="btnRsumAud" onclick="rsumToAudacity()" disabled title="Проект Audacity: сверху дорожка «Сборка» (start, место, end), ниже — каждый класс сумм в ряд по порядку, с метками">В Audacity</button>
                 </div>
             </div>
             <div id="rsumRun" class="bsynth-run" style="display:none">
@@ -1582,67 +1581,6 @@
         </div>
     </div>
 
-    <!-- «Сборка сумм» (sumbuild.js, core/sum_build.py): куски после разбора — суммы целиком, варианты, стыки, готовые файлы -->
-    <div id="stage6-sumbuild" class="stage stage-listen stage-sb" style="display: none;">
-        <header class="workspace-header">
-            <div class="header-actions">
-                <button class="btn-ghost" onclick="sbExit()">&#8592;&nbsp; Главное меню</button>
-                <button class="btn-ghost btn-ghost--info" onclick="sbPick()" title="Папка кусков после «Разбора записи сумм»">Папка</button>
-                <button class="btn-ghost btn-ghost--info" onclick="sbCtx('start', '')" title="Начальная фраза для всех строк (свои — у каждой фразы ниже)">Начало</button>
-                <button class="btn-ghost btn-ghost--info" onclick="sbCtx('end')" title="Конечная фраза после суммы (необязательно)">Конец</button>
-                <button class="btn-ghost btn-ghost--info" onclick="sbAuto()" title="Паузы на стыках — как в естественном чтении, края — по голосу, громкость — к общему уровню. Ручные правки остаются">Авто-настройка</button>
-                <button class="btn-ghost btn-ghost--good" onclick="sbExport()" title="Готовые файлы в «_готово»: выбранные варианты с краями, стыками и громкостью + начальные фразы">Готовые файлы</button>
-            </div>
-            <div class="constructor-title">
-                <span class="constructor-title__main"><svg class="icon"><use href="#icon-tenge"></use></svg> Сборка сумм</span>
-                <span class="constructor-title__sub" id="sbMeta"></span>
-            </div>
-        </header>
-        <div class="listen-body">
-            <aside class="listen-side">
-                <div class="lp-progress">
-                    <div class="lp-progress__head"><span>Утверждено</span><b id="sbProgNum">0 / 0</b></div>
-                    <div class="lp-progress__bar"><i id="sbProgBar"></i></div>
-                    <div class="lp-progress__sub" id="sbStat"></div>
-                </div>
-                <input class="lp-search" id="sbFilter" placeholder="Поиск: «двести», «стр 12»" oninput="sbRenderList()">
-                <div class="listen-tabs" id="sbTabs">
-                    <button type="button" data-f="all" onclick="sbSetFilter('all')">Все</button>
-                    <button type="button" data-f="check" onclick="sbSetFilter('check')" title="Красные куски, нет куска или помечено «исправить»">Проверить <b>0</b></button>
-                    <button type="button" data-f="todo" onclick="sbSetFilter('todo')" title="Ещё не утверждены">Не утв. <b>0</b></button>
-                </div>
-                <div class="listen-tabs listen-tabs--sm" id="sbLogic">
-                    <button type="button" data-l="0" onclick="sbSetLogic(0)">Обе логики</button>
-                    <button type="button" data-l="1" onclick="sbSetLogic(1)" title="Миллионы + сотни + тысячи + тенге">Логика 1</button>
-                    <button type="button" data-l="2" onclick="sbSetLogic(2)" title="Миллионы + сотни тысяч + тенге">Логика 2</button>
-                </div>
-                <div class="listen-list" id="sbList"></div>
-            </aside>
-            <section class="listen-main">
-                <div class="lp-card">
-                    <div class="lp-top">
-                        <span class="lp-pos" id="sbPos"></span>
-                        <span class="lp-status" id="sbStatus"></span>
-                        <span class="lp-top__spacer"></span>
-                        <span class="sb-ctx" id="sbCtx"></span>
-                    </div>
-                    <div class="listen-now">
-                        <div class="listen-now__name" id="sbName">—</div>
-                        <div class="listen-now__file" id="sbSub"></div>
-                    </div>
-                    <canvas class="sb-wave" id="sbCanvas" title="Как звучит: начало → куски → конец. Клик — выбрать кусок, двойной клик — слушать отсюда"></canvas>
-                    <div class="sb-chips" id="sbChips"></div>
-                    <div class="sb-piece" id="sbPiece"></div>
-                    <div class="listen-decide">
-                        <button class="listen-decide__btn listen-decide__btn--play" onclick="sbPlay()" title="Вся сумма стыком, как в IVR (← / → — кусок, ↑ / ↓ — строки)"><svg class="icon"><use href="#icon-play"></use></svg> Слушать <kbd>Space</kbd></button>
-                        <button class="listen-decide__btn listen-decide__btn--fix" onclick="sbMark('flag')" title="Пометить «исправить» и дальше">Исправить <kbd>Backspace</kbd></button>
-                        <button class="listen-decide__btn listen-decide__btn--ok" onclick="sbMark('ok')" title="Звучит хорошо — утвердить и дальше">Утвердить <kbd>Enter</kbd></button>
-                    </div>
-                </div>
-            </section>
-        </div>
-    </div>
-
     <div id="stage3-constructor" class="stage stage-constructor" style="display: none;">
         <header class="workspace-header">
             <div class="header-actions">
@@ -1861,6 +1799,5 @@
     <script src="script.js?v=30"></script>
     <script src="tutorial.js?v=17"></script>
     <script src="listen.js?v=33"></script>
-    <script src="sumbuild.js?v=1"></script>
 </body>
 </html>

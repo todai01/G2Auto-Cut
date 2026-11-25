@@ -265,12 +265,11 @@ let isProcessing = false;
             'stage2-workspace':   'block',
             'stage3-constructor': 'block',
             'stage4-tts':         'flex',
-            'stage5-listen':      'flex',
-            'stage6-sumbuild':    'flex'
+            'stage5-listen':      'flex'
         };
 
         // Рабочие экраны: «Вернуться к работе» в меню ведёт на последний из них.
-        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи', 'stage5-listen': 'Прослушка', 'stage6-sumbuild': 'Сборка сумм' };
+        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи', 'stage5-listen': 'Прослушка' };
         let lastWork = null;
         function showStage(activeId) {
             Object.keys(STAGE_DISPLAY).forEach(id => {
@@ -280,7 +279,7 @@ let isProcessing = false;
             if (WORK_STAGES[activeId]) lastWork = { stage: activeId, area: embedAreaId, btn: embedBtnId };
             // цвет окон — по режиму: студия синяя, переменные янтарные
             if (activeId === 'stage4-tts') document.body.dataset.mode = 'new';
-            else if (activeId === 'stage3-constructor' || activeId === 'stage5-listen' || activeId === 'stage6-sumbuild') document.body.dataset.mode = 'vars';
+            else if (activeId === 'stage3-constructor' || activeId === 'stage5-listen') document.body.dataset.mode = 'vars';
         }
         // Есть ли куда вернуться: пустой рабочий экран (ничего не загружено) — не считается.
         function canResumeWork() {
@@ -879,8 +878,6 @@ let isProcessing = false;
 
                 { title: 'Разбор записи сумм', icon: 'scissors', run: () => openRsum(),
                   desc: 'Один длинный дубль, прочитанный по таблице, → куски по ярусам: распознавание и выравнивание по тексту' },
-                { title: 'Сборка сумм', icon: 'tenge', run: () => sbStart(),
-                  desc: 'Куски после разбора: суммы целиком с начальной фразой, запасные варианты, стыки, готовые файлы' },
             ],
         };
         const RADIAL_CAT_KEY = 'gvox_radial_cat';
@@ -4983,7 +4980,6 @@ let isProcessing = false;
             // TTS-проект: свои клавиши (Space / Enter / стрелки / Del / F).
             if (isShown('stage4-tts')) { ttsHandleKey(e); return; }
             if (isShown('stage5-listen')) { listenKey(e); return; }
-            if (isShown('stage6-sumbuild')) { sbKey(e); return; }
 
             // Конструктор переменных — свой мини-режим со своим плеером:
             // Space играет/останавливает собранную сумму, остальные горячие
@@ -5382,7 +5378,7 @@ let isProcessing = false;
 
         // ---------- Разбор сырой записи сумм (core/raw_sums.py) ----------
         let rsumSt = null, rsumTimer = null, rsumBusy = false;
-        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание и нарезка', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', phr: 'Фразы для переменных', tune: 'Авто-настройка и готовые файлы', done: 'Готово' };
+        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание и нарезка', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', phr: 'Фразы для переменных', done: 'Готово' };
         let rsumWasNeed = false;
         async function openRsum() {
             document.getElementById('rsumOverlay').style.display = 'flex';
@@ -5402,26 +5398,25 @@ let isProcessing = false;
         async function rsumStart() {
             let s = rsumSt, reuse = true;
             if (!s || s.run) return;
-            let night = document.getElementById('rsumNight').checked;
             if (s.ready && !s.summary) {
                 // куски этой записи уже нарезаны (и, может, рассортированы) — модель не нужна
                 if (s.phr_audio && !s.phr_ready) {
                     let how = await showBeautifulChoice(`<b>Куски этой записи уже есть: ${s.ready}.</b><br><br>`
-                        + 'Нарезать только начальные фразы из записи фраз (суммы не трогаются), открыть «Сборку сумм» или разобрать запись заново?',
-                        'Нарезать фразы', 'Сборка сумм', 'S', 'Разобрать заново');
-                    if (how === 'alt') { rsumOpenBuild(); return; }
+                        + 'Нарезать только начальные фразы из записи фраз (суммы не трогаются), отправить куски в Audacity или разобрать запись заново?',
+                        'Нарезать фразы', 'В Audacity', 'A', 'Разобрать заново');
+                    if (how === 'alt') { rsumToAudacity(); return; }
                     if (how === 'ok') {
                         rsumEvent({ ...s, run: true, stage: 'start', pct: 0, msg: '', summary: null, elapsed: 0, eta: null, need_model: false });
-                        let r = await pywebview.api.rsum_start(true, rsumMode, night, true);
+                        let r = await pywebview.api.rsum_start(true, rsumMode, true);
                         if (r && r.error) { rsumEvent(await pywebview.api.rsum_state()); showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
                         rsumEvent(r);
                         return;
                     }
                 } else {
                     let open = await showBeautifulConfirm(`<b>Куски этой записи уже есть: ${s.ready}.</b><br><br>`
-                        + `<span class="tts-dim">${escapeHtml(s.out || '')}</span><br><br>Открыть «Сборку сумм» (модель не нужна, папка не меняется) `
-                        + 'или разобрать запись заново в новую папку?', 'Сборка сумм', 'Разобрать заново');
-                    if (open) { rsumOpenBuild(); return; }
+                        + `<span class="tts-dim">${escapeHtml(s.out || '')}</span><br><br>Отправить их в Audacity (модель не нужна, папка не меняется) `
+                        + 'или разобрать запись заново в новую папку?', 'В Audacity', 'Разобрать заново');
+                    if (open) { rsumToAudacity(); return; }
                 }
             }
             if (s.partial) {
@@ -5430,7 +5425,7 @@ let isProcessing = false;
             } else if (s.cached && !(await showBeautifulConfirm('<b>Эта запись уже распознавалась.</b><br><br>Взять прежнее распознавание '
                 + '(быстро — только выравнивание и нарезка) или распознать заново?', 'Взять прежнее', 'Заново'))) reuse = false;
             rsumEvent({ ...s, run: true, stage: 'start', pct: 0, msg: '', summary: null, elapsed: 0, eta: null, need_model: false });
-            let r = await pywebview.api.rsum_start(reuse, rsumMode, night);
+            let r = await pywebview.api.rsum_start(reuse, rsumMode);
             if (r && r.error) { rsumEvent(await pywebview.api.rsum_state()); showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             rsumEvent(r);
         }
@@ -5442,7 +5437,7 @@ let isProcessing = false;
                 else if (m && !m.error) rsumStart();
             }
         }
-        let rsumMode = 'bg', rsumNightInit = false;
+        let rsumMode = 'bg';
         try { rsumMode = localStorage.getItem('gvox_rsum_mode') === 'max' ? 'max' : 'bg'; } catch (e) {}
         function rsumSetMode(m) {
             rsumMode = m === 'max' ? 'max' : 'bg';
@@ -5467,17 +5462,23 @@ let isProcessing = false;
             rsumEvent(r);
             return true;
         }
-        async function rsumOpenBuild() {
-            // «Сборка сумм» — свой экран (sumbuild.js); куски и таблица — те, что в разборе
+        async function rsumToAudacity() {
+            // проект Audacity: «Сборка» (start, место, end) и дорожка на каждый класс сумм — куски в ряд по порядку
             if (rsumSt && !rsumSt.ready && !rsumSt.summary) {
                 if (!(await showBeautifulConfirm('<b>Готовых кусков этой записи не нашлось.</b><br><br>Указать папку с кусками '
                     + '(«1 - 100 млн», «100 - 900», «1 - 99 тыс»… — как после разбора)?', 'Указать папку', 'Отмена'))) return;
                 if (!(await rsumPickOut())) return;
             }
-            let r = await pywebview.api.sb_open_rsum();
+            if (!(await showBeautifulConfirm('<b>В Audacity</b><br><br>Текущий проект в Audacity очистится (несохранённое в нём пропадёт). '
+                + 'Новый проект сохранится в папку кусков.', 'Собрать', 'Отмена'))) return;
+            let btn = document.getElementById('btnRsumAud'), was = btn.innerHTML;
+            btn.disabled = true; btn.innerHTML = '<span class="bsynth-spin"></span> Собираю…';
+            let r;
+            try { r = await pywebview.api.rsum_to_audacity(); } finally { btn.innerHTML = was; btn.disabled = false; }
             if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
-            closeRsum();
-            sbOpen(r);
+            showBeautifulAlert(`<b>Проект в Audacity собран</b><br><br>${r.tracks.map(t => `${escapeHtml(t.name)}: ${t.n}`).join('<br>')}`
+                + (r.project ? `<br><br><span class="tts-dim">${escapeHtml(r.project)}</span>` : '')
+                + (r.warn ? `<br><br><span class="clone-bad">${escapeHtml(r.warn)}</span>` : ''));
         }
         async function rsumStop() {
             await pywebview.api.rsum_stop();
@@ -5490,7 +5491,7 @@ let isProcessing = false;
         }
         function rsumSteps(s) {
             // шаги разбора: ✓ готово, ● идёт, ○ впереди — и что именно сейчас в работе
-            let i = s.info || {}, order = ['model', 'asr', 'cut', 'phr', 'tune', 'done'];
+            let i = s.info || {}, order = ['model', 'asr', 'cut', 'phr', 'done'];
             let at = s.run ? Math.max(0, order.indexOf(s.stage === 'start' ? 'model' : s.stage)) : order.length;
             let a = i.asr, c = i.cut, l = i.live;
             let st = k => k === 'cut' && s.run && s.stage === 'asr' && l ? 'run'      // нарезка идёт вместе с распознаванием
@@ -5518,8 +5519,6 @@ let isProcessing = false;
                 + row('cut', s.stage === 'asr' ? 'Нарезка по ходу' : 'Нарезка', live, cutSub
                     + (s.run && l && l.pieces ? `${cutSub ? '<br>' : ''}Готовые куски уже в папке — их можно слушать` : ''))
                 + (s.phr_audio || i.phr ? row('phr', 'Начальные фразы', i.phr ? `нарезано ${i.phr.found} из ${i.phr.of}` : 'из записи фраз') : '')
-                + (i.tune || (s.run && s.stage === 'tune') || document.getElementById('rsumNight').checked
-                    ? row('tune', 'Авто-настройка и готовые файлы', i.tune ? `кусков ${i.tune.pieces}, фраз ${i.tune.ctx} → «_готово»` : (s.stage === 'tune' ? `${s.pct || 0}%` : '')) : '')
                 + row('done', 'Итог и отчёт', st('done') === 'done' ? 'разбор.xlsx, _проверка.xlsx в папках ярусов' : '');
         }
         function rsumDur(sec) {
@@ -5549,7 +5548,7 @@ let isProcessing = false;
                 : '';
             let btn = $('btnRsumStart');
             btn.disabled = !(s.audio && t) || s.run;
-            document.getElementById('btnRsumBuild').disabled = !(s.ready || s.summary || s.out) || s.run;
+            document.getElementById('btnRsumAud').disabled = !(s.ready || s.summary || s.out) || s.run;
             $('rsumPhr').innerHTML = s.phr_audio ? escapeHtml(s.phr_audio.split(/[\\/]/).pop()) + (s.phr_ready ? ' · нарезаны' : '')
                 + ` <a href="#" onclick="rsumClearPhrases(); return false;" title="Не резать запись фраз">✕</a>` : '';
             let ctxLine = (k, empty) => s[k] ? `${escapeHtml(s[k])} <a href="#" onclick="rsumClearCtx('${k === 'ctx_end' ? 'end' : 'start'}'); return false;" title="Убрать">✕</a>` : empty;
@@ -5572,15 +5571,12 @@ let isProcessing = false;
             $('btnRsumStop').style.display = s.run ? '' : 'none';
             rsumSetMode(rsumMode);
             document.querySelectorAll('#rsumMode button').forEach(b => b.disabled = !!s.run);
-            let cb = document.getElementById('rsumNight');
-            if (!rsumNightInit) { rsumNightInit = true; try { cb.checked = localStorage.getItem('gvox_rsum_night') !== '0'; } catch (e) {} }
-            cb.disabled = !!s.run;
             if (s.need_model && !rsumWasNeed) setTimeout(rsumNeedModel, 0);
             rsumWasNeed = !!s.need_model;
             $('rsumMsg').innerText = s.msg || '';
             let m = s.summary;
             $('rsumSummary').innerHTML = !m && s.ready && !s.run
-                ? `<div>Готовые куски: <b>${s.ready}</b> — «Сборка сумм» откроет их (модель не нужна) · `
+                ? `<div>Готовые куски: <b>${s.ready}</b> — «В Audacity» соберёт их (модель не нужна) · `
                     + `<a href="#" onclick="rsumPickOut(); return false;">другая папка…</a></div><div class="tts-dim">${escapeHtml(s.out || '')}</div>`
                 : m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`
                 + (m.repeats ? ` · повторов не сохранено: ${m.repeats}` : '')

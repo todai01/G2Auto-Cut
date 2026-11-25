@@ -466,3 +466,70 @@ def test_zero_tenge_last(tmp_path):
     rows = a._tts_sum_rows(sh, 1)
     assert rows[0] == 1_101_001 and rows[-1] % 1000 == 0
 
+
+
+def _sum_table(tmp_path):
+    wb = openpyxl.Workbook()
+    for row in [['Начало', 'миллионы', 'сотни', 'тысячи', None, 'тенге'],
+                ['Сумма к оплате', 'один миллион', 'сто', 'одна', 'тысяча', 'одна тенге'],
+                ['Сумма к оплате', 'два миллиона', 'двести', 'две', 'тысячи', 'два тенге'],
+                ['Сумма к оплате', 'три миллиона', 'триста', 'три', 'тысячи', 'три тенге']]:
+        wb.active.append(row)
+    p = str(tmp_path / 'таблица.xlsx')
+    wb.save(p)
+    return p
+
+
+def test_start_phrases_cut_from_phrase_recording(tmp_path):
+    """Запись начальных фраз → «_фразы_переменные/Фразы/<текст>.wav» (основная — последняя полная попытка)."""
+    from core.raw_sums import RS_PHR_DIR, rs_phrase_table, rs_start_texts
+    a, st = _sums_api(tmp_path)
+    texts = rs_start_texts(rs_read_table(_sum_table(tmp_path)))
+    assert texts == ['сумма к оплате']
+    words_t, rec, t = [], [], 0.5
+    for _take in range(2):
+        for w in ['сумма', 'к', 'оплате']:
+            rec.append((w, t, t + 0.3, 1.0))
+            words_t.append((t, t + 0.3))
+            t += 0.45
+        t += 1.2
+    wav = tmp_path / 'фразы.wav'
+    write_wav16(str(wav), tone_track(words_t))
+    res = rs_run(None, str(wav), rs_phrase_table(texts), os.path.join(st["out"], RS_PHR_DIR), rec_words=rec)
+    assert os.path.exists(os.path.join(st["out"], RS_PHR_DIR, 'Фразы', 'сумма к оплате.wav'))
+    assert any(pc["role"] == 'main' for pc in res["pieces"])
+
+
+def test_worker_cuts_phrases_only(tmp_path, monkeypatch):
+    """Куски уже есть — процесс режет только начальные фразы, суммы не трогает."""
+    import json as _json
+    import core.raw_sums as R
+    from types import SimpleNamespace as NS
+
+    class Fake:
+        def transcribe(self, audio, **kw):
+            return [NS(text='', words=[])], None
+    a, st = _sums_api(tmp_path)
+    xl = _sum_table(tmp_path)
+    snap = lambda: {p: md5(p) for p in glob.glob(os.path.join(st["out"], '**', '*.wav'), recursive=True)}
+    before = snap()
+    monkeypatch.setattr(R, '_rs_load_model', lambda path, threads: Fake())
+    job = {"wav": st["audio"], "table": xl, "out": st["out"], "model": 'x', "threads": 2, "cache": None, "part": None,
+           "reuse": True, "phr_wav": st["audio"], "only_phrases": True,
+           "state": str(tmp_path / 'state.json'), "stop": str(tmp_path / 'stop')}
+    (tmp_path / 'job.json').write_text(_json.dumps(job, ensure_ascii=False), encoding='utf-8')
+    assert R.rs_worker_main(str(tmp_path / 'job.json')) == 0
+    state = _json.loads((tmp_path / 'state.json').read_text(encoding='utf-8'))
+    assert state["done"] and not state["error"] and state["info"]["phr"]["of"] == 1
+    assert snap() == before
+
+
+def test_ctx_files_picked_in_window(tmp_path):
+    import harness
+    a, st = _sums_api(tmp_path)
+    s_f = tmp_path / 'start.wav'
+    write_wav16(str(s_f), tone_track([(0.1, 0.6)]))
+    harness.DIALOG.append([str(s_f)])
+    r = a.rsum_pick_ctx('start')
+    assert r["ctx_start"] == str(s_f) and not r["ctx_end"]
+    assert a.rsum_clear_ctx('start')["ctx_start"] is None

@@ -47,7 +47,7 @@ from core.audit_fix import AuditFixMixin
 from core.listen_mode import ListenMixin
 from core.batch_synth import BatchSynthMixin
 from core.raw_sums import RawSumsMixin
-from core.sum_build import SumBuildMixin
+from core.rsum_audacity import RsumAudacityMixin
 from core import project_state
 
 # 🛠 Вспомогательные утилиты (из папки utils)
@@ -61,7 +61,7 @@ from utils.ffmpeg_setup import ensure_ffmpeg
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin, ClonePrepMixin, AuditFixMixin, ListenMixin, BatchSynthMixin, RawSumsMixin, SumBuildMixin):
+class Api(VariablesMixin, PhrasesMixin, ProjectMixin, MontageMixin, ConverterMixin, ConstructorMixin, FilenameMatchMixin, TableToPptxMixin, TimingEditorMixin, AutoCheckMixin, AuditAsrMixin, TtsFlowMixin, TtsLiveMixin, TtsSynthMixin, ClonePrepMixin, AuditFixMixin, ListenMixin, BatchSynthMixin, RawSumsMixin, RsumAudacityMixin):
     def __init__(self):
         super().__init__()
 

@@ -1570,25 +1570,10 @@ class RawSumsMixin:
         st = self._rsum()
         st["audio"] = picked if isinstance(picked, str) else picked[0]
         st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]), ''
-        self._rsum_ctx_from_out()
         return self.rsum_state()
 
-    def _rsum_ctx_from_out(self):
-        """Прежняя папка кусков уже со «сборка.json» — её начало и конец показываем сразу (если своих не выбрали)."""
-        st = self._rsum()
-        try:
-            with open(os.path.join(st["out"], 'сборка.json'), 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
-        except (OSError, ValueError, TypeError):
-            return
-        s, e = (cfg.get("starts") or {}).get(''), cfg.get("end")
-        if not st.get("ctx_start") and s and os.path.exists(s):
-            st["ctx_start"] = s
-        if not st.get("ctx_end") and e and os.path.exists(e):
-            st["ctx_end"] = e
-
     def rsum_pick_ctx(self, which):
-        """Свой файл начальной ('start') или конечной ('end') фразы — для всех сумм («Сборка», готовые файлы)."""
+        """Свой файл начальной ('start') или конечной ('end') фразы — на дорожку «Сборка» в Audacity."""
         import webview
         st = self._rsum()
         cur = st.get("ctx_start") or st.get("ctx_end") or st.get("audio") or st.get("table") or ''
@@ -1620,7 +1605,6 @@ class RawSumsMixin:
         if st["run"]:
             return {"error": "Идёт разбор."}
         st["out"], st["result"] = folder, None
-        self._rsum_ctx_from_out()
         return self.rsum_state()
 
     def rsum_pick_table(self):
@@ -1642,16 +1626,13 @@ class RawSumsMixin:
                              "заполнено хотя бы две ячейки."}
         st["table"], st["tdata"] = path, t
         st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]) if st["audio"] else None, ''
-        self._rsum_ctx_from_out()
         return self.rsum_state()
 
-    def rsum_start(self, reuse_asr=True, mode='bg', night=True, only_phrases=False):
+    def rsum_start(self, reuse_asr=True, mode='bg', only_phrases=False):
         """mode: 'bg' — фон (ядер на 2 меньше, приоритет ниже: остальная работа не заикается), 'max' — все ядра.
-        night — по окончании «Авто-настройка» и готовые файлы (sum_build.sb_night): к утру всё готово.
         only_phrases — куски сумм уже есть, нарезать только начальные фразы из записи фраз (в ту же папку)."""
         st = self._rsum()
         st["mode"] = 'max' if mode == 'max' else 'bg'
-        st["night"] = bool(night)
         st["par"] = 1
         if st["run"]:
             return {"error": "Разбор уже идёт."}
@@ -1780,7 +1761,6 @@ class RawSumsMixin:
                     json.dump(res["rec"], f, ensure_ascii=False)
                 os.replace(cache + '.tmp', cache)
             st["result"] = res
-            self._rsum_night()
         except Exception as e:
             st["msg"] = f'Ошибка: {e}'
         finally:
@@ -1854,7 +1834,6 @@ class RawSumsMixin:
                     st["result"] = json.load(f)
             except (OSError, ValueError) as e:
                 st["msg"] = f'Разбор закончен, но отчёт не прочитался: {e}'
-            self._rsum_night()
         elif state.get("error"):
             st["msg"] = f'Ошибка: {state["error"]}'
         elif state.get("stopped") or st["stop"]:
@@ -1867,19 +1846,6 @@ class RawSumsMixin:
                 tail = ''
             st["msg"] = 'Процесс разбора закрылся неожиданно. Распознанное сохранено — «Разобрать» продолжит.' + \
                         (f'\n{tail}' if tail else '')
-
-    def _rsum_night(self):
-        """«Ночной» режим: после разбора — авто-настройка и готовые файлы в «_готово» (sum_build)."""
-        st = self._rsum()
-        if not st.get("night") or st["stop"] or not hasattr(self, 'sb_night'):
-            return
-        st["stage"], st["pct"], st["stage_t"] = 'tune', 0, time.time()
-        try:
-            r = self.sb_night(st["out"], st["table"], progress=lambda n, of: st.update(pct=round(n * 100 / max(1, of))),
-                              start=st.get("ctx_start"), end=st.get("ctx_end"))
-            st["info"]["tune"] = r
-        except Exception as e:
-            st["msg"] = f'Авто-настройка не удалась: {e}'
 
     def rsum_pick_phrases(self):
         """Запись фраз для переменных (необязательно): из неё режутся начальные фразы таблицы сумм."""

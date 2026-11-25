@@ -335,37 +335,4 @@ input[type=range]::-webkit-slider-thumb{
 .listen-sums__plus{ opacity: .45; }
 .listen-sums__dir{ margin-left: 6px; font-weight: 500; }
 
-/* ---------- «Сборка сумм» (sumbuild.js) ---------- */
-.stage-sb .sb-wave{ width: 100%; height: 150px; display: block; background: var(--screen); border-radius: var(--radius-md);
-    box-shadow: var(--shadow-screen); cursor: pointer; margin: 10px 0 8px; }
-.sb-ctx{ display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.sb-ctx__b{ font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--panel-raised); border: 1px solid var(--line);
-    color: var(--text-dim); cursor: pointer; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sb-ctx__b:hover{ color: var(--text); }
-.sb-ctx__b.is-miss{ color: var(--accent-trash); border-color: color-mix(in srgb, var(--accent-trash) 45%, transparent); }
-.sb-ctx__x{ background: none; border: 0; color: var(--text-faint); cursor: pointer; }
-.sb-chips{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
-.sb-plus{ color: var(--text-faint); }
-.sb-chip{ display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 11px; border-radius: var(--radius-sm);
-    background: var(--panel-raised); border: 1px solid var(--line); color: var(--text); cursor: pointer; font-size: 13px; }
-.sb-chip i{ font-style: normal; font-size: 10.5px; color: var(--text-faint); }
-.sb-chip--piece{ border-color: color-mix(in srgb, var(--accent-var) 35%, transparent); }
-.sb-chip.is-bad{ border-color: color-mix(in srgb, var(--accent-trash) 60%, transparent); background: var(--tint-trash); }
-.sb-chip.is-miss{ border-style: dashed; border-color: var(--accent-trash); color: var(--accent-trash); }
-.sb-chip.is-on{ box-shadow: 0 0 0 2px var(--accent-primary); }
-.sb-piece{ background: var(--panel-raised); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 10px; display: grid; gap: 8px; }
-.sb-piece:empty{ display: none; }
-.sb-piece__head b{ font-size: 15px; }
-.sb-vars{ display: flex; flex-wrap: wrap; gap: 6px; }
-.sb-var{ display: flex; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--line); }
-.sb-var.is-on{ border-color: var(--accent-good); }
-.sb-var button{ background: var(--panel); border: 0; color: var(--text); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
-.sb-var.is-on .sb-var__pick{ background: var(--tint-good); }
-.sb-var__play{ border-left: 1px solid var(--line) !important; color: var(--accent-primary) !important; }
-.sb-row{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.sb-knob{ display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--text-dim); }
-.sb-knob button{ width: 26px; height: 26px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--text); cursor: pointer; }
-.sb-knob b{ min-width: 58px; text-align: center; color: var(--text); font-weight: 600; }
-.listen-tabs--sm button{ font-size: 11.5px; }
-.sb-reset{ width: auto !important; flex: none; padding: 5px 12px !important; }
 .rsum-phr-alt{ font-size: 12px; margin: -2px 0 6px; color: var(--text-faint); }
