@@ -2023,7 +2023,7 @@ class RawSumsMixin:
                 have = files.get(t) or {}
                 if not have:
                     continue
-                n = min(have)
+                n = min(have, key=lambda v: (v == 0, v))      # «ноль тенге» — не контекст: берём «одна тенге»
                 segs.append(AudioSegment.from_file(have[n]))
                 label.append(f'{n} {RS_CAT_SHORT[t]}'.strip())
             if not segs:

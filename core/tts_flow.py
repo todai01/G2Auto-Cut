@@ -2504,6 +2504,7 @@ class TtsFlowMixin:
             c = by_base.get(t)
             vals = [(re.sub(r'\D', '', v), int(re.sub(r'\D', '', v))) for v in (c or {}).get("values", [])
                     if re.sub(r'\D', '', v)]
+            vals = [x for x in vals if x[1]] + [x for x in vals if not x[1]]   # «ноль тенге» — отдельно, в конце
             if vals:
                 cols.append((t, c["key"], vals))
         if not cols:

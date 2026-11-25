@@ -293,7 +293,8 @@ class AuditFixMixin:
                 partial += 1                        # части кусков нет — строка встанет, когда они появятся
                 for x in miss:
                     lack.setdefault(x["label"], set()).add(str(x["value"]))
-        plans.sort(key=lambda p: (p[0].get("logic") or 0, p[0]["id"]))
+        rk = lambda u: int(str(u.get("row", '')).rsplit(':', 1)[-1]) if str(u.get("row", '')).rsplit(':', 1)[-1].isdigit() else u["id"]
+        plans.sort(key=lambda p: (p[0].get("logic") or 0, rk(p[0])))     # порядок строк таблицы (номер строки, не id)
         first = {}                                  # эталон перезаписывает только первая строка, где он встречается
         for u, _b, paths in plans:
             for k, p in enumerate(paths):

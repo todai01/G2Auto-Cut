@@ -627,3 +627,35 @@ def test_open_studio_asks_folder_when_no_pieces(tmp_path):
     assert a2.rsum_pick_out()["ready"] > 0
     r = a2.rsum_open_studio()
     assert not r.get("error") and r["rsum_open"]["copied"] > 0
+
+
+def test_zero_tenge_last(tmp_path):
+    """«ноль тенге» и слово «тенге» — отдельные переменные в конце: первая строка суммы — «один миллион сто одна
+    тысяча одна тенге»; в «Прослушке сумм» начало/конец — из «одна тенге», «0» и «тенге» — последними строками."""
+    import harness
+    from core.tts_flow import parse_tts_workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Начало', 'миллионы', 'сотни', 'тысячи', None, 'тенге'])
+    ws.append(['Сумма', 'один миллион', 'сто', 'одна', 'тысяча', 'ноль тенге'])
+    ws.append(['Сумма', 'два миллиона', 'двести', 'две', 'тысячи', 'одна тенге'])
+    ws.append(['Сумма', 'три миллиона', 'триста', 'три', 'тысячи', 'два тенге'])
+    xl = str(tmp_path / 't.xlsx')
+    wb.save(xl)
+    a = harness.Api()
+    sh = parse_tts_workbook(xl)["var_sheets"]["sum_ru"]
+    rows = a._tts_sum_rows(sh, 1)
+    assert rows[0] == 1_101_001 and rows[-1] % 1000 == 0
+    # прослушка: папка тенге с 0, 1, 2 и «тенге»
+    d = tmp_path / 'куски'
+    for cat, names in (('1 - 100 млн', ('1', '2')), ('100 - 900', ('100',)), ('1 - 99 тыс', ('1',)),
+                       ('1 - 100 тенге', ('0', '1', '2', 'тенге'))):
+        os.makedirs(d / cat)
+        for n in names:
+            write_wav16(str(d / cat / f'{n}.wav'), tone_track([(0.1, 0.4)]))
+    harness.DIALOG.append([str(d)])
+    a.listen_sums_pick()
+    r = a.listen_sums_open(1, 'million')
+    assert r["sums"]["end"].endswith('1 тенге)') and '0 тенге' not in r["sums"]["end"], r["sums"]
+    r = a.listen_sums_open(1, 'tenge')
+    assert [x["name"] for x in r["rows"]][:2] == ['1', '2'] and [x["name"] for x in r["rows"]][-2:] == ['0', 'тенге']

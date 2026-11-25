@@ -200,7 +200,9 @@ class ListenMixin:
         if not ls["index"]:
             return {"error": "В папке переменных нет аудиофайлов (.wav, .mp3…)."}
         natural = lambda x: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', x)]
-        names = sorted({os.path.splitext(os.path.basename(p))[0] for paths in ls["index"].values() for p in paths}, key=natural)
+        # «0» («ноль тенге») и названия без числа («тенге») — отдельные переменные, в конце: первая строка — «1»
+        names = sorted({os.path.splitext(os.path.basename(p))[0] for paths in ls["index"].values() for p in paths},
+                       key=lambda x: (x.strip() == '0' or not re.search(r'\d', x), natural(x)))
         ls["table"], ls["table_names"] = None, {"ru": names, "kz": names}
         ls["rows"], ls["pos"], ls["synth"] = [], 0, {}
         self._listen_match()
