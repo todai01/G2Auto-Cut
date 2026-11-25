@@ -188,7 +188,6 @@ class ListenMixin:
         """«Сборка переменной» из Студии: начало и конец — отмеченные файлы из «Фразы_Переменные»,
         записи значений — выбранная папка; строки — файлы этой папки (таблицу можно загрузить потом)."""
         self._listen_mode_name = 'var'
-        self._ls().pop("sums", None)                       # обычная сборка переменной; суммы ставят своё после
         r = self._listen_load_phrases(phr_dir)
         if r.get("error"):
             return r
@@ -200,9 +199,7 @@ class ListenMixin:
         if not ls["index"]:
             return {"error": "В папке переменных нет аудиофайлов (.wav, .mp3…)."}
         natural = lambda x: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', x)]
-        # «0» («ноль тенге») и названия без числа («тенге») — отдельные переменные, в конце: первая строка — «1»
-        names = sorted({os.path.splitext(os.path.basename(p))[0] for paths in ls["index"].values() for p in paths},
-                       key=lambda x: (x.strip() == '0' or not re.search(r'\d', x), natural(x)))
+        names = sorted({os.path.splitext(os.path.basename(p))[0] for paths in ls["index"].values() for p in paths}, key=natural)
         ls["table"], ls["table_names"] = None, {"ru": names, "kz": names}
         ls["rows"], ls["pos"], ls["synth"] = [], 0, {}
         self._listen_match()
@@ -282,7 +279,6 @@ class ListenMixin:
             return {"error": "cancel"}
         self._listen_set_folder(picked if isinstance(picked, str) else picked[0])
         ls = self._ls()
-        ls.pop("sums", None)                                 # другая папка — уже не «Прослушка сумм»
         if not ls["index"]:
             return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
         return self.listen_state()
@@ -632,7 +628,6 @@ class ListenMixin:
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
-            "sums": ls.get("sums"),                     # «Прослушка сумм»: логика, класс, папка (raw_sums._sums_listen)
         }
 
     def listen_set(self, pos=None, lang=None, short=None, ctx_ms=None, norm=None, auto_on=None):

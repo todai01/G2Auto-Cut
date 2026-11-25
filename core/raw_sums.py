@@ -1205,6 +1205,38 @@ class RsCutter:
         return res
 
 
+RS_PHR_DIR = '_фразы_переменные'      # в папке кусков: начальные фразы, нарезанные из отдельной записи фраз
+RS_PHR_TIER = 'Фразы'
+
+
+def rs_start_texts(table):
+    """Начальные фразы таблицы сумм («Сумма к оплате», «С суммой задолженности»): ячейки до первого числа, по порядку."""
+    out = []
+    for p in table["phrases"]:
+        words = []
+        for c in p["cells"]:
+            if c.get("num"):
+                break
+            words += c["words"]
+        t = ' '.join(words)
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def rs_phrase_table(texts):
+    """Список фраз → таблица разбора: фраза — одна ячейка (сохраняется целиком: «<папка>/Фразы/<текст>.wav»)."""
+    phrases = []
+    for t in texts:
+        words = rs_canon(t) or str(t).lower().split()
+        if not words:
+            continue
+        phrases.append({"id": len(phrases), "block": 0, "row": len(phrases) + 1, "words": words, "cell_of": [0] * len(words),
+                        "cells": [{"col": 'A', "tier": RS_PHR_TIER, "text": ' '.join(words), "words": words,
+                                   "num": True, "cat": None}]})
+    return {"phrases": phrases, "tiers": {'A': RS_PHR_TIER}, "skipped": []}
+
+
 def rs_run(model, wav_path, table, out_dir, log=None, stop=None, rec_words=None, workers=1, part=None):
     """Разбор записи: распознать → выровнять → нарезать. Куски пишутся в out_dir по ходу распознавания.
     log(dict) — ход работы: {"stage", "pct"} и подробности {"asr": …}, {"cut": …}, {"live": …}.
@@ -1353,9 +1385,22 @@ def rs_worker_main(job_path):
         def log(d):
             rs_apply_log(state, d)
             write()
-        res = rs_run(model, job["wav"], table, job["out"], log, stop, rec, 1, part)
+        res = {"rec": None, "skip": True} if job.get("only_phrases") else rs_run(model, job["wav"], table, job["out"], log, stop, rec, 1, part)
+        if res is not None and job.get("phr_wav") and not stop():
+            texts = rs_start_texts(table)
+            if texts:                                          # начальные фразы — из отдельной записи фраз
+                log({"stage": "phr", "pct": 0})
+                pr = rs_run(model, job["phr_wav"], rs_phrase_table(texts), os.path.join(job["out"], RS_PHR_DIR),
+                            lambda d: log({**d, "stage": "phr"} if "stage" in d else d), stop, None, 1, None)
+                if pr is None:
+                    res = None
+                else:
+                    state["info"]["phr"] = {"found": len({pc["text"] for pc in pr["pieces"] if pc["role"] == 'main'}),
+                                            "of": len(texts)}
         if res is None:
             state["stopped"] = True
+        elif res.get("skip"):
+            state["done"] = True
         else:
             if rec is None and job.get("cache"):
                 os.makedirs(os.path.dirname(job["cache"]), exist_ok=True)
@@ -1511,8 +1556,10 @@ class RawSumsMixin:
                 "cats": {c: len(v) for c, v in self._rsum_cat_files().items()} if st["out"] else {},
                 "cached": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]))),
                 "partial": bool(st["audio"] and _rs_cache_file(st["audio"]) and os.path.exists(_rs_cache_file(st["audio"]) + '.part')),
-                "studio_ok": self._rsum_studio_sheet() is not None,
-                "ready": sum(len(v) for v in self._rsum_cat_files().values()) if st["out"] and not st["run"] else 0}
+                "ready": sum(len(v) for v in self._rsum_cat_files().values()) if st["out"] and not st["run"] else 0,
+                "phr_audio": st.get("phr_audio"),
+                "phr_ready": bool(st["out"] and os.path.isdir(os.path.join(st["out"], RS_PHR_DIR))),
+                "starts": rs_start_texts(t) if t else []}
 
     def rsum_pick_audio(self):
         import webview
@@ -1564,12 +1611,13 @@ class RawSumsMixin:
         st["result"], st["out"], st["msg"] = None, rs_prev_out(st["audio"]) if st["audio"] else None, ''
         return self.rsum_state()
 
-    def rsum_start(self, reuse_asr=True, mode='bg', to_studio=False):
-        """mode: 'bg' — фон (ядер на 2 меньше, приоритет ниже: Студия и прослушка не заикаются), 'max' — все ядра.
-        to_studio — готовые куски по ходу копировать в открытый проект Студии."""
+    def rsum_start(self, reuse_asr=True, mode='bg', night=True, only_phrases=False):
+        """mode: 'bg' — фон (ядер на 2 меньше, приоритет ниже: остальная работа не заикается), 'max' — все ядра.
+        night — по окончании «Авто-настройка» и готовые файлы (sum_build.sb_night): к утру всё готово.
+        only_phrases — куски сумм уже есть, нарезать только начальные фразы из записи фраз (в ту же папку)."""
         st = self._rsum()
         st["mode"] = 'max' if mode == 'max' else 'bg'
-        st["to_studio"] = bool(to_studio)
+        st["night"] = bool(night)
         st["par"] = 1
         if st["run"]:
             return {"error": "Разбор уже идёт."}
@@ -1578,8 +1626,14 @@ class RawSumsMixin:
         if not st["tdata"]:
             return {"error": "Выберите таблицу."}
         # модель грузится в потоке (первый раз — десятки секунд): окно сразу видит «Загрузка модели»
+        if only_phrases and not (st.get("phr_audio") and st.get("out") and os.path.isdir(st["out"])):
+            return {"error": "Нужны готовые куски сумм и запись фраз."}
+        if only_phrases and not self._auto_check_model_path('kz'):
+            return {"error": "Для нарезки фраз нужна модель в папке (как для разбора в фоне)."}
+        st["only_phrases"] = bool(only_phrases)
         st.update(run=True, stop=False, stage='model', pct=0, msg='', result=None, need_model=False,
-                  out=rs_out_dir(st["audio"]), started=time.time(), stage_t=time.time(), ended=None, info={})
+                  out=st["out"] if only_phrases else rs_out_dir(st["audio"]), started=time.time(), stage_t=time.time(),
+                  ended=None, info={})
         threading.Thread(target=self._rsum_boot, args=(bool(reuse_asr),), daemon=True).start()
         return self.rsum_state()
 
@@ -1692,6 +1746,7 @@ class RawSumsMixin:
                     json.dump(res["rec"], f, ensure_ascii=False)
                 os.replace(cache + '.tmp', cache)
             st["result"] = res
+            self._rsum_night()
         except Exception as e:
             st["msg"] = f'Ошибка: {e}'
         finally:
@@ -1719,6 +1774,8 @@ class RawSumsMixin:
         threads = self._rsum_threads(st.get("mode"))
         job = {"wav": st["audio"], "table": st["table"], "out": st["out"], "model": model_path, "threads": threads,
                "cache": cache, "part": (cache + '.part') if cache else None, "reuse": bool(reuse_asr),
+               "phr_wav": st.get("phr_audio") if st.get("phr_audio") and os.path.exists(st["phr_audio"]) else None,
+               "only_phrases": bool(st.get("only_phrases")),
                "state": os.path.join(jd, 'state.json'), "stop": os.path.join(jd, 'stop')}
         with open(os.path.join(jd, 'job.json'), 'w', encoding='utf-8') as f:
             json.dump(job, f, ensure_ascii=False)
@@ -1732,7 +1789,7 @@ class RawSumsMixin:
                                 stdin=subprocess.DEVNULL, creationflags=flags)
         st["proc"] = proc
         st["info"].update(threads=threads, bg=st.get("mode") != 'max', workers=1)
-        stop_t, last_studio, state = None, 0.0, {}
+        stop_t, state = None, {}
         try:
             while True:
                 alive = proc.poll() is None
@@ -1744,30 +1801,26 @@ class RawSumsMixin:
                 if state:
                     st["stage"], st["pct"] = state.get("stage") or st["stage"], state.get("pct", st["pct"])
                     st["stage_t"] = state.get("stage_t") or st["stage_t"]
-                    keep = {k: st["info"][k] for k in ("threads", "bg", "workers", "studio") if k in st["info"]}
+                    keep = {k: st["info"][k] for k in ("threads", "bg", "workers") if k in st["info"]}
                     st["info"] = {**state.get("info", {}), **keep}
                 if st["stop"] and stop_t is None:
                     open(job["stop"], 'w').close()                 # дописать текущую пачку и выйти
                     stop_t = time.time()
                 if stop_t and alive and time.time() - stop_t > 60:
                     proc.terminate()
-                if st.get("to_studio") and time.time() - last_studio > 5:
-                    last_studio = time.time()
-                    self._rsum_studio_tick()
                 if not alive:
                     break
                 time.sleep(0.5)
         finally:
             logf.close()
             st.pop("proc", None)
-        if st.get("to_studio"):
-            self._rsum_studio_tick()
         if state.get("done"):
             try:
                 with open(os.path.join(st["out"], 'разбор.json'), 'r', encoding='utf-8') as f:
                     st["result"] = json.load(f)
             except (OSError, ValueError) as e:
                 st["msg"] = f'Разбор закончен, но отчёт не прочитался: {e}'
+            self._rsum_night()
         elif state.get("error"):
             st["msg"] = f'Ошибка: {state["error"]}'
         elif state.get("stopped") or st["stop"]:
@@ -1781,25 +1834,31 @@ class RawSumsMixin:
             st["msg"] = 'Процесс разбора закрылся неожиданно. Распознанное сохранено — «Разобрать» продолжит.' + \
                         (f'\n{tail}' if tail else '')
 
-    def _rsum_studio_tick(self):
-        """«Сразу в проект Студии»: новые куски — в проект; Студия перечитывает значения."""
+    def _rsum_night(self):
+        """«Ночной» режим: после разбора — авто-настройка и готовые файлы в «_готово» (sum_build)."""
+        st = self._rsum()
+        if not st.get("night") or st["stop"] or not hasattr(self, 'sb_night'):
+            return
+        st["stage"], st["pct"], st["stage_t"] = 'tune', 0, time.time()
         try:
-            r = self.rsum_to_studio(auto=True)
-        except Exception:
-            return
-        if r.get("error"):
-            self._rsum()["info"]["studio_err"] = r["error"]
-            return
-        n = r.get("copied", 0) + r.get("updated", 0)
-        info = self._rsum()["info"]
-        info["studio"] = info.get("studio", 0) + n
-        if n:
-            self.__dict__.pop('_tts_claims_cache', None)
-            try:
-                import webview
-                webview.windows[0].evaluate_js(f"rsumStudioFill({int(n)})")
-            except Exception:
-                pass
+            r = self.sb_night(st["out"], st["table"], progress=lambda n, of: st.update(pct=round(n * 100 / max(1, of))))
+            st["info"]["tune"] = r
+        except Exception as e:
+            st["msg"] = f'Авто-настройка не удалась: {e}'
+
+    def rsum_pick_phrases(self):
+        """Запись фраз для переменных (необязательно): из неё режутся начальные фразы таблицы сумм."""
+        import webview
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN, file_types=('Звук (*.wav;*.mp3;*.flac;*.ogg;*.m4a)', 'Все файлы (*.*)'))
+        if not picked:
+            return {"error": "cancel"}
+        self._rsum()["phr_audio"] = picked if isinstance(picked, str) else picked[0]
+        return self.rsum_state()
+
+    def rsum_clear_phrases(self):
+        self._rsum()["phr_audio"] = None
+        return self.rsum_state()
 
     def rsum_stop(self):
         self._rsum()["stop"] = True
@@ -1829,220 +1888,10 @@ class RawSumsMixin:
             return {"error": str(e)}
         return {"ok": True}
 
-    # ---- куски как суммы: в проект Студии и «Прослушка сумм» ----
+    # ---- куски по классам сумм ----
     def _rsum_cat_files(self):
         """{класс: {число: путь}} — основные куски разбора по классам сумм."""
         st = self._rsum()
         if not st.get("out") or not os.path.isdir(st["out"]):
             return {}
         return rs_sum_files(rs_find_sum_dirs(st["out"]))
-
-    def _rsum_studio_sheet(self):
-        tt = self._tts() if hasattr(self, '_tts') else {}
-        if not tt.get("work_dir"):
-            return None
-        return next((k for k, sh in (tt.get("var_sheets") or {}).items() if self._tts_is_sum_sheet(sh)
-                     and not any(re.search(r'_(kz|kk)$', c["key"]) for c in sh["categories"])), None)
-
-    def rsum_to_studio(self, auto=False):
-        """Копии кусков в открытый проект Студии: «Значения/<лист сумм RU>/<класс>/<значение>.wav» —
-        имя как значение в таблице проекта. Что в проекте уже есть — не трогаем; исключение — файл, который
-        скопировал сам разбор и с тех пор его никто не менял (кусок перерезали — обновляем). Учёт — «.в_проект.json»."""
-        import shutil
-        files = self._rsum_cat_files()
-        if not files:
-            return {"error": "Кусков по классам сумм пока нет."}
-        tt = self._tts() if hasattr(self, '_tts') else {}
-        wd, sheets = tt.get("work_dir"), tt.get("var_sheets") or {}
-        sheet = next((k for k, sh in sheets.items() if self._tts_is_sum_sheet(sh)
-                      and not any(re.search(r'_(kz|kk)$', c["key"]) for c in sh["categories"])), None)
-        if not wd or not sheet:
-            return {"error": "Откройте в Студии проект, в таблице которого есть лист сумм RU (<sum_ru> с <million_ru>, <tenge_ru>…)."}
-        copied, exist, nowhere, updated = 0, 0, 0, 0
-        st = self._rsum()
-        man_path = os.path.join(st["out"] or '', '.в_проект.json')
-        try:
-            with open(man_path, 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-        except (OSError, ValueError):
-            manifest = {}
-
-        def md5(p):
-            with open(p, 'rb') as f:
-                return hashlib.md5(f.read()).hexdigest()
-        for c in sheets[sheet]["categories"]:
-            base = re.sub(r'_(ru|kz|kk)$', '', c["key"])
-            have = files.get(base) or {}
-            idx = {}
-            for v in c["values"]:
-                dg = re.sub(r'\D', '', str(v))
-                if dg:
-                    idx.setdefault(int(dg), v)
-            for n, src in have.items():
-                if n not in idx:
-                    nowhere += 1
-                    continue
-                dst = self._tts_value_file(sheet, c["key"], idx[n])
-                src_md5 = md5(src)
-                if os.path.exists(dst):
-                    mine = manifest.get(dst)
-                    if mine and mine != src_md5 and md5(dst) == mine:     # наша копия, кусок перерезали — обновить
-                        shutil.copy2(src, dst + '.tmp')
-                        os.replace(dst + '.tmp', dst)
-                        manifest[dst] = src_md5
-                        updated += 1
-                    else:
-                        exist += 1
-                    continue
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.copy2(src, dst + '.tmp')
-                os.replace(dst + '.tmp', dst)
-                manifest[dst] = src_md5
-                copied += 1
-        used = {re.sub(r'_(ru|kz|kk)$', '', c["key"]) for c in sheets[sheet]["categories"]}
-        nowhere += sum(len(v) for k, v in files.items() if k not in used)
-        if copied or updated:
-            try:
-                with open(man_path + '.tmp', 'w', encoding='utf-8') as f:
-                    json.dump(manifest, f, ensure_ascii=False)
-                os.replace(man_path + '.tmp', man_path)
-            except OSError:
-                pass
-        rail = self.tts_rail_sums(sheet, jump=not auto) if hasattr(self, 'tts_rail_sums') else {}
-        return {"ok": True, "sheet": sheet, "copied": copied, "exist": exist, "nowhere": nowhere, "updated": updated,
-                "rows": rail.get("rows", 0), "partial": rail.get("partial", 0), "lack": rail.get("lack") or {}, "dir": os.path.join(wd, 'Значения', sheet)}
-
-    def rsum_open_studio(self):
-        """«Открыть в Студии»: всё готово одной кнопкой. Открытый проект Студии с этой таблицей или с листом сумм —
-        работаем в нём; иначе (другой проект — он сохраняется как есть и закрывается) — проект «<запись>_Студия»
-        рядом с записью: таблица разбора, куски — в «Значения/…» (что уже есть — не трогаем). Возвращает tts_state."""
-        st = self._rsum()
-        if not st.get("table") or not os.path.exists(st["table"]):
-            return {"error": "Выберите таблицу."}
-        if st["run"] is False and not self._rsum_cat_files():
-            return {"need_out": True, "error": "Кусков пока нет: разберите запись или укажите готовую папку кусков."}
-        if getattr(self, '_tts_rec', None):
-            return {"error": "В Студии идёт запись — сначала остановите её (R)."}
-        tt = self._tts()
-        same = bool(tt.get("excel_path")) and os.path.normcase(os.path.abspath(tt["excel_path"])) == \
-            os.path.normcase(os.path.abspath(st["table"]))
-        if not (tt.get("work_dir") and os.path.isdir(tt["work_dir"]) and (same or self._rsum_studio_sheet())):
-            base = st.get("audio") or st["table"]
-            root = os.path.join(os.path.dirname(base), rs_safe_name(os.path.splitext(os.path.basename(base))[0]) + '_Студия')
-            os.makedirs(root, exist_ok=True)
-            if tt.get("work_dir") and os.path.normcase(os.path.abspath(tt["work_dir"])) != os.path.normcase(root):
-                r = self.tts_reset()                       # прежний проект сохраняется на диске как есть
-                if r.get("error"):
-                    return r
-            self._tts_attach_folder(root)                  # там уже был проект — подтягиваем его
-            r = self.tts_load_excel(st["table"])
-            if r.get("error"):
-                return r
-            if r.get("choose_sheet"):
-                pend = getattr(self, '_tts_pending', None)
-                sheet = next((x["title"] for x in r["choose_sheet"] if x.get("title") == "(только переменные)"),
-                             r["choose_sheet"][0]["title"])
-                r = self.tts_load_excel(st["table"], sheet)
-                if r.get("error"):
-                    return r
-        copied = None
-        if st.get("out") and os.path.isdir(st["out"]) and self._rsum_cat_files():
-            copied = self.rsum_to_studio()
-        self.__dict__.pop('_tts_claims_cache', None)
-        self._tts_save()
-        res = self.tts_state()
-        res["rsum_open"] = {"dir": self._tts().get("work_dir"),
-                            "copied": (copied or {}).get("copied", 0), "exist": (copied or {}).get("exist", 0),
-                            "updated": (copied or {}).get("updated", 0), "rows": (copied or {}).get("rows", 0), "sheet": self._rsum_studio_sheet(),
-                            "partial": (copied or {}).get("partial", 0), "lack": (copied or {}).get("lack") or {},
-                            "takes": len(self._tts()["takes"])}
-        return res
-
-    def rsum_listen(self, logic, cat):
-        """«Прослушка сумм» из окна разбора — по папке разбора."""
-        st = self._rsum()
-        dirs = rs_find_sum_dirs(st["out"]) if st.get("out") and os.path.isdir(st["out"]) else {}
-        return self._sums_listen(st["out"], dirs, logic, cat)
-
-    # ---- «Прослушка сумм»: готовая папка → значения класса в сумме (логика 1 / 2), правка как обычно ----
-    def listen_sums_pick(self):
-        """Выбрать готовую папку с кусками сумм (папка разбора или проект Студии / «Значения»)."""
-        import webview
-        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
-        if not picked:
-            return {"error": "cancel"}
-        folder = picked if isinstance(picked, str) else picked[0]
-        dirs = rs_find_sum_dirs(folder)
-        files = rs_sum_files(dirs)
-        if not files:
-            return {"error": "В этой папке нет кусков сумм: нужны папки классов с файлами-числами — "
-                             "«1 - 100 млн», «100 - 900», «1 - 99 тыс», «100 - 900 тыс», «1 - 100 тенге» (как после разбора) "
-                             "или «million_ru», «thousand_ru»… (Значения проекта Студии)."}
-        self._lsums = {"folder": folder, "dirs": dirs}
-        return {"folder": folder, "cats": {c: len(v) for c, v in files.items()}}
-
-    def listen_sums_open(self, logic=1, cat=None):
-        """Открыть класс выбранной папки в «Прослушке». cat=None — первый класс логики, где есть куски."""
-        ss = getattr(self, '_lsums', None)
-        if not ss:
-            return {"error": "Сначала выберите папку с кусками сумм."}
-        logic = 2 if int(logic or 1) == 2 else 1
-        files = rs_sum_files(ss["dirs"])
-        if cat not in RS_LOGICS[logic] or not files.get(cat):
-            cat = next((c for c in RS_LOGICS[logic] if files.get(c)), None)
-        if not cat:
-            return {"error": f"Для логики {logic} в папке нет кусков."}
-        return self._sums_listen(ss["folder"], ss["dirs"], logic, cat)
-
-    def _sums_listen(self, folder, dirs, logic, cat):
-        """Значения класса cat звучат в сумме логики logic — между кусками остальных классов (для них берётся
-        меньшее значение: «один миллион», «сто», «одна тенге»). Открывается обычный экран «Прослушки» (сборка
-        переменной): правка, «Сохранить», «_до_правок» — как всегда; склейка начала и конца — во временной папке."""
-        import tempfile
-        from pydub import AudioSegment
-        logic = 2 if int(logic) == 2 else 1
-        tiers = RS_LOGICS[logic]
-        if cat not in tiers:
-            return {"error": "Этого класса нет в выбранной логике."}
-        files = rs_sum_files(dirs)
-        if not files.get(cat):
-            return {"error": f"Кусков «{RS_CAT_DIRS[cat]}» пока нет."}
-        k = tiers.index(cat)
-        ctx_dir = os.path.join(tempfile.gettempdir(), 'gvox_rsum_ctx',
-                               hashlib.md5(f'{folder}|{logic}|{cat}'.encode('utf-8')).hexdigest()[:12])
-        os.makedirs(ctx_dir, exist_ok=True)
-        for f in os.listdir(ctx_dir):                      # прошлый контекст этого класса — заново
-            try:
-                os.remove(os.path.join(ctx_dir, f))
-            except OSError:
-                pass
-
-        def build(part, which):
-            segs, label = [], []
-            for t in part:
-                have = files.get(t) or {}
-                if not have:
-                    continue
-                n = min(have, key=lambda v: (v == 0, v))      # «ноль тенге» — не контекст: берём «одна тенге»
-                segs.append(AudioSegment.from_file(have[n]))
-                label.append(f'{n} {RS_CAT_SHORT[t]}'.strip())
-            if not segs:
-                return None
-            path = os.path.join(ctx_dir, f'{which} ({", ".join(label)}).wav')
-            sum(segs[1:], segs[0]).export(path, format='wav')
-            return path
-        start, end = build(tiers[:k], 'начало'), build(tiers[k + 1:], 'конец')
-        if not start and not end:
-            return {"error": "Для суммы не хватает кусков других классов."}
-        r = self.listen_setup_assembly(ctx_dir, start, end, dirs[cat])
-        if isinstance(r, dict) and not r.get("error"):
-            info = {"logic": logic, "cat": cat, "cat_name": RS_CAT_DIRS[cat], "folder": folder,
-                    "folder_name": os.path.basename(os.path.normpath(folder)),
-                    "cats": {c: len(v) for c, v in files.items()},
-                    "start": os.path.splitext(os.path.basename(start))[0] if start else None,
-                    "end": os.path.splitext(os.path.basename(end))[0] if end else None}
-            self._lsums = {"folder": folder, "dirs": dirs}
-            self._ls()["sums"] = info
-            r["sums"] = info
-            r["rsum"] = {"logic": logic, "cat": RS_CAT_DIRS[cat], "start": info["start"], "end": info["end"]}
-        return r

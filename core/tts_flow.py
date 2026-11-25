@@ -1223,9 +1223,8 @@ class TtsFlowMixin:
         wd = st.get("work_dir")
         d = None
         prev = [v for c in (st.get("var_ctx") or {}).values() for v in (c or {}).values() if v and os.path.exists(v)]
-        rs = getattr(self, '_rsum_st', None) or {}
         for cand in ([os.path.join(wd, 'Фразы_Переменные'), os.path.join(wd, 'Проверенные')] if wd else []) + \
-                [os.path.dirname(p) for p in prev] + ([os.path.dirname(rs["audio"])] if rs.get("audio") else []):
+                [os.path.dirname(p) for p in prev]:
             if os.path.isdir(cand):
                 d = cand
                 break

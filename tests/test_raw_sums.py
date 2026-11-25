@@ -295,52 +295,8 @@ def _sums_api(tmp_path):
     return a, st
 
 
-def test_to_studio_copies_without_overwriting(tmp_path):
-    a, st = _sums_api(tmp_path)
-    wd = tmp_path / 'проект'
-    tt = a._tts()
-    tt["work_dir"] = str(wd)
-    tt["var_sheets"] = {'sum_ru': {"categories": [
-        {"key": 'million_ru', "label": 'м', "values": ['1', '2', '3']},
-        {"key": 'hundred_ru', "label": 'с', "values": ['100', '200', '300']},
-        {"key": 'thousand_ru', "label": 'т', "values": ['1', '2']},
-        {"key": 'tenge_ru', "label": 'тг', "values": ['1', '2', '3']}]}}
-    mine = wd / 'Значения' / 'sum_ru' / 'million_ru' / '2.wav'      # уже записанное в проекте
-    os.makedirs(mine.parent)
-    mine.write_bytes(b'RIFF-my-own-take')
-    before = {f: md5(os.path.join(r, f)) for r, _, fs in os.walk(st["out"]) for f in fs}
-    r = a.rsum_to_studio()
-    assert r["copied"] == 10 and r["exist"] == 1 and r["nowhere"] == 1      # тысяча 3 — в таблице проекта нет
-    assert mine.read_bytes() == b'RIFF-my-own-take'                         # своё не тронуто
-    assert md5(str(wd / 'Значения' / 'sum_ru' / 'thousand_ru' / '1.wav')) == md5(os.path.join(st["out"], '1 - 99 тыс', '1.wav'))
-    after = {f: md5(os.path.join(r_, f)) for r_, _, fs in os.walk(st["out"]) for f in fs if f != '.в_проект.json'}
-    assert before == after                                                   # разбор не тронут
-    r2 = a.rsum_to_studio()                                                  # повтор — ничего нового
-    assert r2["copied"] == 0 and r2["exist"] == 11 and r2["updated"] == 0
-    # кусок перерезали (новый файл в разборе) — наша прежняя копия в проекте обновляется…
-    src = os.path.join(st["out"], '1 - 100 тенге', '1.wav')
-    with open(src, 'ab') as f:
-        f.write(b'\0\0')
-    # …а файл, который в проекте кто-то правил, — нет
-    edited = wd / 'Значения' / 'sum_ru' / 'tenge_ru' / '2.wav'
-    with open(os.path.join(st["out"], '1 - 100 тенге', '2.wav'), 'ab') as f:
-        f.write(b'\0\0')
-    edited.write_bytes(b'RIFF-edited-by-hand')
-    r3 = a.rsum_to_studio()
-    assert r3["updated"] == 1
-    assert md5(str(wd / 'Значения' / 'sum_ru' / 'tenge_ru' / '1.wav')) == md5(src)
-    assert edited.read_bytes() == b'RIFF-edited-by-hand' and mine.read_bytes() == b'RIFF-my-own-take'
 
 
-def test_listen_sums_opens_assembly_with_context(tmp_path):
-    a, st = _sums_api(tmp_path)
-    r = a.rsum_listen(1, 'thousand')
-    assert not r.get("error"), r
-    assert r["rsum"]["start"].startswith('начало (1 млн, 100') and r["rsum"]["end"].startswith('конец (1 тенге')
-    assert [row["name"] for row in r["rows"]][:3] == ['1', '2', '3']
-    ctx = os.path.dirname(a._ls()["pick"]["ru"]["start"])
-    assert not ctx.startswith(st["out"])                                    # контекст — во временной папке
-    assert a.rsum_listen(2, 'hundred').get("error")                         # во 2-й логике сотен нет
 
 
 def test_transcribe_parallel_same_words_in_order():
@@ -485,153 +441,16 @@ def test_studio_reads_free_sums_table(tmp_path):
     assert a._tts_value_file('sum_ru', 'thousand_ru', '51').endswith(os.path.join('Значения', 'sum_ru', 'thousand_ru', '51.wav'))
 
 
-def test_open_studio_ready_project(tmp_path):
-    """«Открыть в Студии»: проект рядом с записью, таблица разбора, куски — в эталонах; чужой открытый проект
-    сохраняется как был и не портится; повторное нажатие ничего не дублирует."""
-    from harness import Api
-    a, st = _sums_api(tmp_path)
-    xl = _free_table(tmp_path / 'суммы.xlsx')
-    st["table"] = xl
-    # открыт другой проект (своя таблица без сумм) — он не должен пострадать
-    other = tmp_path / 'другой'
-    os.makedirs(other)
-    tt = a._tts()
-    tt["work_dir"], tt["excel_path"] = str(other), str(tmp_path / 'чужая.xlsx')
-    a._tts_save()
-    other_state = (other / 'tts_project.json').read_bytes()
-    r = a.rsum_open_studio()
-    assert not r.get("error"), r
-    root = os.path.join(str(tmp_path), 'запись_Студия')
-    assert os.path.normpath(r["rsum_open"]["dir"]) == root
-    assert (other / 'tts_project.json').read_bytes() == other_state
-    assert a._tts()["excel_path"] == xl and 'sum_ru' in a._tts()["var_sheets"]
-    assert r["rsum_open"]["copied"] > 0
-    assert os.path.exists(os.path.join(root, 'Значения', 'sum_ru', 'million_ru', '1.wav'))
-    # строки сумм, у которых есть все куски, — на ленте готовыми дублями с границами ярусов
-    tt = a._tts()
-    # в «записи» тысячи 1–3, в таблице 51–53: целиком ни одна строка не собралась — ждут кусков, лента пустая
-    assert r["rsum_open"]["rows"] == 0 and r["rsum_open"]["partial"] > 0 and not tt["takes"]
-    assert r["rsum_open"]["lack"]
-    vals = os.path.join(root, 'Значения', 'sum_ru')
-    src = os.path.join(vals, 'million_ru', '1.wav')
-    for cat, names in (('thousand_ru', (51, 52, 53)), ('tenge_ru', (20, 21, 22, 51)), ('hundred_thousand_ru', (100,))):
-        os.makedirs(os.path.join(vals, cat), exist_ok=True)
-        for n in names:
-            shutil.copy2(src, os.path.join(vals, cat, f'{n}.wav'))
-    rr = a.tts_rail_sums()
-    takes = [t for t in tt["takes"] if t.get("unit") is not None]
-    assert rr["rows"] == len(takes) == 14 and rr["partial"] == 0
-    units = [tt["units"][t["unit"]] for t in takes]
-    assert all(str(u["cat"]).startswith('sum_l') for u in units)
-    for t, u in zip(takes, units):
-        assert os.path.exists(os.path.join(root, t["file"])) and len(t["tier_clips"]) == len(u["tiers"])
-        if u.get("logic") == 2:                            # логика 2 не перезаписывает миллионы и тенге
-            assert all(u["tiers"][int(k)]["tier"] == 'hundred_thousand' for k in t["tier_write"])
-    marks = a.tts_tier_marks(tt["takes"].index(takes[0]))
-    assert marks.get("tiers") and not marks.get("error"), marks
-    before = {p: os.path.getmtime(p) for p in glob.glob(os.path.join(root, 'Значения', '**', '*.wav'), recursive=True)}
-    r2 = a.rsum_open_studio()                          # ещё раз — тот же проект, ничего не копируется и не дублируется
-    assert os.path.normpath(r2["rsum_open"]["dir"]) == root and r2["rsum_open"]["copied"] == 0
-    assert r2["rsum_open"]["rows"] == 0 and len(a._tts()["takes"]) == len(tt["takes"])
-    assert {p: os.path.getmtime(p) for p in before} == before
 
 
-def test_listen_sums_from_ready_folder(tmp_path):
-    """«Прослушка сумм» по готовой папке: и папка разбора, и «Значения» проекта Студии; переключение логики и класса;
-    обычная сборка переменной после этого — без режима сумм."""
-    import shutil
-    import harness
-    from core.raw_sums import rs_find_sum_dirs
-    a, st = _sums_api(tmp_path)
-    # проект Студии: Значения/sum_ru/<класс>_ru/<число>.wav (+ казахский лист — его не берём)
-    vals = tmp_path / 'проект' / 'Значения'
-    for cat, d in (('million_ru', '1 - 100 млн'), ('hundred_ru', '100 - 900'), ('thousand_ru', '1 - 99 тыс'),
-                   ('tenge_ru', '1 - 100 тенге'), ('million_kz', '1 - 100 млн')):
-        shutil.copytree(os.path.join(st["out"], d), vals / 'sum_ru' / cat if cat.endswith('_ru') else vals / 'sum_kz' / cat)
-    dirs = rs_find_sum_dirs(str(tmp_path / 'проект'))
-    assert set(dirs) == {'million', 'hundred', 'thousand', 'tenge'} and all('_kz' not in d for d in dirs.values())
-    assert set(rs_find_sum_dirs(st["out"])) == {'million', 'hundred', 'thousand', 'tenge'}
-    harness.DIALOG.append([str(tmp_path / 'проект')])
-    r = a.listen_sums_pick()
-    assert r["cats"] == {'million': 3, 'hundred': 3, 'thousand': 3, 'tenge': 3}
-    r = a.listen_sums_open(1, 'tenge')
-    assert not r.get("error"), r
-    assert r["sums"]["cat"] == 'tenge' and [x["name"] for x in r["rows"]] == ['1', '2', '3']
-    assert r["sums"]["start"].startswith('начало (1 млн, 100, 1 тыс')
-    assert a.listen_state()["sums"]["logic"] == 1
-    r2 = a.listen_sums_open(2, 'hundred')                  # во 2-й логике сотен нет — первый класс, где есть куски
-    assert r2["sums"]["cat"] == 'million' and r2["sums"]["logic"] == 2
-    harness.DIALOG.append([str(tmp_path)])
-    a.listen_pick_folder()                                 # обычная папка — режим сумм снимается
-    assert a.listen_state()["sums"] is None
 
 
-def test_ready_pieces_open_studio_without_model(tmp_path):
-    """Запись уже разобрана (куски рассортированы): выбор записи и таблицы находит прежнюю папку кусков,
-    «Открыть в Студии» берёт их без модели и ставит строки сумм на ленту; папка кусков не меняется."""
-    import harness
-    a, st = _sums_api(tmp_path)
-    out = st["out"]
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    for row in [['Начало', 'миллионы', 'сотни', 'тысячи', None, 'тенге'],
-                ['Сумма к оплате', 'один миллион', 'сто', 'одна', 'тысяча', 'одна тенге'],
-                ['Сумма к оплате', 'два миллиона', 'двести', 'две', 'тысячи', 'два тенге'],
-                ['Сумма к оплате', 'три миллиона', 'триста', 'три', 'тысячи', 'три тенге']]:
-        ws.append(row)
-    xl = str(tmp_path / 'таблица.xlsx')
-    wb.save(xl)
-    snap = {os.path.relpath(p, out): os.path.getmtime(p) for p in glob.glob(os.path.join(out, '**', '*'), recursive=True)}
-    a2 = harness.Api()                                  # новый запуск программы: окно ничего не помнит
-    harness.DIALOG.append([st["audio"]])
-    s = a2.rsum_pick_audio()
-    assert os.path.normpath(s["out"]) == os.path.normpath(out) and s["ready"] > 0
-    s = a2.rsum_load_table(xl)
-    assert os.path.normpath(s["out"]) == os.path.normpath(out) and s["ready"] > 0
-    r = a2.rsum_open_studio()
-    assert not r.get("error"), r
-    assert r["rsum_open"]["rows"] == 3 and len(a2._tts()["takes"]) == 3
-    assert not a2._rsum()["run"] and getattr(a2, '_rsum_model_obj', None) is None
-    for rel, t in snap.items():                         # куски на месте и не тронуты
-        assert os.path.getmtime(os.path.join(out, rel)) == t
-    # начало и конец фразы (Фразы_Переменные) — «Сборка» ставит их вокруг кусков
-    ctx = tmp_path / 'Фразы_Переменные'
-    os.makedirs(ctx)
-    for n in ('начало', 'конец'):
-        shutil.copy2(st["audio"], ctx / f'{n}.wav')
-    harness.DIALOG.append([str(ctx / 'начало.wav')])
-    harness.DIALOG.append([str(ctx / 'конец.wav')])
-    a2.tts_var_ctx_pick('start', 'sum_ru')
-    info = a2.tts_var_ctx_pick('end', 'sum_ru')["info"]
-    assert info["start"] == 'начало.wav' and info["end"] == 'конец.wav'
-    m = a2.tts_tier_marks(0)
-    assert m.get("tiers") and not m.get("error"), m
 
 
-def test_open_studio_asks_folder_when_no_pieces(tmp_path):
-    import harness
-    a, st = _sums_api(tmp_path)
-    out = st["out"]
-    xl = _free_table(tmp_path / 'суммы.xlsx')
-    other = tmp_path / 'новая' / 'запись.wav'
-    os.makedirs(other.parent)
-    shutil.copy2(st["audio"], other)
-    a2 = harness.Api()
-    harness.DIALOG.append([str(other)])
-    a2.rsum_pick_audio()
-    a2.rsum_load_table(xl)
-    assert a2.rsum_open_studio().get("need_out")
-    harness.DIALOG.append([str(tmp_path / 'новая')])
-    assert a2.rsum_pick_out().get("error")              # там кусков нет
-    harness.DIALOG.append([out])
-    assert a2.rsum_pick_out()["ready"] > 0
-    r = a2.rsum_open_studio()
-    assert not r.get("error") and r["rsum_open"]["copied"] > 0
 
 
 def test_zero_tenge_last(tmp_path):
-    """«ноль тенге» и слово «тенге» — отдельные переменные в конце: первая строка суммы — «один миллион сто одна
-    тысяча одна тенге»; в «Прослушке сумм» начало/конец — из «одна тенге», «0» и «тенге» — последними строками."""
+    """Студия: «ноль тенге» — в конце, первая строка суммы — «один миллион сто одна тысяча одна тенге»."""
     import harness
     from core.tts_flow import parse_tts_workbook
     wb = openpyxl.Workbook()
@@ -646,16 +465,4 @@ def test_zero_tenge_last(tmp_path):
     sh = parse_tts_workbook(xl)["var_sheets"]["sum_ru"]
     rows = a._tts_sum_rows(sh, 1)
     assert rows[0] == 1_101_001 and rows[-1] % 1000 == 0
-    # прослушка: папка тенге с 0, 1, 2 и «тенге»
-    d = tmp_path / 'куски'
-    for cat, names in (('1 - 100 млн', ('1', '2')), ('100 - 900', ('100',)), ('1 - 99 тыс', ('1',)),
-                       ('1 - 100 тенге', ('0', '1', '2', 'тенге'))):
-        os.makedirs(d / cat)
-        for n in names:
-            write_wav16(str(d / cat / f'{n}.wav'), tone_track([(0.1, 0.4)]))
-    harness.DIALOG.append([str(d)])
-    a.listen_sums_pick()
-    r = a.listen_sums_open(1, 'million')
-    assert r["sums"]["end"].endswith('1 тенге)') and '0 тенге' not in r["sums"]["end"], r["sums"]
-    r = a.listen_sums_open(1, 'tenge')
-    assert [x["name"] for x in r["rows"]][:2] == ['1', '2'] and [x["name"] for x in r["rows"]][-2:] == ['0', 'тенге']
+

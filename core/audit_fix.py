@@ -270,45 +270,6 @@ class AuditFixMixin:
             st["index"] = len(st["takes"]) - added
         return added
 
-    def tts_rail_sums(self, sheet=None, jump=True):
-        """Строки сумм (логика 1 и 2), у которых все ярусы уже есть в «Значения», — на ленту дублями
-        (без диалога): «Сборка» покажет их с началом и концом фразы, края правятся, Enter сохраняет.
-        Строки, у которых дубль уже есть, не трогаются."""
-        st = self._tts()
-        if not st.get("work_dir") or not os.path.isdir(st["work_dir"]):
-            return {"error": "Сначала откройте проект Студии.", "rows": 0}
-        self._tts_ensure_value_units()
-        have = {t["unit"] for t in st["takes"] if t.get("unit") is not None and not t.get("rejected")}
-        plans, partial, lack = [], 0, {}
-        for u in self._tts_row_units(sheet):
-            if not str(u.get("cat", '')).startswith('sum_l') or u["id"] in have:
-                continue
-            if not any(self._tts_tier_own(u, x) for x in u["tiers"]):
-                continue                            # строка логики 2 без «сотен тысяч» — ей нечего давать
-            paths = [self._tts_tier_path(u, x) for x in u["tiers"]]
-            miss = [x for x, p in zip(u["tiers"], paths) if not os.path.exists(p)]
-            if paths and not miss:
-                plans.append((u, False, paths))
-            elif len(miss) < len(paths):
-                partial += 1                        # части кусков нет — строка встанет, когда они появятся
-                for x in miss:
-                    lack.setdefault(x["label"], set()).add(str(x["value"]))
-        rk = lambda u: int(str(u.get("row", '')).rsplit(':', 1)[-1]) if str(u.get("row", '')).rsplit(':', 1)[-1].isdigit() else u["id"]
-        plans.sort(key=lambda p: (p[0].get("logic") or 0, rk(p[0])))     # порядок строк таблицы (номер строки, не id)
-        first = {}                                  # эталон перезаписывает только первая строка, где он встречается
-        for u, _b, paths in plans:
-            for k, p in enumerate(paths):
-                if self._tts_tier_own(u, u["tiers"][k]):
-                    first.setdefault(p, (u["id"], k))
-        own = lambda u, k: first.get(self._tts_tier_path(u, u["tiers"][k])) == (u["id"], k)
-        failed = []
-        added = self._tts_rail_glue(plans, failed, own=own, jump=jump) if plans else 0
-        if added:
-            self.__dict__.pop('_tts_claims_cache', None)
-            self._tts_save()
-        return {"rows": added, "partial": partial, "failed": failed[:10],
-                "lack": {k: len(v) for k, v in lack.items()}}
-
     def tts_import_vars(self):
         """Папка с готовыми (нарезанными) значениями переменных — файл на значение, имя = значение;
         внутри могут лежать подпапки ru и kz. Копии — на свои места в «Значения», а строки таблицы,

@@ -265,11 +265,12 @@ let isProcessing = false;
             'stage2-workspace':   'block',
             'stage3-constructor': 'block',
             'stage4-tts':         'flex',
-            'stage5-listen':      'flex'
+            'stage5-listen':      'flex',
+            'stage6-sumbuild':    'flex'
         };
 
         // Рабочие экраны: «Вернуться к работе» в меню ведёт на последний из них.
-        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи', 'stage5-listen': 'Прослушка' };
+        const WORK_STAGES = { 'stage2-workspace': 'Рабочий экран', 'stage3-constructor': 'Конструктор', 'stage4-tts': 'Студия записи', 'stage5-listen': 'Прослушка', 'stage6-sumbuild': 'Сборка сумм' };
         let lastWork = null;
         function showStage(activeId) {
             Object.keys(STAGE_DISPLAY).forEach(id => {
@@ -279,7 +280,7 @@ let isProcessing = false;
             if (WORK_STAGES[activeId]) lastWork = { stage: activeId, area: embedAreaId, btn: embedBtnId };
             // цвет окон — по режиму: студия синяя, переменные янтарные
             if (activeId === 'stage4-tts') document.body.dataset.mode = 'new';
-            else if (activeId === 'stage3-constructor' || activeId === 'stage5-listen') document.body.dataset.mode = 'vars';
+            else if (activeId === 'stage3-constructor' || activeId === 'stage5-listen' || activeId === 'stage6-sumbuild') document.body.dataset.mode = 'vars';
         }
         // Есть ли куда вернуться: пустой рабочий экран (ничего не загружено) — не считается.
         function canResumeWork() {
@@ -876,10 +877,10 @@ let isProcessing = false;
                 { title: 'Прослушка', icon: 'headphones', run: () => listenStart(),
                   desc: 'Записи переменных по таблице — послушать в фразе, подрезать, при нужде синтезировать' },
 
-                { title: 'Прослушка сумм', icon: 'headphones', run: () => listenSumsStart(),
-                  desc: 'Готовая папка с кусками сумм (после разбора или Значения Студии): каждое значение в сумме, логика 1 / 2, правка' },
                 { title: 'Разбор записи сумм', icon: 'scissors', run: () => openRsum(),
                   desc: 'Один длинный дубль, прочитанный по таблице, → куски по ярусам: распознавание и выравнивание по тексту' },
+                { title: 'Сборка сумм', icon: 'tenge', run: () => sbStart(),
+                  desc: 'Куски после разбора: суммы целиком с начальной фразой, запасные варианты, стыки, готовые файлы' },
             ],
         };
         const RADIAL_CAT_KEY = 'gvox_radial_cat';
@@ -4982,6 +4983,7 @@ let isProcessing = false;
             // TTS-проект: свои клавиши (Space / Enter / стрелки / Del / F).
             if (isShown('stage4-tts')) { ttsHandleKey(e); return; }
             if (isShown('stage5-listen')) { listenKey(e); return; }
+            if (isShown('stage6-sumbuild')) { sbKey(e); return; }
 
             // Конструктор переменных — свой мини-режим со своим плеером:
             // Space играет/останавливает собранную сумму, остальные горячие
@@ -5380,7 +5382,7 @@ let isProcessing = false;
 
         // ---------- Разбор сырой записи сумм (core/raw_sums.py) ----------
         let rsumSt = null, rsumTimer = null, rsumBusy = false;
-        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание и нарезка', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', done: 'Готово' };
+        const RSUM_STAGE = { start: 'Запуск', model: 'Загрузка модели', prep: 'Подготовка', asr: 'Распознавание и нарезка', align: 'Выравнивание', cut: 'Нарезка', check: 'Проверка', phr: 'Фразы для переменных', tune: 'Авто-настройка и готовые файлы', done: 'Готово' };
         let rsumWasNeed = false;
         async function openRsum() {
             document.getElementById('rsumOverlay').style.display = 'flex';
@@ -5400,21 +5402,35 @@ let isProcessing = false;
         async function rsumStart() {
             let s = rsumSt, reuse = true;
             if (!s || s.run) return;
+            let night = document.getElementById('rsumNight').checked;
             if (s.ready && !s.summary) {
                 // куски этой записи уже нарезаны (и, может, рассортированы) — модель не нужна
-                let open = await showBeautifulConfirm(`<b>Куски этой записи уже есть: ${s.ready}.</b><br><br>`
-                    + `<span class="tts-dim">${escapeHtml(s.out || '')}</span><br><br>Открыть их в Студии (модель не нужна, папка не меняется) `
-                    + 'или разобрать запись заново в новую папку?', 'Открыть в Студии', 'Разобрать заново');
-                if (open) { rsumOpenStudio(); return; }
+                if (s.phr_audio && !s.phr_ready) {
+                    let how = await showBeautifulChoice(`<b>Куски этой записи уже есть: ${s.ready}.</b><br><br>`
+                        + 'Нарезать только начальные фразы из записи фраз (суммы не трогаются), открыть «Сборку сумм» или разобрать запись заново?',
+                        'Нарезать фразы', 'Сборка сумм', 'S', 'Разобрать заново');
+                    if (how === 'alt') { rsumOpenBuild(); return; }
+                    if (how === 'ok') {
+                        rsumEvent({ ...s, run: true, stage: 'start', pct: 0, msg: '', summary: null, elapsed: 0, eta: null, need_model: false });
+                        let r = await pywebview.api.rsum_start(true, rsumMode, night, true);
+                        if (r && r.error) { rsumEvent(await pywebview.api.rsum_state()); showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+                        rsumEvent(r);
+                        return;
+                    }
+                } else {
+                    let open = await showBeautifulConfirm(`<b>Куски этой записи уже есть: ${s.ready}.</b><br><br>`
+                        + `<span class="tts-dim">${escapeHtml(s.out || '')}</span><br><br>Открыть «Сборку сумм» (модель не нужна, папка не меняется) `
+                        + 'или разобрать запись заново в новую папку?', 'Сборка сумм', 'Разобрать заново');
+                    if (open) { rsumOpenBuild(); return; }
+                }
             }
             if (s.partial) {
                 if (!(await showBeautifulConfirm('<b>Разбор этой записи был прерван.</b><br><br>Продолжить с места остановки '
                     + '(готовые пачки распознавания не считаются заново) или начать сначала?', 'Продолжить', 'Сначала'))) reuse = false;
             } else if (s.cached && !(await showBeautifulConfirm('<b>Эта запись уже распознавалась.</b><br><br>Взять прежнее распознавание '
                 + '(быстро — только выравнивание и нарезка) или распознать заново?', 'Взять прежнее', 'Заново'))) reuse = false;
-            let toStudio = document.getElementById('rsumToStudio').checked;
             rsumEvent({ ...s, run: true, stage: 'start', pct: 0, msg: '', summary: null, elapsed: 0, eta: null, need_model: false });
-            let r = await pywebview.api.rsum_start(reuse, rsumMode, toStudio);
+            let r = await pywebview.api.rsum_start(reuse, rsumMode, night);
             if (r && r.error) { rsumEvent(await pywebview.api.rsum_state()); showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
             rsumEvent(r);
         }
@@ -5426,70 +5442,17 @@ let isProcessing = false;
                 else if (m && !m.error) rsumStart();
             }
         }
-        const RSUM_CATS = { million: '1 - 100 млн', hundred_thousand: '100 - 900 тыс', hundred: '100 - 900', thousand: '1 - 99 тыс', tenge: '1 - 100 тенге' };
-        const RSUM_LOGICS = { 1: ['million', 'hundred', 'thousand', 'tenge'], 2: ['million', 'hundred_thousand', 'tenge'] };
-        let rsumMode = 'bg', rsumStudioInit = false;
+        let rsumMode = 'bg', rsumNightInit = false;
         try { rsumMode = localStorage.getItem('gvox_rsum_mode') === 'max' ? 'max' : 'bg'; } catch (e) {}
         function rsumSetMode(m) {
             rsumMode = m === 'max' ? 'max' : 'bg';
             try { localStorage.setItem('gvox_rsum_mode', rsumMode); } catch (e) {}
             document.querySelectorAll('#rsumMode button').forEach(b => b.classList.toggle('is-on', b.dataset.m === rsumMode));
         }
-        async function rsumStudioFill(n) {
-            // «сразу в проект Студии»: новые куски уже в Значения/… — Студия перечитывает, что записано
-            showToast(`В проект Студии: +${n}`, 2500);
-            try {
-                if (typeof tts !== 'undefined' && tts && tts.loaded && !(ttsRec.on || ttsRec.starting)) {     // во время записи экран не трогаем
-                    tts = await pywebview.api.tts_state();
-                    let scr = document.getElementById('stage4-tts');
-                    if (scr && scr.offsetParent) ttsRender();
-                }
-                let ov = document.getElementById('ttsVarsOverlay');
-                if (ov && ov.style.display === 'flex') { ttsVars = await pywebview.api.tts_vars_state(); ttsRenderVars(); }
-            } catch (e) {}
-        }
-        let rsumLogic = 1;
-        try { rsumLogic = +localStorage.getItem('gvox_rsum_logic') === 2 ? 2 : 1; } catch (e) {}
-        function rsumSetLogic(l) {
-            rsumLogic = l === 2 ? 2 : 1;
-            try { localStorage.setItem('gvox_rsum_logic', String(rsumLogic)); } catch (e) {}
-            if (rsumSt) rsumEvent(rsumSt);
-        }
-        function rsumSums(s) {
-            // «Суммы»: класс логики → «Прослушка» (значения класса в сумме между кусками остальных классов)
-            let box = document.getElementById('rsumSums'), cats = s.cats || {};
-            let any = Object.values(cats).some(n => n > 0);
-            box.style.display = any ? '' : 'none';
-            if (!any) return;
-            document.querySelectorAll('#rsumLogic button').forEach(b => b.classList.toggle('is-on', +b.dataset.l === rsumLogic));
-            let tiers = RSUM_LOGICS[rsumLogic];
-            document.getElementById('rsumCats').innerHTML = tiers.map((c, k) => {
-                let n = cats[c] || 0;
-                let ctx = tiers.filter(t => t !== c).map(t => RSUM_CATS[t]).join(', ');
-                return `<button class="custom-alert-btn rsum-cat" ${n ? '' : 'disabled'} onclick="rsumListen('${c}')" `
-                    + `title="Прослушка: каждое значение — в сумме между кусками «${ctx}»">${RSUM_CATS[c]} <span class="tts-dim">${n}</span></button>`
-                    + (k < tiers.length - 1 ? '<span class="rsum-plus">+</span>' : '');
-            }).join('') + `<div class="tts-dim rsum-sums__hint">Нажмите класс — «Прослушка» его значений в сумме, правка как обычно`
-                + (s.run ? ' · куски, нарезанные позже, появятся при следующем открытии' : '') + `</div>`;
-        }
-        async function rsumListen(cat) {
-            let r = await pywebview.api.rsum_listen(rsumLogic, cat);
-            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
-            closeRsum();
-            LS = r;
-            listenOpen();
-            let x = r.rsum || {};
-            showToast(`${x.cat}: ${r.rows.length} значений · логика ${x.logic} · ${x.start || ''}${x.start && x.end ? ' → … → ' : ''}${x.end || ''}`, 6000);
-        }
-        async function rsumToStudio() {
-            let r = await pywebview.api.rsum_to_studio();
-            if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
-            showBeautifulAlert(`<b>В проект Студии — лист «${escapeHtml(r.sheet)}»</b><br><br>Скопировано: <b>${r.copied}</b>`
-                + (r.exist ? `<br>Уже было в проекте (не тронуто): ${r.exist}` : '')
-                + (r.nowhere ? `<br>Нет такого значения в таблице проекта: ${r.nowhere}` : '')
-                + (r.rows ? `<br>На ленту — строк сумм: <b>${r.rows}</b>` : '')
-                + (r.partial ? `<br>Строк, где нет части кусков (встанут на ленту, когда появятся): ${r.partial}` : '')
-                + `<br><br><span class="tts-dim">${escapeHtml(r.dir)}</span>`);
+        async function rsumPickPhrases() {
+            let r = await pywebview.api.rsum_pick_phrases();
+            if (r && r.error) { if (r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+            rsumEvent(r);
         }
         async function rsumPickOut() {
             let r = await pywebview.api.rsum_pick_out();
@@ -5497,24 +5460,17 @@ let isProcessing = false;
             rsumEvent(r);
             return true;
         }
-        async function rsumOpenStudio() {
-            let r = await pywebview.api.rsum_open_studio();
-            if (r && r.need_out) {
+        async function rsumOpenBuild() {
+            // «Сборка сумм» — свой экран (sumbuild.js); куски и таблица — те, что в разборе
+            if (rsumSt && !rsumSt.ready && !rsumSt.summary) {
                 if (!(await showBeautifulConfirm('<b>Готовых кусков этой записи не нашлось.</b><br><br>Указать папку с кусками '
                     + '(«1 - 100 млн», «100 - 900», «1 - 99 тыс»… — как после разбора)?', 'Указать папку', 'Отмена'))) return;
                 if (!(await rsumPickOut())) return;
-                r = await pywebview.api.rsum_open_studio();
             }
+            let r = await pywebview.api.sb_open_rsum();
             if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return; }
             closeRsum();
-            openTtsScreen(r);
-            let o = r.rsum_open || {};
-            // начало и конец фразы (Фразы_Переменные) — спросить один раз на лист, потом сразу «Сборка» выбранного дубля
-            if (o.sheet) { try { await ttsVarCtxAsk(o.sheet); } catch (e) {} }
-            if (o.takes) setTimeout(() => { try { ttsShowAssembly(); } catch (e) {} }, 400);
-            showToast((o.rows ? `На ленте строк сумм: +${o.rows} — «Сборка»: края, Enter — сохранить, ↓ — следующая` : `Студия: ${o.dir || ''}`)
-                + (o.copied || o.updated ? ` · эталонов из разбора +${o.copied + o.updated}` : '')
-                + (o.partial ? ` · ждут кусков: ${o.partial} строк (нет: ${Object.entries(o.lack || {}).map(([k, n]) => k + ' ' + n).join(', ')})` : ''), 9000);
+            sbOpen(r);
         }
         async function rsumStop() {
             await pywebview.api.rsum_stop();
@@ -5527,8 +5483,8 @@ let isProcessing = false;
         }
         function rsumSteps(s) {
             // шаги разбора: ✓ готово, ● идёт, ○ впереди — и что именно сейчас в работе
-            let i = s.info || {}, order = ['model', 'asr', 'cut', 'done'];
-            let at = s.run ? Math.max(0, order.indexOf(s.stage === 'start' ? 'model' : s.stage)) : 4;
+            let i = s.info || {}, order = ['model', 'asr', 'cut', 'phr', 'tune', 'done'];
+            let at = s.run ? Math.max(0, order.indexOf(s.stage === 'start' ? 'model' : s.stage)) : order.length;
             let a = i.asr, c = i.cut, l = i.live;
             let st = k => k === 'cut' && s.run && s.stage === 'asr' && l ? 'run'      // нарезка идёт вместе с распознаванием
                 : order.indexOf(k) < at ? 'done' : order.indexOf(k) === at ? 'run' : 'wait';
@@ -5545,9 +5501,8 @@ let isProcessing = false;
                     + (st('asr') === 'done' && i.asr_s ? ` · за ${rsumDur(i.asr_s)}` : '');
                 if (st('asr') === 'run' && a.text) asrSub = `Сейчас: «${escapeHtml(a.text.length > 140 ? '…' + a.text.slice(-140) : a.text)}»`;
             }
-            let studio = i.studio ? ` · <b>в проект Студии +${i.studio}</b>` : (i.studio_err ? ` · <span class="clone-bad">${escapeHtml(i.studio_err)}</span>` : '');
             let live = l ? `фраз найдено ${l.found} из ${l.phrases} · нарезано ${l.done} · кусков ${l.pieces}`
-                + (l.spares ? ` · запасных ${l.spares}` : '') + (l.bad ? ` · <span class="clone-bad">проверить ${l.bad}</span>` : '') + studio : studio;
+                + (l.spares ? ` · запасных ${l.spares}` : '') + (l.bad ? ` · <span class="clone-bad">проверить ${l.bad}</span>` : '') : '';
             let f = i.fa, fa = s.run && s.stage === 'cut' && f && f.n < f.of
                 ? `Уточняю границы там, где распознанное не совпало с таблицей: ${f.n} из ${f.of}<br>` : '';
             let cutSub = fa + (c && s.run ? `${s.stage === 'cut' ? 'Режу' : 'Последняя'}: блок ${c.block}, стр ${c.row} — ${escapeHtml(c.text)}` + (s.stage === 'cut' ? ` (${c.n} из ${c.of})` : '') : '');
@@ -5555,6 +5510,9 @@ let isProcessing = false;
                 + row('asr', 'Распознавание', asr, asrSub)
                 + row('cut', s.stage === 'asr' ? 'Нарезка по ходу' : 'Нарезка', live, cutSub
                     + (s.run && l && l.pieces ? `${cutSub ? '<br>' : ''}Готовые куски уже в папке — их можно слушать` : ''))
+                + (s.phr_audio || i.phr ? row('phr', 'Начальные фразы', i.phr ? `нарезано ${i.phr.found} из ${i.phr.of}` : 'из записи фраз') : '')
+                + (i.tune || (s.run && s.stage === 'tune') || document.getElementById('rsumNight').checked
+                    ? row('tune', 'Авто-настройка и готовые файлы', i.tune ? `кусков ${i.tune.pieces}, фраз ${i.tune.ctx} → «_готово»` : (s.stage === 'tune' ? `${s.pct || 0}%` : '')) : '')
                 + row('done', 'Итог и отчёт', st('done') === 'done' ? 'разбор.xlsx, _проверка.xlsx в папках ярусов' : '');
         }
         function rsumDur(sec) {
@@ -5584,7 +5542,8 @@ let isProcessing = false;
                 : '';
             let btn = $('btnRsumStart');
             btn.disabled = !(s.audio && t) || s.run;
-            document.getElementById('btnRsumStudio').disabled = !t;
+            document.getElementById('btnRsumBuild').disabled = !(s.ready || s.summary || s.out) || s.run;
+            $('rsumPhr').innerText = s.phr_audio ? s.phr_audio + (s.phr_ready ? ' · фразы нарезаны' : '') : 'Необязательно: запись начальных фраз («Сумма к оплате»…) — нарежутся под суммы';
             btn.innerHTML = s.run ? '<span class="bsynth-spin"></span> Идёт разбор…' : 'Разобрать';
             let show = s.run || s.summary || s.msg || s.ready;
             $('rsumRun').style.display = show ? '' : 'none';
@@ -5600,19 +5559,17 @@ let isProcessing = false;
             $('rsumBar').style.width = (busy ? 100 : s.run ? (s.pct || 0) : (s.summary ? 100 : 0)) + '%';
             $('rsumSteps').innerHTML = (s.run || s.summary) ? rsumSteps(s) : '';
             $('btnRsumStop').style.display = s.run ? '' : 'none';
-            rsumSums(s);
             rsumSetMode(rsumMode);
             document.querySelectorAll('#rsumMode button').forEach(b => b.disabled = !!s.run);
-            let cb = document.getElementById('rsumToStudio');
-            if (!rsumStudioInit) { rsumStudioInit = true; try { cb.checked = localStorage.getItem('gvox_rsum_studio') === '1'; } catch (e) {} }
-            cb.disabled = !!s.run || !s.studio_ok;
-            cb.parentElement.title = s.studio_ok ? cb.parentElement.title : 'Откройте в Студии проект с листом сумм RU — тогда куски можно копировать туда по ходу';
+            let cb = document.getElementById('rsumNight');
+            if (!rsumNightInit) { rsumNightInit = true; try { cb.checked = localStorage.getItem('gvox_rsum_night') !== '0'; } catch (e) {} }
+            cb.disabled = !!s.run;
             if (s.need_model && !rsumWasNeed) setTimeout(rsumNeedModel, 0);
             rsumWasNeed = !!s.need_model;
             $('rsumMsg').innerText = s.msg || '';
             let m = s.summary;
             $('rsumSummary').innerHTML = !m && s.ready && !s.run
-                ? `<div>Готовые куски: <b>${s.ready}</b> — «Открыть в Студии» возьмёт их (модель не нужна) · `
+                ? `<div>Готовые куски: <b>${s.ready}</b> — «Сборка сумм» откроет их (модель не нужна) · `
                     + `<a href="#" onclick="rsumPickOut(); return false;">другая папка…</a></div><div class="tts-dim">${escapeHtml(s.out || '')}</div>`
                 : m ? `<div>Кусков: <b>${m.pieces}</b> · фраз: ${m.phrases} · запасных: ${m.spares}`
                 + (m.repeats ? ` · повторов не сохранено: ${m.repeats}` : '')
