@@ -138,7 +138,7 @@
         <div class="row"><span>Журнал, задачи и файлы — одним архивом</span><span class="btns2"><button class="btn sm" id="bkSave">Сохранить копию</button><button class="btn sm" id="bkRestore">Восстановить</button></span></div>
       </div>
       <div class="note" id="bkNote">Копия переносит данные на другой компьютер. Перед восстановлением текущие данные сохраняются отдельным архивом.</div>
-      <div class="h">Система</div>
+      <div class="h" id="hSys">Система</div>
       <div class="card">
         <div class="row"><span>Запускать при входе в Windows</span><button class="sw" id="swAuto" role="switch"></button></div>
       </div>
@@ -185,6 +185,18 @@
       <div class="dlg-hint" id="dHint"></div>
       <div class="dlg-btns"><button class="btn sm danger" id="dDel">Удалить</button><span class="grow"></span>
         <button class="btn sm" id="dCancel">Отмена</button><button class="btn sm primary" id="dSave">Сохранить</button></div>
+    </div>
+    <div class="dlg tall" id="dlgAc" hidden>
+      <div class="dlg-t">Автокликер</div>
+      <label class="frow"><span>Интервал, мс</span><input class="ac-n" type="number" id="acInt" min="10" max="3600000" step="10"></label>
+      <div class="frow"><span>Кнопка</span><div class="seg" id="acBtn"><button data-k="left">Левая</button><button data-k="right">Правая</button><button data-k="middle">Средняя</button></div></div>
+      <div class="frow"><span>Двойной клик</span><button class="sw" id="acDbl" role="switch"></button></div>
+      <div class="frow"><span>Где кликать</span><div class="seg" id="acMode"><button data-k="cursor">Под курсором</button><button data-k="point">В точке</button></div></div>
+      <div class="frow" id="acPtRow"><span id="acPt">—</span><button class="btn sm" id="acPick">Указать точку (3 с)</button></div>
+      <label class="frow"><span>Кликов (0 — без конца)</span><input class="ac-n" type="number" id="acLim" min="0" max="1000000"></label>
+      <label class="frow"><span>Пауза перед стартом, с</span><input class="ac-n" type="number" id="acDelay" min="0" max="60"></label>
+      <div class="dlg-hint" id="acHint">F6 — старт / стоп, Esc — стоп. Работает и при свёрнутом окне.</div>
+      <div class="dlg-btns"><b class="num" id="acCnt"></b><span class="grow"></span><button class="btn sm" id="acClose">Закрыть</button><button class="btn sm primary" id="acGo">Старт</button></div>
     </div>
     <div class="dlg tall" id="dlgTask" hidden>
       <textarea class="tdt-in" id="tdText" rows="2" maxlength="200" aria-label="Задача"></textarea>
@@ -261,5 +273,5 @@
     </div>
   </div>
 </div>
-<script src="shift.js"></script><script src="common.js"></script><script src="team.js"></script><script src="update.js"></script><script src="main.js"></script>
+<script src="shift.js"></script><script src="common.js"></script><script src="team.js"></script><script src="update.js"></script><script src="main.js"></script><script src="ac.js"></script>
 </body></html>

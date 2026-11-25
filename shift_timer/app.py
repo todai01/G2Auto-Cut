@@ -17,6 +17,7 @@ import threading
 import time
 from datetime import datetime
 
+import autoclick
 import backup
 import chime
 import report
@@ -31,7 +32,7 @@ OLD_APP_NAME = 'ShiftTimer'        # прежнее название: оттуд
 TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60, "mini_tasks": False,
-            "mini_visible": False, "mini_on_top": True, "mini_pos": None, "team_dir": "", "team_login": "", "palette": "blue"}
+            "mini_visible": False, "mini_on_top": True, "mini_pos": None, "team_dir": "", "team_login": "", "palette": "blue", "ac": autoclick.DEFAULT_CFG}
 PALETTES = ("blue", "pink", "violet", "green", "orange", "teal", "graphite")     # цветовые схемы (ui/style.css, data-palette)
 MAIN_SIZE = (940, 960)            # не «телефонная» узкая колонка: большое окно (на маленьком экране уменьшается — main_size)
 MAIN_MIN = (480, 600)
@@ -124,6 +125,7 @@ def clean(raw):
         s['theme'] = raw['theme']
     if raw.get('palette') in PALETTES:
         s['palette'] = raw['palette']
+    s['ac'] = autoclick.clean_cfg(raw.get('ac'))
     for k in ('team_dir', 'team_login'):
         if isinstance(raw.get(k), str):
             s[k] = raw[k].strip()[:260]
@@ -206,6 +208,31 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
     # ---- настройки ----
     def get_settings(self):
         return self._s
+
+    # ---- автокликер (скрытая функция: тройной щелчок по «Система» в настройках) ----
+    def _ac(self):
+        if getattr(self, "_clicker", None) is None:
+            self._clicker = autoclick.Clicker(locked=timetrack.is_locked)
+            self._clicker.start_hotkeys()
+        return self._clicker
+
+    def ac_get(self):
+        c = self._ac()
+        return {"cfg": self._s["ac"], "state": c.state(), "supported": c.supported()}
+
+    def ac_state(self):
+        return self._ac().state()
+
+    def ac_pick(self):
+        return self._ac().pick()
+
+    def ac_start(self, cfg):
+        cfg = autoclick.clean_cfg(cfg)
+        self.save_settings({"ac": cfg})
+        return self._ac().start(cfg)
+
+    def ac_stop(self):
+        return self._ac().stop()
 
     def save_settings(self, patch):
         new = clean({**self._s, **(patch if isinstance(patch, dict) else {})})
