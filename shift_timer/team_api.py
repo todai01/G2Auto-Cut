@@ -215,7 +215,7 @@ class TeamMixin:
                 days[k] = {"arrival": d.get("arrival") if timetrack.to_sec(d.get("arrival")) is not None else None,
                            "leave": d.get("leave") if timetrack.to_sec(d.get("leave")) is not None else None,
                            "worked": max(0.0, float(d.get("worked", 0))), "norm": int(d.get("norm", tr.norm_s)),
-                           "events": [e for e in (d.get("events") or []) if isinstance(e, dict) and e.get("lock") and e.get("kind") in ("lock", "sleep", "lunch")],
+                           "events": [e for e in (d.get("events") or []) if isinstance(e, dict) and e.get("lock") and e.get("kind") in ("lock", "sleep", "lunch", "studio")],
                            "notified": [], "no_break": False}
             except (ValueError, TypeError, AttributeError):
                 continue

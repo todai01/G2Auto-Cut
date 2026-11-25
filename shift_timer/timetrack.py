@@ -195,7 +195,7 @@ class Tracker:
                     lock, unlock = parse_dt(e.get("lock")), parse_dt(e.get("unlock"))
                     if lock is None:
                         continue
-                    kind = e.get("kind") if e.get("kind") in ("lock", "sleep", "lunch") else "lock"
+                    kind = e.get("kind") if e.get("kind") in ("lock", "sleep", "lunch", "studio") else "lock"
                     if unlock is None and kind == "lunch" and lock.date() == datetime.fromtimestamp(self._clock()).date():
                         evs.append({"lock": iso_dt(lock), "unlock": None, "kind": "lunch"})      # обед идёт — таймер переживает перезапуск
                         continue
@@ -387,20 +387,31 @@ class Tracker:
                     total += max(0.0, (b - a).total_seconds())
         return total
 
+    @staticmethod
+    def _studio_s(d):
+        """Сколько времени в дне отмечено как «студия» (ушли на запись): это не перерыв."""
+        total = 0.0
+        for e in d["events"]:
+            if e["kind"] == "studio":
+                a, b = parse_dt(e["lock"]), parse_dt(e["unlock"])
+                if a and b:
+                    total += max(0.0, (b - a).total_seconds())
+        return total
+
     # ---------- данные для окон ----------
     def _break(self, d):
-        """Перерывы без обеда: от прихода до ухода минус отработанное и обед."""
+        """Перерывы без обеда и студии: от прихода до ухода минус отработанное, обед и студия."""
         a, l = to_sec(d.get("arrival")), to_sec(d.get("leave"))
         if a is None or l is None or l < a:
             return 0
-        return max(0, (l - a) - d["worked"] - self._lunch_s(d, datetime.fromtimestamp(self._clock())))
+        return max(0, (l - a) - d["worked"] - self._lunch_s(d, datetime.fromtimestamp(self._clock())) - self._studio_s(d))
 
     def snapshot(self):
         with self._lock:
             now = datetime.fromtimestamp(self._clock())
             d = self.days.get(now.date().isoformat()) or _new_day(self.norm_s)
             return {"date": now.date().isoformat(), "arrival": d["arrival"], "leave": d["leave"], "worked_s": d["worked"],
-                    "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": sum(1 for e in d["events"] if e["kind"] != "lunch"),
+                    "norm_s": d["norm"], "break_s": self._break(d), "locked": self.locked, "events_n": sum(1 for e in d["events"] if e["kind"] not in ("lunch", "studio")),
                     "notice": {k: self.notice[k] for k in ("id", "kind", "text")} if self.notice and self._mono() < self.notice["until"] else None,
                     "lunch": self._lunch_info(d, now)}
 
@@ -546,7 +557,7 @@ class Tracker:
             return {"date": iso, "weekday": WEEK[dd.weekday()], "weekend": dd.weekday() >= 5, "mark": self.marks.get(iso, ""), "record": d is not None,
                     "arrival": d["arrival"] if d else None, "leave": d["leave"] if d else None, "worked_s": w, "norm_s": full,
                     "delta_s": 0 if dd > now.date() or (today and w < full) else w - full, "break_s": self._break(d) if d else 0,
-                    "lunch_s": self._lunch_s(d, now) if d else 0, "today": today, "future": dd > now.date(),
+                    "lunch_s": self._lunch_s(d, now) if d else 0, "studio_s": self._studio_s(d) if d else 0, "today": today, "future": dd > now.date(),
                     "events": self._events(d, now) if d else []}
 
     # ---------- ручные правки ----------
@@ -605,10 +616,10 @@ class Tracker:
             return int(max(0, now_s - a - rest))
 
     def set_event_kind(self, iso, idx, kind):
-        """Исправить тип уже закончившегося события: блокировка / пауза → «обед» (забыли нажать «Обед») и обратно.
+        """Исправить тип уже закончившегося события: блокировка / пауза → «обед» (забыли нажать «Обед») или «студия» (ушли на запись) и обратно.
         На рабочее время это не влияет (блокировка и так не считается работой) — меняется, что видно в «Обед» и «Перерывы»."""
         with self._lock:
-            if kind not in ("lock", "sleep", "lunch"):
+            if kind not in ("lock", "sleep", "lunch", "studio"):
                 return {"error": "Неизвестный тип."}
             day = self.days.get(str(iso))
             if day is None or not isinstance(idx, int) or isinstance(idx, bool) or not 0 <= idx < len(day["events"]):
@@ -676,7 +687,7 @@ class Tracker:
         for k in ks:
             for e in snap[k]["events"]:
                 a, b = parse_dt(e["lock"]), parse_dt(e["unlock"])
-                ev.append([date.fromisoformat(k), {'sleep': 'пауза', 'lunch': 'обед'}.get(e["kind"], 'блокировка'), a, b,
+                ev.append([date.fromisoformat(k), {'sleep': 'пауза', 'lunch': 'обед', 'studio': 'студия'}.get(e["kind"], 'блокировка'), a, b,
                            (b - a).total_seconds() / 86400 if a and b else None])
         for c in ev[1]:
             c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='3B6CF6')

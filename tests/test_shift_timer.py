@@ -1197,6 +1197,25 @@ def _day_with_lock(tmp_path):
     return c, tr
 
 
+def test_mark_lock_as_studio_is_not_a_break(tmp_path):
+    c, tr = _day_with_lock(tmp_path)
+    before = tr.snapshot()
+    assert before["break_s"] >= 1790
+    worked = before["worked_s"]
+    assert tr.set_event_kind('2026-11-17', 0, 'studio') == {"ok": True}
+    after = tr.snapshot()
+    assert after["break_s"] < 10 and after["lunch"]["done_s"] == 0 and after["events_n"] == 0     # не перерыв и не обед
+    assert after["worked_s"] == worked
+    info = tr.day_info('2026-11-17')
+    assert abs(info["studio_s"] - 1800) <= 5 and info["break_s"] < 10 and info["lunch_s"] == 0
+    assert info["events"][0]["kind"] == "studio"
+    tr2 = timetrack.Tracker(tr.path, clock=lambda: c.wall) if hasattr(tr, "path") else None
+    if tr2:
+        assert tr2.day_info('2026-11-17')["events"][0]["kind"] == "studio"                      # переживает перезапуск
+    assert tr.set_event_kind('2026-11-17', 0, 'lock') == {"ok": True}
+    assert tr.snapshot()["break_s"] >= 1790 and tr.day_info('2026-11-17')["studio_s"] == 0
+
+
 def test_mark_lock_as_lunch_moves_it_from_breaks_to_lunch(tmp_path):
     c, tr = _day_with_lock(tmp_path)
     before = tr.snapshot()

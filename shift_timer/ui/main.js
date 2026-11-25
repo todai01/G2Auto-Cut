@@ -279,9 +279,9 @@ async function openDay(iso) {
     $('ddGrid').innerHTML = info.record
         ? c('Приход', hmOr(info.arrival)) + c('Уход', info.today ? 'идёт' : hmOr(info.leave)) + c('Отработано', `${Shift.hmSec(info.worked_s)} ч`) + c('Норма', `${Shift.hmSec(info.norm_s)} ч`)
           + c('Разница', info.future || (info.today && info.worked_s < info.norm_s) ? '—' : Shift.signed(info.delta_s), info.delta_s < 0 ? 'neg' : 'pos')
-          + c('Перерывы', Shift.words(info.break_s, false) || '0 мин') + c('Обед', Shift.words(info.lunch_s, false) || '—')
+          + c('Перерывы', Shift.words(info.break_s, false) || '0 мин') + c('Обед', Shift.words(info.lunch_s, false) || '—') + (info.studio_s ? c('Студия', Shift.words(info.studio_s, false)) : '')
         : `<div class="dd-none">${info.future ? 'День ещё не наступил.' : 'За этот день записей нет.'}${info.norm_s ? ` Норма — ${Shift.hmSec(info.norm_s)} ч.` : ''}</div>`;
-    const ev = info.events.map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'пауза' : e.kind === 'lunch' ? 'обед' : 'блок'}</span><b class="num">${e.lock.slice(11, 16)} → ${e.unlock ? e.unlock.slice(11, 16) : 'сейчас'}</b><span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span><span></span></div>`).join('');
+    const ev = evText({ date: iso, events: info.events });
     $('ddEvents').innerHTML = ev; $('ddEvents').style.display = $('ddEvH').style.display = ev ? '' : 'none';
     $('ddTasks').innerHTML = info.tasks.length ? info.tasks.map(t => `<div class="dd-t"><span class="dd-r ${t.role[0]}">${t.role.join(' · ')}</span><span class="dd-x">${escT(t.text)}${t.tags.length ? ` <em>${t.tags.map(escT).join(', ')}</em>` : ''}</span>`
         + `<b class="num">${t.done && t.role.includes('выполнена') ? 'ушло ' + Shift.dur(t.elapsed_s) : t.waiting_who ? 'жду ' + escT(t.waiting_who) : ''}</b></div>`).join('')
@@ -306,12 +306,30 @@ async function saveMark() {
 
 // ---------- диалоги ----------
 let editing = null;
+const EV_NAME = { sleep: 'пауза', lunch: 'обед', studio: 'студия' };
+function evBtns(e) {                                     // «обед» / «студия» на закончившемся событии; отмеченное — кнопка «не …» возвращает блокировку
+    if (!e.unlock) return '<span></span>';
+    const b = (k, text, title, on) => `<button class="ev-b${on ? ' on' : ''}" data-i="${e.i}" data-k="${k}" title="${title}">${text}</button>`;
+    if (e.kind === 'lunch') return b('lock', 'не обед', 'Вернуть: это не обед, а блокировка', true);
+    if (e.kind === 'studio') return b('lock', 'не студия', 'Вернуть: это не студия, а блокировка', true);
+    return `<span class="ev-bs">${b('lunch', 'обед', 'Это был обед: забыли нажать «Обед»')}${b('studio', 'студия', 'Ушли на запись в студию: это не перерыв')}</span>`;
+}
 function evText(row) {                                   // «12:10 → 12:55 · 45 мин» (дата — если разблокировали в другой день)
     const t = iso => iso ? (iso.slice(0, 10) === row.date ? iso.slice(11, 16) : iso.slice(8, 10) + '.' + iso.slice(5, 7) + ' ' + iso.slice(11, 16)) : 'сейчас';
-    return (row.events || []).map(e => `<div class="ev-r"><span>${e.kind === 'sleep' ? 'пауза' : e.kind === 'lunch' ? 'обед' : 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
-        + `<span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span>`
-        + (e.unlock ? `<button class="ev-b${e.kind === 'lunch' ? ' on' : ''}" data-i="${e.i}" data-k="${e.kind === 'lunch' ? 'lock' : 'lunch'}" title="${e.kind === 'lunch' ? 'Вернуть: это не обед, а блокировка' : 'Это был обед: забыли нажать «Обед»'}">${e.kind === 'lunch' ? 'не обед' : 'обед'}</button>` : '<span></span>')
-        + '</div>').join('');
+    return (row.events || []).map(e => `<div class="ev-r"><span>${EV_NAME[e.kind] || 'блок'}</span><b class="num">${t(e.lock)} → ${t(e.unlock)}</b>`
+        + `<span class="num dim">${Shift.words(e.dur_s, false) || '< 1 мин'}</span>${evBtns(e)}</div>`).join('');
+}
+// смена типа события из карточки дня или окна правки: сразу видно результат (список, плитки, календарь), кнопка на время запроса не нажимается
+async function evChange(bt, iso, hint) {
+    bt.disabled = true;
+    const r = await pywebview.api.event_kind(iso, +bt.dataset.i, bt.dataset.k);
+    if (r && r.error) { bt.disabled = false; if (hint) { hint.textContent = r.error; hint.classList.add('err'); } return false; }
+    if (hint) hint.classList.remove('err');
+    await poll();
+    if (!$('dlgDay').hidden) await openDay(iso);          // карточка дня перерисуется с новыми цифрами
+    else { await loadJournal(); const info = await pywebview.api.get_day_info(iso); if (info && !info.error) { $('dEvents').innerHTML = evText({ date: iso, events: info.events }); } }
+    render();
+    return true;
 }
 function openDlg(id) { $('dlgBack').classList.add('on'); document.querySelectorAll('#dlgBack .dlg').forEach(d => d.hidden = d.id !== id); tdId = null; }
 function closeDlg() { $('dlgBack').classList.remove('on'); tdId = null; }
@@ -490,13 +508,11 @@ boot(() => {
     $('dEvents').onclick = async e => {                      // «обед» на блокировке: забыли нажать кнопку «Обед»
         const bt = e.target.closest('.ev-b');
         if (!bt || !editing) return;
-        const r = await pywebview.api.event_kind(editing, +bt.dataset.i, bt.dataset.k);
-        if (r && r.error) { $('dHint').textContent = r.error; $('dHint').classList.add('err'); return; }
-        $('dHint').classList.remove('err');
-        await loadJournal(); await poll();
-        const row = JR && JR.rows.find(x => x.date === editing);
-        if (row) $('dEvents').innerHTML = evText(row);
-        render();
+        await evChange(bt, editing, $('dHint'));
+    };
+    $('ddEvents').onclick = async e => {                     // то же прямо в карточке дня
+        const bt = e.target.closest('.ev-b');
+        if (bt && dayCur) await evChange(bt, dayCur.date, null);
     };
     $('dCancel').onclick = closeDlg;
     $('dSave').onclick = saveEdit;
