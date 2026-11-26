@@ -1086,7 +1086,14 @@ let isProcessing = false;
                 radialRun(it);
             });
         }
+        // Сборка «Студия» (edition.js): в меню — только «Студия записи» и «Недавние».
+        const STUDIO_ONLY = window.GVOX_EDITION === 'studio';
         function homeItems(cat) {
+            if (STUDIO_ONLY) {
+                if (cat === 'recent') return radialRecentItems();
+                if (cat !== 'new') return [];
+                return RADIAL_ITEMS.new.filter(it => it.src === '#btnTts').map(it => ({ ...it, node: document.querySelector('.menu-grid ' + it.src) }));
+            }
             if (cat === 'tools') return radialToolItems();
             if (cat === 'recent') return radialRecentItems();
             return (RADIAL_ITEMS[cat] || []).map(it => ({ ...it, node: it.src ? document.querySelector('.menu-grid ' + it.src) : null }));
@@ -1099,7 +1106,7 @@ let isProcessing = false;
             RADIAL_CATS.forEach(c => {
                 let list = radial.homeItems[c.key] = homeItems(c.key);
                 let sec = root.querySelector(`.home__group[data-cat="${c.key}"]`);
-                sec.style.display = c.key === 'recent' && !list.length ? 'none' : '';
+                sec.style.display = (c.key === 'recent' || STUDIO_ONLY) && !list.length ? 'none' : '';
                 let html = list.map((it, k) => {
                     let loaded = it.node && it.node.classList.contains('loaded');
                     let on = it.act === 'cut' && radial.cutOpen;

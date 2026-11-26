@@ -172,6 +172,12 @@ Python-бэкенд + веб-интерфейс в окне pywebview (Windows, 
   Тесты: `tests/test_shift_timer.py` (часы подменяются — `Clock`), `tests/shift_logic.test.js` (node). Exe — `.github/workflows/build-shift-timer.yml`,
   **только вручную** (workflow_dispatch) → Releases `gtime-N` (один `GTime.exe`); собирать по команде пользователя.
 
+## Сборки exe
+
+- `build-exe.yml` (всё + модели), `build-exe-lite.yml` (без распознавания) — на пуш; `build-exe-studio.yml` — только вручную:
+  `build_exe.py --studio` (= `--no-asr` + `frontend/edition.js` → `GVOX_EDITION = 'studio'`): в меню только «Студия записи»
+  и «Недавние» (`STUDIO_ONLY` в `homeItems`), Releases `gvox-studio-N`. В репозитории `edition.js` всегда `'full'`.
+
 ## Предметная область
 
 - Таблица Студии: лист фраз (`<phrase>`, `<name_phrase>`, флаги `<start>/<start_2>/<end>`) и

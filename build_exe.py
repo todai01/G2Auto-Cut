@@ -37,9 +37,13 @@ def is_model(path):
 
 
 def main():
-    no_asr = '--no-asr' in sys.argv
+    studio = '--studio' in sys.argv                      # издание «Студия»: в меню только Студия записи, без распознавания
+    no_asr = '--no-asr' in sys.argv or studio
     no_kz = '--no-kz' in sys.argv or no_asr
     os.chdir(HERE)
+    if studio:
+        with open(os.path.join(HERE, 'frontend', 'edition.js'), 'w', encoding='utf-8') as f:
+            f.write("// Сборка «Студия» (build_exe.py --studio)\nwindow.GVOX_EDITION = 'studio';\n")
     if no_asr:
         os.environ['GVOX_NO_ASR'] = '1'                 # main.spec: без модулей распознавания
 
