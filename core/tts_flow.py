@@ -2448,13 +2448,14 @@ class TtsFlowMixin:
         seg = AudioSegment.from_file(tmp)
         like = self._tts_clips(t)[0]["raw"] if t.get("clips") else self._tts_raw(t)
         export_like(seg, dst, like)
-        if t.get("clips"):                   # склеено в Audacity — исходник дубля теперь эта склейка
-            src = os.path.join(st["work_dir"], TTS_RECORDS_DIR, f"Audacity_{t.get('chunk', i)}_{int(time.time())}.wav")
-            os.makedirs(os.path.dirname(src), exist_ok=True)
-            shutil.copy2(dst, src)
-            for k in ("clips", "clips_orig", "stitched", "edit"):
-                t.pop(k, None)
-            t["raw"], t["orig"], t["start_ms"] = src, [0, len(seg)], 0
+        # Исходник дубля — эта правка, КАЖДЫЙ раз: волна «Сборки» рисуется из исходника, и без новой копии
+        # второй возврат из Audacity звучал по-новому, а волна оставалась от первого. Имя уникальное (не по секунде).
+        src = os.path.join(st["work_dir"], TTS_RECORDS_DIR, f"Audacity_{t.get('chunk', i)}_{time.time_ns()}.wav")
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        shutil.copy2(dst, src)
+        for k in ("clips", "clips_orig", "stitched", "edit"):
+            t.pop(k, None)
+        t["raw"], t["orig"], t["start_ms"] = src, [0, len(seg)], 0
         t["ms"] = len(seg)
         t["listened"] = False
         t["audacity"] = True

@@ -64,3 +64,35 @@ def test_single_delete_makes_no_backup(studio):
     a.tts_take_delete(0)
     d = os.path.join(wd, '_Кэш')
     assert not os.path.isdir(d) or not [f for f in os.listdir(d) if f.startswith('tts_project_до_')]
+
+
+class _AudExport:
+    """Audacity-заглушка: Export2 пишет заданный звук (как будто там срезали лишнее)."""
+    def __init__(self):
+        self.next = None
+
+    def send_command(self, cmd, auto_start=False, timeout=20):
+        if cmd.startswith('Export2:') and self.next is not None:
+            self.next.export(cmd.split('Filename="', 1)[1].split('"', 1)[0], format='wav')
+        return '[]' if cmd.startswith('GetInfo') else 'OK'
+
+
+def test_audacity_round_trip_twice_wave_follows(studio, monkeypatch):
+    """Дубль в Audacity и обратно дважды: волна «Сборки» (исходник клипа) — от последней правки, не от первой."""
+    from pydub import AudioSegment
+    a, st, U, wd = studio
+    monkeypatch.setattr(a, '_ensure_audacity_ready', lambda: True, raising=False)
+    aud = _AudExport()
+    a.audacity = aud
+    i = 0
+    src = AudioSegment.from_file(os.path.join(wd, st["takes"][i]["file"]))
+    raws = []
+    for cut_to in (len(src) - 300, len(src) - 900):                    # каждый раз срезали лишнее
+        assert a.tts_send_to_audacity(i).get("status") == 'ok'
+        aud.next = src[:cut_to]
+        assert not a.tts_take_from_audacity(i).get("error")
+        clips = a.tts_clips_load(i)["clips"]
+        assert len(clips) == 1 and abs((clips[0]["b"] - clips[0]["a"]) - cut_to) <= 5
+        raws.append(clips[0]["raw"])
+        assert abs(len(AudioSegment.from_file(os.path.join(wd, st["takes"][i]["file"]))) - cut_to) <= 5
+    assert raws[0] != raws[1] and all(os.path.exists(r) for r in raws)
