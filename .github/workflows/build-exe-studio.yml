@@ -1,9 +1,12 @@
 # Сборка GVox «Студия» — только «Студия записи» в меню (суфлёр, лента, «Сборка», «Переменные» → Фразы_Переменные),
-# БЕЗ распознавания речи (как lite). Только вручную. Releases: gvox-studio-<номер> → GVox-studio-<номер>.zip
+# БЕЗ распознавания речи (как lite). Вручную или пушем правки этого файла. Releases: gvox-studio-<номер> → GVox-studio-<номер>.zip
 name: Сборка GVox.exe (только Студия)
 
 on:
   workflow_dispatch:
+  push:                       # запуск из рабочей ветки: правка этого файла (ручной запуск виден только в основной ветке)
+    branches: [claude/g2auto-cut-project-y8qvzc]
+    paths: [.github/workflows/build-exe-studio.yml]
 
 permissions:
   contents: write
