@@ -336,3 +336,5 @@ input[type=range]::-webkit-slider-thumb{
 .listen-sums__dir{ margin-left: 6px; font-weight: 500; }
 
 .rsum-phr-alt{ font-size: 12px; margin: -2px 0 6px; color: var(--text-faint); }
+.tts-tiers__sel{ position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent-primary) 28%, transparent); border-left: 1px solid var(--accent-primary); border-right: 1px solid var(--accent-primary); pointer-events: none; z-index: 2; }
+.tts-tiers__wave{ cursor: text; }

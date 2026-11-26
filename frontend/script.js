@@ -7939,7 +7939,7 @@ let isProcessing = false;
                       <button type="button" class="tts-reuse-chip ${tp.auto ? 'is-on' : ''}" onclick="ttsTierAutoSet(${!tp.auto})" title="Записали строку — ярусы сохраняются сами, «Сборка» не открывается">сохранять сразу${tp.auto ? ' ✓' : ''}</button>` : ''}</span></div>
                 ${ttsTierPhraseHTML(r)}
                 <div class="tts-tiers__row"><span class="tts-tiers__name">Дубль</span>
-                    <div class="tts-tiers__wave" id="ttsTiersWave"><canvas id="ttsTiersCanvas" style="width:${pct(r.length)}"></canvas>${regions}</div></div>
+                    <div class="tts-tiers__wave" id="ttsTiersWave" onpointerdown="ttsTierSelStart(event)" title="Протяните мышью — выделить кусок, Space — слушать выделенное"><canvas id="ttsTiersCanvas" style="width:${pct(r.length)}"></canvas>${regions}${ttsTierSelHTML(pct)}</div></div>
                 ${langs.map((lg_, row) => `<div class="tts-tiers__row"><span class="tts-tiers__name">${lg_ ? `Сборка <em class="tts-tiers__lang is-${lg_}">${lg_.toUpperCase()}</em>` : 'Сборка'}</span>
                     <div class="tts-tiers__asm" data-lang="${lg_ || ''}" onpointerdown="ttsTierSeek(event, ${lg_ ? `'${lg_}'` : 'null'})" title="Клик — слушать с этого места">${clipsHTML(lays[row], row)}<i class="tts-tiers__head" data-lang="${lg_ || ''}"></i></div></div>`).join('')}
                 <div class="tts-tiers__chips">${chips}</div>`;
@@ -7953,6 +7953,42 @@ let isProcessing = false;
             let i = ttsCurTake() && ttsCurTake().i;
             let res = await pywebview.api.tts_tier_set(i, ttsTR.tiers.map(t => ({ a: t.a, b: t.b, pre: t.pre, post: t.post, tempo: t.tempo, gain: t.gain })), null);
             if (res && res.tiers) { ttsTR = res; ttsTiersRender(); }
+        }
+        // Выделение на дорожке «Дубль» (мс файла дубля): Space слушает выделенное, без выделения — дубль с начала.
+        let ttsTierSel = null;
+        function ttsTierSelHTML(pct) {
+            let t = ttsCurTake(), s = ttsTierSel;
+            if (!s || !t || s.i !== t.i || Math.abs(s.b - s.a) < 15) return '';
+            let a = Math.min(s.a, s.b), b = Math.max(s.a, s.b);
+            return `<div class="tts-tiers__sel" style="left:${pct(a)};width:${pct(b - a)}"></div>`;
+        }
+        function ttsTierSelRange() {
+            let t = ttsCurTake(), s = ttsTierSel;
+            if (!s || !t || s.i !== t.i || !ttsTR) return null;
+            let a = Math.max(0, Math.min(s.a, s.b)), b = Math.min(ttsTR.length, Math.max(s.a, s.b));
+            return b - a >= 15 ? [Math.round(a), Math.round(b)] : null;
+        }
+        function ttsTierSelStart(e) {
+            if (e.button !== 0 || !ttsTR || e.target.closest('.tts-tiers__edge')) return;
+            e.preventDefault();
+            let t = ttsCurTake();
+            if (!t) return;
+            let span = ttsTiersSpan(), x0 = e.clientX, moved = false;
+            let msAt = ev => { let rc = document.getElementById('ttsTiersWave').getBoundingClientRect();
+                               return rc.width ? Math.max(0, Math.min(ttsTR.length, (ev.clientX - rc.left) / rc.width * span)) : 0; };
+            let a = msAt(e);
+            let move = ev => {
+                if (!moved && Math.abs(ev.clientX - x0) < 3) return;
+                moved = true;
+                ttsTierSel = { i: t.i, a, b: msAt(ev) };
+                if (ttsEd) ttsEd.sel = null;                     // одно выделение на экране
+                ttsTiersRender();
+            };
+            let up = () => {
+                window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+                if (!moved) { ttsTierSel = null; ttsTiersRender(); }      // просто клик — снять выделение
+            };
+            window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
         }
         // край клипа на дорожке «Дубль»: откуда и докуда берётся ярус
         function ttsTierEdge(e, k, side) {
@@ -8583,6 +8619,7 @@ let isProcessing = false;
                 if (tlMultiLane()) { c.lane = tlLaneAt(y); ttsEd.cur.lane = c.lane; }
             } else if (d.kind === 'body' && d.moved) {
                 ttsEd.sel = { k: d.k, t0: d.t0, t1: t };
+                if (ttsTierSel) { ttsTierSel = null; ttsTiersRender(); }      // одно выделение на экране
             }
             ttsEditorDraw();
         });
@@ -8912,7 +8949,7 @@ let isProcessing = false;
             clearTimeout(ttsPlayTimer);
             let g = ++ttsPlayGen;
             ttsPlayPending = true;
-            let rng = ttsEdSelRange();                   // выделено — слушаем выделенное, нет — с начала
+            let rng = ttsEdSelRange() || ttsTierSelRange();   // выделено (волна внизу или дорожка «Дубль») — выделенное, нет — с начала
             let res = await pywebview.api.tts_play(t.i, rng ? rng[0] : null, rng ? rng[1] : null);
             if (g === ttsPlayGen) ttsPlayPending = false;
             if (g !== ttsPlayGen) return;                // пока запускалось — нажали другое
