@@ -7960,7 +7960,9 @@ let isProcessing = false;
             let t = ttsCurTake(), s = ttsTierSel;
             if (!s || !t || s.i !== t.i || Math.abs(s.b - s.a) < 15) return '';
             let a = Math.min(s.a, s.b), b = Math.max(s.a, s.b);
-            return `<div class="tts-tiers__sel" style="left:${pct(a)};width:${pct(b - a)}"></div>`;
+            return `<div class="tts-tiers__sel" style="left:${pct(a)};width:${pct(b - a)}">`
+                + `<i class="tts-tiers__sel-h is-l" onpointerdown="ttsTierSelEdge(event, 'a')" title="Тяните — край выделения"></i>`
+                + `<i class="tts-tiers__sel-h is-r" onpointerdown="ttsTierSelEdge(event, 'b')" title="Тяните — край выделения"></i></div>`;
         }
         function ttsTierSelRange() {
             let t = ttsCurTake(), s = ttsTierSel;
@@ -7968,8 +7970,25 @@ let isProcessing = false;
             let a = Math.max(0, Math.min(s.a, s.b)), b = Math.min(ttsTR.length, Math.max(s.a, s.b));
             return b - a >= 15 ? [Math.round(a), Math.round(b)] : null;
         }
+        // край выделения на дорожке «Дубль» — тянуть мышью (выделение растёт / сужается)
+        function ttsTierSelEdge(e, side) {
+            if (e.button !== 0 || !ttsTierSel || !ttsTR) return;
+            e.preventDefault(); e.stopPropagation();
+            let span = ttsTiersSpan();
+            let lo = Math.min(ttsTierSel.a, ttsTierSel.b), hi = Math.max(ttsTierSel.a, ttsTierSel.b);
+            let move = ev => {
+                let rc = document.getElementById('ttsTiersWave').getBoundingClientRect();
+                if (!rc.width) return;
+                let ms = Math.max(0, Math.min(ttsTR.length, (ev.clientX - rc.left) / rc.width * span));
+                if (side === 'a') lo = Math.min(ms, hi - 15); else hi = Math.max(ms, lo + 15);
+                ttsTierSel = { i: ttsTierSel.i, a: lo, b: hi };
+                ttsTiersRender();
+            };
+            let up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+            window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+        }
         function ttsTierSelStart(e) {
-            if (e.button !== 0 || !ttsTR || e.target.closest('.tts-tiers__edge')) return;
+            if (e.button !== 0 || !ttsTR || e.target.closest('.tts-tiers__edge, .tts-tiers__sel-h')) return;
             e.preventDefault();
             let t = ttsCurTake();
             if (!t) return;
@@ -8562,6 +8581,8 @@ let isProcessing = false;
                 let a = Math.max(c.pos, Math.min(ttsEd.sel.t0, ttsEd.sel.t1)), b = Math.min(c.pos + tlLen(c), Math.max(ttsEd.sel.t0, ttsEd.sel.t1));
                 let ln = tlLane(ttsEd.sel.k);
                 ctx.fillStyle = 'rgba(122,162,255,0.28)'; ctx.fillRect(tlX(a), ln.top, tlX(b) - tlX(a), ln.h);
+                ctx.fillStyle = '#7aa2ff';                                      // края выделения — тянуть мышью
+                [a, b].forEach(t => { ctx.fillRect(tlX(t) - 1, ln.top, 2, ln.h); ctx.fillRect(tlX(t) - 4, ln.top, 8, 6); ctx.fillRect(tlX(t) - 4, ln.top + ln.h - 6, 8, 6); });
             }
             if (ttsEd.play != null) { ctx.fillStyle = '#34d399'; ctx.fillRect(tlX(ttsEd.play) - 1, 0, 2, H); }
             let time = document.getElementById('ttsEdTime');
@@ -8579,6 +8600,14 @@ let isProcessing = false;
 
         // Что под мышью: ручка края / полоска клипа / метка выреза / тело / пусто.
         function tlHit(x, y) {
+            if (ttsEd.sel && Math.abs(ttsEd.sel.t1 - ttsEd.sel.t0) >= 15) {          // край выделения — раньше краёв клипа
+                let { top, h } = tlLane(ttsEd.sel.k);
+                if (y >= top && y < top + h) {
+                    let lo = Math.min(ttsEd.sel.t0, ttsEd.sel.t1), hi = Math.max(ttsEd.sel.t0, ttsEd.sel.t1);
+                    if (Math.abs(x - tlX(lo)) <= TTS_ED_HIT) return { kind: 'seledge', k: ttsEd.sel.k, side: 'a' };
+                    if (Math.abs(x - tlX(hi)) <= TTS_ED_HIT) return { kind: 'seledge', k: ttsEd.sel.k, side: 'b' };
+                }
+            }
             let multi = ttsEd.clips.length > 1 || tlMultiLane();
             let ord = tlOrder().reverse().filter(k => {   // только клипы своей дорожки
                 let { top, h } = tlLane(k); return !multi || (y >= top && y < top + h);
@@ -8617,6 +8646,11 @@ let isProcessing = false;
             } else if (d.kind === 'move') {
                 c.pos = Math.max(0, Math.round(d.pos0 + (t - d.t0)));
                 if (tlMultiLane()) { c.lane = tlLaneAt(y); ttsEd.cur.lane = c.lane; }
+            } else if (d.kind === 'seledge') {
+                let lo = Math.min(ttsEd.sel.t0, ttsEd.sel.t1), hi = Math.max(ttsEd.sel.t0, ttsEd.sel.t1);
+                let t_ = Math.max(c.pos, Math.min(c.pos + tlLen(c), t));
+                if (d.side === 'a') lo = Math.min(t_, hi - 15); else hi = Math.max(t_, lo + 15);
+                ttsEd.sel = { k: d.k, t0: lo, t1: hi };
             } else if (d.kind === 'body' && d.moved) {
                 ttsEd.sel = { k: d.k, t0: d.t0, t1: t };
                 if (ttsTierSel) { ttsTierSel = null; ttsTiersRender(); }      // одно выделение на экране
@@ -8630,6 +8664,7 @@ let isProcessing = false;
                 ttsEdRemember(d.kind === 'move' ? `сдвиг клипа ${d.k + 1}` : 'подрезка края', d.snap);
                 ttsEditorApply(); return;
             }
+            if (d.kind === 'seledge') { ttsEditorDraw(); return; }                 // край выделения подвинули — выделение остаётся
             if (d.kind === 'body' && d.moved && ttsEd.sel && Math.abs(ttsEd.sel.t1 - ttsEd.sel.t0) >= 15) { ttsEditorDraw(); return; }
             // Просто клик — слушать с этого места.
             ttsEd.sel = null;
@@ -8656,12 +8691,12 @@ let isProcessing = false;
                 ttsEd.drag = { kind: h.kind, side: h.side, k: h.k, x0: x, t0: t, moved: false,
                                a0: c && c.a, b0: c && c.b, pos0: c && c.pos,
                                snap: (h.kind === 'trim' || h.kind === 'move') ? ttsEdSnap() : null };
-                if (h.kind !== 'body') ttsEd.sel = null;
+                if (h.kind !== 'body' && h.kind !== 'seledge') ttsEd.sel = null;
             });
             canvas.addEventListener('mousemove', e => {
                 if (!ttsEd || ttsEd.drag) return;
                 let { x, y } = ttsEdPos(e), h = tlHit(x, y);
-                canvas.style.cursor = h.kind === 'trim' ? 'ew-resize' : h.kind === 'move' ? 'grab'
+                canvas.style.cursor = h.kind === 'trim' || h.kind === 'seledge' ? 'ew-resize' : h.kind === 'move' ? 'grab'
                     : h.kind === 'uncut' ? 'pointer' : 'text';
             });
             canvas.addEventListener('wheel', e => {

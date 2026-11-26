@@ -338,3 +338,6 @@ input[type=range]::-webkit-slider-thumb{
 .rsum-phr-alt{ font-size: 12px; margin: -2px 0 6px; color: var(--text-faint); }
 .tts-tiers__sel{ position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent-primary) 28%, transparent); border-left: 1px solid var(--accent-primary); border-right: 1px solid var(--accent-primary); pointer-events: none; z-index: 2; }
 .tts-tiers__wave{ cursor: text; }
+.tts-tiers__sel-h{ position: absolute; top: 0; bottom: 0; width: 10px; pointer-events: auto; cursor: ew-resize; z-index: 3; }
+.tts-tiers__sel-h.is-l{ left: -5px; } .tts-tiers__sel-h.is-r{ right: -5px; }
+.tts-tiers__sel-h::before{ content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent-primary); opacity: .9; }
