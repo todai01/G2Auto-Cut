@@ -209,9 +209,9 @@ def test_three_variants_folders_resume_and_stop(api, dialog, tmp_path, monkeypat
     start = wav_path = str(tmp_path / 'start.wav')
     _seg(_tone(8000, 600, 200, 0.15), 8000).export(start, format='wav')
     api._ls()["start"] = start
-    assert api.listen_variants_start(3).get("error")                         # голос не выбран
+    assert api.listen_variants_start(3, pause=0).get("error")                         # голос не выбран
     api.listen_set_voice(0, 'голос 1')
-    r = api.listen_variants_start(3)
+    r = api.listen_variants_start(3, pause=0)
     assert r.get("ok") and r["state"]["variants"]["total"] == 9 and r["state"]["variants"]["running"]
     for j in list(w.jobs):
         w.jobs.remove(j)
@@ -229,7 +229,7 @@ def test_three_variants_folders_resume_and_stop(api, dialog, tmp_path, monkeypat
     # повтор: пропал один вариант — докачивается только он
     (out / 'вариант_2' / 'Айгерим.wav').unlink()
     calls.clear()
-    assert api.listen_variants_start(3)["state"]["variants"]["total"] == 9
+    assert api.listen_variants_start(3, pause=0)["state"]["variants"]["total"] == 9
     for j in list(w.jobs):
         w.jobs.remove(j)
         j(_Page())
@@ -237,7 +237,7 @@ def test_three_variants_folders_resume_and_stop(api, dialog, tmp_path, monkeypat
     # Стоп: ничего не синтезируется, готовое остаётся
     for f in list((out / 'вариант_3').glob('*.wav')):
         f.unlink()
-    api.listen_variants_start(3)
+    api.listen_variants_start(3, pause=0)
     api.listen_variants_stop()
     calls.clear()
     for j in list(w.jobs):
@@ -259,9 +259,29 @@ def test_variants_error_is_recorded_and_continues(api, dialog, tmp_path, monkeyp
     monkeypatch.setattr(api, '_listen_synth_page', flaky)
     out = _table_session(api, dialog, tmp_path, names=('Гизат',))
     api.listen_set_voice(0, 'голос 1')
-    api.listen_variants_start(3)
+    api.listen_variants_start(3, pause=0)
     for j in list(w.jobs):
         j(_Page())
     vs = api.listen_state()["variants"]
     assert vs["done"] == 2 and vs["errors_n"] == 1 and vs["errors"][0]["v"] == 2
     assert (out / 'вариант_1' / 'Гизат.wav').exists() and not (out / 'вариант_2' / 'Гизат.wav').exists() and (out / 'вариант_3' / 'Гизат.wav').exists()
+
+
+def test_variants_pause_between_requests(api, dialog, tmp_path, monkeypatch):
+    """Между отправками в сервис — пауза (сервер синтеза не заваливаем); «Стоп» её прерывает."""
+    import time
+    w = FakeWorker()
+    monkeypatch.setattr(api, '_listen_synth_worker', w, raising=False)
+    stamps = []
+
+    def fake(page, v, etalon, etalon_text, text, lang, raw):
+        stamps.append(time.time())
+        _seg(_tone(16000, 300), 16000).export(raw, format='wav')
+        return 'тест'
+    monkeypatch.setattr(api, '_listen_synth_page', fake)
+    _table_session(api, dialog, tmp_path, names=('Гизат',))
+    api.listen_set_voice(0, 'голос 1')
+    api.listen_variants_start(3, pause=0.4)
+    for j in list(w.jobs):
+        j(_Page())
+    assert len(stamps) == 3 and all(b - a >= 0.38 for a, b in zip(stamps, stamps[1:]))

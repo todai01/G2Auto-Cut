@@ -1184,7 +1184,7 @@ class ListenMixin:
     # ---- «N вариантов» для веб-сервиса выбора: каждое имя синтезируется N раз → вариант_1 / вариант_2 / … ----
     LISTEN_VARIANT_DIR, LISTEN_CTX_DIR = 'вариант_{}', '_контекст'
 
-    def listen_variants_start(self, n=3, lang=None):
+    def listen_variants_start(self, n=3, lang=None, pause=2.0):
         """Все имена таблицы — по N раз (каждый синтез сервиса немного отличается), файлы по папкам «вариант_1…N» в папке результата.
         Громкость — по начальной фразе, файлы целые. Можно остановить и запустить снова: готовые файлы пропускаются.
         Рядом — «имена.json» (порядок имён) и «_контекст/» с начальной / конечной фразой для веб-сервиса."""
@@ -1226,6 +1226,14 @@ class ListenMixin:
                                "pending": len(todo), "running": bool(todo), "started": _t.time(),
                                "done": sum(1 for i in range(len(names)) for vi in range(1, n + 1) if os.path.exists(path_of(i, vi)))}
         st["done0"] = st["done"]
+        st["pause"] = max(0.0, float(pause))
+
+        def rest(sec):
+            """Пауза между отправками в сервис (чтобы не завалить его); «Стоп» прерывает ожидание."""
+            import time as _tm
+            end = _tm.time() + sec
+            while _tm.time() < end and not st["stop"]:
+                _tm.sleep(min(0.25, max(0.0, end - _tm.time())))
 
         def finish_one():
             st["pending"] -= 1
@@ -1245,6 +1253,7 @@ class ListenMixin:
                     text = names[i] if not ls.get("qmark") or names[i].endswith('?') else names[i].rstrip('.!,;: ') + '?'
                     for vi in range(1, n + 1):
                         dst = path_of(i, vi)
+                        failed = False
                         if st["stop"]:
                             break
                         if os.path.exists(dst):
@@ -1259,6 +1268,7 @@ class ListenMixin:
                             st["done"] += 1
                         except Exception as e:
                             st["errors"].append({"name": names[i], "v": vi, "error": str(e)[:200]})
+                            failed = True
                         finally:
                             for tmp in (raw, dst + '.part.wav'):
                                 try:
@@ -1266,6 +1276,8 @@ class ListenMixin:
                                 except OSError:
                                     pass
                         push()
+                        if st["pause"]:
+                            rest(st["pause"] * (5 if failed else 1))        # после ошибки — дольше
                 finally:
                     finish_one()
                     if not st["running"]:
