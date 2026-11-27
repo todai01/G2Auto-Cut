@@ -489,4 +489,3 @@ input:disabled{ opacity:.55; }
 .ev-bs{ display:flex; gap:5px; justify-content:flex-end; }
 .ev-b{ padding:0 8px; }
 .ev-b:disabled{ opacity:.5; }
-.ac-n{ width:110px; font:inherit; font-weight:600; color:var(--text); background:var(--card-2); border:1px solid var(--line); border-radius:10px; height:34px; padding:0 10px; outline:none; text-align:right; user-select:text; cursor:text; }

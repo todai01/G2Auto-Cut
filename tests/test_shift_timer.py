@@ -10,7 +10,6 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'shift_timer'))
 import app as shift_app                                    # noqa: E402
-import autoclick                                           # noqa: E402
 import chime                                               # noqa: E402
 import tasks                                               # noqa: E402
 import timetrack                                           # noqa: E402
@@ -1566,72 +1565,3 @@ def test_stall_watchdog_writes_thread_dump_only_when_polling_stops(tmp_path):
     shift_app.start_watchdog(api3, log_path=str(log3), stall_s=1, every=0.2)
     _t.sleep(0.6)
     assert not log3.exists()                                                              # окно скрыто в трей — опроса и не должно быть
-
-
-# ---------- автокликер ----------
-class FakeInput:
-    def __init__(self):
-        self.clicks, self.moves, self.keys = [], [], set()
-
-    def pos(self):
-        return 11, 22
-
-    def move(self, x, y):
-        self.moves.append((x, y))
-
-    def click(self, button):
-        self.clicks.append(button)
-
-    def key_down(self, vk):
-        return vk in self.keys
-
-
-def _wait(cond, t=3.0):
-    import time as _t
-    end = _t.monotonic() + t
-    while _t.monotonic() < end:
-        if cond():
-            return True
-        _t.sleep(0.01)
-    return False
-
-
-def test_autoclick_cfg_is_cleaned():
-    c = autoclick.clean_cfg({"interval_ms": 1, "button": "x", "double": "да", "mode": "point", "x": "5", "limit": -4, "delay_s": 999})
-    assert c["interval_ms"] == autoclick.INTERVAL_MIN and c["button"] == "left" and c["double"] is False
-    assert c["mode"] == "point" and c["x"] == 0 and c["limit"] == 0 and c["delay_s"] == autoclick.DELAY_MAX
-    assert autoclick.clean_cfg(None) == autoclick.DEFAULT_CFG and autoclick.clean_cfg({"interval_ms": 50, "button": "right"})["button"] == "right"
-
-
-def test_autoclick_limit_point_double_and_stop():
-    fi = FakeInput()
-    ck = autoclick.Clicker(fi)
-    assert ck.start({"interval_ms": 10, "mode": "point", "x": 100, "y": 200, "limit": 3, "double": True, "delay_s": 0, "button": "right"}) == {"ok": True}
-    assert _wait(lambda: not ck.state()["running"])
-    assert fi.clicks == ["right"] * 6 and fi.moves == [(100, 200)] * 3 and ck.state()["count"] == 3     # 3 двойных клика, каждый раз — в точку
-    assert ck.start({"interval_ms": 10, "limit": 0, "delay_s": 0})["ok"]                                  # без предела — идёт, пока не остановят
-    assert "error" in ck.start({"interval_ms": 10})                                                        # второй запуск поверх — нельзя
-    assert _wait(lambda: ck.state()["count"] >= 2)
-    ck.stop()
-    n = len(fi.clicks)
-    assert not ck.state()["running"] and len(fi.clicks) == n and fi.moves == [(100, 200)] * 3             # в режиме «под курсором» мышь не двигается
-
-
-def test_autoclick_stops_when_locked_and_picks_point():
-    fi, locked = FakeInput(), {"v": False}
-    ck = autoclick.Clicker(fi, locked=lambda: locked["v"])
-    assert ck.pick() == {"x": 11, "y": 22}
-    ck.start({"interval_ms": 10, "delay_s": 0})
-    assert _wait(lambda: ck.state()["count"] >= 1)
-    locked["v"] = True
-    assert _wait(lambda: not ck.state()["running"], 4) and "заблокирован" in ck.state()["error"]
-
-
-def test_autoclick_settings_persist_and_api(tmp_path):
-    p = str(tmp_path / 's.json')
-    api = shift_app.Api(path=p, history=str(tmp_path / 'h.json'), store=tasks.TaskStore(str(tmp_path / 't.json')))
-    api._clicker = autoclick.Clicker(FakeInput())                      # без настоящей мыши
-    assert api.ac_get()["cfg"] == autoclick.DEFAULT_CFG
-    r = api.ac_start({"interval_ms": 20, "limit": 2, "delay_s": 0, "button": "middle"})
-    assert r == {"ok": True} and _wait(lambda: not api.ac_state()["running"])
-    assert api.ac_get()["cfg"]["button"] == "middle" and shift_app.load_settings(p)["ac"]["interval_ms"] == 20       # настройки переживают перезапуск
