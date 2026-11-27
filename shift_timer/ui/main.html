@@ -11,8 +11,6 @@
     </div>
   </div>
 
-  <div class="upd" id="updBar" hidden><span id="updTxt"></span><button class="btn sm primary" id="updBtn" type="button">Обновить</button></div>
-
   <div class="views">
     <section class="view on" id="v-home">
       <div class="chip" id="chip"><i></i><span id="chipT">…</span></div>
@@ -71,19 +69,6 @@
       <div class="note" id="jrNote">Нажмите на день — откроется всё за этот день. График 5/2: суббота и воскресенье — выходные.</div>
     </section>
 
-    <section class="view" id="v-team">
-      <div class="jr-top">
-        <div class="cal-nav"><button class="btn sm ic" id="tmPrev" title="Предыдущий день">‹</button><div class="h" id="tmDate">Сегодня</div><button class="btn sm ic" id="tmNext" title="Следующий день">›</button></div>
-        <div class="jr-btns"><button class="btn sm" id="tmToday">Сегодня</button><button class="btn sm" id="tmAcc">Учётки</button></div>
-      </div>
-      <div class="card tm-card">
-        <div class="tm-row tm-head"><span>Сотрудник</span><span>Приход</span><span>Статус</span><span>Отработано</span><span>Задачи</span></div>
-        <div class="tm-list" id="tmList"></div>
-      </div>
-      <div class="jr-acts"><button class="btn sm primary" id="tmRepW">Отчёт команды за неделю</button><button class="btn sm" id="tmRepM">За месяц</button></div>
-      <div class="note" id="tmNote">Нажмите на сотрудника — сводка, дни и задачи с комментариями.</div>
-    </section>
-
     <section class="view" id="v-set">
       <div class="h">Рабочий день</div>
       <div class="card">
@@ -118,21 +103,6 @@
         <div class="row"><span>Показывать мини-окно</span><button class="sw" id="swMini" role="switch"></button></div>
         <div class="row"><span>Поверх всех окон</span><button class="sw" id="swTop" role="switch"></button></div>
       </div>
-      <div class="h">Команда</div>
-      <div class="card">
-        <div class="row"><span>Сетевая папка команды</span><span class="btns2"><button class="btn sm" id="tmPick">Выбрать…</button><button class="btn sm" id="tmOff">Отключить</button></span></div>
-        <div class="row"><span class="dim tm-dir" id="tmDir">не выбрана — GTime работает сам по себе</span></div>
-        <div class="row" id="tmWhoRow" style="display:none"><span id="tmWho">—</span><span class="btns2"><button class="btn sm" id="tmPass">Сменить пароль</button><button class="btn sm" id="tmOut">Выйти</button></span></div>
-      </div>
-      <div class="note" id="tmSetNote">С папкой команды у каждого сотрудника своя учётка, а администратор видит, кто во сколько пришёл, и задачи команды. Папка общая, поэтому пароли защищают от случайного просмотра; жёсткую защиту даёт доступ к папке в Windows.</div>
-      <div class="h">Обновления</div>
-      <div class="card">
-        <div class="row"><span>Версия GTime</span><span class="v" id="updVer">—</span></div>
-        <div class="row"><span class="dim upd-state" id="updState">—</span><span class="btns2"><button class="btn sm" id="updCheck">Проверить</button><button class="btn sm primary" id="updGo" hidden>Обновить</button></span></div>
-        <div class="row" id="updNotesRow" hidden><input class="fld" id="updNotes" placeholder="Что нового (по желанию, увидят все)" maxlength="300" autocomplete="off"></div>
-        <div class="row" id="updPubRow" hidden><span>Выложить эту сборку для команды</span><span class="btns2"><button class="btn sm" id="updPub">Опубликовать</button></span></div>
-      </div>
-      <div class="note">GTime сам смотрит папку команды раз в час. Нашёл новую сборку — покажет «Обновить»; по кнопке заменит себя и перезапустится. Данные не трогаются.</div>
       <div class="h">Резервная копия</div>
       <div class="card">
         <div class="row"><span>Журнал, задачи и файлы — одним архивом</span><span class="btns2"><button class="btn sm" id="bkSave">Сохранить копию</button><button class="btn sm" id="bkRestore">Восстановить</button></span></div>
@@ -141,6 +111,7 @@
       <div class="h">Система</div>
       <div class="card">
         <div class="row"><span>Запускать при входе в Windows</span><button class="sw" id="swAuto" role="switch"></button></div>
+        <div class="row"><span>Версия GTime</span><span class="v" id="updVer">—</span></div>
       </div>
     </section>
   </div>
@@ -149,28 +120,8 @@
     <button class="tab on" data-v="home"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>Смена</button>
     <button class="tab" data-v="tk"><svg viewBox="0 0 24 24"><path d="M5 7l2 2 3-3.5M5 16l2 2 3-3.5M13 8h6M13 17h6"/></svg>Задачи</button>
     <button class="tab" data-v="jr"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Журнал</button>
-    <button class="tab" data-v="team" id="tabTeam" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3"/><circle cx="17" cy="10" r="2.4"/><path d="M3.5 19c.5-3 2.7-5 5.5-5s5 2 5.5 5M15 19c.3-1.8 1.4-3 3-3.4"/></svg>Команда</button>
     <button class="tab" data-v="set"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Настройки</button>
   </nav>
-
-  <div class="lock" id="lock" hidden>
-    <div class="lock-card">
-      <div class="lock-logo"></div>
-      <div class="lock-t" id="lkTitle">Вход в GTime</div>
-      <div class="lock-sub" id="lkSub"></div>
-      <form id="lkForm" autocomplete="off">
-        <input class="fld" id="lkLogin" placeholder="Логин" autocomplete="username" maxlength="32">
-        <input class="fld" id="lkName" placeholder="Имя (как показывать в списке)" maxlength="60" hidden>
-        <input class="fld" id="lkPass" type="password" placeholder="Пароль" autocomplete="current-password">
-        <input class="fld" id="lkNew" type="password" placeholder="Новый пароль (от 6 знаков)" autocomplete="new-password" hidden>
-        <input class="fld" id="lkNew2" type="password" placeholder="Новый пароль ещё раз" autocomplete="new-password" hidden>
-        <label class="lk-rem" id="lkRemRow"><input type="checkbox" id="lkRem" checked> Запомнить на этом компьютере</label>
-        <div class="dlg-hint" id="lkHint"></div>
-        <button class="btn primary" type="submit" id="lkBtn">Войти</button>
-      </form>
-      <div class="lk-links"><button class="lk-link" id="lkSkip" type="button">Работать без входа</button><button class="lk-link" id="lkDir" type="button">Папка команды…</button></div>
-    </div>
-  </div>
 
   <div class="back" id="dlgBack">
     <div class="dlg" id="dlgEdit" hidden>
@@ -225,35 +176,6 @@
       <div class="dlg-hint" id="mkHint">Отмеченные дни не считаются недоработкой: норма за них — 0. Суббота и воскресенье и так выходные.</div>
       <div class="dlg-btns"><span class="grow"></span><button class="btn sm" id="mkCancel">Отмена</button><button class="btn sm primary" id="mkSave">Применить</button></div>
     </div>
-    <div class="dlg" id="dlgPass" hidden>
-      <div class="dlg-t">Сменить пароль</div>
-      <input class="fld" id="psOld" type="password" placeholder="Текущий пароль" autocomplete="current-password">
-      <input class="fld" id="psNew" type="password" placeholder="Новый пароль (от 6 знаков)" autocomplete="new-password">
-      <input class="fld" id="psNew2" type="password" placeholder="Новый пароль ещё раз" autocomplete="new-password">
-      <div class="dlg-hint" id="psHint"></div>
-      <div class="dlg-btns"><span class="grow"></span><button class="btn sm" id="psCancel">Отмена</button><button class="btn sm primary" id="psSave">Сменить</button></div>
-    </div>
-    <div class="dlg tall" id="dlgEmp" hidden>
-      <div class="dlg-t" id="emTitle">Сотрудник</div>
-      <div class="jr-mid"><div class="seg" id="emSeg"><button data-k="week" class="on">Неделя</button><button data-k="month">Месяц</button></div><span class="sum-lab" id="emLab"></span></div>
-      <div class="card" id="emSum"></div>
-      <div class="ev-h">Дни</div>
-      <div class="em-days" id="emDays"></div>
-      <div class="ev-h">Задачи за период <span id="emTkN"></span></div>
-      <div class="em-tasks" id="emTasks"></div>
-      <div class="dlg-btns"><span class="grow"></span><button class="btn sm primary" id="emClose">Закрыть</button></div>
-    </div>
-    <div class="dlg tall" id="dlgAcc" hidden>
-      <div class="dlg-t">Учётки команды</div>
-      <div class="acc-list" id="accList"></div>
-      <div class="ev-h" id="accFormT">Новая учётка</div>
-      <input class="fld" id="acLogin" placeholder="Логин (например, Gizat)" maxlength="32" autocomplete="off">
-      <input class="fld" id="acName" placeholder="Имя (как показывать)" maxlength="60" autocomplete="off">
-      <input class="fld" id="acPass" placeholder="Стартовый пароль (сотрудник сменит при входе)" autocomplete="off">
-      <div class="seg" id="acRole"><button data-r="user" class="on">Сотрудник</button><button data-r="mentor">Супервайзер</button><button data-r="admin">Администратор</button></div>
-      <div class="dlg-hint" id="acHint"></div>
-      <div class="dlg-btns"><button class="btn sm" id="acNew" hidden>Новая учётка</button><span class="grow"></span><button class="btn sm" id="acClose">Закрыть</button><button class="btn sm primary" id="acSave">Добавить</button></div>
-    </div>
     <div class="dlg" id="dlgClose" hidden>
       <div class="dlg-t">Закрыть программу?</div>
       <div class="dlg-hint" id="cHint">Пока она закрыта, время не считается.</div>
@@ -261,5 +183,5 @@
     </div>
   </div>
 </div>
-<script src="shift.js"></script><script src="common.js"></script><script src="team.js"></script><script src="update.js"></script><script src="main.js"></script>
+<script src="shift.js"></script><script src="common.js"></script><script src="main.js"></script>
 </body></html>

@@ -1,15 +1,10 @@
-"""Обновление GTime через сетевую папку команды и «одна копия на компьютере».
-
-В папке команды лежат `GTime_team/update/GTime.exe` и `version.json` ({"version": N, "sha256", "notes", "published"}).
-Клиент сравнивает N со своим номером сборки (version.BUILD) и по кнопке «Обновить» заменяет свой exe:
-Windows не даёт перезаписать запущенный файл, но даёт его переименовать — старый становится GTime.old.exe,
-на его место ложится новый, запускается и старый закрывается. Удаляется .old при следующем запуске.
+"""Самоустановка GTime и «один экземпляр на компьютере».
 
 Самоустановка: любой запущенный exe переносит себя в %LOCALAPPDATA%\\GTime\\GTime.exe (если там версия старее или файла нет)
-и запускается оттуда — автозапуск всегда указывает на одну копию. Один экземпляр на пользователя — именованный mutex.
+и запускается оттуда — автозапуск всегда указывает на одну копию. Запущенный файл Windows не даёт перезаписать, но даёт переименовать:
+старая копия становится GTime.exe.old, на её место ложится новая; .old удаляется при следующем запуске.
+Один экземпляр на пользователя — именованный mutex.
 """
-import hashlib
-import json
 import os
 import re
 import shutil
@@ -17,22 +12,15 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
 
 try:
     from version import BUILD, VERSION
 except ImportError:                                      # запуск не из папки приложения
     BUILD, VERSION = 0, '0.0'
 
-SUB = 'GTime_team'
 EXE = 'GTime.exe'
-MANIFEST = 'version.json'
 MUTEX = 'Local\\GTime_single'
 EV_SHOW, EV_QUIT = 'Local\\GTime_show', 'Local\\GTime_quit'
-
-
-class UpdateError(Exception):
-    """Понятная пользователю ошибка."""
 
 
 def parse_version(v):
@@ -50,87 +38,8 @@ def is_frozen():
     return bool(getattr(sys, 'frozen', False))
 
 
-def update_folder(team_dir):
-    return os.path.join(team_dir, SUB, 'update')
-
-
 def install_dir():
     return os.path.join(os.environ.get('LOCALAPPDATA') or os.path.expanduser('~'), 'GTime')
-
-
-def sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1 << 20), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _write_json(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f'{path}.{os.getpid()}.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(obj, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)
-
-
-def read_remote(team_dir):
-    """Что лежит в папке обновлений: {"version": "1.1", "build": 14, "sha256", "notes", "published", "size"} или None (нет папки / файл повреждён)."""
-    if not team_dir:
-        return None
-    try:
-        with open(os.path.join(update_folder(team_dir), MANIFEST), 'r', encoding='utf-8') as f:
-            m = json.load(f)
-        ver = str(m["version"]).strip()
-        build = int(m.get("build") or 0)
-        sha = str(m["sha256"]).lower()
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return None
-    if parse_version(ver) == (0, 0, 0) or len(sha) != 64 or build < 0:
-        return None
-    return {"version": ver[:20], "build": build, "sha256": sha, "notes": str(m.get("notes") or '')[:1000], "published": m.get("published"),
-            "size": int(m.get("size") or 0)}
-
-
-def check(team_dir, version=None, build=None):
-    """Есть ли новее своей сборки. Возвращает {"version", "build", "remote", "available"}; нет папки — UpdateError."""
-    version = VERSION if version is None else version
-    build = BUILD if build is None else build
-    if not team_dir:
-        raise UpdateError('Папка команды не выбрана (Настройки → Команда).')
-    if not os.path.isdir(team_dir):
-        raise UpdateError('Сетевая папка недоступна.')
-    r = read_remote(team_dir)
-    ok = bool(r and os.path.isfile(os.path.join(update_folder(team_dir), EXE)))
-    return {"version": version, "build": build, "remote": r, "available": bool(ok and newer(r["version"], r["build"], version, build))}
-
-
-def publish(team_dir, exe_path, version=None, build=None, notes=''):
-    """Выложить exe для команды: копия в папку обновлений + version.json. Версия и номер — этой сборки (version.VERSION / BUILD)."""
-    version = VERSION if version is None else str(version)
-    build = BUILD if build is None else int(build)
-    if build <= 0:
-        raise UpdateError('У этой сборки нет номера (запуск из исходников) — выкладывать нечего.')
-    if not team_dir or not os.path.isdir(team_dir):
-        raise UpdateError('Сетевая папка недоступна.')
-    if not exe_path or not os.path.isfile(exe_path):
-        raise UpdateError('Не найден файл exe.')
-    cur = read_remote(team_dir)
-    if cur and newer(cur["version"], cur["build"], version, build):
-        raise UpdateError(f'В папке уже более новая версия ({cur["version"]}), а эта — {version}.')
-    folder = update_folder(team_dir)
-    os.makedirs(folder, exist_ok=True)
-    dst, tmp = os.path.join(folder, EXE), os.path.join(folder, EXE + '.tmp')
-    shutil.copyfile(exe_path, tmp)
-    sha = sha256_file(tmp)
-    if sha != sha256_file(exe_path):
-        os.remove(tmp)
-        raise UpdateError('Копия в папке не совпала с исходным файлом — повторите.')
-    os.replace(tmp, dst)
-    m = {"version": version, "build": build, "sha256": sha, "notes": str(notes or '').strip()[:1000], "published": datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
-         "size": os.path.getsize(dst)}
-    _write_json(os.path.join(folder, MANIFEST), m)
-    return m
 
 
 def _spawn(exe, args):
@@ -161,29 +70,6 @@ def _swap_in(new_path, target):
         if had:
             os.replace(old, target)
         raise
-
-
-def apply_update(team_dir, exe_path, launch=_spawn, extra_args=()):
-    """Заменить exe_path новой сборкой из папки команды и запустить её. Возвращает номер новой версии; после этого процесс должен закрыться."""
-    r = read_remote(team_dir)
-    src = os.path.join(update_folder(team_dir or ''), EXE)
-    if not r or not os.path.isfile(src):
-        raise UpdateError('В папке обновлений нет новой сборки.')
-    new = exe_path + '.new'
-    try:
-        shutil.copyfile(src, new)
-        if sha256_file(new) != r["sha256"]:
-            raise UpdateError('Файл обновления повреждён (контрольная сумма не совпала). Попросите выложить сборку заново.')
-        _swap_in(new, exe_path)
-    except UpdateError:
-        _silent_remove(new)
-        raise
-    except OSError as e:
-        _silent_remove(new)
-        raise UpdateError(f'Не удалось заменить программу: {e.strerror or e}')
-    _write_version(os.path.dirname(exe_path), r["version"], r["build"])
-    launch(exe_path, ['--replace'] + list(extra_args))
-    return r["version"]
 
 
 def _silent_remove(p):

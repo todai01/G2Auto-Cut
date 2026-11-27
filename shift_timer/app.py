@@ -21,9 +21,7 @@ import backup
 import chime
 import report
 import tasks
-import team_api
 import timetrack
-import update_api
 import updater
 
 APP_NAME = 'GTime'
@@ -31,7 +29,7 @@ OLD_APP_NAME = 'ShiftTimer'        # прежнее название: оттуд
 TITLE = 'GTime'
 DEFAULTS = {"norm": "08:00", "seconds": True, "theme": "auto", "autostart": True,
             "notify_hours": True, "notify_break": True, "break_min": 60, "sound": True, "volume": "mid", "lunch_min": 60, "mini_tasks": False,
-            "mini_visible": False, "mini_on_top": True, "mini_pos": None, "team_dir": "", "team_login": "", "palette": "blue"}
+            "mini_visible": False, "mini_on_top": True, "mini_pos": None, "palette": "blue"}
 PALETTES = ("blue", "pink", "violet", "green", "orange", "teal", "graphite")     # цветовые схемы (ui/style.css, data-palette)
 MAIN_SIZE = (940, 960)            # не «телефонная» узкая колонка: большое окно (на маленьком экране уменьшается — main_size)
 MAIN_MIN = (480, 600)
@@ -124,9 +122,6 @@ def clean(raw):
         s['theme'] = raw['theme']
     if raw.get('palette') in PALETTES:
         s['palette'] = raw['palette']
-    for k in ('team_dir', 'team_login'):
-        if isinstance(raw.get(k), str):
-            s[k] = raw[k].strip()[:260]
     p = raw.get('mini_pos')
     if isinstance(p, (list, tuple)) and len(p) == 2 and all(isinstance(v, (int, float)) for v in p):
         s['mini_pos'] = [int(p[0]), int(p[1])]
@@ -176,7 +171,7 @@ def set_autostart(on):
         return False
 
 
-class Api(team_api.TeamMixin, update_api.UpdateMixin):
+class Api:
     """Методы без «_» видны из JS как pywebview.api.<имя>."""
 
     def __init__(self, path=None, history=None, table=None, tracker=None, store=None):
@@ -184,8 +179,6 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
         self._s = load_settings(path)
         self._table = table
         self._tasks = store or tasks.TaskStore(tasks_file())
-        self._team_init()
-        self._update_init()
         self._reports = None                             # папка отчётов (в тестах — временная)
         self._screen_h = None
         self._screen_w = None
@@ -206,6 +199,9 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
     # ---- настройки ----
     def get_settings(self):
         return self._s
+
+    def app_version(self):
+        return {"version": updater.VERSION, "build": updater.BUILD}
 
     def save_settings(self, patch):
         new = clean({**self._s, **(patch if isinstance(patch, dict) else {})})
@@ -246,8 +242,6 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
             threading.Thread(target=show, daemon=True).start()
 
     def _after_tick(self):
-        self._team_sync()
-        self._update_maybe()
         if self._temp_mini_until and time.time() > self._temp_mini_until:
             self._temp_mini_until = 0.0
             if not self._s["mini_visible"] and self._mini is not None:
@@ -424,6 +418,20 @@ class Api(team_api.TeamMixin, update_api.UpdateMixin):
     # ---- журнал: сводки, календарь, отметки дней ----
     def _today_iso(self):
         return self._t.snapshot()["date"]
+
+    @staticmethod
+    def _summary_for(tr, st, kind, iso):
+        """Сводка недели / месяца: учёт времени + задачи периода (для окна и для Excel-отчёта)."""
+        kind = 'month' if kind == 'month' else 'week'
+        a, b = report.period(kind, iso)
+        s = tr.summary(a, b)
+        rows = st.rows_between(a, b)
+        s["kind"], s["label"] = kind, report.label(kind, a, b)
+        s["tasks"] = {"created": sum(1 for r in rows if a <= r["created"].date() <= b),
+                      "done": sum(1 for r in rows if r["done"] and r["finished"] and a <= r["finished"].date() <= b),
+                      "work": sum(1 for r in rows if not r["done"]),
+                      "by_tag": {g: {"n": v["n"], "done": v["done"], "sec": v["sec"]} for g, v in report.tag_stats(rows).items() if v["n"]}}
+        return s, rows
 
     def get_summary(self, kind='week', iso=None):
         """Сводка за неделю (пн–вс) или месяц, в который попадает день iso (по умолчанию сегодня); график 5/2."""
