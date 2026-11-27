@@ -90,3 +90,37 @@ def test_synth_all_and_stop(lw):
     assert a.listen_synth_all('ru')["queued"] == 0                     # уже в очереди — второй раз не ставит
     s = a.listen_synth_stop()
     assert s["dropped"] == len(missing) and s["state"]["synth_busy"] == 0 and not w.jobs
+
+
+def test_table_only_no_recordings(api, dialog, tmp_path, monkeypatch):
+    """Только таблица имён и пустая папка результата: имена без записи, синтез (очередь) и «Взять» кладут файл в папку."""
+    import openpyxl
+    w = FakeWorker()
+    monkeypatch.setattr(api, '_listen_synth_worker', w, raising=False)
+    xl = tmp_path / 'имена.xlsx'
+    wb = openpyxl.Workbook()
+    wb.active.append(['Имя'])
+    for n in ['Гизат', 'Айгерим', 'Нурлан']:
+        wb.active.append([n])
+    wb.save(xl)
+    out = tmp_path / 'результат'
+    out.mkdir()
+    api.listen_mode('var')
+    dialog(str(xl), str(out))
+    assert api.listen_pick_table()["rows"][0]["name"] == 'Гизат'      # таблица — до папки, записей нет
+    st = api.listen_pick_output()
+    assert not st.get("error") and st["folder"] == str(out) and st["found"] == 0 and st["qmark"] is True
+    assert [r["name"] for r in st["rows"]] == ['Гизат', 'Айгерим', 'Нурлан'] and not any(r["path"] for r in st["rows"])
+    api.listen_set_voice(0, 'голос 1')
+    r = api.listen_synth(1, 'Айгерим', 'ru', take=True)
+    assert r.get("queued") and api._ls()["synth"][1]["text"] == 'Айгерим?'
+    # сервис «ответил»: готовый файл → «Взять» кладёт его в папку результата как запись строки
+    from pydub import AudioSegment
+    f = api._ls()["synth"][1]["file"]
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    AudioSegment.silent(600, frame_rate=8000).export(f, format='wav')
+    api._ls()["synth"][1]["status"] = 'ready'
+    t = api.listen_synth_take(1)
+    assert t.get("ok") and os.path.exists(str(out / 'Айгерим.wav'))
+    rows = {x["name"]: x for x in api.listen_state()["rows"]}
+    assert rows['Айгерим']["path"] and not rows['Гизат']["path"]

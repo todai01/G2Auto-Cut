@@ -14,6 +14,11 @@ const lRow = () => LS && LS.rows[LS.pos];
 
 async function listenStart() {
     LS = await pywebview.api.listen_mode('var');
+    let how = await showBeautifulChoice('<b>Прослушка переменных</b><br><br>Есть ли уже <b>записи имён</b> (файлы «Гизат.wav»…)?<br><br>'
+        + '<span class="tts-dim">Если записей нет, а есть только таблица с именами — выберите второй вариант: имена синтезируются по одному, '
+        + 'прямо здесь, при прослушке.</span>', 'Есть записи', 'Только таблица — синтез', 'S', 'Отмена');
+    if (!how) return;
+    if (how === 'alt') return listenStartTableOnly();
     let ok = await showBeautifulAlert('<b>Прослушка переменных · шаг 1 из 3</b><br><br>Выберите <b>папку с записями переменных</b> — '
         + 'файлы, названные как значения (например, «Гизат.wav»). Подпапки тоже смотрю.');
     if (!ok) return;
@@ -37,6 +42,33 @@ async function listenStart() {
     LS = r;
     listenOpen();
     showToast(`Таблица: ${r.rows.length} названий · есть запись у ${r.found}${r.column ? ` · ${r.column}` : ''}`, 4500);
+}
+
+// ----- «Только таблица»: записей нет — имена синтезируются по одному (R) и сразу слушаются -----
+async function listenStartTableOnly() {
+    let ok = await showBeautifulAlert('<b>Только таблица · шаг 1 из 3</b><br><br><b>Таблица с именами</b> (.xlsx): список имён в одной колонке — '
+        + 'шапку («Имя») пропущу, колонку найду сам.');
+    if (!ok) return;
+    let r = await pywebview.api.listen_pick_table();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    LS = r;
+    ok = await showBeautifulAlert(`<b>Шаг 2 из 3</b><br><br>В таблице имён: <b>${r.rows.length}</b>.<br><br>Выберите <b>папку для результата</b> — туда лягут синтезированные имена `
+        + '(можно создать новую пустую). Записи в ней не нужны.');
+    if (!ok) return;
+    r = await pywebview.api.listen_pick_output();
+    if (!r || r.error === 'cancel') return;
+    if (r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r.error)); return; }
+    LS = r;
+    ok = await showBeautifulAlert('<b>Шаг 3 из 3</b><br><br>Папка <b>«Фразы_Переменные»</b> с вашей <b>начальной фразой</b> (start): по её громкости выравнивается каждое имя, '
+        + 'и имя слышно внутри фразы. Отметьте «Начало» (и «Конец», если есть).');
+    if (ok) {
+        r = await pywebview.api.listen_pick_phrases();
+        if (r && r.error && r.error !== 'cancel') showBeautifulAlert('⚠️ ' + escapeHtml(r.error));
+        if (r && !r.error) { LS = r; await listenPhrOpen(); }
+    }
+    listenOpen();
+    showToast('Имя без записи: R — синтез, сразу слышно. Enter — сохранить и дальше. Голос и транскрипцию образца спрошу при первом синтезе', 7000);
 }
 
 // ----- режим «Фразы»: текст из таблицы + запись с этим названием (папка с ru / kz) -----

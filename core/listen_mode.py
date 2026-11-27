@@ -283,6 +283,19 @@ class ListenMixin:
             return {"error": "В этой папке нет аудиофайлов (.wav, .mp3…).", "state": self.listen_state()}
         return self.listen_state()
 
+    def listen_pick_output(self):
+        """Режим «записей нет, только таблица»: папка, куда лягут синтезированные имена (может быть пустой / новой).
+        Аудио в ней не требуется; синтез сохраняется как обычная запись («<имя>.wav») и дальше правится как запись."""
+        picked = webview.windows[0].create_file_dialog(webview.FileDialog.FOLDER)
+        if not picked:
+            return {"error": "cancel"}
+        path = picked if isinstance(picked, str) else picked[0]
+        if not os.path.isdir(path):
+            return {"error": "Папка не найдена."}
+        self._listen_set_folder(path)
+        self._ls()["qmark"] = True                  # имена синтезируются с «?» (флажок можно снять на панели синтеза)
+        return self.listen_state()
+
     def _listen_set_folder(self, path):
         ls = self._ls()
         ls["folder"] = listen_lang_root(path)
