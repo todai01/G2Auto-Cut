@@ -68,7 +68,11 @@ async function listenStartTableOnly() {
         if (r && !r.error) { LS = r; await listenPhrOpen(); }
     }
     listenOpen();
-    showToast('Имя без записи: R — синтез, сразу слышно. Enter — сохранить и дальше. Голос и транскрипцию образца спрошу при первом синтезе', 7000);
+    if (await listenVoiceReady()) {                                  // голос и образец — сразу, дальше имена синтезируются сами
+        let pos = LS.pos; LS = await pywebview.api.listen_autosynth_kick(); LS.pos = pos;
+        listenRenderList(); listenRenderSynth();
+        showToast('Авто-синтез: первое имя уже синтезируется. Слушайте, Enter — сохранить; следующее синтезируется само и сразу звучит', 8000);
+    }
 }
 
 // ----- режим «Фразы»: текст из таблицы + запись с этим названием (папка с ru / kz) -----
@@ -873,6 +877,7 @@ function listenRenderSynth() {
         ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}
         <button class="btn-ghost btn-ghost--compact" onclick="listenVoicePick()" title="Голос синтеза: свой образец (файл + транскрипция), запись на экране или готовый голос сервиса">голос: ${escapeHtml(LS.voice ? LS.voice.label : 'не выбран')} ✎</button>
         <label class="listen-opt" title="В конце имени — знак вопроса («Гизат?»): так сервис даёт нужную интонацию"><input type="checkbox" ${LS.qmark ? 'checked' : ''} onchange="listenQmark(this.checked)"> «?» в конце</label>
+        <label class="listen-opt" title="Имя без записи синтезируется само — это и два следующих: после сохранения (Enter) следующее уже готово и сразу звучит в фразе"><input type="checkbox" ${LS.autosynth ? 'checked' : ''} onchange="listenAutoSynthSet(this.checked)"> авто-синтез</label>
         ${LS.synth_busy ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthStop()" title="Снять очередь синтеза (идущий доделается)">Стоп (${LS.synth_busy})</button>`
           : `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthAll()" title="Синтез всех строк без записи по очереди — каждое встанет на место записи (громкость — по начальной фразе, тишина и вдохи срезаны)">Синтезировать все без записи (${LS.rows.filter(x => !x.path && x.synth !== 'ready').length})</button>`}`;
     listenStatusRender(); listenEdRender();
@@ -999,6 +1004,12 @@ async function listenSampleSet(force) {
     showToast('Образец голоса сохранён — синтез будет его голосом');
     return true;
 }
+async function listenAutoSynthSet(on) {
+    if (on && !(await listenVoiceReady())) { listenRenderSynth(); return; }
+    let pos = LS.pos; LS = await pywebview.api.listen_set_autosynth(on); LS.pos = pos;
+    listenRenderList(); listenRenderSynth();
+    if (on) showToast('Авто-синтез: имена без записи синтезируются сами, по мере прослушки');
+}
 async function listenQmark(on) { let pos = LS.pos; LS = await pywebview.api.listen_set_qmark(on); LS.pos = pos; listenRenderSynth(); }
 async function listenSynthAll() {
     if (!(await listenVoiceReady())) return;
@@ -1063,7 +1074,8 @@ function listenEvent(p) {
     if (p.stage === 'synth') {
         let name = LS && LS.rows[p.k] ? LS.rows[p.k].name : '';
         let voice = p.voice ? ` · голос «${p.voice}»` : '';
-        showToast(!p.ok ? `Синтез «${name}»: ${p.error}` : p.taken ? `Синтез «${name}» — на дорожке${voice}` : `Синтез готов: ${name}${voice} — «▶ Синтез в фразе»`, 4500);
+        if (!p.ok || !p.taken || (LS && p.k === LS.pos))               // авто-синтез впрок (другие строки) — без уведомлений
+            showToast(!p.ok ? `Синтез «${name}»: ${p.error}` : p.taken ? `Синтез «${name}» — на дорожке${voice}` : `Синтез готов: ${name}${voice} — «▶ Синтез в фразе»`, 4500);
         if (isShown('stage5-listen')) {
             listenRenderList();
             if (LS && p.k === LS.pos) {

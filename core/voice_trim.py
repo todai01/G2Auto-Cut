@@ -10,6 +10,7 @@ HOP_MS, WIN_MS = 10, 30
 MIN_VOICED_MS = 40            # короче — не голос (щелчок, призвук)
 LEAD_CONS_MS = 160            # сколько глухого шума вплотную перед голосом считать согласной
 TAIL_CONS_MS = 300            # после голоса: «с», «т», затухание
+TAIL_BRIDGE_MS = 140          # пауза-«затвор» перед взрывом на конце слова («Гиза | т»): шум за ней — тоже слово
 BREATH_MIN_MS = 80            # шум до паузы длиннее этого — вдох
 
 
@@ -56,6 +57,16 @@ def voice_span(x, rate):
     e = b                                                   # и после
     while e < n and e - b < TAIL_CONS_MS // HOP_MS and db[e] > thr_lo:
         e += 1
+    g = e                                                   # затвор + взрыв: «т», «к», «п» на конце после короткой паузы
+    lim = TAIL_BRIDGE_MS // HOP_MS
+    while g < n and g - e < lim and db[g] <= thr_lo:
+        g += 1
+    if 0 < g - e < lim and g < n and db[g] > thr_lo:
+        h = g
+        while h < n and h - g < TAIL_CONS_MS // HOP_MS and db[h] > thr_lo:
+            h += 1
+        if h - g >= 2:
+            e = h
     info = {}
     before = int(np.sum(db[:j] > thr_lo)) * HOP_MS
     if before >= BREATH_MIN_MS:

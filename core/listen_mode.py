@@ -294,6 +294,7 @@ class ListenMixin:
             return {"error": "Папка не найдена."}
         self._listen_set_folder(path)
         self._ls()["qmark"] = True                  # имена синтезируются с «?» (флажок можно снять на панели синтеза)
+        self._ls()["autosynth"] = True              # и сами, по мере прослушки (флажок «авто-синтез» на панели синтеза)
         return self.listen_state()
 
     def _listen_set_folder(self, path):
@@ -611,6 +612,10 @@ class ListenMixin:
             return {"error": "Таблица не загружена."}
         ls["pos"] = k = max(0, min(int(pos), len(ls["rows"]) - 1))
         ls["go"] = gen = ls.get("go", 0) + 1
+        try:
+            self._listen_autosynth(k)                       # нет записи — синтез этого имени и двух следующих, сразу
+        except Exception:
+            pass
         path = ls["rows"][k]["path"]
         out = {"pos": k, "row": self._listen_row(k)}
         part = None
@@ -639,7 +644,7 @@ class ListenMixin:
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None, "voice": ls.get("voice"),
             "sample": (lambda s: {"name": os.path.basename(s["path"]), "text": s["text"]} if s else None)(self._listen_sample()),
-            "qmark": bool(ls.get("qmark")), "synth_busy": sum(1 for s in ls["synth"].values() if s.get("status") == 'busy'),
+            "qmark": bool(ls.get("qmark")), "autosynth": bool(ls.get("autosynth")), "synth_busy": sum(1 for s in ls["synth"].values() if s.get("status") == 'busy'),
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
@@ -1127,7 +1132,7 @@ class ListenMixin:
         self._ls()["qmark"] = bool(on)
         return self.listen_state()
 
-    def listen_synth(self, k, text, lang=None, take=False, ref=None):
+    def listen_synth(self, k, text, lang=None, take=False, ref=None, front=False):
         """Синтез строки k в фоне. take — готовый сразу поставить вместо записи
         (на дорожку: правка и прослушка — уже по нему)."""
         ls = self._ls()
@@ -1210,25 +1215,15 @@ class ListenMixin:
                 ls["synth"].setdefault(k, {"file": dst, "text": text, "lang": lang})["status"] = "error"
                 self._listen_push({"stage": "synth", "k": k, "ok": False, "error": str(e), "state": self.listen_state()})
         job.k = k                                           # «Стоп» снимает ещё не начатые по номеру строки
-        self._listen_worker().add(job)
+        self._listen_worker().add(job, front=front)
         return {"queued": True, "state": self.listen_state()}
 
-    SYNTH_PAD_MS = (30, 60)          # после срезки синтеза: до голоса / после голоса
-
     def _listen_level(self, dst, ref):
-        """Синтез: тишина и вдохи по краям срезаются (`voice_span`), громкость и формат — как у начальной фразы
-        (или прежней записи переменной)."""
+        """Синтез: файл остаётся ПОЛНЫМ (ничего не режем — глухой звук на конце, «Гизат», не пропадёт); срезка тишины и вдохов —
+        только отметка автосрезки на дорожке (`listen_auto`), которую можно двигать или выключить. Громкость и формат — как у
+        начальной фразы (или прежней записи переменной)."""
         try:
             seg = AudioSegment.from_file(dst)
-            try:
-                import numpy as np
-                x = np.array(seg.set_channels(1).get_array_of_samples(), dtype=np.float64) / float(1 << (8 * seg.sample_width - 1))
-                v0, v1, _info = voice_span(x, seg.frame_rate)
-                a, b = max(0, int(v0) - self.SYNTH_PAD_MS[0]), min(len(seg), int(v1) + self.SYNTH_PAD_MS[1])
-                if b - a >= 80:
-                    seg = seg[a:b].fade_in(5).fade_out(10)
-            except Exception:
-                pass
             if ref and os.path.exists(ref):
                 r = AudioSegment.from_file(ref)
                 a, b = self._loudness(seg), self._loudness(r)
@@ -1238,6 +1233,35 @@ class ListenMixin:
             seg.export(dst, format='wav')
         except Exception:
             pass
+
+    def _listen_autosynth(self, k, ahead=2):
+        """Автосинтез: строка k (сразу, впереди очереди) и ещё `ahead` следующих без записи — синтезируются сами и встают
+        на место записи; к переходу на них синтез уже готов, сборка (начало → имя → конец) звучит сразу."""
+        ls = self._ls()
+        if not ls.get("autosynth") or not ls.get("voice") or not ls["rows"]:
+            return 0
+        n = 0
+        for j in range(max(0, k), min(len(ls["rows"]), k + 1 + ahead)):
+            row = ls["rows"][j]
+            if row["path"] or (ls["synth"].get(j) or {}).get("status") in ('busy', 'ready'):
+                continue
+            text = (row.get("text") if ls["mode"] == 'phrase' else None) or row["name"]
+            r = self.listen_synth(j, text, None, take=True, front=(j == k))
+            if r.get("error"):
+                break
+            n += 1
+        return n
+
+    def listen_set_autosynth(self, on):
+        """Автосинтез имён без записи: текущего и двух следующих (включается сам в режиме «Только таблица»)."""
+        self._ls()["autosynth"] = bool(on)
+        self._listen_autosynth(self._ls()["pos"])
+        return self.listen_state()
+
+    def listen_autosynth_kick(self):
+        """Запустить автосинтез для текущей строки (после выбора голоса / открытия таблицы)."""
+        self._listen_autosynth(self._ls()["pos"])
+        return self.listen_state()
 
     def listen_synth_all(self, lang=None):
         """Синтез всех строк без записи (на текущем языке) — по очереди, каждый сам встаёт на место записи."""
