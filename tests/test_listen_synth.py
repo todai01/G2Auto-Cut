@@ -1,5 +1,6 @@
 """Прослушка, синтез имён: свой образец с транскрипцией, «?» в конце, громкость по начальной фразе,
 срезка тишины и вдохов, все без записи разом и «Стоп». Сервис синтеза не нужен: очередь — заглушка."""
+import json
 import os
 
 import numpy as np
@@ -170,3 +171,97 @@ def test_table_only_no_recordings(api, dialog, tmp_path, monkeypatch):
     assert t.get("ok") and os.path.exists(str(out / 'Айгерим.wav'))
     rows = {x["name"]: x for x in api.listen_state()["rows"]}
     assert rows['Айгерим']["path"] and not rows['Гизат']["path"]
+
+
+class _Page:
+    def page_ready(self):
+        return None
+
+
+def _table_session(api, dialog, tmp_path, names=('Гизат', 'Айгерим', 'Нурлан')):
+    import openpyxl
+    xl = tmp_path / 'имена.xlsx'
+    wb = openpyxl.Workbook()
+    for n in names:
+        wb.active.append([n])
+    wb.save(xl)
+    out = tmp_path / 'результат'
+    out.mkdir(exist_ok=True)
+    api.listen_mode('var')
+    dialog(str(xl), str(out))
+    api.listen_pick_table()
+    api.listen_pick_output()
+    return out
+
+
+def test_three_variants_folders_resume_and_stop(api, dialog, tmp_path, monkeypatch):
+    """Каждое имя — N раз в «вариант_1…N»; рядом имена.json и _контекст со start; повтор докачивает только недостающее; Стоп."""
+    w = FakeWorker()
+    monkeypatch.setattr(api, '_listen_synth_worker', w, raising=False)
+    calls = []
+
+    def fake_page(page, v, etalon, etalon_text, text, lang, raw):
+        calls.append(text)
+        _seg(_tone(16000, 400, 150 + 20 * len(calls)), 16000).export(raw, format='wav')
+        return 'тест'
+    monkeypatch.setattr(api, '_listen_synth_page', fake_page)
+    out = _table_session(api, dialog, tmp_path)
+    start = wav_path = str(tmp_path / 'start.wav')
+    _seg(_tone(8000, 600, 200, 0.15), 8000).export(start, format='wav')
+    api._ls()["start"] = start
+    assert api.listen_variants_start(3).get("error")                         # голос не выбран
+    api.listen_set_voice(0, 'голос 1')
+    r = api.listen_variants_start(3)
+    assert r.get("ok") and r["state"]["variants"]["total"] == 9 and r["state"]["variants"]["running"]
+    for j in list(w.jobs):
+        w.jobs.remove(j)
+        j(_Page())
+    for v in (1, 2, 3):
+        for nm in ('Гизат', 'Айгерим', 'Нурлан'):
+            assert (out / f'вариант_{v}' / f'{nm}.wav').exists()
+    assert len(calls) == 9 and all(t == 'Гизат?' for t in calls[:3])        # «?» — у каждого прогона
+    ctx = json.loads((out / 'имена.json').read_text(encoding='utf-8'))
+    assert ctx["names"] == ['Гизат', 'Айгерим', 'Нурлан'] and ctx["variants"] == 3 and (out / '_контекст' / 'start.wav').exists()
+    vs = api.listen_state()["variants"]
+    assert vs["done"] == 9 and not vs["running"] and not vs["errors_n"]
+    files = {p: os.path.getsize(p) for p in map(str, out.rglob('*.wav'))}
+    assert not [p for p in files if p.endswith('.part.wav') or p.endswith('.download')]
+    # повтор: пропал один вариант — докачивается только он
+    (out / 'вариант_2' / 'Айгерим.wav').unlink()
+    calls.clear()
+    assert api.listen_variants_start(3)["state"]["variants"]["total"] == 9
+    for j in list(w.jobs):
+        w.jobs.remove(j)
+        j(_Page())
+    assert len(calls) == 1 and (out / 'вариант_2' / 'Айгерим.wav').exists()
+    # Стоп: ничего не синтезируется, готовое остаётся
+    for f in list((out / 'вариант_3').glob('*.wav')):
+        f.unlink()
+    api.listen_variants_start(3)
+    api.listen_variants_stop()
+    calls.clear()
+    for j in list(w.jobs):
+        j(_Page())
+    assert not calls and (out / 'вариант_1' / 'Гизат.wav').exists()
+
+
+def test_variants_error_is_recorded_and_continues(api, dialog, tmp_path, monkeypatch):
+    w = FakeWorker()
+    monkeypatch.setattr(api, '_listen_synth_worker', w, raising=False)
+    n = {"c": 0}
+
+    def flaky(page, v, etalon, etalon_text, text, lang, raw):
+        n["c"] += 1
+        if n["c"] == 2:
+            raise RuntimeError('сервис не ответил')
+        _seg(_tone(16000, 300), 16000).export(raw, format='wav')
+        return 'тест'
+    monkeypatch.setattr(api, '_listen_synth_page', flaky)
+    out = _table_session(api, dialog, tmp_path, names=('Гизат',))
+    api.listen_set_voice(0, 'голос 1')
+    api.listen_variants_start(3)
+    for j in list(w.jobs):
+        j(_Page())
+    vs = api.listen_state()["variants"]
+    assert vs["done"] == 2 and vs["errors_n"] == 1 and vs["errors"][0]["v"] == 2
+    assert (out / 'вариант_1' / 'Гизат.wav').exists() and not (out / 'вариант_2' / 'Гизат.wav').exists() and (out / 'вариант_3' / 'Гизат.wav').exists()

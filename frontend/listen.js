@@ -878,6 +878,7 @@ function listenRenderSynth() {
         <button class="btn-ghost btn-ghost--compact" onclick="listenVoicePick()" title="Голос синтеза: свой образец (файл + транскрипция), запись на экране или готовый голос сервиса">голос: ${escapeHtml(LS.voice ? LS.voice.label : 'не выбран')} ✎</button>
         <label class="listen-opt" title="В конце имени — знак вопроса («Гизат?»): так сервис даёт нужную интонацию"><input type="checkbox" ${LS.qmark ? 'checked' : ''} onchange="listenQmark(this.checked)"> «?» в конце</label>
         <label class="listen-opt" title="Имя без записи синтезируется само — это и два следующих: после сохранения (Enter) следующее уже готово и сразу звучит в фразе"><input type="checkbox" ${LS.autosynth ? 'checked' : ''} onchange="listenAutoSynthSet(this.checked)"> авто-синтез</label>
+        ${listenVariantsHTML()}
         ${LS.synth_busy ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthStop()" title="Снять очередь синтеза (идущий доделается)">Стоп (${LS.synth_busy})</button>`
           : `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthAll()" title="Синтез всех строк без записи по очереди — каждое встанет на место записи (громкость — по начальной фразе, тишина и вдохи срезаны)">Синтезировать все без записи (${LS.rows.filter(x => !x.path && x.synth !== 'ready').length})</button>`}`;
     listenStatusRender(); listenEdRender();
@@ -1004,6 +1005,34 @@ async function listenSampleSet(force) {
     showToast('Образец голоса сохранён — синтез будет его голосом');
     return true;
 }
+// «3 варианта»: каждое имя таблицы синтезируется три раза → папки вариант_1 / вариант_2 / вариант_3 в папке результата
+// (для веб-сервиса выбора вариантов). Готовые файлы пропускаются — можно остановить и продолжить.
+function listenVariantsHTML() {
+    let v = LS.variants, dur = s => { s = Math.max(0, Math.round(s)); return s >= 3600 ? `${Math.floor(s / 3600)} ч ${Math.floor(s / 60) % 60} мин` : `${Math.floor(s / 60)} мин`; };
+    if (v && v.running)
+        return `<span class="listen-variants" title="${escapeHtml(v.current || '')}">варианты: <b>${v.done}</b> из ${v.total}${v.eta_s ? ` · осталось ~${dur(v.eta_s)}` : ''}${v.errors_n ? ` · <span class="listen-warn">ошибок ${v.errors_n}</span>` : ''}</span>
+            <button class="btn-ghost btn-ghost--compact" onclick="listenVariantsStop()" title="Идущее имя доделается, готовые варианты остаются">Стоп вариантов</button>`;
+    return `<button class="btn-ghost btn-ghost--compact" onclick="listenVariantsStart()" title="Все имена таблицы — по 3 раза в папки вариант_1 / вариант_2 / вариант_3 (для веб-сервиса выбора)">${v && v.done ? `Варианты: ${v.done} из ${v.total} — продолжить` : '3 варианта всех имён'}</button>`;
+}
+async function listenVariantsStart() {
+    if (!LS || !LS.rows.length) { showToast('Сначала загрузите таблицу с именами'); return; }
+    if (!LS.folder) { showToast('Выберите папку результата (кнопка «Папка»)'); return; }
+    if (!(await listenVoiceReady())) return;
+    let n = LS.rows.length;
+    if (!(await showBeautifulConfirm(`<b>3 варианта всех имён</b><br><br>Имён: <b>${n}</b> → синтезов: <b>${n * 3}</b>. Каждое имя синтезируется три раза подряд (сервис каждый раз даёт чуть разный результат), `
+        + `файлы — в папки «вариант_1», «вариант_2», «вариант_3» внутри «${escapeHtml(LS.folder_name || '')}», целые, громкость по start-фразе${LS.qmark ? ', с «?» в конце' : ''}.<br><br>`
+        + 'Можно остановить и запустить снова — готовое не пересинтезируется. Моноблок и браузер сервиса должны остаться открытыми.', 'Начать', 'Отмена'))) return;
+    let pos = LS.pos, r = await pywebview.api.listen_variants_start(3);
+    if (r && r.state) { LS = r.state; LS.pos = pos; }
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); }
+    listenRenderSynth();
+}
+async function listenVariantsStop() {
+    let pos = LS.pos, r = await pywebview.api.listen_variants_stop();
+    if (r && r.state) { LS = r.state; LS.pos = pos; }
+    listenRenderSynth();
+    showToast('Останавливаю: идущее имя доделается, готовые варианты остаются');
+}
 async function listenAutoSynthSet(on) {
     if (on && !(await listenVoiceReady())) { listenRenderSynth(); return; }
     let pos = LS.pos; LS = await pywebview.api.listen_set_autosynth(on); LS.pos = pos;
@@ -1071,6 +1100,12 @@ async function listenSynthDrop() { LS = await pywebview.api.listen_synth_drop(LS
 function listenEvent(p) {
     if (!p) return;
     if (p.state) { let pos = LS ? LS.pos : 0; LS = p.state; LS.pos = pos; }
+    if (p.stage === 'variants') {
+        if (LS) LS.variants = p.variants;
+        if (isShown('stage5-listen')) listenRenderSynth();
+        if (p.variants && !p.variants.running && p.variants.done >= p.variants.total) showToast(`Варианты готовы: ${p.variants.done} файлов — папки вариант_1 / 2 / 3`, 8000);
+        return;
+    }
     if (p.stage === 'synth') {
         let name = LS && LS.rows[p.k] ? LS.rows[p.k].name : '';
         let voice = p.voice ? ` · голос «${p.voice}»` : '';

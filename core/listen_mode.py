@@ -644,7 +644,7 @@ class ListenMixin:
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None, "voice": ls.get("voice"),
             "sample": (lambda s: {"name": os.path.basename(s["path"]), "text": s["text"]} if s else None)(self._listen_sample()),
-            "qmark": bool(ls.get("qmark")), "autosynth": bool(ls.get("autosynth")), "synth_busy": sum(1 for s in ls["synth"].values() if s.get("status") == 'busy'),
+            "qmark": bool(ls.get("qmark")), "autosynth": bool(ls.get("autosynth")), "variants": self._listen_variants_state(), "synth_busy": sum(1 for s in ls["synth"].values() if s.get("status") == 'busy'),
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
@@ -1132,6 +1132,172 @@ class ListenMixin:
         self._ls()["qmark"] = bool(on)
         return self.listen_state()
 
+    def _listen_etalon(self, k, ref=None):
+        """Эталон для клонирования голоса: (файл, его текст, ошибка). Предустановленный голос сервиса — эталона нет (None)."""
+        ls = self._ls()
+        v = ls.get("voice") or {"index": SYNTH_PRESET_SEL["voice_index"], "label": None}
+        row = ls["rows"][k] if 0 <= k < len(ls["rows"]) else {"path": None, "name": '', "text": None}
+        if v["index"] == -2:                                # свой образец: загруженный файл + его транскрипция
+            smp = self._listen_sample()
+            if not smp:
+                return None, None, "Образец голоса не задан — выберите голос «свой образец» и загрузите файл с транскрипцией."
+            etalon = os.path.join(tempfile.gettempdir(), "gvox_listen_sample.wav")
+            try:
+                AudioSegment.from_file(smp["path"]).export(etalon, format="wav")
+            except Exception as e:
+                return None, None, f"Образец не читается: {e}"
+            return etalon, smp["text"], None
+        if v["index"] < 0:                                  # образец — то, что сейчас на экране (с правкой)
+            ref = ref or ({"path": row["path"]} if row["path"] else None)
+            if not ref or not ref.get("path") or not os.path.exists(ref["path"]):
+                return None, None, "Для синтеза по образцу нужна запись на экране — у этой строки её нет. Выберите голос сервиса."
+            etalon = os.path.join(tempfile.gettempdir(), f"gvox_listen_ref_{k}.wav")
+            try:
+                self._listen_render(ref["path"], ref.get("ranges"), float(ref.get("gain") or 0), float(ref.get("tempo") or 1)).export(etalon, format="wav")
+            except Exception as e:
+                return None, None, f"Образец не собрался: {e}"
+            return etalon, row.get("text") or row["name"], None
+        return None, None, None
+
+    def _listen_synth_page(self, page, v, etalon, etalon_text, text, lang, raw):
+        """Один синтез в браузере сервиса: заполнить, нажать «Синтезировать», скачать в raw. Возвращает название голоса."""
+        if etalon:                                          # по образцу: эталон + его текст + что сказать
+            sel = SYNTH_SEL
+            self._listen_tab(page, 'clone')
+            page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
+            page.set_input_files(sel["etalon_file"], etalon)
+            page.fill(sel["etalon_text"], etalon_text)
+            page.fill(sel["text"], text)
+            synth_collect(page, sel["submit"], raw)
+            return "по образцу"
+        sel = SYNTH_PRESET_SEL
+        self._listen_tab(page, 'preset')
+        voice = lambda: preset_pick(page, sel["voice"], v["index"])
+        # Сервис сбрасывает голос (после «Синтезировать», при догрузке списка) — голос и язык выставляем
+        # перед каждым синтезом с проверкой, голос — ещё раз сразу после нажатия, и только потом скачиваем.
+        page.fill(sel["text"], text)
+        preset_pick(page, sel["lang"], SYNTH_LANG_INDEX.get(lang, 0))
+        vname = voice()
+        synth_collect(page, sel["submit"], raw, after_click=voice)
+        return vname
+
+    # ---- «N вариантов» для веб-сервиса выбора: каждое имя синтезируется N раз → вариант_1 / вариант_2 / … ----
+    LISTEN_VARIANT_DIR, LISTEN_CTX_DIR = 'вариант_{}', '_контекст'
+
+    def listen_variants_start(self, n=3, lang=None):
+        """Все имена таблицы — по N раз (каждый синтез сервиса немного отличается), файлы по папкам «вариант_1…N» в папке результата.
+        Громкость — по начальной фразе, файлы целые. Можно остановить и запустить снова: готовые файлы пропускаются.
+        Рядом — «имена.json» (порядок имён) и «_контекст/» с начальной / конечной фразой для веб-сервиса."""
+        import time as _t
+        ls = self._ls()
+        n = max(1, min(int(n or 3), 9))
+        if not ls["rows"]:
+            return {"error": "Таблица с именами не загружена."}
+        if not ls["folder"] or not os.path.isdir(ls["folder"]):
+            return {"error": "Выберите папку результата."}
+        if not ls.get("voice"):
+            return {"error": "Выберите голос синтеза (свой образец или голос сервиса)."}
+        if ls["voice"]["index"] == -1:
+            return {"error": "Для вариантов нужен свой образец (с транскрипцией) или голос сервиса: «по образцу — запись на экране» не подходит."}
+        if ls.get("variants", {}).get("running"):
+            return {"error": "Синтез вариантов уже идёт."}
+        etalon, etalon_text, err = self._listen_etalon(0)
+        if err:
+            return {"error": err}
+        lang = lang if lang in ('ru', 'kz') else ('ru' if ls["lang"] == 'uni' else ls["lang"])
+        root = ls["folder"]
+        v = ls["voice"]
+        names = [r["name"] for r in ls["rows"]]
+        stems = [listen_stem(nm) or f'строка_{i + 1}' for i, nm in enumerate(names)]
+        ctx = os.path.join(root, self.LISTEN_CTX_DIR)
+        os.makedirs(ctx, exist_ok=True)
+        for key, nm in (("start", 'start'), ("end", 'end')):
+            src = ls.get(key)
+            if src and os.path.exists(src):
+                shutil.copyfile(src, os.path.join(ctx, nm + os.path.splitext(src)[1].lower()))
+        for i in range(1, n + 1):
+            os.makedirs(os.path.join(root, self.LISTEN_VARIANT_DIR.format(i)), exist_ok=True)
+        with open(os.path.join(root, 'имена.json'), 'w', encoding='utf-8') as f:
+            json.dump({"names": names, "stems": stems, "variants": n, "lang": lang, "qmark": bool(ls.get("qmark")),
+                       "voice": v.get("label"), "created": _t.strftime('%Y-%m-%d %H:%M')}, f, ensure_ascii=False, indent=1)
+        path_of = lambda i, vi: os.path.join(root, self.LISTEN_VARIANT_DIR.format(vi), f"{stems[i]}.wav")
+        todo = [i for i in range(len(names)) if not all(os.path.exists(path_of(i, vi)) for vi in range(1, n + 1))]
+        st = ls["variants"] = {"n": n, "total": len(names) * n, "stop": False, "errors": [], "current": None,
+                               "pending": len(todo), "running": bool(todo), "started": _t.time(),
+                               "done": sum(1 for i in range(len(names)) for vi in range(1, n + 1) if os.path.exists(path_of(i, vi)))}
+        st["done0"] = st["done"]
+
+        def finish_one():
+            st["pending"] -= 1
+            if st["pending"] <= 0:
+                st["running"] = False
+                st["current"] = None
+
+        def push():
+            self._listen_push({"stage": "variants", "variants": self._listen_variants_state()})
+
+        for i in todo:
+            def job(worker, i=i):
+                try:
+                    if st["stop"]:
+                        return
+                    page = worker.page_ready()
+                    text = names[i] if not ls.get("qmark") or names[i].endswith('?') else names[i].rstrip('.!,;: ') + '?'
+                    for vi in range(1, n + 1):
+                        dst = path_of(i, vi)
+                        if st["stop"]:
+                            break
+                        if os.path.exists(dst):
+                            continue
+                        st["current"] = f"{names[i]} · вариант {vi}"
+                        raw = dst + '.download'
+                        try:
+                            self._listen_synth_page(page, v, etalon, etalon_text, text, lang, raw)
+                            clean_wav(raw, dst + '.part.wav')
+                            self._listen_level(dst + '.part.wav', ls["start"])
+                            os.replace(dst + '.part.wav', dst)                     # целый файл появляется сразу
+                            st["done"] += 1
+                        except Exception as e:
+                            st["errors"].append({"name": names[i], "v": vi, "error": str(e)[:200]})
+                        finally:
+                            for tmp in (raw, dst + '.part.wav'):
+                                try:
+                                    os.remove(tmp)
+                                except OSError:
+                                    pass
+                        push()
+                finally:
+                    finish_one()
+                    if not st["running"]:
+                        push()
+            job.k = None
+            self._listen_worker().add(job)
+        if not todo:
+            push()
+        return {"ok": True, "state": self.listen_state()}
+
+    def listen_variants_stop(self):
+        """Остановить: ещё не начатые имена снимаются, идущее доделывается (готовые варианты остаются)."""
+        st = self._ls().get("variants")
+        if st and st.get("running"):
+            st["stop"] = True
+            dropped = len(self._listen_worker().clear())
+            st["pending"] = max(0, st["pending"] - dropped)
+            if st["pending"] <= 0:
+                st["running"], st["current"] = False, None
+        return {"ok": True, "state": self.listen_state()}
+
+    def _listen_variants_state(self):
+        st = self._ls().get("variants")
+        if not st:
+            return None
+        import time as _t
+        done_now = st["done"] - st.get("done0", 0)
+        el = _t.time() - st.get("started", _t.time())
+        eta = round((st["total"] - st["done"]) * el / done_now) if st.get("running") and done_now >= 3 and el > 0 else None
+        return {"n": st["n"], "total": st["total"], "done": st["done"], "running": st["running"], "stop": st["stop"],
+                "current": st["current"], "errors": st["errors"][-20:], "errors_n": len(st["errors"]), "eta_s": eta}
+
     def listen_synth(self, k, text, lang=None, take=False, ref=None, front=False):
         """Синтез строки k в фоне. take — готовый сразу поставить вместо записи
         (на дорожку: правка и прослушка — уже по нему)."""
@@ -1150,52 +1316,16 @@ class ListenMixin:
         v = ls.get("voice") or {"index": SYNTH_PRESET_SEL["voice_index"], "label": None}
         if ls.get("qmark") and not text.endswith('?'):
             text = text.rstrip('.!,;: ') + '?'
-        etalon, etalon_text = None, row.get("text") or row["name"]
-        if v["index"] == -2:                                # свой образец: загруженный файл + его транскрипция
-            smp = self._listen_sample()
-            if not smp:
-                return {"error": "Образец голоса не задан — выберите голос «свой образец» и загрузите файл с транскрипцией."}
-            etalon = os.path.join(tempfile.gettempdir(), "gvox_listen_sample.wav")
-            try:
-                AudioSegment.from_file(smp["path"]).export(etalon, format="wav")
-            except Exception as e:
-                return {"error": f"Образец не читается: {e}"}
-            etalon_text = smp["text"]
-        elif v["index"] < 0:                                # образец — то, что сейчас на экране (с правкой)
-            ref = ref or ({"path": row["path"]} if row["path"] else None)
-            if not ref or not ref.get("path") or not os.path.exists(ref["path"]):
-                return {"error": "Для синтеза по образцу нужна запись на экране — у этой строки её нет. Выберите голос сервиса."}
-            etalon = os.path.join(tempfile.gettempdir(), f"gvox_listen_ref_{k}.wav")
-            try:
-                self._listen_render(ref["path"], ref.get("ranges"), float(ref.get("gain") or 0), float(ref.get("tempo") or 1)).export(etalon, format="wav")
-            except Exception as e:
-                return {"error": f"Образец не собрался: {e}"}
+        etalon, etalon_text, err = self._listen_etalon(k, ref)
+        if err:
+            return {"error": err}
         ls["synth"][k] = {"status": "busy", "file": dst, "text": text, "lang": lang}
 
         def job(worker):
             try:
                 page = worker.page_ready()
                 raw = os.path.splitext(dst)[0] + '.download'
-                if etalon:                                  # по образцу: эталон + его текст + что сказать
-                    sel = SYNTH_SEL
-                    self._listen_tab(page, 'clone')
-                    page.select_option(sel["lang"], index=SYNTH_LANG_INDEX.get(lang, 0))
-                    page.set_input_files(sel["etalon_file"], etalon)
-                    page.fill(sel["etalon_text"], etalon_text)
-                    page.fill(sel["text"], text)
-                    vname = "по образцу"
-                    synth_collect(page, sel["submit"], raw)
-                else:
-                    sel = SYNTH_PRESET_SEL
-                    self._listen_tab(page, 'preset')
-                    voice = lambda: preset_pick(page, sel["voice"], v["index"])
-                    # Сервис сбрасывает голос (после «Синтезировать», при догрузке списка) —
-                    # голос и язык выставляем перед каждым синтезом с проверкой, голос — ещё раз
-                    # сразу после нажатия, и только потом скачиваем.
-                    page.fill(sel["text"], text)
-                    preset_pick(page, sel["lang"], SYNTH_LANG_INDEX.get(lang, 0))
-                    vname = voice()
-                    synth_collect(page, sel["submit"], raw, after_click=voice)
+                vname = self._listen_synth_page(page, v, etalon, etalon_text, text, lang, raw)
                 try:
                     clean_wav(raw, dst)
                 finally:
