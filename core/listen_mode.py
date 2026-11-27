@@ -625,6 +625,8 @@ class ListenMixin:
             "phr_folder_name": nm(ls["phr_folder"]), "phrases": ls["phrases"], "pick": ls["pick"],
             "split": bool(ls["lang_dirs"]),
             "tpl": {"from": ls["tpl"]["from"]} if ls.get("tpl") else None, "voice": ls.get("voice"),
+            "sample": (lambda s: {"name": os.path.basename(s["path"]), "text": s["text"]} if s else None)(self._listen_sample()),
+            "qmark": bool(ls.get("qmark")), "synth_busy": sum(1 for s in ls["synth"].values() if s.get("status") == 'busy'),
             "flagged": self._listen_flagged(),
             "rows": [self._listen_row(k) for k in range(len(rows))],
             "found": sum(1 for r in rows if r["path"]),
@@ -1055,11 +1057,61 @@ class ListenMixin:
         return {"voices": voices, "voice": ls.get("voice"), "error": err}
 
     def listen_set_voice(self, index, label=None):
-        """index ≥ 0 — готовый голос сервиса; -1 — по образцу: запись на экране + её название как текст образца."""
+        """index ≥ 0 — готовый голос сервиса; -1 — по образцу: запись на экране + её название как текст образца;
+        -2 — свой образец: загруженный файл + его транскрипция (`listen_set_sample`)."""
         ls = self._ls()
         index = int(index)
-        ls["voice"] = {"index": -1, "label": "по образцу — запись на экране"} if index < 0 else \
-            {"index": index, "label": str(label or f"голос {index + 1}")}
+        if index == -2:
+            smp = self._listen_sample()
+            if not smp:
+                return {"error": "Сначала загрузите образец голоса и его транскрипцию."}
+            ls["voice"] = {"index": -2, "label": f"образец «{os.path.basename(smp['path'])}»"}
+        else:
+            ls["voice"] = {"index": -1, "label": "по образцу — запись на экране"} if index < 0 else \
+                {"index": index, "label": str(label or f"голос {index + 1}")}
+        return self.listen_state()
+
+    # ---- свой образец голоса: файл + транскрипция (для сервиса синтеза), хранится между запусками ----
+    LISTEN_SAMPLE_FILE = os.path.join(os.path.expanduser('~'), '.gvox', 'listen_sample.json')
+
+    def _listen_sample(self):
+        smp = self.__dict__.get('_listen_smp')
+        if smp is None:
+            try:
+                with open(self.LISTEN_SAMPLE_FILE, 'r', encoding='utf-8') as f:
+                    smp = json.load(f)
+            except (OSError, ValueError):
+                smp = {}
+            self._listen_smp = smp
+        return smp if smp.get("path") and os.path.exists(smp["path"]) and str(smp.get("text") or '').strip() else None
+
+    def listen_pick_sample(self):
+        """Выбрать аудиофайл образца голоса (транскрипцию — `listen_set_sample`)."""
+        picked = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN, file_types=('Аудио (*.wav;*.mp3;*.ogg;*.flac;*.m4a)', 'Все файлы (*.*)'))
+        if not picked:
+            return {"error": "cancel"}
+        return {"path": picked if isinstance(picked, str) else picked[0]}
+
+    def listen_set_sample(self, path, text):
+        """Образец голоса для синтеза: файл и что в нём сказано (транскрипция). Выбирается голосом «свой образец»."""
+        path, text = str(path or ''), ' '.join(str(text or '').split())
+        if not path or not os.path.exists(path):
+            return {"error": "Файл образца не найден."}
+        if not text:
+            return {"error": "Нужна транскрипция образца — что именно в нём сказано."}
+        self._listen_smp = {"path": path, "text": text}
+        try:
+            os.makedirs(os.path.dirname(self.LISTEN_SAMPLE_FILE), exist_ok=True)
+            with open(self.LISTEN_SAMPLE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self._listen_smp, f, ensure_ascii=False)
+        except OSError:
+            pass
+        return self.listen_set_voice(-2)
+
+    def listen_set_qmark(self, on):
+        """«?» в конце имени при синтезе («Гизат?») — интонация вопроса нужна сервису."""
+        self._ls()["qmark"] = bool(on)
         return self.listen_state()
 
     def listen_synth(self, k, text, lang=None, take=False, ref=None):
@@ -1078,8 +1130,20 @@ class ListenMixin:
         safe = listen_stem(row["name"]) or f'строка_{k + 1}'
         dst = os.path.join(out_dir, f"{safe}.wav")
         v = ls.get("voice") or {"index": SYNTH_PRESET_SEL["voice_index"], "label": None}
-        etalon = None
-        if v["index"] < 0:                                  # образец — то, что сейчас на экране (с правкой)
+        if ls.get("qmark") and not text.endswith('?'):
+            text = text.rstrip('.!,;: ') + '?'
+        etalon, etalon_text = None, row.get("text") or row["name"]
+        if v["index"] == -2:                                # свой образец: загруженный файл + его транскрипция
+            smp = self._listen_sample()
+            if not smp:
+                return {"error": "Образец голоса не задан — выберите голос «свой образец» и загрузите файл с транскрипцией."}
+            etalon = os.path.join(tempfile.gettempdir(), "gvox_listen_sample.wav")
+            try:
+                AudioSegment.from_file(smp["path"]).export(etalon, format="wav")
+            except Exception as e:
+                return {"error": f"Образец не читается: {e}"}
+            etalon_text = smp["text"]
+        elif v["index"] < 0:                                # образец — то, что сейчас на экране (с правкой)
             ref = ref or ({"path": row["path"]} if row["path"] else None)
             if not ref or not ref.get("path") or not os.path.exists(ref["path"]):
                 return {"error": "Для синтеза по образцу нужна запись на экране — у этой строки её нет. Выберите голос сервиса."}
@@ -1088,7 +1152,6 @@ class ListenMixin:
                 self._listen_render(ref["path"], ref.get("ranges"), float(ref.get("gain") or 0), float(ref.get("tempo") or 1)).export(etalon, format="wav")
             except Exception as e:
                 return {"error": f"Образец не собрался: {e}"}
-        etalon_text = row.get("text") or row["name"]
         ls["synth"][k] = {"status": "busy", "file": dst, "text": text, "lang": lang}
 
         def job(worker):
@@ -1122,7 +1185,7 @@ class ListenMixin:
                         os.remove(raw)
                     except OSError:
                         pass
-                self._listen_level(dst, row["path"] or ls["start"])
+                self._listen_level(dst, ls["start"] or row["path"])      # громкость — по начальной фразе
                 ls["synth"][k]["status"] = "ready"
                 if take:
                     r = self.listen_synth_take(k, stop=False)
@@ -1133,13 +1196,26 @@ class ListenMixin:
             except Exception as e:
                 ls["synth"].setdefault(k, {"file": dst, "text": text, "lang": lang})["status"] = "error"
                 self._listen_push({"stage": "synth", "k": k, "ok": False, "error": str(e), "state": self.listen_state()})
+        job.k = k                                           # «Стоп» снимает ещё не начатые по номеру строки
         self._listen_worker().add(job)
         return {"queued": True, "state": self.listen_state()}
 
+    SYNTH_PAD_MS = (30, 60)          # после срезки синтеза: до голоса / после голоса
+
     def _listen_level(self, dst, ref):
-        """Синтез — к громкости и формату соседа (прежняя запись переменной или начало фразы)."""
+        """Синтез: тишина и вдохи по краям срезаются (`voice_span`), громкость и формат — как у начальной фразы
+        (или прежней записи переменной)."""
         try:
             seg = AudioSegment.from_file(dst)
+            try:
+                import numpy as np
+                x = np.array(seg.set_channels(1).get_array_of_samples(), dtype=np.float64) / float(1 << (8 * seg.sample_width - 1))
+                v0, v1, _info = voice_span(x, seg.frame_rate)
+                a, b = max(0, int(v0) - self.SYNTH_PAD_MS[0]), min(len(seg), int(v1) + self.SYNTH_PAD_MS[1])
+                if b - a >= 80:
+                    seg = seg[a:b].fade_in(5).fade_out(10)
+            except Exception:
+                pass
             if ref and os.path.exists(ref):
                 r = AudioSegment.from_file(ref)
                 a, b = self._loudness(seg), self._loudness(r)
@@ -1149,6 +1225,31 @@ class ListenMixin:
             seg.export(dst, format='wav')
         except Exception:
             pass
+
+    def listen_synth_all(self, lang=None):
+        """Синтез всех строк без записи (на текущем языке) — по очереди, каждый сам встаёт на место записи."""
+        ls = self._ls()
+        n = 0
+        for k, row in enumerate(ls["rows"]):
+            if row["path"] or (ls["synth"].get(k) or {}).get("status") in ('busy', 'ready'):
+                continue
+            text = (row.get("text") if ls["mode"] == 'phrase' else None) or row["name"]
+            r = self.listen_synth(k, text, lang, take=True)
+            if r.get("error"):
+                return {"error": r["error"], "queued": n, "state": self.listen_state()}
+            n += 1
+        return {"queued": n, "state": self.listen_state()}
+
+    def listen_synth_stop(self):
+        """Остановить очередь синтеза: ещё не начатые — снимаются, идущий доделывается."""
+        ls = self._ls()
+        jobs = self._listen_worker().clear()
+        for j in jobs:
+            k = getattr(j, 'k', None)
+            if k is not None and (ls["synth"].get(k) or {}).get("status") == 'busy':
+                ls["synth"].pop(k, None)
+        cur = getattr(self._listen_worker(), 'current', None)
+        return {"dropped": len(jobs), "running": cur is not None, "state": self.listen_state()}
 
     def listen_synth_play(self, k):
         s = self._ls()["synth"].get(int(k))

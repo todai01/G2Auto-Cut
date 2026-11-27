@@ -341,3 +341,4 @@ input[type=range]::-webkit-slider-thumb{
 .tts-tiers__sel-h{ position: absolute; top: 0; bottom: 0; width: 10px; pointer-events: auto; cursor: ew-resize; z-index: 3; }
 .tts-tiers__sel-h.is-l{ left: -5px; } .tts-tiers__sel-h.is-r{ right: -5px; }
 .tts-tiers__sel-h::before{ content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent-primary); opacity: .9; }
+html[data-edition] .home [data-slot]{ display: none; }      /* отдельные сборки: без настроек других режимов */

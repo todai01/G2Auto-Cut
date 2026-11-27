@@ -1,0 +1,61 @@
+# Сборка GVox «Прослушка» — в меню только «Прослушка» (синтез имён своим образцом голоса с транскрипцией, «?» в конце,
+# громкость по start-фразе, срезка тишины и вдохов), БЕЗ распознавания речи. Вручную или пушем правки этого файла.
+# Сборка: 1.
+name: Сборка GVox.exe (только Прослушка)
+
+on:
+  workflow_dispatch:
+  push:                       # запуск из рабочей ветки: правка этого файла (ручной запуск виден только в основной ветке)
+    branches: [claude/g2auto-cut-project-y8qvzc]
+    paths: [.github/workflows/build-exe-listen.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  build-listen:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Сборка «Прослушка» и самопроверка
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+        run: python build_exe.py --listen
+
+      - name: Проверка «как после скачивания» (метка из интернета на всех файлах)
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\GVox -Recurse -File | ForEach-Object {
+            Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
+          $psi = New-Object System.Diagnostics.ProcessStartInfo (Resolve-Path dist\GVox\GVox.exe).Path, '--selftest'
+          $psi.UseShellExecute = $false
+          $psi.WorkingDirectory = (Resolve-Path dist\GVox).Path
+          $p = [System.Diagnostics.Process]::Start($psi); $p.WaitForExit()
+          Get-Content dist\GVox\GVox_проверка.txt -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Самопроверка после «скачивания» не прошла" }
+          if (Test-Path dist\GVox\_internal\ctranslate2) { throw "В сборку «Прослушка» попал ctranslate2" }
+          if (-not (Select-String -Path dist\GVox\_internal\frontend\edition.js -Pattern "'listen'" -Quiet)) { throw "edition.js не «listen»" }
+          Remove-Item dist\GVox\GVox_проверка.txt
+
+      - name: Архив
+        shell: pwsh
+        run: |
+          $n = "${{ github.run_number }}"
+          7z a -tzip -mx=5 "GVox-listen-$n.zip" .\dist\GVox
+          Get-ChildItem *.zip | Format-Table Name, Length
+
+      - name: Выложить в Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $n = "${{ github.run_number }}"
+          $notes = "Сборка «Прослушка» $n — в меню только «Прослушка» (синтез имён), без распознавания речи, коммит ${{ github.sha }}.`n`nСкачайте GVox-listen-$n.zip, распакуйте, запустите GVox\GVox.exe. "
+          gh release create "gvox-listen-$n" "GVox-listen-$n.zip" --target "${{ github.sha }}" --title "GVox «Прослушка» — сборка $n" --notes "$notes" --prerelease

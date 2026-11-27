@@ -839,7 +839,10 @@ function listenRenderSynth() {
             <button class="btn-ghost btn-ghost--compact btn-ghost--good" onclick="listenSynthTake()">Взять</button>
             <button class="btn-ghost btn-ghost--compact" onclick="listenSynthDrop()">Отклонить</button>` : ''}
         ${st === 'error' ? '<span class="listen-warn">не получился — ещё раз</span>' : ''}
-        <button class="btn-ghost btn-ghost--compact" onclick="listenVoicePick()" title="Голос синтеза: готовый голос сервиса или по образцу — запись на экране">голос: ${escapeHtml(LS.voice ? LS.voice.label : 'не выбран')} ✎</button>`;
+        <button class="btn-ghost btn-ghost--compact" onclick="listenVoicePick()" title="Голос синтеза: свой образец (файл + транскрипция), запись на экране или готовый голос сервиса">голос: ${escapeHtml(LS.voice ? LS.voice.label : 'не выбран')} ✎</button>
+        <label class="listen-opt" title="В конце имени — знак вопроса («Гизат?»): так сервис даёт нужную интонацию"><input type="checkbox" ${LS.qmark ? 'checked' : ''} onchange="listenQmark(this.checked)"> «?» в конце</label>
+        ${LS.synth_busy ? `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthStop()" title="Снять очередь синтеза (идущий доделается)">Стоп (${LS.synth_busy})</button>`
+          : `<button class="btn-ghost btn-ghost--compact" onclick="listenSynthAll()" title="Синтез всех строк без записи по очереди — каждое встанет на место записи (громкость — по начальной фразе, тишина и вдохи срезаны)">Синтезировать все без записи (${LS.rows.filter(x => !x.path && x.synth !== 'ready').length})</button>`}`;
     listenStatusRender(); listenEdRender();
 }
 const listenLangName = l => l === 'uni' ? 'УНИВ' : l.toUpperCase();
@@ -929,6 +932,7 @@ async function listenVoicePick() {
     let item = (i, label, desc) => `<label class="listen-voice__row"><input type="radio" name="listenVoice" value="${i}" ${i === cur ? 'checked' : ''}>
         <span><b>${escapeHtml(label)}</b>${desc ? `<small>${escapeHtml(desc)}</small>` : ''}</span></label>`;
     let html = `<b>Голос синтеза</b><br><br><div class="listen-voice">`
+        + item(-2, 'Свой образец — файл и его транскрипция', LS.sample ? `«${LS.sample.name}»: «${LS.sample.text}» — выберите, потом можно загрузить другой` : 'загрузите аудио с голосом и напишите, что в нём сказано')
         + item(-1, 'По образцу — запись на экране', 'голос и интонация — из текущей записи (с правкой), текст образца — название строки')
         + (r && r.voices || []).map(v => item(v.index, v.label)).join('')
         + `</div>` + (r && r.error ? `<br><span class="listen-warn">Список голосов не получен: ${escapeHtml(r.error)}</span>` : '');
@@ -936,9 +940,51 @@ async function listenVoicePick() {
     let el = document.querySelector('input[name="listenVoice"]:checked');
     if (!el) return false;
     let i = +el.value, v = (r && r.voices || []).find(x => x.index === i);
+    if (i === -2) return await listenSampleSet(!LS.sample);
     let pos = LS.pos; LS = await pywebview.api.listen_set_voice(i, v ? v.label : null); LS.pos = pos;
     listenRenderSynth();
     return true;
+}
+// Свой образец голоса: файл + транскрипция (что в нём сказано) — их сервис синтеза берёт как эталон
+async function listenSampleSet(force) {
+    let s = LS.sample, path = null;
+    if (s && !force) {
+        let how = await showBeautifulChoice(`<b>Образец голоса</b><br><br>«${escapeHtml(s.name)}» — «${escapeHtml(s.text)}»`, 'Взять этот', 'Загрузить другой', 'D', 'Отмена');
+        if (!how) return false;
+        if (how === 'ok') { let pos = LS.pos, r = await pywebview.api.listen_set_voice(-2); if (r && !r.error) { LS = r; LS.pos = pos; } listenRenderSynth(); return true; }
+    }
+    let f = await pywebview.api.listen_pick_sample();
+    if (!f || f.error) return false;
+    path = f.path;
+    let ok = await showBeautifulConfirm(`<b>Транскрипция образца</b><br><br><span class="tts-dim">${escapeHtml(path.split(/[\\/]/).pop())}</span><br>Что именно сказано в этой записи — слово в слово:`
+        + `<br><br><textarea id="listenSampleText" rows="3" style="width:100%"></textarea>`, 'Сохранить', 'Отмена');
+    let t = ((document.getElementById('listenSampleText') || {}).value || '').trim();
+    if (!ok) return false;
+    let pos = LS.pos, r = await pywebview.api.listen_set_sample(path, t);
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); return false; }
+    LS = r; LS.pos = pos;
+    listenRenderSynth();
+    showToast('Образец голоса сохранён — синтез будет его голосом');
+    return true;
+}
+async function listenQmark(on) { let pos = LS.pos; LS = await pywebview.api.listen_set_qmark(on); LS.pos = pos; listenRenderSynth(); }
+async function listenSynthAll() {
+    if (!(await listenVoiceReady())) return;
+    let n = LS.rows.filter(x => !x.path && x.synth !== 'ready').length;
+    if (!n) { showToast('У всех строк уже есть запись'); return; }
+    if (!(await showBeautifulConfirm(`<b>Синтезировать все без записи: ${n}</b><br><br>Голос: ${escapeHtml(LS.voice.label)}${LS.qmark ? ' · с «?» в конце' : ''}.<br>`
+        + 'Каждое имя встанет на место записи; громкость — по начальной фразе, тишина и вдохи по краям срезаны. Остановить — «Стоп».', 'Начать', 'Отмена'))) return;
+    let pos = LS.pos, r = await pywebview.api.listen_synth_all(LS.lang);
+    if (r && r.state) { LS = r.state; LS.pos = pos; }
+    if (!r || r.error) { showBeautifulAlert('⚠️ ' + escapeHtml(r && r.error || 'Не получилось')); }
+    listenRenderList(); listenRenderSynth();
+    if (r && r.queued) showToast(`В очереди синтеза: ${r.queued}`, 4000);
+}
+async function listenSynthStop() {
+    let pos = LS.pos, r = await pywebview.api.listen_synth_stop();
+    if (r && r.state) { LS = r.state; LS.pos = pos; }
+    listenRenderList(); listenRenderSynth();
+    showToast(`Очередь снята: ${r ? r.dropped : 0}${r && r.running ? ' · текущий доделается' : ''}`);
 }
 async function listenVoiceReady() { return !!LS.voice || await listenVoicePick(); }
 async function listenSynth() {
